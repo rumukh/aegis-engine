@@ -125,6 +125,9 @@ export default tseslint.config(
       ],
       'no-restricted-syntax': [
         'error',
+        // Flat config *replaces* a rule's options rather than merging them, so every selector
+        // for these files must live in this one array. Declaring any of them in another block
+        // that also matches would silently drop the rest — the `new Date()` ban included.
         {
           selector: "NewExpression[callee.name='Date']",
           message: 'Wall-clock time breaks determinism (ADR-0001).',
