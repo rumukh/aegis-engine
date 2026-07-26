@@ -47,9 +47,16 @@ Before you hand back, this must pass from the repo root:
 npm run verify
 ```
 
-which runs build + test + lint + dependency-boundary check. "It works on my package" is not
-the gate; the whole workspace is the gate. If you broke something you don't own, that is
-still your problem to report.
+which runs build + **type-check of every test file** + test + lint + dependency-boundary check.
+"It works on my package" is not the gate; the whole workspace is the gate. If you broke something
+you don't own, that is still your problem to report.
+
+The test type-check step (`npm run typecheck:tests`, `tsconfig.tests.json`) exists because every
+`packages/*/tsconfig.json` excludes `*.test.ts` from the build, vitest transpiles without
+type-checking, and eslint is not type-aware — so for a long time `npm run verify` never
+type-checked a single test file. A test fixture could silently drift out of contract with the type
+it claims to exercise, and one had: `packages/mode-fps/src/systems.test.ts` built `InputFrame`s
+missing `released` and `pointer` from the day it was written. Tests are code; they get checked.
 
 Note: `.github/workflows/ci.yml` is documentation of intent — this repo has **no git remote**,
 so GitHub Actions never actually runs. `npm run verify` is the real gate. Keep the workflow
@@ -60,8 +67,11 @@ in sync with it anyway, so the project is CI-ready the day it gets a remote.
 Principle 3 in the charter. Concretely:
 
 - No `Date.now()`, `performance.now()`, `Math.random()`, or `Math.sin`/`cos`/`tan`/`atan2`
-  etc. in any simulation package. ESLint enforces this as an **error**; do not add an
-  eslint-disable to get around it. Use `@aegis/core/math`.
+  etc. in any simulation package **or in `games/*`** — including their tests. ESLint enforces
+  this as an **error**; do not add an eslint-disable to get around it. Use `@aegis/core/math`.
+  (`games/*` was outside the rule's `files` glob until it was extended; game code is where the
+  AI, patrols, damage and win conditions live, so it is exactly the code whose non-determinism
+  would corrupt a golden hash.)
 - No iteration over unordered structures where order affects results.
 - No wall-clock time in gameplay. Time is ticks.
 
