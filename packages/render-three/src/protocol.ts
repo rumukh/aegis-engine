@@ -47,6 +47,16 @@ export type ControlCommand = 'pause' | 'resume' | 'toggle' | 'step' | 'restart';
 export interface ControlRequest {
   /** What to do. */
   command: ControlCommand;
+  /** For `step`: how many fixed ticks to advance. Defaults to `1`. */
+  ticks?: number;
+}
+
+/** The full recorded event log of a session — read-only, and does not disturb the frame cursor. */
+export interface EventLog {
+  /** The tick the session has reached. */
+  tick: number;
+  /** Every event emitted since the session started (or since the last restart). */
+  events: readonly EventLine[];
 }
 
 /** Everything the page needs to boot, embedded in the served HTML. */

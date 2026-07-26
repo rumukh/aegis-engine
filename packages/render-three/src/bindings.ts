@@ -41,6 +41,24 @@ export interface ControlHelp {
   does: string;
 }
 
+/**
+ * A script action name that is the digital spelling of an axis direction.
+ *
+ * The platformer's `platformer.intake` reads `axes.MoveX` and falls back to
+ * `actions.Right`/`actions.Left`, so `hold Right` and `axis MoveX 1` mean the same thing to the
+ * simulation. A keyboard only has the key, so replaying a script that uses the action spelling
+ * needs that equivalence written down — here, next to the bindings it relates, rather than
+ * guessed at by the thing doing the replay.
+ */
+export interface DirectionAlias {
+  /** The action name a script may use, e.g. `"Right"`. */
+  action: string;
+  /** The axis it is equivalent to, e.g. `"MoveX"`. */
+  axis: string;
+  /** The direction along that axis; only the sign is used. */
+  value: number;
+}
+
 /** Everything needed to drive one mode from a browser. */
 export interface ModeBindings {
   /** Digital action keys. */
@@ -53,6 +71,8 @@ export interface ModeBindings {
   primaryButtonAction?: string;
   /** Degrees of look per pixel of mouse movement (fps). */
   lookDegreesPerPixel?: number;
+  /** Action spellings of an axis direction, for replaying scripts that use them. */
+  directionAliases?: readonly DirectionAlias[];
   /** On-screen control list. */
   help: readonly ControlHelp[];
 }
@@ -72,6 +92,10 @@ export const BINDINGS: Readonly<Record<GameMode, ModeBindings>> = {
       { code: 'ArrowRight', axis: 'MoveX', value: 1 },
     ],
     pointer: 'none',
+    directionAliases: [
+      { action: 'Right', axis: 'MoveX', value: 1 },
+      { action: 'Left', axis: 'MoveX', value: -1 },
+    ],
     help: [
       { keys: 'A / D  ·  ← / →', does: 'run · axis MoveX' },
       { keys: 'Space / W / ↑', does: 'jump · coyote time + buffering' },
@@ -117,3 +141,41 @@ export const SESSION_CONTROLS: readonly ControlHelp[] = [
   { keys: '.', does: 'single-step one tick' },
   { keys: 'R', does: 'restart at tick 0' },
 ];
+
+// --- reading the table ----------------------------------------------------------------------
+//
+// The browser's input collector and the script-replay compiler must agree exactly on what a set
+// of held keys means, or a replayed capture would diverge from what a human's keyboard produces.
+// So the table owns the interpretation, and both callers go through these.
+
+/** The analog axis values a set of held key codes produces, each clamped to `[-1, 1]`. */
+export function axesFromCodes(
+  bindings: ModeBindings,
+  codes: Iterable<string>,
+): Record<string, number> {
+  const held = new Set(codes);
+  const axes: Record<string, number> = {};
+  for (const binding of bindings.axes) {
+    if (!held.has(binding.code)) continue;
+    axes[binding.axis] = (axes[binding.axis] ?? 0) + binding.value;
+  }
+  for (const axis of Object.keys(axes)) {
+    axes[axis] = Math.max(-1, Math.min(1, axes[axis] as number));
+  }
+  return axes;
+}
+
+/** The digital actions a single key code maps to. */
+export function actionsForCode(bindings: ModeBindings, code: string): string[] {
+  return bindings.actions
+    .filter((binding) => binding.action !== '' && binding.code === code)
+    .map((binding) => binding.action);
+}
+
+/** Whether `code` appears anywhere in the table, so the browser default can be suppressed. */
+export function isBoundCode(bindings: ModeBindings, code: string): boolean {
+  return (
+    bindings.actions.some((binding) => binding.code === code) ||
+    bindings.axes.some((binding) => binding.code === code)
+  );
+}

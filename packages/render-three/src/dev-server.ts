@@ -27,7 +27,13 @@ import type { GameDefinition } from './catalog.js';
 import { renderIndexPage, renderPlayPage } from './pages.js';
 import { systemClock } from './loop.js';
 import type { Clock } from './loop.js';
-import type { ControlRequest, EventLine, FrameRequest, FrameResponse } from './protocol.js';
+import type {
+  ControlRequest,
+  EventLine,
+  EventLog,
+  FrameRequest,
+  FrameResponse,
+} from './protocol.js';
 
 /** Options for {@link startDevServer}. */
 export interface DevServerOptions {
@@ -186,11 +192,22 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
     return created;
   };
 
-  /** Build the response body for the current state of a runtime. */
-  const frameBody = (runtime: GameRuntime, steps: number): FrameResponse => {
-    const history = runtime.session.world.events.history();
-    const fresh = history.slice(runtime.eventCursor);
-    runtime.eventCursor = history.length;
+  /**
+   * Build the response body for the current state of a runtime.
+   *
+   * `drainEvents` is deliberately opt-in: the cursor belongs to the **page's** frame channel, so
+   * only `/frame` may advance it. A `state` read or a `control` command that consumed events
+   * would silently empty the on-screen feed — which is exactly what happened when the screenshot
+   * capture began driving the session through `control`, leaving the photograph with no evidence
+   * of the run it had just performed.
+   */
+  const frameBody = (runtime: GameRuntime, steps: number, drainEvents = false): FrameResponse => {
+    let fresh: readonly GameEvent[] = [];
+    if (drainEvents) {
+      const history = runtime.session.world.events.history();
+      fresh = history.slice(runtime.eventCursor);
+      runtime.eventCursor = history.length;
+    }
     return {
       tick: runtime.session.tick,
       steps,
@@ -249,7 +266,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       return;
     }
 
-    const api = /^\/api\/([A-Za-z0-9_-]+)\/(frame|state|control)$/.exec(path);
+    const api = /^\/api\/([A-Za-z0-9_-]+)\/(frame|state|events|control)$/.exec(path);
     if (api !== null) {
       const runtime = runtimeFor(api[1] as string);
       if (runtime === undefined) {
@@ -263,6 +280,17 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         return;
       }
 
+      if (endpoint === 'events' && request.method === 'GET') {
+        // The full log, deliberately *not* cursor-based: the page drains the cursor on every
+        // frame, so an observer that shared it would race the page and see an arbitrary suffix.
+        const body: EventLog = {
+          tick: runtime.session.tick,
+          events: toEventLines(runtime.session.world.events.history()),
+        };
+        sendJson(response, 200, body);
+        return;
+      }
+
       if (endpoint === 'frame' && request.method === 'POST') {
         const body = await readJsonBody<FrameRequest>(request);
         if (body?.input !== undefined) runtime.session.input.submit(body.input);
@@ -271,7 +299,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         const elapsed = Math.min(Math.max(now - runtime.lastFrameAt, 0), MAX_FRAME_SECONDS);
         runtime.lastFrameAt = now;
         const steps = runtime.session.advance(elapsed);
-        sendJson(response, 200, frameBody(runtime, steps));
+        sendJson(response, 200, frameBody(runtime, steps, true));
         return;
       }
 
@@ -281,8 +309,13 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         if (command === 'pause') runtime.session.paused = true;
         else if (command === 'resume') runtime.session.paused = false;
         else if (command === 'toggle') runtime.session.paused = !runtime.session.paused;
-        else if (command === 'step') runtime.session.step();
-        else if (command === 'restart') {
+        else if (command === 'step') {
+          // A bounded batch: replaying a whole input script one HTTP round trip per tick would
+          // take thousands of requests, and the ticks between two input changes are identical.
+          const requested = body?.ticks ?? 1;
+          const ticks = Number.isInteger(requested) ? Math.max(0, Math.min(requested, 10_000)) : 1;
+          for (let i = 0; i < ticks; i++) runtime.session.step();
+        } else if (command === 'restart') {
           runtime.session.restart();
           runtime.eventCursor = 0;
         }

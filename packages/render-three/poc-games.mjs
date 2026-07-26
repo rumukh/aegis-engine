@@ -19,9 +19,17 @@ import { coyoteGapPlugin } from '@aegis/game-platformer';
 import { serverVaultPlugin } from '@aegis/game-iso';
 import { sectorBreachPlugin } from '@aegis/game-fps';
 import { BINDINGS } from './dist/bindings.js';
-import { findRepoRoot, loadScene } from './dist/catalog.js';
+import { findRepoRoot, loadInputScript, loadScene } from './dist/catalog.js';
 
-/** The three PoC games: id, presentation, the **composed** plugin, and the scene it runs. */
+/**
+ * The three PoC games: id, presentation, the **composed** plugin, the scene it runs, the game's
+ * own `.input` script, and what a completed playthrough looks like.
+ *
+ * The script and the acceptance pair are what let the screenshot capture refuse to ship a failed
+ * run: it replays the same file the game's acceptance test runs, then requires the win event and
+ * a live player. Both are the game's facts, declared here, where the renderer is allowed to know
+ * them.
+ */
 const POC = [
   {
     id: 'platformer',
@@ -30,6 +38,10 @@ const POC = [
     objective: 'Cross the gaps and reach the goal volume on the far right.',
     plugin: coyoteGapPlugin,
     scene: 'games/platformer/levels/coyote-gap.scene.json',
+    script: 'games/platformer/play/coyote-gap.input',
+    // The tick count the game's own acceptance test runs, so the replay covers the same run.
+    scriptTicks: 400,
+    acceptance: { winEvent: 'level.completed', playerName: 'player' },
   },
   {
     id: 'iso',
@@ -38,6 +50,9 @@ const POC = [
     objective: 'Flip the switch to unseal the vault door, then reach the exit pad.',
     plugin: serverVaultPlugin,
     scene: 'games/iso/levels/server-vault.scene.json',
+    script: 'games/iso/play/server-vault.input',
+    scriptTicks: 960,
+    acceptance: { winEvent: 'mission.completed', playerName: 'operative' },
   },
   {
     id: 'fps',
@@ -46,8 +61,22 @@ const POC = [
     objective: 'Shoot the panel, jump the coolant pit, kill the grunt, reach the exit.',
     plugin: sectorBreachPlugin,
     scene: 'games/fps/levels/sector-breach.scene.json',
+    script: 'games/fps/play/sector-breach.input',
+    scriptTicks: 600,
+    // Sector Breach wins by standing in a dead-end doorway, so the frame worth keeping is the
+    // firefight. The tick still comes from the run's own event log.
+    acceptance: {
+      winEvent: 'level.completed',
+      playerName: 'player',
+      photoEvent: 'enemy.damaged',
+    },
   },
 ];
+
+/** Resolve a repo-relative POSIX path against the repository root. */
+function at(root, relative) {
+  return join(root, ...relative.split('/'));
+}
 
 /** Build the catalogue the dev server and the screenshot capture both serve. */
 export async function pocGames() {
@@ -60,7 +89,10 @@ export async function pocGames() {
       objective: entry.objective,
       mode: entry.plugin.mode,
       plugin: entry.plugin,
-      scene: await loadScene(join(root, ...entry.scene.split('/'))),
+      scene: await loadScene(at(root, entry.scene)),
+      script: await loadInputScript(at(root, entry.script)),
+      scriptTicks: entry.scriptTicks,
+      acceptance: entry.acceptance,
       bindings: BINDINGS[entry.plugin.mode],
     })),
   );

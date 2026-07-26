@@ -7,8 +7,19 @@
  * installed, so it adds no dependency (ADR-0005: three.js stays the only third-party runtime
  * dependency).
  *
- * The per-game input routines are keyed by catalogue `id` and fall back to "just let it run", so
- * this stays engine-side: it knows how to *drive a browser*, not what any particular game is.
+ * Two properties this is built around, both learned the hard way:
+ *
+ * 1. **It replays the game's own `.input` script**, compiled to browser events by
+ *    `./script-input.ts`. The previous version carried hand-written key timings, which drifted
+ *    the moment a level was retuned — and were never stable anyway, since hand-tuned wall-clock
+ *    sleeps race a live browser. An enumeration is only as good as the enumeration; there is now
+ *    no enumeration to be wrong about, because the source of truth is the same file the
+ *    acceptance test runs.
+ * 2. **It refuses to ship a failed playthrough.** The old run counted dead entities and printed
+ *    them, then wrote the PNG anyway — so a screenshot of a corpse falling out of the world
+ *    became the committed evidence that the game is playable. Reporting a problem is not the
+ *    same as declining to ship it, so the observation is now a gate: no win event, or a dead
+ *    player, fails the capture.
  *
  * Usage: `node packages/render-three/capture.mjs [--out <dir>] [--headed]`.
  * @packageDocumentation
@@ -19,9 +30,15 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { DiagnosticError } from '@aegis/core';
+import { parseInputScript } from '@aegis/harness';
+import type { InputScript } from '@aegis/harness';
 import { findRepoRoot } from './catalog.js';
 import type { GameDefinition } from './catalog.js';
 import { startDevServer } from './dev-server.js';
+import { compileDomInput } from './script-input.js';
+import type { DomInputPlan } from './script-input.js';
+import type { ControlCommand, ControlRequest, EventLog } from './protocol.js';
 
 /** Where a Chromium-family browser might live on this machine. */
 const BROWSER_CANDIDATES = [
@@ -98,28 +115,31 @@ class CdpSession {
   }
 }
 
-/** One key press, described the way CDP wants it. */
-interface Key {
-  code: string;
-  key: string;
-  vk: number;
-}
-
-/** The keys the capture script uses. */
-const KEYS: Readonly<Record<string, Key>> = {
-  KeyW: { code: 'KeyW', key: 'w', vk: 87 },
-  KeyA: { code: 'KeyA', key: 'a', vk: 65 },
-  KeyD: { code: 'KeyD', key: 'd', vk: 68 },
-  Space: { code: 'Space', key: ' ', vk: 32 },
+/** Virtual key codes for every key the binding tables can name. */
+const VIRTUAL_KEYS: Readonly<Record<string, { key: string; vk: number }>> = {
+  KeyA: { key: 'a', vk: 65 },
+  KeyD: { key: 'd', vk: 68 },
+  KeyS: { key: 's', vk: 83 },
+  KeyW: { key: 'w', vk: 87 },
+  Space: { key: ' ', vk: 32 },
+  ArrowUp: { key: 'ArrowUp', vk: 38 },
+  ArrowDown: { key: 'ArrowDown', vk: 40 },
+  ArrowLeft: { key: 'ArrowLeft', vk: 37 },
+  ArrowRight: { key: 'ArrowRight', vk: 39 },
 };
 
-/** Hold or release a key in the page. */
-async function key(cdp: CdpSession, name: string, down: boolean): Promise<void> {
-  const spec = KEYS[name];
-  if (spec === undefined) throw new Error(`unmapped key ${name}`);
+/** Dispatch a real key event into the page. */
+async function key(cdp: CdpSession, code: string, down: boolean): Promise<void> {
+  const spec = VIRTUAL_KEYS[code];
+  if (spec === undefined) {
+    throw new Error(
+      `[aegis:render-three] no virtual-key mapping for "${code}". Add it to VIRTUAL_KEYS ` +
+        'so the capture can press the key a human would.',
+    );
+  }
   await cdp.send('Input.dispatchKeyEvent', {
     type: down ? 'keyDown' : 'keyUp',
-    code: spec.code,
+    code,
     key: spec.key,
     windowsVirtualKeyCode: spec.vk,
     nativeVirtualKeyCode: spec.vk,
@@ -127,15 +147,31 @@ async function key(cdp: CdpSession, name: string, down: boolean): Promise<void> 
   });
 }
 
-/** Click at canvas pixel `(x, y)`. */
-async function click(cdp: CdpSession, x: number, y: number): Promise<void> {
-  const base = { x, y, button: 'left', clickCount: 1 };
-  await cdp.send('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 });
-  await sleep(40);
-  await cdp.send('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 });
+/** Dispatch a primary mouse button edge at canvas pixel `(x, y)`. */
+async function mouseButton(
+  cdp: CdpSession,
+  down: boolean,
+  x = VIEWPORT.width / 2,
+  y = VIEWPORT.height / 2,
+): Promise<void> {
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: down ? 'mousePressed' : 'mouseReleased',
+    x,
+    y,
+    button: 'left',
+    clickCount: 1,
+    buttons: down ? 1 : 0,
+  });
 }
 
-/** Move the mouse by a relative delta (used for pointer-locked look). */
+/** A full click at canvas pixel `(x, y)`. */
+async function click(cdp: CdpSession, x: number, y: number): Promise<void> {
+  await mouseButton(cdp, true, x, y);
+  await sleep(20);
+  await mouseButton(cdp, false, x, y);
+}
+
+/** Move the mouse to an absolute canvas position (the page reads the resulting delta). */
 async function mouseMove(cdp: CdpSession, x: number, y: number): Promise<void> {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
 }
@@ -150,41 +186,164 @@ async function evaluate<T>(cdp: CdpSession, expression: string): Promise<T> {
   return result.result.value;
 }
 
-/** Read a component field of a named entity out of the page's mirror world. */
-function entityExpression(name: string, path: string): string {
-  return (
-    `(() => { const e = globalThis.aegis.world.snapshot().entities` +
-    `.find(x => x.name === ${JSON.stringify(name)}); ` +
-    `return e ? e.components.${path} : null; })()`
-  );
-}
-
 /** Poll `expression` until `accept` returns true, or throw on timeout. */
 async function until<T>(
   cdp: CdpSession,
   expression: string,
   accept: (value: T) => boolean,
-  timeoutMs = 15000,
+  timeoutMs = 20_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = await evaluate<T>(cdp, expression);
     if (accept(value)) return value;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${expression}`);
-    await sleep(50);
+    await sleep(40);
   }
 }
 
-/** Wait until the page's mirror world has advanced past `tick`. */
-async function waitForTick(cdp: CdpSession, tick: number, timeoutMs = 15000): Promise<number> {
-  return until<number>(
-    cdp,
-    'globalThis.aegis ? globalThis.aegis.tick() : -1',
-    (current) => current > tick,
-    timeoutMs,
-  );
+/** Wait until the page has booted and drawn its first frame. */
+async function waitForBoot(cdp: CdpSession): Promise<void> {
+  await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
 }
 
+/**
+ * Wait until input collected *after this call* has reached the server.
+ *
+ * This is the whole reason the replay is exact. Dispatching a key and immediately asking the
+ * simulation to step would race the page's animation frame: the packet in flight was collected
+ * before the key existed. `aegis.sync()` settles only on an exchange whose `collector.take()` ran
+ * afterwards, so "the key is down" is a fact before the tick it applies to is simulated.
+ */
+async function syncInput(cdp: CdpSession): Promise<void> {
+  await evaluate<null>(cdp, 'globalThis.aegis.sync().then(() => null)');
+}
+/**
+ * The horizontal/vertical extent a plan's mouse walk covers, relative to its start.
+ *
+ * Under pointer lock the page reads `movementX`/`movementY`, which the browser derives from
+ * consecutive absolute positions. So a look delta *is* a displacement: the cursor cannot be
+ * re-centred between deltas (that re-centring would itself be read as look, cancelling the turn —
+ * which is exactly why the first attempt at this never turned to face the panel). The cursor
+ * therefore walks, and the walk has to fit inside the viewport.
+ */
+export function mouseWalkExtent(plan: DomInputPlan): {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+} {
+  let x = 0;
+  let y = 0;
+  const extent = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+  for (const segment of plan.segments) {
+    if (segment.mouse === undefined) continue;
+    x += segment.mouse.dx;
+    y += segment.mouse.dy;
+    extent.minX = Math.min(extent.minX, x);
+    extent.maxX = Math.max(extent.maxX, x);
+    extent.minY = Math.min(extent.minY, y);
+    extent.maxY = Math.max(extent.maxY, y);
+  }
+  return extent;
+}
+
+/** Where the cursor must start for a plan's whole mouse walk to stay on screen. */
+function mouseStart(plan: DomInputPlan): { x: number; y: number } {
+  const extent = mouseWalkExtent(plan);
+  const margin = 8;
+  const spanX = extent.maxX - extent.minX;
+  const spanY = extent.maxY - extent.minY;
+  if (spanX > VIEWPORT.width - 2 * margin || spanY > VIEWPORT.height - 2 * margin) {
+    throw new Error(
+      `[aegis:render-three] the script's look sweep needs ${spanX}x${spanY} px of mouse travel, ` +
+        `which does not fit a ${VIEWPORT.width}x${VIEWPORT.height} capture viewport. Raise the ` +
+        "viewport, or the mode's lookDegreesPerPixel so the same turn costs fewer pixels.",
+    );
+  }
+  return { x: margin - extent.minX, y: margin - extent.minY };
+}
+
+/** POST a session-control command to the dev server. */
+async function control(
+  serverUrl: string,
+  id: string,
+  command: ControlCommand,
+  ticks?: number,
+): Promise<void> {
+  const body: ControlRequest = ticks === undefined ? { command } : { command, ticks };
+  const response = await fetch(`${serverUrl}/api/${id}/control`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`control ${command} failed: ${response.status}`);
+}
+
+/**
+ * Replay a compiled input plan into the page as real browser events, tick by tick.
+ *
+ * The session is **paused** and advanced explicitly, so each segment's input is in the server's
+ * hands before the ticks it applies to are simulated. That is what makes the replay reproducible:
+ * the previous capture hand-tuned wall-clock sleeps against a live simulation and was a coin flip
+ * — the same commit died in two runs out of three.
+ *
+ * The live input path is unchanged and fully exercised: key and mouse events go through the
+ * page's collector, the binding table, an HTTP packet and `LiveInput` exactly as a human's do.
+ * Only the *trigger* for advancing time differs, and the accumulator that normally provides it is
+ * covered by `loop.test.ts` and `session.test.ts`.
+ */
+async function replayPlan(
+  cdp: CdpSession,
+  serverUrl: string,
+  id: string,
+  plan: DomInputPlan,
+  cursor: { x: number; y: number },
+  upToTick = plan.totalTicks,
+): Promise<void> {
+  await control(serverUrl, id, 'pause');
+
+  for (const segment of plan.segments) {
+    if (segment.tick >= upToTick) break;
+    for (const code of segment.keyUp) await key(cdp, code, false);
+    for (const code of segment.keyDown) await key(cdp, code, true);
+    if (segment.buttonDown) await mouseButton(cdp, true, cursor.x, cursor.y);
+    if (segment.buttonUp) await mouseButton(cdp, false, cursor.x, cursor.y);
+
+    if (segment.mouse !== undefined) {
+      cursor.x += segment.mouse.dx;
+      cursor.y += segment.mouse.dy;
+      await mouseMove(cdp, cursor.x, cursor.y);
+    }
+
+    if (segment.click !== undefined) {
+      const at = await evaluate<{ x: number; y: number } | null>(
+        cdp,
+        `globalThis.aegis.project(${segment.click.x}, 0, ${segment.click.y})`,
+      );
+      if (at === null) {
+        throw new Error(
+          `[aegis:render-three] cell (${segment.click.x}, ${segment.click.y}) is off screen at ` +
+            `tick ${segment.tick}; the script's click cannot be reproduced by a real click.`,
+        );
+      }
+      await click(cdp, at.x, at.y);
+    }
+
+    await syncInput(cdp);
+    // A partial run stops exactly on `upToTick`, so the frame photographed is the one asked for.
+    await control(serverUrl, id, 'step', Math.min(segment.ticks, upToTick - segment.tick));
+  }
+
+  // Release anything still held, so the final frame is not mid-input.
+  for (const code of new Set(plan.segments.flatMap((s) => s.keyDown))) {
+    await key(cdp, code, false);
+  }
+  await syncInput(cdp);
+  // Let the page fetch and draw the final state before anything is photographed.
+  await until<number>(cdp, 'globalThis.aegis.tick()', (t) => t >= upToTick);
+  await sleep(250);
+}
 /** Save a PNG screenshot of the page. */
 async function screenshot(cdp: CdpSession, file: string): Promise<void> {
   const shot = await cdp.send<{ data: string }>('Page.captureScreenshot', { format: 'png' });
@@ -192,7 +351,7 @@ async function screenshot(cdp: CdpSession, file: string): Promise<void> {
   writeFileSync(file, Buffer.from(shot.data, 'base64'));
 }
 
-/** Launch a headless browser with the DevTools endpoint open, and resolve its WS URL. */
+/** Launch a headless browser with the DevTools endpoint open. */
 async function launchBrowser(headed: boolean): Promise<{
   process: ChildProcess;
   port: number;
@@ -215,7 +374,7 @@ async function launchBrowser(headed: boolean): Promise<{
   if (!headed) args.unshift('--headless=new');
   const child = spawn(executable, args, { stdio: 'ignore' });
 
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + 30_000;
   for (;;) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`);
@@ -246,125 +405,169 @@ async function openPage(port: number, url: string): Promise<CdpSession> {
   return cdp;
 }
 
-/**
- * Play a game briefly with real input, then capture it. The routines are keyed by catalogue id;
- * an unrecognised id is simply left running for a moment and photographed, so adding a game to
- * the catalogue never breaks the capture.
- */
-async function captureGame(cdp: CdpSession, id: string): Promise<void> {
-  await waitForTick(cdp, 0);
-  if (id === 'platformer') await playPlatformer(cdp);
-  else if (id === 'fps') await playFps(cdp);
-  else if (id === 'iso') await playIso(cdp);
-  else await sleep(1000);
+/** What a capture observed about one game. */
+export interface CaptureResult {
+  /** Catalogue id. */
+  id: string;
+  /** The PNG written. */
+  file: string;
+  /** Tick the run finished on. */
+  tick: number;
+  /** Whether the game's win event was emitted. */
+  won: boolean;
+  /** Names of entities that ended the run dead. */
+  dead: readonly string[];
+  /** Reasons the capture is not a valid playthrough. Empty means it is. */
+  failures: readonly string[];
 }
 
 /**
- * Coyote Gap: run right and hop the spike pit. Jump buffering (`jumpBufferTicks`) means a press
- * landing just before touchdown re-launches immediately, so tapping Space while holding right
- * chains maximum-distance hops.
+ * Check the run actually succeeded.
  *
- * It stops on the plateau, short of the critter and the lava. Two reasons, both deliberate:
- * touching the critter side-on is a lethal gore (the stomp needs a descending contact, which is a
- * timing beat, not something to race a wall clock for), and the lava ferry is non-bridging — you
- * board it and stand still while it carries you (see `games/platformer/play/coyote-gap.input`).
- * The game's own `defineGameTest` proves the level is completable; this proves a human's keyboard
- * reaches the simulation, and frames the level while it does.
+ * The previous capture *reported* a dead player and carried on writing the PNG, which is how a
+ * screenshot of a corpse falling out of the world became the committed evidence that a human can
+ * play the game. Reporting is not refusing: this turns the same observation into a gate.
  */
-async function playPlatformer(cdp: CdpSession): Promise<void> {
-  const playerX = entityExpression('player', 'Transform.position.x');
-  await key(cdp, 'KeyD', true);
-  // Hop across the spike pit (cols 7-9) onto the plateau.
-  const deadline = Date.now() + 8000;
-  while (Date.now() < deadline) {
-    await key(cdp, 'Space', true);
-    await sleep(20);
-    await key(cdp, 'Space', false);
-    await sleep(30);
-    const x = await evaluate<number | null>(cdp, playerX);
-    if (x !== null && x > 11.5) break;
-  }
-  await until<number>(cdp, playerX, (x) => x !== null && x > 13.4, 5000).catch(() => undefined);
-  await key(cdp, 'KeyD', false);
-  await sleep(400);
-}
-
-/**
- * Sector Breach: capture the pointer, turn to face the wall panel, shoot the blast door open,
- * turn back and walk up the corridor to the lip of the coolant pit.
- */
-async function playFps(cdp: CdpSession): Promise<void> {
-  const yaw = entityExpression('player', 'LookState.yawDeg');
-  const z = entityExpression('player', 'Transform.position.z');
-  // A click both captures the pointer and fires, so the first one is not wasted.
-  await click(cdp, VIEWPORT.width / 2, VIEWPORT.height / 2);
-  await sleep(200);
-
-  if (await evaluate<boolean>(cdp, 'document.pointerLockElement !== null')) {
-    // The panel is due east of spawn: sweep the mouse right until the look state reads ~90 deg.
-    await turnTo(cdp, yaw, 90);
-    await click(cdp, VIEWPORT.width / 2, VIEWPORT.height / 2);
-    await sleep(300);
-    // Face north again and walk up the corridor the blast door was sealing.
-    await turnTo(cdp, yaw, 0);
-  }
-
-  await key(cdp, 'KeyW', true);
-  await until<number>(cdp, z, (value) => value !== null && value > 9.6, 12000).catch(
-    () => undefined,
+async function inspectRun(
+  cdp: CdpSession,
+  serverUrl: string,
+  game: GameDefinition,
+): Promise<{ won: boolean; photoTick?: number; dead: string[]; failures: string[] }> {
+  const log = (await (await fetch(`${serverUrl}/api/${game.id}/events`)).json()) as EventLog;
+  const dead = await evaluate<string[]>(
+    cdp,
+    'globalThis.aegis.world.snapshot().entities' +
+      '.filter((e) => e.components.Dead).map((e) => e.name ?? e.id)',
   );
-  await key(cdp, 'KeyW', false);
-  await sleep(300);
+
+  const failures: string[] = [];
+  const acceptance = game.acceptance;
+  if (acceptance === undefined) return { won: false, dead, failures };
+
+  const win = log.events.find((event) => event.type === acceptance.winEvent);
+  if (win === undefined) {
+    failures.push(`"${acceptance.winEvent}" was never emitted — the playthrough did not complete`);
+  }
+  if (dead.includes(acceptance.playerName)) {
+    failures.push(`the player entity "${acceptance.playerName}" ended the run dead`);
+  }
+
+  // The frame to keep: the named photo event if the run produced one, else the win.
+  const photoName = acceptance.photoEvent ?? acceptance.winEvent;
+  const photo = log.events.find((event) => event.type === photoName) ?? win;
+  return {
+    won: win !== undefined,
+    ...(photo !== undefined ? { photoTick: photo.tick } : {}),
+    dead,
+    failures,
+  };
+}
+/** Put the session back at a paused tick 0 with a clean input source and a repositioned cursor. */
+async function resetToStart(
+  cdp: CdpSession,
+  serverUrl: string,
+  game: GameDefinition,
+  plan: DomInputPlan,
+  cursor: { x: number; y: number },
+): Promise<void> {
+  await control(serverUrl, game.id, 'pause');
+  if (game.bindings.pointer === 'lock') {
+    // Moving the locked cursor is itself read as look, so it happens before the restart that
+    // discards it.
+    Object.assign(cursor, mouseStart(plan));
+    await mouseMove(cdp, cursor.x, cursor.y);
+    await syncInput(cdp);
+  }
+  await control(serverUrl, game.id, 'restart');
+  await until<number>(cdp, 'globalThis.aegis.tick()', (t) => t === 0);
 }
 
-/**
- * Sweep the (locked) mouse horizontally until the simulated yaw reaches `targetDeg`. Driving off
- * the world's own `LookState` rather than a pixel count keeps this honest: it only succeeds if
- * the look actually reached the simulation.
- */
-async function turnTo(cdp: CdpSession, yawExpression: string, targetDeg: number): Promise<void> {
-  let cursorX = VIEWPORT.width / 2;
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const current = await evaluate<number | null>(cdp, yawExpression);
-    if (current === null) return;
-    const error = targetDeg - current;
-    if (Math.abs(error) < 2.5) return;
-    const stepPixels = Math.sign(error) * Math.min(Math.abs(error) / 0.14, 24);
-    let next = cursorX + stepPixels;
-    if (next < 40 || next > VIEWPORT.width - 40) {
-      // Re-centre first; the page reads deltas, so this jump is absorbed as one large step.
-      cursorX = VIEWPORT.width / 2;
-      next = cursorX + stepPixels;
+/** Play one game by replaying its own script, then photograph and inspect the result. */
+async function captureGame(
+  cdp: CdpSession,
+  serverUrl: string,
+  game: GameDefinition,
+  outDir: string,
+): Promise<CaptureResult> {
+  await waitForBoot(cdp);
+
+  if (game.script === undefined) {
+    throw new Error(
+      `[aegis:render-three] game "${game.id}" has no input script. The capture replays the ` +
+        "game's own .input file so it cannot drift; wire it in the catalogue.",
+    );
+  }
+
+  const parsed = parseInputScript(game.script);
+  if (!parsed.ok || parsed.value === undefined) throw new DiagnosticError(parsed.diagnostics);
+  const ticks = game.scriptTicks ?? scriptSpan(parsed.value);
+  const plan = compileDomInput(parsed.value.frames(ticks), game.bindings);
+
+  // Freeze time *before* anything else. Opening the page starts a live session, so by the time
+  // the first command is dispatched the simulation has already run for however long the browser
+  // took to boot — which silently offset the whole replay and drowned the player in the lava.
+  await control(serverUrl, game.id, 'pause');
+
+  const cursor = { x: VIEWPORT.width / 2, y: VIEWPORT.height / 2 };
+  if (game.bindings.pointer === 'lock') {
+    // Pointer lock needs a real user click, and that click also fires the bound button action.
+    await click(cdp, cursor.x, cursor.y);
+    await sleep(250);
+    const locked = await evaluate<boolean>(cdp, 'document.pointerLockElement !== null');
+    if (!locked) {
+      throw new Error(
+        '[aegis:render-three] pointer lock did not engage, so no mouse-look would reach the ' +
+          'simulation. Failing rather than capturing a run that silently never turned.',
+      );
     }
-    await mouseMove(cdp, next, VIEWPORT.height / 2);
-    cursorX = next;
-    await sleep(16);
   }
+  await resetToStart(cdp, serverUrl, game, plan, cursor);
+
+  // Pass 1: the whole playthrough, which is what the gate judges.
+  await replayPlan(cdp, serverUrl, game.id, plan, cursor);
+  const { won, photoTick, dead, failures } = await inspectRun(cdp, serverUrl, game);
+
+  // Pass 2: photograph the moment of victory rather than wherever the script happened to stop.
+  // The tick is *derived from the run*, so it cannot drift the way a hand-picked one would — and
+  // a failed run is photographed where it failed, which is the useful frame for diagnosis.
+  if (won && photoTick !== undefined && photoTick < plan.totalTicks) {
+    await resetToStart(cdp, serverUrl, game, plan, cursor);
+    await replayPlan(cdp, serverUrl, game.id, plan, cursor, photoTick + 1);
+  }
+
+  const file = join(outDir, `${game.id}.png`);
+  await screenshot(cdp, file);
+  const tick = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+  return { id: game.id, file, tick, won, dead, failures };
 }
 
-/** The Server Vault: click a floor cell to path there, then click the switch corridor. */
-async function playIso(cdp: CdpSession): Promise<void> {
-  const cell = entityExpression('operative', 'GridPosition.cellX');
-  const target = await evaluate<{ x: number; y: number } | null>(
-    cdp,
-    'globalThis.aegis.project(1, 0, 5)',
-  );
-  if (target !== null) await click(cdp, target.x, target.y);
-  await sleep(1800);
-  const second = await evaluate<{ x: number; y: number } | null>(
-    cdp,
-    'globalThis.aegis.project(9, 0, 1)',
-  );
-  if (second !== null) await click(cdp, second.x, second.y);
-  await until<number>(cdp, cell, (x) => x !== null && x > 3, 12000).catch(() => undefined);
-  await sleep(600);
+/**
+ * The last tick any command in a script refers to.
+ *
+ * `TickSpan` is inclusive-start / exclusive-end and `@t` parses to `{ start: t, end: t + 1 }`, so
+ * the script's length is the largest `end` (or `tick + 1`) across its commands.
+ */
+export function scriptSpan(script: InputScript): number {
+  let end = 1;
+  for (const command of script.commands) {
+    const shape = command as { tick?: number; span?: { start: number; end: number } };
+    if (typeof shape.tick === 'number') end = Math.max(end, shape.tick + 1);
+    if (shape.span !== undefined) end = Math.max(end, shape.span.end);
+  }
+  return end;
 }
 
-/** Capture every game in `games` and return the files written. */
+/**
+ * Capture every game in `games`.
+ *
+ * Throws if any run failed its acceptance check, **after** writing every PNG — a failed frame is
+ * the most useful thing to look at when diagnosing why, so it is still saved; it just no longer
+ * passes for success.
+ */
 export async function capture(
   games: readonly GameDefinition[],
   argv: readonly string[] = process.argv.slice(2),
-): Promise<string[]> {
+): Promise<CaptureResult[]> {
   const outIndex = argv.indexOf('--out');
   const repoRoot = findRepoRoot();
   const outDir =
@@ -375,24 +578,21 @@ export async function capture(
 
   const server = await startDevServer({ games, port: 0 });
   const browser = await launchBrowser(headed);
-  const written: string[] = [];
+  const results: CaptureResult[] = [];
 
   try {
     for (const game of games) {
       const cdp = await openPage(browser.port, `${server.url}/play/${game.id}`);
       try {
-        await captureGame(cdp, game.id);
-        const file = join(outDir, `${game.id}.png`);
-        await screenshot(cdp, file);
-        const tick = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-        // Surface a lost run rather than quietly photographing a corpse.
-        const deaths = await evaluate<number>(
-          cdp,
-          'globalThis.aegis.world.snapshot().entities.filter((e) => e.components.Dead).length',
+        const result = await captureGame(cdp, server.url, game, outDir);
+        results.push(result);
+        const verdict = result.failures.length === 0 ? 'OK  ' : 'FAIL';
+        const extra = result.dead.length > 0 ? `  dead: ${result.dead.join(', ')}` : '';
+        console.log(
+          `  ${verdict} ${result.id.padEnd(11)} tick ${String(result.tick).padEnd(5)} ` +
+            `${result.won ? 'won' : 'NOT WON'}${extra}`,
         );
-        const note = deaths > 0 ? `  (${deaths} dead entit${deaths === 1 ? 'y' : 'ies'})` : '';
-        console.log(`  ${game.id.padEnd(11)} tick ${String(tick).padEnd(5)} ${file}${note}`);
-        written.push(file);
+        for (const failure of result.failures) console.log(`         ${failure}`);
       } finally {
         cdp.close();
       }
@@ -401,5 +601,14 @@ export async function capture(
     browser.process.kill();
     await server.close();
   }
-  return written;
+
+  const failed = results.filter((result) => result.failures.length > 0);
+  if (failed.length > 0) {
+    throw new Error(
+      `[aegis:render-three] ${failed.length} of ${results.length} captures did not complete ` +
+        `their playthrough: ${failed.map((r) => r.id).join(', ')}. The PNGs were written for ` +
+        'diagnosis, but they are not evidence that a human can play these games.',
+    );
+  }
+  return results;
 }

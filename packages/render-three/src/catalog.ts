@@ -20,6 +20,24 @@ import type { SceneFile } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
 import type { ModeBindings } from './bindings.js';
 
+/** What a completed playthrough must look like, so a capture can refuse to ship a failed one. */
+export interface GameAcceptance {
+  /** The event that must have been emitted for the run to count as won, e.g. `"level.completed"`. */
+  winEvent: string;
+  /** `Name` of the entity that must still be alive at the end, e.g. `"player"`. */
+  playerName: string;
+  /**
+   * The event whose tick makes the most legible screenshot. Defaults to
+   * {@link GameAcceptance.winEvent}.
+   *
+   * Only the event *name* is a choice; the tick is read out of the run's own event log, so this
+   * cannot drift into photographing a moment that never happened. It exists because a game can
+   * win somewhere visually dull — Sector Breach's exit is a dead-end wall, so the frame worth
+   * keeping is the firefight, not the doorway.
+   */
+  photoEvent?: string;
+}
+
 /** One playable entry in the dev server's catalogue. */
 export interface GameDefinition {
   /** URL slug, e.g. `"iso"`. */
@@ -45,6 +63,16 @@ export interface GameDefinition {
   bindings: ModeBindings;
   /** What "winning" looks like, shown in the HUD. */
   objective: string;
+  /**
+   * The game's own `.input` script (DSL text) — the same one its acceptance test runs. The
+   * screenshot capture replays it through real browser events, so a capture can never drift from
+   * the playthrough the tests prove.
+   */
+  script?: string;
+  /** How many ticks of {@link GameDefinition.script} to replay. Defaults to the script's span. */
+  scriptTicks?: number;
+  /** The outcome a capture must observe, or it fails. */
+  acceptance?: GameAcceptance;
 }
 
 /** Read and parse a scene document, throwing structured diagnostics on failure. */
@@ -53,6 +81,11 @@ export async function loadScene(path: string): Promise<SceneFile> {
   const parsed = parseScene(text, path);
   if (!parsed.ok || parsed.value === undefined) throw new DiagnosticError(parsed.diagnostics);
   return parsed.value;
+}
+
+/** Read an input-script document as text. Parsing is the caller's job (see `script-input.ts`). */
+export async function loadInputScript(path: string): Promise<string> {
+  return readFile(path, 'utf8');
 }
 
 /**

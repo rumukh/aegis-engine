@@ -93,6 +93,24 @@ describe('live session', () => {
     expect(session.tick).toBe(2);
   });
 
+  it('restart preserves the paused flag rather than resuming behind your back', () => {
+    // A human who paused, hit R and got a world already sprinting away lost the thing they
+    // paused for — and automation that restarts to reach a known tick 0 cannot do so at all if
+    // the simulation resumes underneath it.
+    const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
+    session.paused = true;
+    session.step();
+    session.restart();
+    expect(session.paused).toBe(true);
+    expect(session.tick).toBe(0);
+    expect(session.advance(1)).toBe(0);
+    expect(session.tick).toBe(0);
+
+    session.paused = false;
+    session.restart();
+    expect(session.paused).toBe(false);
+  });
+
   it('restart rebuilds the world at tick 0 with the same starting hash', () => {
     const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
     const initial = session.hash();

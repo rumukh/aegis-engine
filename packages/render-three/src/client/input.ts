@@ -11,6 +11,7 @@
  * @packageDocumentation
  */
 import type { PointerInput } from '@aegis/core';
+import { actionsForCode, axesFromCodes, isBoundCode } from '../bindings.js';
 import type { ModeBindings } from '../bindings.js';
 import type { InputPacket } from '../live-input.js';
 import type { PickedPoint } from '../adapter.js';
@@ -59,8 +60,7 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
   let pointer: PointerInput | null = null;
   let seq = 0;
 
-  const actionsFor = (code: string): string[] =>
-    bindings.actions.filter((binding) => binding.code === code).map((binding) => binding.action);
+  const actionsFor = (code: string): string[] => actionsForCode(bindings, code);
 
   const addPressed = (action: string): void => {
     if (heldActions.has(action)) return;
@@ -86,7 +86,7 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
       heldCodes.add(event.code);
       for (const action of actionsFor(event.code)) addPressed(action);
     }
-    if (isBound(bindings, event.code)) event.preventDefault();
+    if (isBoundCode(bindings, event.code)) event.preventDefault();
   };
 
   const onKeyUp = (event: KeyboardEvent): void => {
@@ -165,20 +165,12 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
     },
 
     take(): InputPacket {
-      const axes: Record<string, number> = {};
-      for (const binding of bindings.axes) {
-        if (!heldCodes.has(binding.code)) continue;
-        axes[binding.axis] = (axes[binding.axis] ?? 0) + binding.value;
-      }
-      for (const axis of Object.keys(axes)) {
-        axes[axis] = Math.max(-1, Math.min(1, axes[axis] as number));
-      }
       const packet: InputPacket = {
         seq: ++seq,
         held: [...heldActions],
         pressed,
         released,
-        axes,
+        axes: axesFromCodes(bindings, heldCodes),
         look: { dx: lookDx, dy: lookDy },
         pointer,
       };
@@ -201,12 +193,4 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
     },
   };
   return collector;
-}
-
-/** Whether `code` appears anywhere in the binding table (so the browser default can be blocked). */
-function isBound(bindings: ModeBindings, code: string): boolean {
-  return (
-    bindings.actions.some((binding) => binding.code === code) ||
-    bindings.axes.some((binding) => binding.code === code)
-  );
 }

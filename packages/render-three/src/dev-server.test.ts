@@ -17,7 +17,7 @@ import type { DevServer } from './dev-server.js';
 import { findRepoRoot } from './catalog.js';
 import { BINDINGS } from './bindings.js';
 import { escapeHtml, importMap } from './pages.js';
-import type { FrameResponse } from './protocol.js';
+import type { ControlRequest, EventLog, FrameResponse } from './protocol.js';
 import type { GameDefinition } from './catalog.js';
 import { ISO_SCENE, PLATFORMER_SCENE } from './testing/scenes.js';
 
@@ -67,6 +67,17 @@ async function frame(id: string): Promise<FrameResponse> {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ input: { seq: Date.now(), axes: {} } }),
+  });
+  expect(response.status).toBe(200);
+  return (await response.json()) as FrameResponse;
+}
+
+/** POST a session-control command and return the response body. */
+async function postControl(id: string, body: ControlRequest): Promise<FrameResponse> {
+  const response = await fetch(`${server.url}/api/${id}/control`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
   });
   expect(response.status).toBe(200);
   return (await response.json()) as FrameResponse;
@@ -236,5 +247,62 @@ describe('dev server', () => {
       })
     ).json()) as FrameResponse;
     expect(resumed.paused).toBe(false);
+  });
+
+  it('steps a batch of ticks in one request, so a script replay is not thousands of them', async () => {
+    await postControl('platformer', { command: 'restart' });
+    await postControl('platformer', { command: 'pause' });
+    const before = await postControl('platformer', { command: 'step', ticks: 0 });
+    const after = await postControl('platformer', { command: 'step', ticks: 40 });
+    expect(after.tick).toBe(before.tick + 40);
+
+    // A missing count means one tick; a silly one is clamped rather than hanging the server.
+    const one = await postControl('platformer', { command: 'step' });
+    expect(one.tick).toBe(after.tick + 1);
+    const clamped = await postControl('platformer', { command: 'step', ticks: -5 });
+    expect(clamped.tick).toBe(one.tick);
+  });
+
+  it('restart leaves the session paused, so a caller can reach a known tick 0', async () => {
+    await postControl('iso', { command: 'pause' });
+    const restarted = await postControl('iso', { command: 'restart' });
+    expect(restarted.tick).toBe(0);
+    expect(restarted.paused).toBe(true);
+    now += 5;
+    expect((await frame('iso')).tick).toBe(0);
+    await postControl('iso', { command: 'resume' });
+  });
+
+  it('reports the full event log without disturbing the page feed', async () => {
+    await postControl('platformer', { command: 'restart' });
+    await postControl('platformer', { command: 'resume' });
+    now += 2;
+    await frame('platformer');
+
+    const log = (await (await fetch(`${server.url}/api/platformer/events`)).json()) as EventLog;
+    expect(log.tick).toBeGreaterThan(0);
+    expect(log.events.length).toBeGreaterThan(0);
+    // Reading it twice returns the same thing: it is a log, not a queue.
+    const again = (await (await fetch(`${server.url}/api/platformer/events`)).json()) as EventLog;
+    expect(again.events).toEqual(log.events);
+  });
+
+  it('only the page frame channel drains the event cursor', async () => {
+    // The screenshot capture drives sessions through `control`; when that drained the cursor, the
+    // page's on-screen feed came out empty and the photograph showed no evidence of the run.
+    await postControl('platformer', { command: 'restart' });
+    await postControl('platformer', { command: 'resume' });
+    now += 2;
+
+    const control1 = await postControl('platformer', { command: 'step', ticks: 30 });
+    expect(control1.events).toEqual([]);
+    const state = (await (
+      await fetch(`${server.url}/api/platformer/state`)
+    ).json()) as FrameResponse;
+    expect(state.events).toEqual([]);
+
+    // The page still receives everything emitted since it last looked.
+    const page = await frame('platformer');
+    expect(page.events.length).toBeGreaterThan(0);
   });
 });

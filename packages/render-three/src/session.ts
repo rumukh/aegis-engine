@@ -185,9 +185,12 @@ export function createLiveSession(options: LiveSessionOptions): LiveSession {
       return built.world.hash();
     },
     restart(): void {
+      // Deliberately preserves `paused`: restart means "this scene again from tick 0", not "and
+      // also start running". A human who paused, hit R and got a world already sprinting away
+      // from them lost the thing they paused for; and automation that restarts to reach a known
+      // tick 0 cannot do so at all if the simulation resumes underneath it.
       built = buildWorld(options);
       loop.reset();
-      paused = false;
     },
   };
   return session;

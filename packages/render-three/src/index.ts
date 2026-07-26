@@ -20,6 +20,7 @@ export * from './loop.js';
 export * from './live-input.js';
 export * from './session.js';
 export * from './catalog.js';
+export * from './script-input.js';
 export * from './pages.js';
 export * from './dev-server.js';
 export * from './play.js';

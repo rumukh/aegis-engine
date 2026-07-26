@@ -28,10 +28,44 @@ Every game also takes `P` (pause/resume), `.` (single-step one tick while paused
 
 ## Screenshots
 
-`node packages/render-three/capture.mjs` drives all three games in a real browser with real key
-and mouse events and writes `screenshots/{platformer,iso,fps}.png`. It speaks the Chrome DevTools
+`node packages/render-three/capture.mjs` plays all three games in a real browser with real key and
+mouse events and writes `screenshots/{platformer,iso,fps}.png`. It speaks the Chrome DevTools
 Protocol over Node's built-in `WebSocket`, so it needs no extra dependency — just Chrome or Edge.
 Add `--headed` to watch it happen.
+
+Two properties it is built around, both learned by getting them wrong first:
+
+**It replays the game's own `.input` script.** Not hand-written key timings — the same file the
+game's acceptance test runs, compiled to browser events by `script-input.ts` through the same
+binding table a human's keyboard goes through. The earlier version carried canned timings, and
+when the platformer's lava ferry was restored they silently began running the player into a gap.
+They were never stable anyway: hand-tuned wall-clock sleeps race the browser's frame pacing, and
+the same commit died in **two runs out of three**.
+
+> An enumerated fix is only as good as the enumeration. There is now no enumeration to be wrong
+> about, because the source of truth is the file the tests already prove.
+
+The replay is exact rather than hopeful: the session is paused and stepped explicitly, and
+`aegis.sync()` guarantees each segment's input has reached the server _before_ the ticks it
+applies to are simulated. The live input path is untouched — key and mouse events go through the
+page's collector, the binding table, an HTTP packet and `LiveInput` exactly as a human's do. Only
+the trigger for advancing time differs, and the accumulator that normally provides it has its own
+tests (`loop.test.ts`, `session.test.ts`).
+
+**It refuses to ship a failed playthrough.** The previous version counted dead entities and
+printed them — and then wrote the PNG anyway, so a screenshot of a corpse falling out of the world
+became the committed evidence that the game is playable. Reporting a problem is not the same as
+declining to ship it. A capture now fails if the game's win event was never emitted or the player
+ended up dead; the PNG is still written, because a failed frame is the most useful thing to look
+at, but it no longer passes for success.
+
+The frame kept is the one at a named event's tick — the win, or something more legible if a game
+wins somewhere dull (Sector Breach's exit is a dead-end wall, so it photographs the firefight).
+Only the event _name_ is a choice; the tick comes out of the run's own event log.
+
+None of this is trusted on the strength of a screenshot: `script-input.test.ts` compiles a script
+to browser events, replays them back through the real `LiveInput`, and asserts the resulting
+simulation reaches **the same state hash** as the script itself — headlessly, in `npm run verify`.
 
 ## How it fits together
 
@@ -80,6 +114,7 @@ they are not. Crude on purpose — legibility over beauty (CHARTER §5).
 | `appearance.ts`, `primitives.ts`           | role palette + authored appearance, shared geometry/materials                       |
 | `loop.ts`                                  | the fixed-timestep accumulator — the only wall-clock read in the package            |
 | `live-input.ts`, `bindings.ts`             | browser reports ➜ `InputFrame`s, and the key/mouse binding table                    |
+| `script-input.ts`                          | a game's `.input` script ➜ browser events, and back again for the round-trip test   |
 | `session.ts`                               | world + schedule + live input, steppable in real time                               |
 | `catalog.ts`                               | `GameDefinition` and scene loading — game-agnostic; the caller supplies the entries |
 | `dev-server.ts`, `pages.ts`, `protocol.ts` | the `node:http` server, its HTML, and the wire types                                |

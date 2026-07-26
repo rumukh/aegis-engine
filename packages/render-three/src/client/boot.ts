@@ -35,6 +35,15 @@ export interface AegisDebugHandle {
   tick(): number;
   /** Project a world point to canvas pixels, or `null` when it is behind the camera. */
   project(x: number, y: number, z: number): { x: number; y: number } | null;
+  /**
+   * Resolve once an input packet **collected after this call** has been accepted by the server.
+   *
+   * Automation that wants tick-exact input needs to know its key events actually landed before it
+   * asks the simulation to step. Polling a counter cannot answer that — a packet already in
+   * flight was collected *before* the events. So the waiter is registered here and only settled
+   * by an exchange whose `collector.take()` ran strictly afterwards.
+   */
+  sync(): Promise<void>;
 }
 
 /** Map a keyboard session command onto the wire command. */
@@ -76,6 +85,8 @@ export function boot(config: BootConfig): void {
   let framesThisSecond = 0;
   let fps = 0;
   let fpsWindowStart = performance.now();
+  /** Waiters registered by {@link AegisDebugHandle.sync}, settled by the next exchange. */
+  let syncWaiters: (() => void)[] = [];
 
   const resize = (): void => {
     const width = canvas.clientWidth || globalThis.innerWidth;
@@ -104,12 +115,23 @@ export function boot(config: BootConfig): void {
   };
 
   const exchange = async (): Promise<void> => {
-    const response = await postJson<FrameResponse>(`${config.api}/frame`, {
-      input: collector.take(),
-    });
-    paused = response.paused;
-    applySnapshot(response.snapshot);
-    hud.pushEvents(response.events);
+    // Claim the waiters registered before this collection: their events are in this packet.
+    const settling = syncWaiters;
+    syncWaiters = [];
+    try {
+      const response = await postJson<FrameResponse>(`${config.api}/frame`, {
+        input: collector.take(),
+      });
+      paused = response.paused;
+      applySnapshot(response.snapshot);
+      hud.pushEvents(response.events);
+      for (const resolve of settling) resolve();
+    } catch (error) {
+      // A failed exchange never delivered the input, so put the waiters back rather than
+      // resolving them — otherwise automation would step on input the server never saw.
+      syncWaiters.push(...settling);
+      throw error;
+    }
   };
 
   const frame = (): void => {
@@ -157,6 +179,9 @@ export function boot(config: BootConfig): void {
         x: rect.left + ((ndc.x + 1) / 2) * rect.width,
         y: rect.top + ((1 - ndc.y) / 2) * rect.height,
       };
+    },
+    sync(): Promise<void> {
+      return new Promise<void>((resolve) => syncWaiters.push(resolve));
     },
   };
   (globalThis as unknown as { aegis: AegisDebugHandle }).aegis = debug;
