@@ -354,8 +354,11 @@ describe('World — C1 acceptance criteria (no laundering on any entry path)', (
       const e = w.spawn();
       w.add(e, Vel, { x: value });
 
-      // 1. It survives the way in. Pre-fix `defineComponent`'s clone flattened it here.
+      // 1. It survives the way in, as an actual non-finite `number`. Pre-fix
+      //    `defineComponent`'s clone flattened it here. A string `"Infinity"` or a
+      //    `{ __nonFinite: … }` sentinel would not count — the type is part of the criterion.
       const stored = w.get(e, Vel)?.x as number;
+      expect(typeof stored).toBe('number');
       expect(Number.isFinite(stored)).toBe(false);
       expect(Object.is(stored, value)).toBe(true);
 
@@ -372,7 +375,9 @@ describe('World — C1 acceptance criteria (no laundering on any entry path)', (
     it(`does not launder ${label} to null on the spawn() path`, () => {
       const w = createWorld({ seed: 1 });
       const e = w.spawn(Vel({ x: value }));
-      expect(Object.is(w.get(e, Vel)?.x, value)).toBe(true);
+      const stored = w.get(e, Vel)?.x as number;
+      expect(typeof stored).toBe('number');
+      expect(Object.is(stored, value)).toBe(true);
       const result = snapshotOrRejection(w);
       if (typeof result !== 'string') {
         expect(JSON.stringify(result.entities[0]?.components)).not.toContain('"x":null');
@@ -553,12 +558,84 @@ describe('World — C2 acceptance criteria (slot-reuse aliasing: identity, not l
       'first()',
       (r: QueryResult): number[] => (r.first() === undefined ? [] : [r.first()!.get(Tag).v]),
     ],
+    [
+      'one()',
+      (r: QueryResult): number[] => {
+        try {
+          return [r.one().get(Tag).v];
+        } catch {
+          return [];
+        }
+      },
+    ],
   ] as const) {
     it(`${name} never yields the impostor's data`, () => {
       const { result } = afterSlotReuse();
       expect(extract(result)).not.toContain(IMPOSTOR);
+      expect(extract(result)).toEqual([]);
     });
   }
+
+  it('covers every accessor on QueryResult — a new one cannot be added uncovered', () => {
+    // The defect was five accessors each independently re-deriving the handle from the slot,
+    // so five call sites leaked. `views()` in particular is the path @aegis/content's
+    // healthSystem takes, so a fix applied to iteration alone would leave a shipped engine
+    // system broken while looking correct. This asserts the surface itself, so adding a
+    // sixth accessor without covering it fails here.
+    const { result } = afterSlotReuse();
+    const covered = new Set(['count', 'entities', 'views', 'first', 'one', 'forEach']);
+    const actual = new Set(Object.keys(result));
+    expect(actual).toEqual(covered);
+    expect(typeof result[Symbol.iterator]).toBe('function');
+
+    // And every one of them, in one place, reports the row as gone rather than as the impostor.
+    const outcomes = {
+      iteration: [...result].map((v) => v.get(Tag).v),
+      views: result.views().map((v) => v.get(Tag).v),
+      entities: result.entities(),
+      first: result.first(),
+      count: result.count(),
+      forEach: (() => {
+        const o: number[] = [];
+        result.forEach((v) => o.push(v.get(Tag).v));
+        return o;
+      })(),
+      one: (() => {
+        try {
+          return result.one().get(Tag).v;
+        } catch {
+          return 'refused';
+        }
+      })(),
+    };
+    expect(outcomes).toEqual({
+      iteration: [],
+      views: [],
+      entities: [],
+      first: undefined,
+      count: 0,
+      forEach: [],
+      one: 'refused',
+    });
+  });
+
+  it('views() is safe for the consumption shape @aegis/content healthSystem uses', () => {
+    // `for (const view of world.query({...}).views()) { view.get(Health); world.get(view.entity, Name); }`
+    // Reproduced here because core cannot depend on content (dependency boundary).
+    const Health = defineComponent<{ current: number }>({
+      id: 'Health',
+      defaults: () => ({ current: 0 }),
+    });
+    const w = createWorld({ seed: 1 });
+    const doomed = w.spawn(Name({ value: 'DOOMED' }), Health({ current: 0 }));
+    const rows = w.query({ has: [Health] });
+    w.despawn(doomed);
+    w.spawn(Name({ value: 'BYSTANDER' }), Health({ current: 10 }));
+
+    const reported = rows.views().map((v) => w.get(v.entity, Name)?.value ?? '<none>');
+    expect(reported).not.toContain('BYSTANDER');
+    expect(reported).toEqual([]);
+  });
 
   it('entities() returns query-time handles, never a freshly packed one', () => {
     const { result, original, impostor } = afterSlotReuse();

@@ -40,8 +40,11 @@ describe('hashing — pinned golden digests', () => {
   // stay green if FNV_PRIME_64 or FNV_OFFSET_64 changed, or if the byte order flipped — while
   // every stored replay and every game's GOLDEN_HASH silently broke. These literals pin it.
   //
-  // Do NOT regenerate from the implementation. A diff here is an approved algorithm change or
-  // a bug.
+  // PROVENANCE: `hashString('')` and `hashString('hello')` were cross-checked against a table
+  // recorded independently by the audit before this code was touched; the rest were derived
+  // here. A pinned literal that was merely generated from the implementation is the M5 defect,
+  // not a fix for it — so a derived value disagreeing with the recorded table is a finding to
+  // report, never a number to overwrite.
   it('hashString matches its pinned digests', () => {
     expect(hashString('')).toBe('cbf29ce484222325'); // the FNV-1a-64 offset basis, unmixed
     expect(hashString('hello')).toBe('32964f71b2764b97');

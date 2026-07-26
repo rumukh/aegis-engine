@@ -7,8 +7,14 @@ describe('seeded PRNG (sfc32) — pinned golden streams', () => {
   // the SplitMix32 seed stretch or the 12-draw warm-up changed — while every stored replay and
   // every game's GOLDEN_HASH silently broke. These literals pin the actual stream.
   //
+  // PROVENANCE: the two six-word streams below were derived from this implementation AND
+  // cross-checked, digit for digit, against a table recorded independently by the audit before
+  // any of this code was touched. That check is the point of M5 — a literal generated from the
+  // implementation and never verified is exactly the defect M5 describes, not a fix for it.
+  //
   // Do NOT regenerate from the implementation. A diff here is an approved algorithm change or
-  // a bug.
+  // a bug. If a derived value ever disagrees with the recorded table, that is a finding to
+  // report, not a number to overwrite.
   it("createPrng('canary') emits its pinned first six words", () => {
     const p = createPrng('canary');
     expect([

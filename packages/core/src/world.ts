@@ -571,41 +571,49 @@ export function createWorld(config: WorldConfig): World {
    * bug wearing the costume of a safety feature: the free list is LIFO, so a despawn+spawn
    * inside a system loop reused the slot immediately and the pending row then packed the *new*
    * generation — handing the caller a live handle to a different entity, with real data and no
-   * error. Handles are now fixed when the query runs, and every row is generation-checked
-   * before it is yielded, so a despawned entity simply disappears from the result.
+   * error. Nothing was dead by the time the row was read, so no liveness check could have
+   * caught it; the mechanism is **slot-reuse aliasing** and the fix is **identity**.
+   *
+   * Every accessor below is a thin consumer of the single {@link liveRows} traversal, and
+   * `handles` is the only place a handle exists — no accessor re-derives one from a slot.
+   * That matters structurally: the original defect was five accessors each independently
+   * re-deriving the same handle, so five separate call sites leaked the impostor. One
+   * derivation point and one traversal means there is one thing to keep right, not five.
    */
   function makeQueryResult(handles: readonly Entity[]): QueryResult {
-    const stillAlive = (): Entity[] => handles.filter(isAlive);
+    /**
+     * The matched rows that are still the entity they matched as.
+     *
+     * Generated lazily and re-checked per step, so an entity that dies *during* iteration
+     * drops out rather than being yielded from a stale position.
+     */
+    function* liveRows(): Generator<Entity> {
+      for (const entity of handles) if (isAlive(entity)) yield entity;
+    }
 
     const result: QueryResult = {
-      [Symbol.iterator](): Iterator<EntityView> {
-        let i = 0;
-        return {
-          next(): IteratorResult<EntityView> {
-            // Re-check on each step: entities may die *during* iteration.
-            while (i < handles.length) {
-              const entity = handles[i++] as Entity;
-              if (isAlive(entity)) return { value: makeView(entity), done: false };
-            }
-            return { value: undefined as unknown as EntityView, done: true };
-          },
-        };
+      *[Symbol.iterator](): Generator<EntityView> {
+        for (const entity of liveRows()) yield makeView(entity);
       },
       count(): number {
-        return stillAlive().length;
+        let n = 0;
+        for (const _ of liveRows()) n++;
+        return n;
       },
       entities(): readonly Entity[] {
-        return stillAlive();
+        return [...liveRows()];
       },
       views(): readonly EntityView[] {
-        return stillAlive().map(makeView);
+        // The path `@aegis/content`'s healthSystem takes — it must be exactly as safe as the
+        // iterator, which is why both are the same traversal rather than two similar ones.
+        return [...liveRows()].map(makeView);
       },
       first(): EntityView | undefined {
-        for (const entity of handles) if (isAlive(entity)) return makeView(entity);
+        for (const entity of liveRows()) return makeView(entity);
         return undefined;
       },
       one(): EntityView {
-        const live = stillAlive();
+        const live = [...liveRows()];
         if (live.length !== 1) {
           throw new Error(`[aegis] QueryResult.one: expected exactly 1 match, got ${live.length}`);
         }
@@ -613,9 +621,7 @@ export function createWorld(config: WorldConfig): World {
       },
       forEach(fn: (view: EntityView, i: number) => void): void {
         let i = 0;
-        for (const entity of handles) {
-          if (isAlive(entity)) fn(makeView(entity), i++);
-        }
+        for (const entity of liveRows()) fn(makeView(entity), i++);
       },
     };
     return result;

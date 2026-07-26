@@ -253,6 +253,13 @@ describe('deterministic scalar transcendentals — pinned golden values', () => 
   // that changing a coefficient, a reduction step, or the kernel evaluation order fails here
   // instead of silently invalidating every stored replay and every game's GOLDEN_HASH.
   //
+  // PROVENANCE: `sin(1) = 0.8414709848078965` was cross-checked against a table recorded
+  // independently by the audit before this code was touched, and the whole table is
+  // additionally checked against a reference that shares no code with the implementation (see
+  // the independent-reference test below). Pinning a self-derived literal is the M5 defect
+  // itself, so a value disagreeing with the recorded table is a finding, not a number to
+  // overwrite.
+  //
   // Do NOT regenerate these from the implementation. A diff here is either an approved
   // algorithm change or a bug.
   const SIN_GOLDEN: readonly (readonly [number, number])[] = [
