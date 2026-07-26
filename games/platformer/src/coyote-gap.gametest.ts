@@ -26,7 +26,7 @@ import { defineGameTest, expectSim } from '@aegis/harness';
 import type { SimResult } from '@aegis/harness';
 import { abs, hashString, Transform } from '@aegis/core';
 import type { StateHash } from '@aegis/core';
-import { BodyState } from '@aegis/mode-platformer';
+import { BodyState, Velocity } from '@aegis/mode-platformer';
 import { coyoteGapPlugin } from './plugin.js';
 
 export default defineGameTest({
@@ -244,7 +244,7 @@ function deathOf(result: SimResult): { cause: string; tick: number } | undefined
 export const spikePitDeathTest = defineGameTest({
   name: 'coyote gap (lose): run into the spike pit without jumping',
   scene: 'games/platformer/levels/coyote-gap.scene.json',
-  options: { plugin: coyoteGapPlugin, captureHistory: false },
+  options: { plugin: coyoteGapPlugin, captureHistory: true },
   ticks: 120,
   seed: 'poc-platformer',
   input: `
@@ -259,6 +259,13 @@ export const spikePitDeathTest = defineGameTest({
       .holds('player.died reports cause "hazard" on the tick it entered the spikes', (r) => {
         const death = deathOf(r);
         return death?.cause === 'hazard' && death.tick === 43;
+      })
+      .holds('it died *in the spike pit* (cols 7–10, below the plateau surface at y=5)', (r) => {
+        // The hazard volume spans x ∈ [7,10], y ∈ [0,5]. Pinning where the death happened — not
+        // just that one happened — is what distinguishes "the spikes killed us" from "something
+        // killed us somewhere".
+        const p = playerAt(r, 43);
+        return p.x > 7 && p.x < 10 && p.y < 5 && !p.grounded;
       })
       .holds('the damage was attributed to the hazard, not the critter', (r) => {
         const dmg = r.events.history().find((e) => e.type === 'damage.taken');
@@ -278,7 +285,7 @@ export const spikePitDeathTest = defineGameTest({
 export const fellOutOfWorldTest = defineGameTest({
   name: 'coyote gap (lose): miss the coyote jump and fall out of the world',
   scene: 'games/platformer/levels/coyote-gap.scene.json',
-  options: { plugin: coyoteGapPlugin, captureHistory: false },
+  options: { plugin: coyoteGapPlugin, captureHistory: true },
   ticks: 360,
   seed: 'poc-platformer',
   input: `
@@ -299,6 +306,13 @@ export const fellOutOfWorldTest = defineGameTest({
         const death = deathOf(r);
         return death?.cause === 'fell' && death.tick === 319;
       })
+      .holds('it really was below the world floor, falling at terminal velocity', (r) => {
+        const view = r
+          .at(319)
+          .query({ has: ['Player', 'Transform'] })
+          .one();
+        return view.get(Transform).position.y < -4 && view.get(Velocity).dy === -30;
+      })
       .holds(
         'no hazard volume was involved — this death is positional',
         (r) => r.events.count('damage.taken') === 0,
@@ -316,7 +330,7 @@ export const fellOutOfWorldTest = defineGameTest({
 export const critterGoreTest = defineGameTest({
   name: 'coyote gap (lose): walk into the critter instead of stomping it',
   scene: 'games/platformer/levels/coyote-gap.scene.json',
-  options: { plugin: coyoteGapPlugin, captureHistory: false },
+  options: { plugin: coyoteGapPlugin, captureHistory: true },
   ticks: 140,
   seed: 'poc-platformer',
   input: `
@@ -334,6 +348,24 @@ export const critterGoreTest = defineGameTest({
         const death = deathOf(r);
         return death?.cause === 'critter' && death.tick === 91;
       })
+      .holds(
+        'the contact was a side-on hit: the player was grounded with dy = 0, not descending',
+        (r) => {
+          // This is the gore branch's *input condition*, asserted directly. `game.stompgore` takes
+          // the stomp branch only when `Velocity.dy < 0` and the feet clear the critter's centre;
+          // here neither holds, so a solver that stomps anyway is caught by the missing death
+          // above *and* by this.
+          const view = r
+            .at(91)
+            .query({ has: ['Player', 'Transform'] })
+            .one();
+          return (
+            view.get(BodyState).grounded &&
+            view.get(Velocity).dy === 0 &&
+            view.get(Transform).position.y === 5.5
+          );
+        },
+      )
       .holds('the damage was attributed to the critter, not a hazard', (r) => {
         const dmg = r.events.history().find((e) => e.type === 'damage.taken');
         return (dmg?.data as { source: string } | undefined)?.source === 'critter';

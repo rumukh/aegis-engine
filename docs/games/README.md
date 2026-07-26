@@ -67,6 +67,26 @@ and all three `ViewProvider` projections (orthographic, isometric, perspective).
    engine under it) broke, and at least one **negative playthrough** that deliberately loses, so
    `eventNotEmitted('player.died')` in the winning run is not a vacuous assertion.
 
+## Running a game from the CLI
+
+Each game directory carries an `aegis.json` naming its composed plugin:
+
+```json
+{ "plugin": "./dist/server-vault.js#serverVaultPlugin" }
+```
+
+This closes a trap. Without it, `aegis run games/iso/levels/server-vault.scene.json` exits **0**
+with an empty event log: the scene validates perfectly against the stock `isoPlugin`, and because
+`Operative`/`Guard`/`Patrol` are tags, no component check can detect that the game layer never ran.
+With the file present the CLI resolves the right plugin by default rather than by the user
+remembering a flag. The three declarations are:
+
+| Game               | `aegis.json` `plugin`                      |
+| ------------------ | ------------------------------------------ |
+| `games/platformer` | `./dist/index.js#coyoteGapPlugin`          |
+| `games/iso`        | `./dist/server-vault.js#serverVaultPlugin` |
+| `games/fps`        | `./dist/index.js#sectorBreachPlugin`       |
+
 ## Three rules learned from the mode-capability audit
 
 An independent audit ran ~60 source mutations and found that 7 of 12 named mode capabilities could

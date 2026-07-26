@@ -158,15 +158,47 @@ Both are machine-checkable purely from the event log; no pixel inspection.
 exports three more `defineGameTest`s alongside the winning one, each of which is the winning script
 with exactly one thing removed:
 
-| Playthrough          | Script                           | Asserts                                                         |
-| -------------------- | -------------------------------- | --------------------------------------------------------------- |
-| `spikePitDeathTest`  | no jump at all                   | `player.died{cause:'hazard'}` ×1 at t43, no win                 |
-| `critterGoreTest`    | winning script − `@74`           | `player.died{cause:'critter'}` ×1 at t91, **no** `enemy.killed` |
-| `fellOutOfWorldTest` | winning script − both late jumps | `player.died{cause:'fell'}` ×1 at t319, no win                  |
+| Playthrough          | Script                           | Asserts                                                                                   |
+| -------------------- | -------------------------------- | ----------------------------------------------------------------------------------------- |
+| `spikePitDeathTest`  | no jump at all                   | `player.died{cause:'hazard'}` ×1 at t43, **in the pit** (x 7–10, y < 5)                   |
+| `critterGoreTest`    | winning script − `@74`           | `player.died{cause:'critter'}` ×1 at t91, **grounded with dy = 0**, **no** `enemy.killed` |
+| `fellOutOfWorldTest` | winning script − both late jumps | `player.died{cause:'fell'}` ×1 at t319, below y = −4 at terminal velocity                 |
+
+Each pins _where and how_ the death happened, not merely that one did. The gore run's
+`grounded && dy === 0` is the gore branch's own input condition asserted directly: `game.stompgore`
+takes the stomp branch only when `Velocity.dy < 0` and the feet clear the critter's centre, so a
+collapsed discriminator is caught from the losing side as well as the winning one.
 
 Without them `eventNotEmitted('player.died')` in the winning run is vacuous: it passes even with
 the death emitter deleted, because nothing in the suite ever emits one. (Verified by mutation: the
 three deaths and the emitter itself are each independently killable, and each kills a test.)
+
+> **Open defect — a dead player is still steered (reported to the PM; the fix is not in this
+> package).** `platformer.intake` queries `{ has: [PlatformerController, Velocity, BodyState] }`
+> with **no `none: [Dead]`**, so once `Health` hits 0 and `Dead` latches, the corpse keeps accepting
+> input: in the spike-pit run it holds `Velocity.dx = 8` for the rest of the run and falls forever,
+> still accelerating right. There is no lose _state_ — you die and simply keep going.
+>
+> This sits squarely in the space the lose playthroughs exist to cover, and it is invisible
+> headlessly for as long as the acceptance run never dies. The missing assertion is that the body
+> **stops being driven**, which cannot be added while the mode still drives it. The moment
+> `platformer.intake` gains the guard, add this to `spikePitDeathTest`:
+>
+> ```ts
+> .holds('the corpse is no longer steered — x stops advancing after death', (r) => {
+>   const atDeath = playerAt(r, 43);
+>   const later = playerAt(r, 100);
+>   return later.x === atDeath.x;
+> })
+> ```
+>
+> **The recommendation is a mode-level `none: [Dead]` on the _intake_ system only.** Gravity,
+> integration and collision must keep running so the corpse still falls — that is both mechanically
+> correct and the visible consequence. `mode-iso` already makes exactly this call inside the mode
+> ("a corpse takes no orders", checked in `iso.pathfind`, `iso.move` and `iso.combat`), and
+> `mode-platformer` already depends on `@aegis/content` and already reads `Health` in its view
+> provider, so the guard adds no dependency and no new concept. `fps.intake` has the identical
+> defect.
 
 ## Events emitted
 
