@@ -9,9 +9,28 @@
  * to interpret visually.
  * @packageDocumentation
  */
-import { canonicalStringify, round } from '@aegis/core';
-import type { Diagnostic } from '@aegis/core';
+import { canonicalStringify, entityGeneration, entityIndex, round } from '@aegis/core';
+import type { Diagnostic, Entity } from '@aegis/core';
 import type { AsciiView, SemanticFrame } from '@aegis/harness';
+
+/**
+ * Render a packed entity handle in an agent- and human-legible form: `#<index>` for the common
+ * case, `#<index>@<gen>` when the generation is not 1 (i.e. the slot has been reused). Core packs
+ * `generation` into the high 32 bits, so a raw handle like `4294967296` is really index 0,
+ * generation 1 — unreadable, and indistinguishable from its neighbour `4294967297`. This keeps the
+ * index visually dominant and the generation distinguishable, and stays stable/diffable.
+ */
+export function formatEntity(handle: number): string {
+  const e = handle as Entity;
+  const generation = entityGeneration(e);
+  return generation === 1 ? `#${entityIndex(e)}` : `#${entityIndex(e)}@${generation}`;
+}
+
+/** The decomposed parts of a packed handle for `--json`; `id` preserves the raw packed value. */
+export function entityParts(handle: number): { id: string; index: number; generation: number } {
+  const e = handle as Entity;
+  return { id: String(handle), index: entityIndex(e), generation: entityGeneration(e) };
+}
 
 /** Whether any diagnostic is error severity. */
 export function hasErrors(diagnostics: readonly Diagnostic[]): boolean {
@@ -100,7 +119,7 @@ export function formatFrame(frame: SemanticFrame): string {
     const name = e.name ?? '';
     const tags = e.tags.length > 0 ? e.tags.join('|') : '-';
     return (
-      `  #${e.entity} ${name} [${tags}] ` +
+      `  ${formatEntity(e.entity)} ${name} [${tags}] ` +
       `world=(${e.world.x},${e.world.y},${e.world.z}) ` +
       `screen=(${round2(e.screen.x)},${round2(e.screen.y)}) ` +
       `depth=${round2(e.depth)} glyph=${e.glyph ?? '?'}`

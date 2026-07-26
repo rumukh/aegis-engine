@@ -145,15 +145,27 @@ describe('aegis inspect', () => {
     expect(r.out).toMatch(/^tick\s+: 0$/m);
     expect(r.out).toContain('Transform = ');
     expect(r.out).toContain('Velocity = ');
+    // Entity handles are decomposed: hero is slot index 0, generation 1 -> "#0".
+    expect(r.out).toContain('#0 "hero"');
+    expect(r.out).not.toContain('#4294967296');
   });
 
-  it('--query filters the world dump', async () => {
+  it('--query filters the world dump and exposes packed + decomposed handles in JSON', async () => {
     const dir = makeDir();
     const r = await cli(['inspect', 'level.scene.json', '--query', 'has:Enemy', '--json'], dir);
     expect(r.code).toBe(0);
-    const data = JSON.parse(r.out) as { matched: number; total: number };
+    const data = JSON.parse(r.out) as {
+      matched: number;
+      total: number;
+      entities: { id: string; index: number; generation: number }[];
+    };
     expect(data.matched).toBe(1);
     expect(data.total).toBe(4);
+    const enemy = data.entities[0];
+    expect(enemy).toBeDefined();
+    expect(enemy!.index).toBe(1);
+    expect(enemy!.generation).toBe(1);
+    expect(enemy!.id).toBe('4294967297'); // raw packed handle preserved for tools
   });
 
   it('--view frame prints the structured semantic frame', async () => {
@@ -162,6 +174,8 @@ describe('aegis inspect', () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain('# frame');
     expect(r.out).toContain('mode=platformer');
+    expect(r.out).toContain('#0'); // decomposed handle, not the packed 4294967296
+    expect(r.out).not.toContain('#4294967296');
   });
 
   it('--view ascii prints the ASCII raster', async () => {
