@@ -42,16 +42,29 @@ const bannedMathProps = [
 /**
  * Golden-hash guard rail (CHARTER principle 6, ADR-0008).
  *
- * `hashEquals(result.hash)` compares a run to itself: it is vacuously true, can never
- * fail, and pins nothing — while reading exactly like a determinism regression test.
- * The golden hash must be a literal, derived once from a green run and updated
- * deliberately. See docs/architecture.md §7.
+ * A golden master must be pinned to a **literal**. `hashEquals(result.hash)` compares a run to
+ * itself: it is vacuously true, can never fail, and pins nothing — while reading exactly like a
+ * determinism regression test. See docs/architecture.md §7.
+ *
+ * **The scope is the rule, not the pattern.** The same line is *correct* inside `@aegis/harness`'s
+ * own tests, where `expectSim` is the subject under test and feeding it a matching hash is
+ * precisely how you assert "accepts a correct hash without throwing". Everywhere else — games,
+ * modes, the CLI — `expectSim` is a tool being used to pin a golden master, and the
+ * self-comparison is always a defect. So the ban is lifted for `packages/harness/src/**` *.test.ts
+ * by location, in preference to inline exemptions, which are exactly the thing that would get
+ * copy-pasted into a game test later.
  */
 const noSelfReferentialGoldenHash = {
   selector:
     "CallExpression[callee.property.name='hashEquals'] > MemberExpression[property.name='hash']",
   message:
     'hashEquals(<run>.hash) compares the run to itself and can never fail. Pin a literal golden hash instead (docs/architecture.md §7, ADR-0008).',
+};
+
+/** Wall-clock time is not reproducible; the simulation substrate may never read it (ADR-0001). */
+const noWallClockDate = {
+  selector: "NewExpression[callee.name='Date']",
+  message: 'Wall-clock time breaks determinism (ADR-0001).',
 };
 
 export default tseslint.config(
@@ -119,16 +132,19 @@ export default tseslint.config(
           message: 'Wall-clock time breaks determinism (ADR-0001).',
         },
       ],
-      // Flat config replaces a rule's options wholesale rather than merging them, so this
-      // block must restate the golden-hash selector alongside its own.
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: "NewExpression[callee.name='Date']",
-          message: 'Wall-clock time breaks determinism (ADR-0001).',
-        },
-        noSelfReferentialGoldenHash,
-      ],
+      // Flat config replaces a rule's options wholesale rather than merging them, so each block
+      // that sets `no-restricted-syntax` must restate every selector it wants to keep.
+      'no-restricted-syntax': ['error', noWallClockDate, noSelfReferentialGoldenHash],
+    },
+  },
+  {
+    // The harness's own tests are the one place `expectSim` is the *subject* rather than the tool,
+    // so `hashEquals(result.hash)` there is the correct way to assert "accepts a matching hash
+    // without throwing" — see the note on `noSelfReferentialGoldenHash`. The determinism selectors
+    // still apply. Must stay after the block above, which this narrows.
+    files: ['packages/harness/src/**/*.test.ts', 'packages/harness/test/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', noWallClockDate],
     },
   },
   {

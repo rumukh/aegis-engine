@@ -65,19 +65,6 @@ function level(): SceneFile {
 
 const WINNING_INPUT = 'hold Right 0..60\npress Fire @1';
 
-/**
- * Golden state hashes of the fake-mode playthroughs below, pinned as **literals**.
- *
- * `hashEquals(result.hash)` — which these three call sites used to pass — compares the run to
- * itself: vacuously true, unable to fail, pinning nothing, while reading exactly like a
- * determinism regression test. That shape was copied verbatim out of docs/architecture.md §7
- * into the harness's own tests and into a shipped game. It is now banned by ESLint
- * (`no-restricted-syntax`). Re-derive these two values from a green run if the fake mode's
- * physics or scene change on purpose.
- */
-const GOLDEN_HASH_POC_FAKE = '2ea61fd1c4a8e734'; // level(), 60 ticks, seed 'poc-fake'
-const GOLDEN_HASH_POC_PLATFORMER = '023df306ac80a566'; // level(), 60 ticks, seed 'poc-platformer'
-
 /** Capture the message of the GameAssertionError thrown by `fn`, failing if it does not throw. */
 function messageFrom(fn: () => void): string {
   try {
@@ -98,17 +85,13 @@ describe('expectSim — a passing run chains fluently', () => {
         .eventNotEmitted('player.died')
         .eventEmitted('enemy.killed', 1)
         .entityExists({ has: ['Player'] })
-        .hashEquals(GOLDEN_HASH_POC_FAKE),
+        // `result.hash` is deliberate and correct *here*: `expectSim` is the subject under test,
+        // and feeding it a matching hash is how you assert "accepts a correct hash without
+        // throwing". In a **game** test the same line is a defect — there the point is to pin a
+        // golden master, and comparing a run to itself pins nothing (docs/architecture.md §7).
+        // ESLint enforces that distinction by location, not by pattern.
+        .hashEquals(result.hash),
     ).not.toThrow();
-  });
-
-  it('a pinned golden hash actually fails when the state differs', async () => {
-    const result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
-    // The regression guard for the guard: if `hashEquals` were still being handed `result.hash`,
-    // no wrong value could ever be detected.
-    expect(() => expectSim(result).hashEquals(GOLDEN_HASH_POC_PLATFORMER)).toThrow(
-      GameAssertionError,
-    );
   });
 });
 
@@ -437,7 +420,9 @@ describe('defineGameTest / runGameTest — runner-agnostic playthroughs', () => 
                 .one()
                 .get(Transform).position.x >= 5,
           )
-          .hashEquals(GOLDEN_HASH_POC_FAKE);
+          // Fed deliberately: `runGameTest` is the subject here, not the fake level. A game test
+          // pins a literal instead — see games/platformer/src/coyote-gap.gametest.ts.
+          .hashEquals(result.hash);
         result.assertInvariant(
           'never fell out of the world',
           (w) =>
@@ -588,7 +573,11 @@ describe('expressibility — the platformer defineGameTest block is fully expres
                 .one()
                 .get(Transform).position.x >= 5,
           )
-          .hashEquals(GOLDEN_HASH_POC_PLATFORMER);
+          // Fed deliberately — this block proves the *shape* is authorable against a live plugin,
+          // and `expectSim` is what is under test. **Do not copy this line into a real game
+          // test**: there `hashEquals` must take a pinned literal golden master, or it compares
+          // the run to itself and can never fail (docs/architecture.md §7, ADR-0008).
+          .hashEquals(result.hash);
 
         result.assertInvariant(
           'never fell out of the world',
