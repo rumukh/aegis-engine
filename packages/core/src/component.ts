@@ -16,6 +16,51 @@
  * ```
  * @packageDocumentation
  */
+import { assertFinite, deepClone, deepCloneSerialisable, NonFiniteValueError } from './clone.js';
+import { CoreDiagnosticCode } from './codes.js';
+import { DiagnosticError } from './diagnostics.js';
+
+/**
+ * Build the structured rejection raised when a non-finite value is written into a component.
+ *
+ * Rejecting here rather than at `snapshot()` is the whole point of the write boundary: the
+ * error fires at the code that produced the `NaN`, not several ticks later at the hash.
+ */
+export function nonFiniteAtWrite(
+  componentId: string,
+  err: NonFiniteValueError,
+  entity?: string,
+): DiagnosticError {
+  const where =
+    entity === undefined
+      ? `${componentId}${err.path === '' ? '' : `.${err.path}`}`
+      : `entities[${entity}].components.${componentId}${err.path === '' ? '' : `.${err.path}`}`;
+  const field = err.path === '' ? '(the whole value)' : err.path;
+  const who = entity === undefined ? 'no entity yet' : `entity ${entity}`;
+  return new DiagnosticError([
+    {
+      code: CoreDiagnosticCode.NonFiniteState,
+      severity: 'error',
+      message:
+        `Cannot write a non-finite number (${String(err.value)}) to ${where} — ` +
+        `component "${componentId}", field "${field}", ${who}. World state must serialise to ` +
+        `JSON (CHARTER principle 4), and JSON has no representation for NaN or ±Infinity — it ` +
+        `would be silently written out as null.`,
+      location: { path: where },
+      fix:
+        `Guard the computation that produced ${String(err.value)} — a divide-by-zero, a sqrt of ` +
+        `a negative, an uninitialised accumulator, or an out-of-domain angle. Clamp the input, ` +
+        `or use a sentinel the format can hold (null, or a finite bound).`,
+      data: {
+        entity: entity ?? null,
+        component: componentId,
+        field,
+        path: where,
+        value: String(err.value),
+      },
+    },
+  ]);
+}
 
 /** A component value paired with its type, ready to attach to an entity. */
 export interface ComponentInstance<T = unknown> {
@@ -34,7 +79,13 @@ export interface ComponentType<T> {
   readonly id: string;
   /** Produce a fresh default value. */
   create(init?: Partial<T>): T;
-  /** Deep-clone a value (used when snapshotting / restoring). */
+  /**
+   * Deep-clone a value, used by {@link ComponentType.create}.
+   *
+   * This is **not** what guarantees the world is serialisable. `World.snapshot` clones the
+   * stored value with core's own checked clone and never calls this, precisely so a component
+   * supplying a lossy `clone` cannot opt out of the non-finite guard.
+   */
   clone(value: T): T;
 }
 
@@ -47,6 +98,12 @@ export interface ComponentDefinition<T extends object> {
   /**
    * Optional custom deep-clone. Defaults to a structural clone, which is correct for any
    * plain-data component; override only for performance.
+   *
+   * A custom clone **must** be structural: it must not alias the source, and it must not
+   * silently alter values — in particular it must not be a `JSON.parse(JSON.stringify(…))`
+   * round trip, which maps `NaN` and `±Infinity` to `null`. Supplying a lossy clone corrupts
+   * your own component's data on the way into the world; it cannot, however, defeat the
+   * engine's serialisation guarantee, because `World.snapshot` does not use it.
    */
   clone?: (value: T) => T;
 }
@@ -59,24 +116,43 @@ export interface ComponentDefinition<T extends object> {
  * no gameplay behaviour. `create` applies a shallow *merge* of `init` over the defaults —
  * a nested object is replaced wholesale rather than deep-merged — and then deep-copies the
  * result so no caller-owned object is ever aliased into world state. `clone` defaults to a
- * JSON round-trip, which is exact for plain-data components (the only kind allowed), and is
- * the single cloning path used by both `create` and snapshotting.
+ * **structural** deep copy that preserves `NaN`, `±Infinity` and `-0` exactly, and is the
+ * single cloning path used by both `create` and snapshotting.
+ *
+ * It used to default to a JSON round-trip. That is lossy: `JSON.stringify` maps every
+ * non-finite number to `null`, so a component built with a `NaN` in it was silently corrected
+ * to `null` on the way into the world — the state hash could never see the NaN that broke the
+ * sim, which is the exact failure the hash exists to catch. Non-plain data (a `Date`, a `Map`,
+ * a class instance) is now rejected outright rather than canonicalised to `{}`.
  *
  * @typeParam T - The component's data shape.
  * @param def - Id, defaults factory and optional clone.
  * @returns A callable {@link ComponentType}.
  */
 export function defineComponent<T extends object>(def: ComponentDefinition<T>): ComponentType<T> {
-  const clone = def.clone ?? ((value: T): T => JSON.parse(JSON.stringify(value)) as T);
+  const custom = def.clone;
+  const clone = custom ?? ((value: T): T => deepClone(value));
   const create = (init?: Partial<T>): T => {
-    // Merge `init` over defaults, then deep-copy the result through `clone` so no
-    // caller-owned nested object is ever retained by reference in world state. The spread
-    // alone is shallow: two instances built from one literal would alias the same nested
-    // objects, and the simulation would mutate the caller's data in place. Correctness over
-    // the extra copy — deterministic, owned state is this engine's whole point.
+    // Merge `init` over defaults, then deep-copy the result so no caller-owned nested object
+    // is ever retained by reference in world state. The spread alone is shallow: two instances
+    // built from one literal would alias the same nested objects, and the simulation would
+    // mutate the caller's data in place. Correctness over the extra copy — deterministic,
+    // owned state is this engine's whole point.
     const base = def.defaults();
-    const merged = init ? { ...base, ...init } : base;
-    return clone(merged as T);
+    const merged = (init ? { ...base, ...init } : base) as T;
+    try {
+      if (custom === undefined) {
+        // Clone and check in one pass.
+        return deepCloneSerialisable(merged);
+      }
+      // Check the *input* before handing it to a caller-supplied clone, so a lossy clone
+      // cannot hide a non-finite value by flattening it to `null` on the way past.
+      assertFinite(merged);
+      return custom(merged);
+    } catch (err) {
+      if (err instanceof NonFiniteValueError) throw nonFiniteAtWrite(def.id, err);
+      throw err;
+    }
   };
   const type = ((init?: Partial<T>): ComponentInstance<T> => ({
     type,

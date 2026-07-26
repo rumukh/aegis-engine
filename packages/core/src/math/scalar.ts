@@ -23,11 +23,33 @@
  * pure sequence of IEEE-754 `+ - * /` and `sqrt` operations, so the result depends only on
  * the double inputs and is **bit-identical on every platform**.
  *
+ * ## Domain of `sin`/`cos`/`tan`
+ *
+ * Two-word Cody–Waite reduction is only exact while `k · PIO2_HI` is exact, i.e. up to
+ * `k ≈ 2^22`. Past that the reduction **collapses**, and it collapses quietly: the measured
+ * absolute error is 1.1e-16 at `|x| ≤ 1e6`, but 1.9e-9 at `|x| ≈ 1.9e7` (already outside the
+ * stated contract), 6.2e-2 at 1e15, and beyond `|x| ≈ 1.2e17` the result stops being a sine at
+ * all (`sin(1e18)` computed naively is `2.8e16`; `sin(1e150)` is `-Infinity`). A silently wrong
+ * `sin` feeds straight into world state, and `±Infinity` there is invisible to a JSON-laundering
+ * hash — which is exactly the failure this module exists to prevent.
+ *
+ * `sin`/`cos`/`tan` therefore **enforce** a documented domain of `|x| ≤ 2^20·π`
+ * ({@link SIN_DOMAIN_MAX} ≈ 3.294e6 radians ≈ 524288 full turns) and throw a
+ * {@link RangeError} outside it, including for `NaN` and `±Infinity`. Inside the domain the
+ * measured worst-case absolute error against the platform reference is **2.3e-16** for both
+ * `sin` and `cos` — four orders tighter than the ≤ 1e-9 public contract. A game that reaches
+ * the limit has an accumulator bug; failing loudly at the source beats poisoning the state hash
+ * half a second later. Wrap the angle yourself ({@link wrapAngle}) if you genuinely need an
+ * unbounded input.
+ *
+ * `atan`/`atan2`/`asin`/`acos` have no domain limit; `atan2` implements the IEEE-754 special
+ * cases for zeros and infinities.
+ *
  * Measured worst-case absolute error against the platform `Math` reference:
- * `sin`/`cos` < 1e-12 for `|x| ≤ 1000`; `atan`/`atan2` < 1e-12; `asin`/`acos` < 1e-10.
- * The public contract only guarantees an absolute error ≤ 1e-9; the tests assert tighter
- * bounds so a regression is caught early. Reduction error grows slowly for very large
- * arguments, as with any fixed-precision reducer.
+ * `sin`/`cos` < 1e-15 across the whole supported domain; `atan`/`atan2` < 1e-12;
+ * `asin`/`acos` < 1e-10. The public contract guarantees an absolute error ≤ 1e-9; the tests
+ * assert tighter bounds so a regression is caught early, and pin literal expected values so a
+ * changed coefficient cannot pass.
  * @packageDocumentation
  */
 
@@ -42,7 +64,18 @@ export const RAD2DEG = 180 / PI;
 /** Smallest difference treated as "equal" by {@link approxEqual}. */
 export const EPSILON = 1e-9;
 
+/**
+ * Largest `|radians|` that {@link sin}, {@link cos} and {@link tan} accept.
+ *
+ * `2^20·π` ≈ 3.294e6 radians ≈ 524288 full turns. Inside this range the Cody–Waite reduction
+ * is exact enough for a measured worst-case absolute error of 2.3e-16; outside it the
+ * reduction degrades without warning, so the functions throw instead. See the module doc.
+ */
+export const SIN_DOMAIN_MAX = 3294198.658330571; // 2 ** 20 * PI
+
 const HALF_PI = 1.5707963267948966;
+const QUARTER_PI = 0.7853981633974483;
+const THREE_QUARTER_PI = 2.356194490192345;
 
 // Cody–Waite split of π/2: PIO2_HI holds the leading bits so `k * PIO2_HI` is exact for
 // moderate integer k, and PIO2_LO carries the tail. Keeps reduction accurate well past 2π.
@@ -65,7 +98,13 @@ const C4 = -2.75573143513906633035e-7;
 const C5 = 2.0875723212981748279e-9;
 const C6 = -1.13596475577881948265e-11;
 
-/** Nearest integer to `x` (round half up); used only for argument reduction. */
+/**
+ * Nearest integer to `x` (round half up); used **only** for argument reduction.
+ *
+ * Any consistent tie rule reduces correctly, so this is deliberately not {@link round}: the
+ * exact rule chosen here is baked into every `sin`/`cos` result and therefore into every stored
+ * replay. Changing it is a breaking change to the whole engine.
+ */
 function nearestInt(x: number): number {
   return Math.floor(x + 0.5);
 }
@@ -85,8 +124,21 @@ function kernelCos(r: number): number {
 /**
  * Reduce `radians` to a quadrant `q ∈ {0,1,2,3}` and remainder `r ∈ [-π/4, π/4]` such that
  * `radians ≈ q·(π/2) + r`, then return the requested sine/cosine combination.
+ *
+ * @throws RangeError when `|radians| > {@link SIN_DOMAIN_MAX}`, or when `radians` is `NaN` or
+ * `±Infinity` — outside that range two-word Cody–Waite reduction silently returns a value that
+ * is not a sine at all (see the module doc).
  */
-function reducedSinCos(radians: number, wantSin: boolean): number {
+function reducedSinCos(radians: number, wantSin: boolean, fn: string): number {
+  // `!(|x| <= MAX)` rather than `>` so NaN is rejected too.
+  if (!(radians >= -SIN_DOMAIN_MAX && radians <= SIN_DOMAIN_MAX)) {
+    throw new RangeError(
+      `[aegis] ${fn}(${String(radians)}): argument is outside the supported domain ` +
+        `|x| <= ${SIN_DOMAIN_MAX} (2^20·π). Argument reduction is not accurate beyond it, so ` +
+        `the result would be silently wrong. Wrap the angle with wrapAngle() first, or fix the ` +
+        `accumulator that produced this value.`,
+    );
+  }
   const k = nearestInt(radians / HALF_PI);
   // Two-step (Cody–Waite) subtraction preserves low-order bits lost in a single subtract.
   const r = radians - k * PIO2_HI - k * PIO2_LO;
@@ -101,21 +153,48 @@ function reducedSinCos(radians: number, wantSin: boolean): number {
 
 /**
  * Deterministic sine. Bit-identical on every platform for a given `radians` input.
- * @param radians - Angle in radians.
+ * @param radians - Angle in radians. Must satisfy `|radians| <= {@link SIN_DOMAIN_MAX}`.
+ * @throws RangeError outside the supported domain (including `NaN`/`±Infinity`).
  */
 export function sin(radians: number): number {
-  return reducedSinCos(radians, true);
+  return reducedSinCos(radians, true, 'sin');
 }
 
 /** Deterministic cosine. @see {@link sin} */
 export function cos(radians: number): number {
-  return reducedSinCos(radians, false);
+  return reducedSinCos(radians, false, 'cos');
 }
 
 /** Deterministic tangent. @see {@link sin} */
 export function tan(radians: number): number {
   return sin(radians) / cos(radians);
 }
+
+/**
+ * Wrap an angle into `(-π, π]` using exact IEEE-754 arithmetic, so an unbounded accumulator can
+ * be brought back inside the {@link sin} domain.
+ *
+ * Only meaningful while `|radians|` is small enough that `radians / TAU` still resolves whole
+ * turns — beyond `2^53` radians the input has lost the sub-turn information entirely and no
+ * wrapper can recover it, so this throws rather than returning a fabricated angle.
+ *
+ * @param radians - Angle in radians.
+ * @throws RangeError when `radians` is `NaN`, `±Infinity`, or `|radians| >= 2^53`.
+ */
+export function wrapAngle(radians: number): number {
+  if (!(radians >= -MAX_WRAPPABLE_ANGLE && radians <= MAX_WRAPPABLE_ANGLE)) {
+    throw new RangeError(
+      `[aegis] wrapAngle(${String(radians)}): |x| must be < 2^53 to retain sub-turn ` +
+        `information; this value cannot be wrapped to a meaningful angle.`,
+    );
+  }
+  const turns = radians / TAU;
+  const wrapped = radians - Math.floor(turns) * TAU; // [0, τ)
+  return wrapped > PI ? wrapped - TAU : wrapped;
+}
+
+/** Largest `|x|` {@link wrapAngle} accepts: beyond 2^53 a double has no sub-turn information. */
+const MAX_WRAPPABLE_ANGLE = 9007199254740992; // 2 ** 53
 
 // fdlibm atan kernel breakpoints and polynomial coefficients (≈1 ulp on the whole line).
 const ATAN_HI = [
@@ -180,16 +259,40 @@ function atan(x: number): number {
   return neg ? -result : result;
 }
 
-/** Deterministic two-argument arctangent, returning an angle in `(-π, π]`. */
+/**
+ * Deterministic two-argument arctangent, returning an angle in `[-π, π]`.
+ *
+ * Implements the IEEE-754 / C99 `atan2` special cases so signed zeros and infinities give the
+ * mathematically correct quadrant rather than falling through the finite path:
+ * `atan2(±0, +0) = ±0`, `atan2(±0, -0) = ±π`, `atan2(±y, -∞) = ±π`, `atan2(±∞, ∓∞) = ±3π/4`
+ * or `±π/4`, and `NaN` propagates.
+ */
 export function atan2(y: number, x: number): number {
-  if (x === 0) {
-    if (y > 0) return HALF_PI;
-    if (y < 0) return -HALF_PI;
-    return 0;
+  if (Number.isNaN(y) || Number.isNaN(x)) return NaN;
+
+  // Sign of y, treating -0 as negative — the whole point of the signed-zero cases.
+  const ySign = y < 0 || Object.is(y, -0) ? -1 : 1;
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    if (!Number.isFinite(y)) {
+      // y = ±∞: x = ±∞ splits the quadrant diagonally, finite x collapses to ±π/2.
+      if (!Number.isFinite(x)) return ySign * (x > 0 ? QUARTER_PI : THREE_QUARTER_PI);
+      return ySign * HALF_PI;
+    }
+    // Finite y, x = ±∞.
+    return x > 0 ? ySign * 0 : ySign * PI;
   }
+
+  if (x === 0) {
+    if (y !== 0) return ySign * HALF_PI;
+    // y is ±0: the result carries y's sign and depends on the sign of the zero x.
+    return Object.is(x, -0) ? ySign * PI : ySign * 0;
+  }
+  if (y === 0) return x > 0 ? ySign * 0 : ySign * PI;
+
   const a = atan(y / x);
   if (x > 0) return a;
-  return y >= 0 ? a + PI : a - PI;
+  return ySign > 0 ? a + PI : a - PI;
 }
 
 /** Deterministic arcsine, returning an angle in `[-π/2, π/2]`. */
@@ -205,8 +308,10 @@ export function acos(x: number): number {
 }
 
 /**
- * IEEE-754 correctly-rounded square root. Deterministic across platforms, so this is a
- * thin, allowed wrapper.
+ * Square root. ECMA-262 classifies `Math.sqrt` as implementation-approximated, but every
+ * mainstream engine delegates to the hardware `sqrtsd`/`fsqrt` instruction, which IEEE-754
+ * requires to be correctly rounded — so in practice it is bit-identical everywhere and this
+ * thin wrapper is an allowed exception to the "own our transcendentals" rule (ADR-0001).
  */
 export function sqrt(x: number): number {
   return Math.sqrt(x);
@@ -232,9 +337,21 @@ export function ceil(x: number): number {
   return Math.ceil(x);
 }
 
-/** Round half away from zero — a fixed rule, unlike some libm variants. */
+/**
+ * Round half away from zero: `round(2.5) === 3`, `round(-2.5) === -3`.
+ *
+ * Deliberately **not** `Math.floor(x + 0.5)`: that is half-*up* (it rounds `-2.5` to `-2`) and
+ * it double-rounds — `0.49999999999999994 + 0.5` is exactly `1` in float64, so the naive form
+ * returns `1` for a value strictly below one half. Splitting off the integer part with
+ * `Math.trunc` and comparing the remainder is exact for every finite double, and the remainder
+ * carries the sign so the away-from-zero tie rule falls out directly.
+ */
 export function round(x: number): number {
-  return Math.floor(x + 0.5);
+  const t = Math.trunc(x); // toward zero, so `frac` carries x's sign
+  const frac = x - t; // exact for every finite double
+  if (frac > 0.5 || frac === 0.5) return t + 1;
+  if (frac < -0.5 || frac === -0.5) return t - 1;
+  return t;
 }
 
 /** Minimum of two numbers. */

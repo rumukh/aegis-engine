@@ -86,7 +86,10 @@ function encodeCanonical(value: unknown, out: string[]): void {
     out.push('[');
     for (let i = 0; i < value.length; i++) {
       if (i > 0) out.push(',');
-      encodeCanonical(value[i], out);
+      // JSON.stringify emits `null` for a hole or an undefined element; match it exactly so
+      // the canonical encoding stays a faithful superset of JSON.
+      if (value[i] === undefined) out.push('null');
+      else encodeCanonical(value[i], out);
     }
     out.push(']');
     return;

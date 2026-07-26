@@ -9,14 +9,20 @@
  * @packageDocumentation
  */
 import { entityGeneration, entityIndex, makeEntity, NULL_ENTITY } from './entity.js';
+import { MAX_ENTITY_GENERATION } from './entity.js';
 import { createEventBus } from './events.js';
 import { createPrng } from './prng.js';
 import { hashSnapshot } from './hash.js';
-import { SET_TICK } from './internal.js';
+import { CoreDiagnosticCode } from './codes.js';
+import { assertFinite, deepClone, deepCloneSerialisable, NonFiniteValueError } from './clone.js';
+import { nonFiniteAtWrite } from './component.js';
+import { DiagnosticError } from './diagnostics.js';
+import { RESET_LOG, SET_TICK } from './internal.js';
 import type { ComponentInstance, ComponentType, ResourceType } from './component.js';
+import type { Diagnostic } from './diagnostics.js';
 import type { Entity } from './entity.js';
 import type { EventBus } from './events.js';
-import type { TickControlledWorld } from './internal.js';
+import type { ManagedEventBus, TickControlledWorld } from './internal.js';
 import type { Prng } from './prng.js';
 import type { ComponentRef, EntityView, QueryDescriptor, QueryResult } from './query.js';
 import type { StateHash } from './hash.js';
@@ -87,9 +93,38 @@ export interface WorldConfig {
   recordEvents?: boolean;
 }
 
-/** Structural deep clone for plain component/resource data. */
-function deepClone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+/**
+ * Build the structured diagnostic for a non-finite value found while snapshotting.
+ *
+ * Detection on the live-mutation path is necessarily later than production — catching
+ * `world.get(e, C).v = 0 / 0` at a write boundary would mean proxying every component read —
+ * so **this diagnostic is the entire compensation for that gap**. "Loud corruption with no
+ * address" is barely better than silent corruption, so the *message text* names the component,
+ * the field and the entity, not just the structured `location`/`data`: a caller that only logs
+ * `err.message` must still get a usable address.
+ */
+function nonFiniteDiagnostic(
+  err: NonFiniteValueError,
+  where: string,
+  subject: string,
+  data: Readonly<Record<string, unknown>>,
+): DiagnosticError {
+  const path = err.path === '' ? where : `${where}.${err.path}`;
+  const field = err.path === '' ? '(the whole value)' : err.path;
+  const diagnostic: Diagnostic = {
+    code: CoreDiagnosticCode.NonFiniteState,
+    severity: 'error',
+    message:
+      `World state holds a non-finite number (${String(err.value)}) at ${path} — ` +
+      `${subject}, field "${field}". The world cannot be serialised or hashed while it does.`,
+    location: { path },
+    fix:
+      `Find the system that wrote ${path}. ${String(err.value)} almost always comes from a ` +
+      `divide-by-zero, a sqrt of a negative, an uninitialised accumulator, or an out-of-domain ` +
+      `angle. Guard the input rather than the output.`,
+    data: { ...data, field, path, value: String(err.value) },
+  };
+  return new DiagnosticError([diagnostic]);
 }
 
 /** A sparse-set store for one component type (ADR-0002). */
@@ -144,6 +179,200 @@ function refId(ref: ComponentRef): string {
   return typeof ref === 'string' ? ref : ref.id;
 }
 
+/** Rejection raised when a non-finite value is written into a resource. */
+function nonFiniteAtWriteResource(resourceId: string, err: NonFiniteValueError): DiagnosticError {
+  const where = `resources.${resourceId}${err.path === '' ? '' : `.${err.path}`}`;
+  const field = err.path === '' ? '(the whole value)' : err.path;
+  return new DiagnosticError([
+    {
+      code: CoreDiagnosticCode.NonFiniteState,
+      severity: 'error',
+      message:
+        `Cannot write a non-finite number (${String(err.value)}) to ${where} — ` +
+        `resource "${resourceId}", field "${field}". World state must serialise to JSON ` +
+        `(CHARTER principle 4), and JSON has no representation for NaN or ±Infinity — it would ` +
+        `be silently written out as null.`,
+      location: { path: where },
+      fix: `Guard the computation that produced ${String(err.value)} before setting the resource.`,
+      data: {
+        entity: null,
+        component: resourceId,
+        field,
+        path: where,
+        value: String(err.value),
+      },
+    },
+  ]);
+}
+
+/** Raise a structured {@link CoreDiagnosticCode.InvalidSnapshot} for `path`. */
+function invalidSnapshot(path: string, message: string, fix: string): DiagnosticError {
+  return new DiagnosticError([
+    {
+      code: CoreDiagnosticCode.InvalidSnapshot,
+      severity: 'error',
+      message: `World.restore: ${message}`,
+      location: { path },
+      fix,
+    },
+  ]);
+}
+
+function isUint32(v: unknown): boolean {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 0xffffffff;
+}
+
+/**
+ * Structurally validate a snapshot before it is allowed to become world state.
+ *
+ * Cheap (linear in the snapshot) and worth it: `restore` is the boundary where hand-edited
+ * saves, truncated files and cross-version snapshots enter the simulation, and an invalid one
+ * used to produce a world that hashed successfully while containing `"id": "NaN"`.
+ */
+function validateSnapshot(snap: WorldSnapshot): void {
+  if (snap === null || typeof snap !== 'object') {
+    throw invalidSnapshot('<root>', 'snapshot is not an object.', 'Pass a WorldSnapshot.');
+  }
+  if (snap.version !== 1) {
+    throw invalidSnapshot(
+      'version',
+      `unsupported snapshot version ${String(snap.version)}; this build reads version 1.`,
+      'Re-capture the snapshot with this engine version.',
+    );
+  }
+  if (!Number.isInteger(snap.tick) || snap.tick < 0) {
+    throw invalidSnapshot(
+      'tick',
+      `tick must be a non-negative integer, got ${String(snap.tick)}.`,
+      'Ticks are whole numbers counted from 0.',
+    );
+  }
+  if (snap.prng === null || typeof snap.prng !== 'object' || !Array.isArray(snap.prng.s)) {
+    throw invalidSnapshot(
+      'prng.s',
+      'PRNG state is missing or is not an array of words.',
+      'Capture the snapshot with World.snapshot() rather than assembling it by hand.',
+    );
+  }
+  const allocator = snap.allocator;
+  if (
+    allocator === null ||
+    typeof allocator !== 'object' ||
+    !Array.isArray(allocator.slots) ||
+    !Array.isArray(allocator.free)
+  ) {
+    throw invalidSnapshot(
+      'allocator',
+      'allocator state is missing `slots` or `free`.',
+      'Snapshots from before the allocator was captured cannot be restored exactly.',
+    );
+  }
+  for (let i = 0; i < allocator.slots.length; i++) {
+    const g = allocator.slots[i];
+    if (typeof g !== 'number' || !Number.isInteger(g) || g < 1 || g > MAX_ENTITY_GENERATION) {
+      throw invalidSnapshot(
+        `allocator.slots[${i}]`,
+        `slot generation must be an integer in [1, ${MAX_ENTITY_GENERATION}], got ${String(g)}.`,
+        'Slots start at generation 1 and are bumped once per despawn.',
+      );
+    }
+  }
+  for (let i = 0; i < allocator.free.length; i++) {
+    const f = allocator.free[i];
+    if (typeof f !== 'number' || !Number.isInteger(f) || f < 0 || f >= allocator.slots.length) {
+      throw invalidSnapshot(
+        `allocator.free[${i}]`,
+        `free-list entry must be a slot index in [0, ${allocator.slots.length}), got ${String(f)}.`,
+        'The free list holds indices into `allocator.slots`.',
+      );
+    }
+  }
+  if (!Array.isArray(snap.entities)) {
+    throw invalidSnapshot('entities', 'entities must be an array.', 'Use World.snapshot().');
+  }
+
+  const seen = new Set<number>();
+  for (let i = 0; i < snap.entities.length; i++) {
+    const ent = snap.entities[i] as EntitySnapshot | undefined;
+    const at = `entities[${i}]`;
+    if (ent === null || typeof ent !== 'object') {
+      throw invalidSnapshot(at, 'entity entry is not an object.', 'Use World.snapshot().');
+    }
+    if (typeof ent.id !== 'string' || ent.id === '') {
+      throw invalidSnapshot(
+        `${at}.id`,
+        `entity id must be a non-empty decimal string, got ${JSON.stringify(ent.id)}.`,
+        'Entity ids are the decimal form of the packed index+generation handle.',
+      );
+    }
+    const handle = Number(ent.id);
+    if (!Number.isSafeInteger(handle) || handle <= 0) {
+      throw invalidSnapshot(
+        `${at}.id`,
+        `entity id "${ent.id}" is not a positive safe integer, so it cannot be an entity handle.`,
+        'A NULL/NaN id here is the signature of a hand-edited or truncated save file.',
+      );
+    }
+    const slot = entityIndex(handle as Entity);
+    const generation = entityGeneration(handle as Entity);
+    if (slot >= allocator.slots.length) {
+      throw invalidSnapshot(
+        `${at}.id`,
+        `entity ${ent.id} refers to slot ${slot}, but the allocator only has ` +
+          `${allocator.slots.length} slot(s).`,
+        'Restore the snapshot that captured this allocator, not a mismatched pair.',
+      );
+    }
+    if (allocator.slots[slot] !== generation) {
+      throw invalidSnapshot(
+        `${at}.id`,
+        `entity ${ent.id} claims generation ${generation}, but slot ${slot} is at generation ` +
+          `${String(allocator.slots[slot])} — this handle is stale.`,
+        'A live entity always matches its slot generation.',
+      );
+    }
+    if (seen.has(slot)) {
+      throw invalidSnapshot(
+        `${at}.id`,
+        `two live entities occupy slot ${slot}.`,
+        'Each slot holds at most one live entity.',
+      );
+    }
+    seen.add(slot);
+    if (allocator.free.includes(slot)) {
+      throw invalidSnapshot(
+        `${at}.id`,
+        `slot ${slot} is both live and on the free list.`,
+        'A free slot has no live entity.',
+      );
+    }
+    if (ent.components === null || typeof ent.components !== 'object') {
+      throw invalidSnapshot(
+        `${at}.components`,
+        'components must be an object keyed by component id.',
+        'Use World.snapshot().',
+      );
+    }
+  }
+
+  if (snap.resources === null || typeof snap.resources !== 'object') {
+    throw invalidSnapshot(
+      'resources',
+      'resources must be an object keyed by resource id.',
+      'Use World.snapshot().',
+    );
+  }
+  for (const w of snap.prng.s) {
+    if (!isUint32(w)) {
+      throw invalidSnapshot(
+        'prng.s',
+        `PRNG state words must be unsigned 32-bit integers, got ${String(w)}.`,
+        'Capture the snapshot with World.snapshot().',
+      );
+    }
+  }
+}
+
 /** Create an empty world. */
 export function createWorld(config: WorldConfig): World {
   const recordEvents = config.recordEvents ?? false;
@@ -194,6 +423,16 @@ export function createWorld(config: WorldConfig): World {
   }
 
   function spawn(...components: ComponentInstance[]): Entity {
+    // Validate every value BEFORE allocating: a mid-spawn throw would otherwise leave the
+    // allocator holding a half-built entity, perturbing every future entity id.
+    for (const c of components) {
+      try {
+        assertFinite(c.value);
+      } catch (err) {
+        if (err instanceof NonFiniteValueError) throw nonFiniteAtWrite(c.type.id, err);
+        throw err;
+      }
+    }
     const slot = allocSlot();
     liveCount++;
     for (const c of components) {
@@ -205,9 +444,21 @@ export function createWorld(config: WorldConfig): World {
   function despawn(entity: Entity): void {
     if (!isAlive(entity)) return;
     const slot = entityIndex(entity);
+    const nextGeneration = (generations[slot] as number) + 1;
+    if (nextGeneration > MAX_ENTITY_GENERATION) {
+      // Past this point `makeEntity` can no longer represent index+generation exactly in a
+      // float64, so two distinct entities would pack to the same handle on odd slots — an
+      // alive-but-unaddressable entity. Refuse loudly rather than corrupt identity.
+      throw new Error(
+        `[aegis] World.despawn: slot ${slot} has been recycled ${MAX_ENTITY_GENERATION} times, ` +
+          `the maximum an Entity handle can encode exactly. Pool and reuse entities instead of ` +
+          `despawning and respawning them, or raise ENTITY_INDEX_BITS (a breaking change to ` +
+          `every serialised snapshot).`,
+      );
+    }
     for (const s of stores.values()) storeRemove(s, slot);
     alive[slot] = false;
-    generations[slot] = (generations[slot] as number) + 1;
+    generations[slot] = nextGeneration;
     free.push(slot);
     liveCount--;
   }
@@ -215,6 +466,19 @@ export function createWorld(config: WorldConfig): World {
   function add<T>(entity: Entity, type: ComponentType<T>, value?: Partial<T>): void {
     if (!isAlive(entity)) {
       throw new Error(`[aegis] World.add: entity ${String(entity)} is not alive`);
+    }
+    // Check the caller's input here, where the entity is known, so the diagnostic names the
+    // row and not just the component. `create` re-checks the merged result (catching a
+    // non-finite that came from `defaults()`), with component-level context.
+    if (value !== undefined) {
+      try {
+        assertFinite(value);
+      } catch (err) {
+        if (err instanceof NonFiniteValueError) {
+          throw nonFiniteAtWrite(type.id, err, String(entity));
+        }
+        throw err;
+      }
     }
     storeSet(store(type.id), entityIndex(entity), type.create(value));
   }
@@ -250,8 +514,16 @@ export function createWorld(config: WorldConfig): World {
   function setResource<T>(type: ResourceType<T>, value: T): void {
     // Deep-copy on the way in, symmetric with how `spawn` clones component values, so a
     // caller-owned object (e.g. a nested field of a SceneFile) is never aliased into world
-    // state where the simulation would mutate it in place.
-    resources.set(type.id, deepClone(value));
+    // state where the simulation would mutate it in place. Non-finite values are rejected
+    // here rather than at `snapshot()`, so the error names the code that produced them.
+    try {
+      resources.set(type.id, deepCloneSerialisable(value));
+    } catch (err) {
+      if (err instanceof NonFiniteValueError) {
+        throw nonFiniteAtWriteResource(type.id, err);
+      }
+      throw err;
+    }
   }
 
   function getResource<T>(type: ResourceType<T>): T | undefined {
@@ -317,15 +589,31 @@ export function createWorld(config: WorldConfig): World {
     }
     // Deterministic ascending slot-index order, independent of insertion history.
     matched.sort((a, b) => a - b);
-    return makeQueryResult(matched);
+    // Materialise handles NOW: a slot index alone is not an identity once the free list
+    // recycles it, and the free list is LIFO (see makeQueryResult).
+    return makeQueryResult(matched.map(handleFor));
   }
 
-  function makeView(slot: number): EntityView {
-    const entity = handleFor(slot);
+  function makeView(entity: Entity): EntityView {
+    const slot = entityIndex(entity);
+    /**
+     * Every read re-checks the generation. A `QueryResult` row is a *handle*, not a slot, so a
+     * row whose entity was despawned mid-iteration can never resolve to whatever entity later
+     * took its slot — it reports absent, or throws.
+     */
+    function live(): boolean {
+      return alive[slot] === true && generations[slot] === entityGeneration(entity);
+    }
     const view: EntityView = {
       entity,
       get<T>(ref: ComponentType<T> | string): T {
         const id = typeof ref === 'string' ? ref : ref.id;
+        if (!live()) {
+          throw new Error(
+            `[aegis] EntityView.get: entity ${String(entity)} was despawned; this query row is ` +
+              `stale. Re-run the query after despawning, or use tryGet/has to skip dead rows.`,
+          );
+        }
         const v = slotGet(id, slot);
         if (v === undefined) {
           throw new Error(
@@ -335,46 +623,73 @@ export function createWorld(config: WorldConfig): World {
         return v as T;
       },
       tryGet<T>(type: ComponentType<T>): T | undefined {
-        return slotGet(type.id, slot) as T | undefined;
+        return live() ? (slotGet(type.id, slot) as T | undefined) : undefined;
       },
       has(ref: ComponentRef): boolean {
-        return slotHas(refId(ref), slot);
+        return live() && slotHas(refId(ref), slot);
       },
     };
     return view;
   }
 
-  function makeQueryResult(slots: readonly number[]): QueryResult {
+  /**
+   * Build a {@link QueryResult} over handles materialised at `query()` time.
+   *
+   * Storing raw slot indices and packing a handle at *consumption* time was a use-after-despawn
+   * bug wearing the costume of a safety feature: the free list is LIFO, so a despawn+spawn
+   * inside a system loop reused the slot immediately and the pending row then packed the *new*
+   * generation — handing the caller a live handle to a different entity, with real data and no
+   * error. Nothing was dead by the time the row was read, so no liveness check could have
+   * caught it; the mechanism is **slot-reuse aliasing** and the fix is **identity**.
+   *
+   * Every accessor below is a thin consumer of the single {@link liveRows} traversal, and
+   * `handles` is the only place a handle exists — no accessor re-derives one from a slot.
+   * That matters structurally: the original defect was five accessors each independently
+   * re-deriving the same handle, so five separate call sites leaked the impostor. One
+   * derivation point and one traversal means there is one thing to keep right, not five.
+   */
+  function makeQueryResult(handles: readonly Entity[]): QueryResult {
+    /**
+     * The matched rows that are still the entity they matched as.
+     *
+     * Generated lazily and re-checked per step, so an entity that dies *during* iteration
+     * drops out rather than being yielded from a stale position.
+     */
+    function* liveRows(): Generator<Entity> {
+      for (const entity of handles) if (isAlive(entity)) yield entity;
+    }
+
     const result: QueryResult = {
-      [Symbol.iterator](): Iterator<EntityView> {
-        let i = 0;
-        return {
-          next(): IteratorResult<EntityView> {
-            if (i < slots.length) return { value: makeView(slots[i++] as number), done: false };
-            return { value: undefined as unknown as EntityView, done: true };
-          },
-        };
+      *[Symbol.iterator](): Generator<EntityView> {
+        for (const entity of liveRows()) yield makeView(entity);
       },
       count(): number {
-        return slots.length;
+        let n = 0;
+        for (const _ of liveRows()) n++;
+        return n;
       },
       entities(): readonly Entity[] {
-        return slots.map((s) => handleFor(s));
+        return [...liveRows()];
       },
       views(): readonly EntityView[] {
-        return slots.map((s) => makeView(s));
+        // The path `@aegis/content`'s healthSystem takes — it must be exactly as safe as the
+        // iterator, which is why both are the same traversal rather than two similar ones.
+        return [...liveRows()].map(makeView);
       },
       first(): EntityView | undefined {
-        return slots.length > 0 ? makeView(slots[0] as number) : undefined;
+        for (const entity of liveRows()) return makeView(entity);
+        return undefined;
       },
       one(): EntityView {
-        if (slots.length !== 1) {
-          throw new Error(`[aegis] QueryResult.one: expected exactly 1 match, got ${slots.length}`);
+        const live = [...liveRows()];
+        if (live.length !== 1) {
+          throw new Error(`[aegis] QueryResult.one: expected exactly 1 match, got ${live.length}`);
         }
-        return makeView(slots[0] as number);
+        return makeView(live[0] as Entity);
       },
       forEach(fn: (view: EntityView, i: number) => void): void {
-        for (let i = 0; i < slots.length; i++) fn(makeView(slots[i] as number), i);
+        let i = 0;
+        for (const entity of liveRows()) fn(makeView(entity), i++);
       },
     };
     return result;
@@ -386,29 +701,64 @@ export function createWorld(config: WorldConfig): World {
     return out;
   }
 
+  /**
+   * Capture the world as plain JSON.
+   *
+   * Cloning is structural, so `NaN`/`±Infinity` survive into the snapshot instead of being
+   * laundered into `null` by a JSON round-trip. Rather than letting the canonical encoder throw
+   * a bare "non-finite number" from deep inside the hash, this reports a structured
+   * {@link CoreDiagnosticCode.NonFiniteState} diagnostic naming the entity, its authoring name,
+   * the component and the JSON path — so the answer to "where did the NaN come from?" is in the
+   * error, not in a bisect.
+   */
   function snapshot(): WorldSnapshot {
     const entities: EntitySnapshot[] = [];
     for (const slot of liveSlotsAscending()) {
       const components: Record<string, unknown> = {};
+      const id = String(handleFor(slot));
+      // Resolve Name first so a diagnostic can quote the authoring name of the culprit.
       let name: string | undefined;
-      for (const [id, s] of stores) {
+      const nameStore = stores.get('Name');
+      if (nameStore !== undefined && storeHas(nameStore, slot)) {
+        const n = (storeGet(nameStore, slot) as { value?: unknown }).value;
+        if (typeof n === 'string') name = n;
+      }
+      for (const [componentId, s] of stores) {
         if (!storeHas(s, slot)) continue;
-        const value = storeGet(s, slot);
-        components[id] = deepClone(value);
-        if (id === 'Name') {
-          const n = (value as { value?: unknown }).value;
-          if (typeof n === 'string') name = n;
+        try {
+          components[componentId] = deepCloneSerialisable(storeGet(s, slot));
+        } catch (err) {
+          if (err instanceof NonFiniteValueError) {
+            throw nonFiniteDiagnostic(
+              err,
+              `entities[${id}].components.${componentId}`,
+              `entity ${id}${name === undefined ? '' : ` ("${name}")`}, component "${componentId}"`,
+              { entity: id, entityName: name ?? null, component: componentId },
+            );
+          }
+          throw err;
         }
       }
       const snap: EntitySnapshot =
-        name === undefined
-          ? { id: String(handleFor(slot)), components }
-          : { id: String(handleFor(slot)), name, components };
+        name === undefined ? { id, components } : { id, name, components };
       entities.push(snap);
     }
 
     const resourcesOut: Record<string, unknown> = {};
-    for (const [id, value] of resources) resourcesOut[id] = deepClone(value);
+    for (const [id, value] of resources) {
+      try {
+        resourcesOut[id] = deepCloneSerialisable(value);
+      } catch (err) {
+        if (err instanceof NonFiniteValueError) {
+          throw nonFiniteDiagnostic(err, `resources.${id}`, `resource "${id}"`, {
+            entity: null,
+            entityName: null,
+            component: id,
+          });
+        }
+        throw err;
+      }
+    }
 
     return {
       version: 1,
@@ -420,7 +770,16 @@ export function createWorld(config: WorldConfig): World {
     };
   }
 
+  /**
+   * Replace this world's state with a snapshot's.
+   *
+   * The snapshot is validated first. It used to be trusted blindly, so a hand-edited or
+   * truncated file produced a world whose own snapshot contained `"id": "NaN"` and which
+   * hashed happily — a corrupt save that looked like a valid one. Every failure here is a
+   * structured {@link CoreDiagnosticCode.InvalidSnapshot} diagnostic naming the offending path.
+   */
   function restore(snap: WorldSnapshot): void {
+    validateSnapshot(snap);
     tick = snap.tick;
 
     // Rebuild the allocator exactly so future entity ids match an uninterrupted run.
@@ -452,6 +811,9 @@ export function createWorld(config: WorldConfig): World {
     }
 
     random.load(snap.prng);
+    // A restored world is a *replacement*, not a continuation: keeping the previous world's
+    // recorded events would double-count every assertion made against the log.
+    (events as ManagedEventBus)[RESET_LOG]();
   }
 
   function hash(): StateHash {

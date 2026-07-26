@@ -6,6 +6,12 @@
  * {@link Diagnostic}s (CHARTER principle 8). Only truly exceptional conditions (a caller
  * passing a non-string) throw. Instantiation writes entities/components/resources into a
  * live {@link World} and reports what it created.
+ *
+ * Validation has two altitudes. *Structural* checks (`parseScene`) need only the document:
+ * required fields, JSON types, tilemap geometry. *Semantic* checks (`validateScene`) need the
+ * {@link ComponentRegistry}: that every component id resolves, and — via `schema.ts` — that
+ * each component's authored data matches that component's own shape, field by field. The
+ * second half is what stops a level from loading clean and being unwinnable.
  * @packageDocumentation
  */
 import { defineTag, isGameMode, Name, Transform } from '@aegis/core';
@@ -19,8 +25,9 @@ import type {
   World,
 } from '@aegis/core';
 import { ContentCode, diagnostic } from './diagnostics.js';
+import { componentSchema, isDescribedId, suggestName, validateComponentData } from './schema.js';
 import type { ComponentData, EntityDecl, PrefabFile, SceneFile, TilemapFile } from './scene.js';
-import type { ComponentRegistry } from './registry.js';
+import type { ComponentRegistry, ResourceRegistry } from './registry.js';
 
 /** Resolves a prefab name to its {@link PrefabFile}. */
 export interface PrefabResolver {
@@ -373,6 +380,22 @@ export interface ValidateOptions {
   registry: ComponentRegistry;
   /** Optional prefab resolver; required if any entity uses `prefab`. */
   prefabs?: PrefabResolver;
+  /**
+   * Optional registry of known resource ids. When supplied, a scene setting an id that is not
+   * registered is an error (with a did-you-mean); when omitted, resource ids are **not
+   * checked at all**, because there is no way to tell an unknown id from one belonging to a
+   * package the caller did not mention.
+   *
+   * Note that `runScene` does not supply one today, so this is inert in the shipped run path
+   * — see {@link ResourceRegistry} for the two changes that activate it (a `ModePlugin`
+   * contract addition plus the three modes declaring their resources), deferred to v2.
+   */
+  resources?: ResourceRegistry;
+  /**
+   * Source file, echoed into every diagnostic location. Supply it when the scene came from
+   * disk so diagnostics carry file **and** JSON path (CHARTER principle 8).
+   */
+  file?: string;
 }
 
 function collectEntityIds(
@@ -400,66 +423,260 @@ function collectEntityIds(
   });
 }
 
-function validateEntitySemantics(
-  decls: readonly EntityDecl[],
-  path: string,
-  options: ValidateOptions,
-  diags: Diagnostic[],
-  file?: string,
+/** State threaded through the semantic pass (registry lookups, prefab expansion, diagnostics). */
+interface SemanticContext {
+  options: ValidateOptions;
+  diags: Diagnostic[];
+  file: string | undefined;
+  /** Prefabs whose own component data has already been checked, so a prefab used by twenty
+   * entities reports its problems once. */
+  checkedPrefabs: Set<string>;
+}
+
+/** Where a `componentId -> data` map lives, and who owns it. */
+interface ComponentMapScope {
+  /** JSON path of the components object itself. */
+  path: string;
+  /** Names the owner in the unknown-component message ("Entity \"hero\""). */
+  subject: string;
+  /**
+   * The document the map really lives in. `undefined` for a prefab, because a
+   * {@link PrefabResolver} hands back a {@link PrefabFile} with no path — and naming the
+   * *scene* would send an agent to edit a file that does not contain the defect.
+   */
+  file: string | undefined;
+  /**
+   * Set when the map came from a prefab. Field-level diagnostics are stamped with it, because
+   * "Component Velocity has no field speed" is useless on its own when forty entities share
+   * one prefab: you need to know which document authored it and where to see it go wrong.
+   */
+  prefab?: { name: string; instantiatedBy: string };
+}
+
+/** Stamp a prefab-sourced diagnostic with the provenance the message cannot otherwise carry. */
+function withPrefabProvenance(
+  diag: Diagnostic,
+  prefab: { name: string; instantiatedBy: string },
+): Diagnostic {
+  return {
+    ...diag,
+    message: `Prefab "${prefab.name}" (instantiated by entity "${prefab.instantiatedBy}"): ${diag.message}`,
+    data: { ...(diag.data ?? {}), prefab: prefab.name, instantiatedBy: prefab.instantiatedBy },
+  };
+}
+
+/**
+ * Validate one `componentId -> data` map: first that every id resolves, then that each
+ * component's data matches that component's own shape (`schema.ts`).
+ */
+function validateComponentMap(
+  components: Readonly<Record<string, ComponentData>>,
+  scope: ComponentMapScope,
+  ctx: SemanticContext,
 ): void {
+  const { registry } = ctx.options;
+  const { file, path, prefab } = scope;
+  for (const cid of Object.keys(components)) {
+    const type = registry.get(cid);
+    if (type === undefined) {
+      const suggestion = suggestName(cid, registry.ids());
+      ctx.diags.push(
+        diagnostic(
+          ContentCode.UnknownComponent,
+          `${scope.subject} uses unknown component "${cid}"${
+            suggestion === undefined ? '' : ` - did you mean "${suggestion}"?`
+          }`,
+          {
+            location: { file, path: `${path}.${cid}` },
+            data: {
+              component: cid,
+              ...(suggestion === undefined ? {} : { suggestion }),
+              ...(prefab === undefined
+                ? {}
+                : { prefab: prefab.name, instantiatedBy: prefab.instantiatedBy }),
+              known: registry.ids(),
+            },
+            fix:
+              suggestion === undefined
+                ? 'Register the component type, or fix the component id.'
+                : `Rename "${cid}" to "${suggestion}", or register the component type.`,
+          },
+        ),
+      );
+      continue;
+    }
+    // The id resolves, so the component's own schema can now check the authored data.
+    const found = validateComponentData(type, components[cid], { path: `${path}.${cid}`, file });
+    ctx.diags.push(
+      ...(prefab === undefined ? found : found.map((d) => withPrefabProvenance(d, prefab))),
+    );
+  }
+}
+
+function validateEntitySemantics(decls: readonly EntityDecl[], path: string, ctx: SemanticContext) {
   decls.forEach((decl, i) => {
     const p = `${path}[${i}]`;
     if (decl.prefab !== undefined) {
-      const resolved = options.prefabs?.resolve(decl.prefab);
+      const resolved = ctx.options.prefabs?.resolve(decl.prefab);
       if (resolved === undefined) {
-        diags.push(
+        ctx.diags.push(
           diagnostic(
             ContentCode.UnknownPrefab,
             `Entity "${decl.id}" references unknown prefab "${decl.prefab}".`,
             {
-              location: { file, path: `${p}.prefab` },
+              location: { file: ctx.file, path: `${p}.prefab` },
               fix: 'Provide a PrefabResolver that resolves this name, or fix the prefab reference.',
             },
           ),
         );
-      }
-    }
-    if (decl.components) {
-      for (const cid of Object.keys(decl.components)) {
-        if (!options.registry.has(cid)) {
-          diags.push(
-            diagnostic(
-              ContentCode.UnknownComponent,
-              `Entity "${decl.id}" uses unknown component "${cid}".`,
-              {
-                location: { file, path: `${p}.components.${cid}` },
-                data: { component: cid, known: options.registry.ids() },
-                fix: 'Register the component type, or fix the component id.',
-              },
-            ),
+      } else if (!ctx.checkedPrefabs.has(decl.prefab)) {
+        // A prefab is authored content too, and its data is merged in ahead of the entity's:
+        // a typo there breaks every instance. Check it once, wherever it is first referenced,
+        // and stamp what comes back with that reference so the report names an entity that
+        // will visibly misbehave.
+        ctx.checkedPrefabs.add(decl.prefab);
+        if (resolved.components) {
+          validateComponentMap(
+            resolved.components,
+            {
+              path: `prefabs["${decl.prefab}"].components`,
+              subject: `Prefab "${decl.prefab}" (instantiated by entity "${decl.id}")`,
+              file: undefined,
+              prefab: { name: decl.prefab, instantiatedBy: decl.id },
+            },
+            ctx,
           );
         }
       }
     }
-    if (decl.children)
-      validateEntitySemantics(decl.children, `${p}.children`, options, diags, file);
+    if (decl.components) {
+      validateComponentMap(
+        decl.components,
+        { path: `${p}.components`, subject: `Entity "${decl.id}"`, file: ctx.file },
+        ctx,
+      );
+    }
+    if (decl.children) validateEntitySemantics(decl.children, `${p}.children`, ctx);
   });
 }
 
 /**
- * Validate an already-parsed scene object against the registry (unknown components, prefab
- * references, duplicate ids, mode). Separated from {@link parseScene} so callers holding a
- * scene built in code (see the builder) can validate without re-serialising.
+ * Warn about a component whose schema declaration is almost certainly keyed against a
+ * *different* component object with the same id.
+ *
+ * Schemas are keyed by identity (`schema.ts`), which is what stops three modules' `Velocity`
+ * from crosstalking — but identity keying can also miss, and a miss is silent: the component
+ * falls through to the undeclared path, where its optional fields become hard "unknown field"
+ * errors. That is the same silent-rejection failure this layer exists to prevent, so it is
+ * reported rather than left to be discovered as a mysterious false positive. A warning, not an
+ * error: two unrelated components may legitimately share an id (a game's `Player` and a test
+ * mode's, say), and only the author can say which case this is.
+ */
+function checkSchemaDeclarations(ctx: SemanticContext): void {
+  const { registry } = ctx.options;
+  for (const id of registry.ids()) {
+    const type = registry.get(id);
+    if (type === undefined) continue;
+    if (componentSchema(type) !== undefined) continue; // declared against this exact object
+    if (!isDescribedId(id)) continue; // nobody ever declared anything under this name
+    ctx.diags.push(
+      diagnostic(
+        ContentCode.SchemaKeyMismatch,
+        `Component "${id}" is registered with no schema of its own, but describeComponent() was called for a different component object with the same id. Schemas are keyed by component identity, so this registration is validated against its defaults alone and any optional field the declaration was meant to permit will be reported as an unknown field.`,
+        {
+          severity: 'warning',
+          location: { file: ctx.file },
+          data: { component: id },
+          fix: `Call describeComponent() with the exact ComponentType that is registered — declare it directly below the definition — or ignore this if two unrelated components legitimately share the id "${id}".`,
+        },
+      ),
+    );
+  }
+}
+
+/** Validate the resource ids a scene sets, when the caller supplied a resource registry. */
+function validateResources(
+  resources: Readonly<Record<string, unknown>>,
+  ctx: SemanticContext,
+): void {
+  const known = ctx.options.resources;
+  if (known === undefined) return;
+  for (const id of Object.keys(resources)) {
+    if (known.has(id)) continue;
+    const suggestion = suggestName(id, known.ids());
+    ctx.diags.push(
+      diagnostic(
+        ContentCode.UnknownResource,
+        `Scene sets unknown resource "${id}"${
+          suggestion === undefined ? '' : ` - did you mean "${suggestion}"?`
+        } Nothing reads an unregistered resource, so whatever it configures keeps its default.`,
+        {
+          // Resource ids are dotted by convention ("platformer.tilemap"), so the bracket form
+          // is the only unambiguous path: `resources.platformer.tilemp` reads as three steps.
+          location: { file: ctx.file, path: `resources[${JSON.stringify(id)}]` },
+          data: {
+            resource: id,
+            ...(suggestion === undefined ? {} : { suggestion }),
+            known: known.ids(),
+          },
+          fix:
+            suggestion === undefined
+              ? `Remove "${id}", or register the resource type. Known: ${known.ids().join(', ')}.`
+              : `Rename "${id}" to "${suggestion}".`,
+        },
+      ),
+    );
+  }
+}
+
+/**
+ * Validate a prefab document against the registry: its component ids must resolve and its
+ * component data must match each component's shape. The scene-level pass runs this implicitly
+ * for every prefab a scene references; call it directly to check a prefab on its own.
+ */
+export function validatePrefab(
+  prefab: PrefabFile,
+  options: ValidateOptions,
+): Validated<PrefabFile> {
+  const diags: Diagnostic[] = [];
+  const ctx: SemanticContext = {
+    options,
+    diags,
+    file: options.file,
+    checkedPrefabs: new Set<string>(),
+  };
+  if (prefab.components) {
+    // Validated as its own document here, so the location names the prefab's own file and no
+    // instantiating entity exists to attribute it to.
+    checkSchemaDeclarations(ctx);
+    validateComponentMap(
+      prefab.components,
+      { path: 'components', subject: `Prefab "${prefab.name}"`, file: options.file },
+      ctx,
+    );
+  }
+  if (prefab.children) validateEntitySemantics(prefab.children, 'children', ctx);
+
+  const ok = diags.every((d) => d.severity !== 'error');
+  return ok ? { ok, value: prefab, diagnostics: diags } : { ok, diagnostics: diags };
+}
+
+/**
+ * Validate an already-parsed scene object against the registry: unknown components **and the
+ * shape of every component's authored data** (`schema.ts`), prefab references and their data,
+ * duplicate ids, resource ids, and the mode. Separated from {@link parseScene} so callers
+ * holding a scene built in code (see the builder) can validate without re-serialising.
  */
 export function validateScene(scene: SceneFile, options: ValidateOptions): Validated<SceneFile> {
   const diags: Diagnostic[] = [];
+  const file = options.file;
   if (scene.aegis !== 'scene/1') {
     diags.push(
       diagnostic(
         ContentCode.UnknownFormat,
         `Expected a "scene/1" document, got ${JSON.stringify(scene.aegis)}.`,
         {
-          location: { path: 'aegis' },
+          location: { file, path: 'aegis' },
         },
       ),
     );
@@ -470,15 +687,18 @@ export function validateScene(scene: SceneFile, options: ValidateOptions): Valid
         ContentCode.UnknownMode,
         `Scene mode ${JSON.stringify(scene.mode)} is not a supported game mode.`,
         {
-          location: { path: 'mode' },
+          location: { file, path: 'mode' },
           data: { mode: scene.mode, supported: ['platformer', 'iso', 'fps'] },
         },
       ),
     );
   }
+  const ctx: SemanticContext = { options, diags, file, checkedPrefabs: new Set<string>() };
   const seen = new Set<string>();
-  collectEntityIds(scene.entities ?? [], 'entities', diags, seen);
-  validateEntitySemantics(scene.entities ?? [], 'entities', options, diags);
+  checkSchemaDeclarations(ctx);
+  collectEntityIds(scene.entities ?? [], 'entities', diags, seen, file);
+  if (scene.resources) validateResources(scene.resources, ctx);
+  validateEntitySemantics(scene.entities ?? [], 'entities', ctx);
 
   const ok = diags.every((d) => d.severity !== 'error');
   return ok ? { ok, value: scene, diagnostics: diags } : { ok, diagnostics: diags };

@@ -19,6 +19,14 @@ export const SET_TICK = Symbol('aegis.setTick');
  */
 export const CLEAR_TICK = Symbol('aegis.clearTick');
 
+/**
+ * Discard the per-tick buffer *and* the recorded history (world-only).
+ *
+ * `World.restore` replaces the world's state; carrying the previous world's event log across
+ * that boundary would double-count every `count()`/`contains()` assertion made afterwards.
+ */
+export const RESET_LOG = Symbol('aegis.resetLog');
+
 /** A world with the scheduler-only tick control attached. */
 export interface TickControlledWorld {
   [SET_TICK](tick: number): void;
@@ -27,4 +35,5 @@ export interface TickControlledWorld {
 /** An event bus with the scheduler-only per-tick buffer control attached. */
 export interface ManagedEventBus extends EventBus {
   [CLEAR_TICK](tick: number): void;
+  [RESET_LOG](): void;
 }

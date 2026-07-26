@@ -32,12 +32,32 @@ const bannedMathProps = [
   'sinh',
   'cosh',
   'tanh',
-].map((property) => ({
+];
+
+const bannedMathMessage =
+  'Non-deterministic or platform-dependent. Use @aegis/core deterministic math (see ADR-0001).';
+
+const restrictedMathProperties = bannedMathProps.map((property) => ({
   object: 'Math',
   property,
-  message:
-    'Non-deterministic or platform-dependent. Use @aegis/core deterministic math (see ADR-0001).',
+  message: bannedMathMessage,
 }));
+
+// `no-restricted-properties` sees `Math.sin` and, in this ESLint version, also
+// `const { sin } = Math` and `Math['sin']`. It does **not** see two forms that were verified to
+// slip through: aliasing the object (`const M = Math; M.sin(x)`) and a non-literal computed key
+// (`const k = 'sin'; Math[k](x)`). Neither has a legitimate use in a simulation package — core
+// exposes its own math surface — so both are banned outright rather than enumerated.
+const restrictedMathSyntax = [
+  {
+    selector: "MemberExpression[computed=true][object.name='Math']",
+    message: `${bannedMathMessage} Computed access to Math is banned outright, because a non-literal key evades the property rule.`,
+  },
+  {
+    selector: "VariableDeclarator[init.name='Math']",
+    message: `${bannedMathMessage} Aliasing or destructuring Math is banned outright, because an alias evades the property rule.`,
+  },
+];
 
 export default tseslint.config(
   {
@@ -96,7 +116,7 @@ export default tseslint.config(
       ],
       'no-restricted-properties': [
         'error',
-        ...bannedMathProps,
+        ...restrictedMathProperties,
         {
           object: 'performance',
           property: 'now',
@@ -105,10 +125,14 @@ export default tseslint.config(
       ],
       'no-restricted-syntax': [
         'error',
+        // Flat config *replaces* a rule's options rather than merging them, so every selector
+        // for these files must live in this one array. Declaring any of them in another block
+        // that also matches would silently drop the rest — the `new Date()` ban included.
         {
           selector: "NewExpression[callee.name='Date']",
           message: 'Wall-clock time breaks determinism (ADR-0001).',
         },
+        ...restrictedMathSyntax,
       ],
     },
   },
