@@ -28,9 +28,10 @@ import type { GameTest, SimResult } from '@aegis/harness';
 import type { TilemapFile } from '@aegis/content';
 import { Health } from '@aegis/content';
 import { hashString, Transform } from '@aegis/core';
-import type { StateHash } from '@aegis/core';
-import { extrudeFloorplan } from '@aegis/mode-fps';
-import type { FloorplanSpec } from '@aegis/mode-fps';
+import { clamp, sqrt } from '@aegis/core/math';
+import type { StateHash, World } from '@aegis/core';
+import { extrudeFloorplan, CapsuleBody, FPS_COLLISION } from '@aegis/mode-fps';
+import type { CollisionGrid, FloorplanSpec } from '@aegis/mode-fps';
 import { SECTOR_BREACH_ORIGIN, floorplanFromTilemap, sectorBreachPlugin } from '../src/index.js';
 
 const SCENE = 'games/fps/levels/sector-breach.scene.json';
@@ -82,6 +83,53 @@ async function expectGameTest(test: GameTest): Promise<void> {
   const outcome = await runGameTest(test);
   if (!outcome.passed) throw outcome.error ?? new Error('game test failed');
   expect(outcome.passed).toBe(true);
+}
+
+// --- capsule-vs-geometry, checked independently of the mode's own solver -------------------
+
+/**
+ * How deep the player capsule is inside the nearest solid cell, in world units (0 when clear).
+ *
+ * Deliberately **re-derived** rather than delegated to the mode's `circleHitsSolid`: a test that
+ * asks the collision solver whether the collision solver was right proves nothing. This walks the
+ * grid's cell data — the extruded `solid` flags, which are level *data* — and does its own
+ * point-to-AABB clamp. It also reads the grid out of the world snapshot for the tick being
+ * checked, so the blast door counts as solid before it opens and passable afterwards.
+ */
+function wallPenetration(world: World): number {
+  const grid = world.getResource(FPS_COLLISION) as CollisionGrid | undefined;
+  if (grid === undefined) return 0;
+  const view = world.query({ has: ['Player', 'Transform'] }).one();
+  const p = view.get(Transform).position;
+  const r = view.get(CapsuleBody).radius;
+  const half = grid.tileSize * 0.5;
+  let worst = 0;
+  for (let row = 0; row < grid.height; row++) {
+    for (let col = 0; col < grid.width; col++) {
+      const cell = grid.cells[row * grid.width + col];
+      if (cell === undefined || !cell.solid) continue;
+      const cx = grid.origin.x + col * grid.tileSize;
+      const cz = grid.origin.z + (grid.height - 1 - row) * grid.tileSize;
+      // Closest point of this cell's footprint to the capsule centre.
+      const nx = clamp(p.x, cx - half, cx + half);
+      const nz = clamp(p.z, cz - half, cz + half);
+      const dx = p.x - nx;
+      const dz = p.z - nz;
+      const gap = sqrt(dx * dx + dz * dz);
+      if (r - gap > worst) worst = r - gap;
+    }
+  }
+  return worst;
+}
+
+/** The player's world position at `tick` (requires `captureHistory`). */
+function playerAt(result: SimResult, tick: number): { x: number; y: number; z: number } {
+  const p = result
+    .at(tick)
+    .query({ has: ['Player', 'Transform'] })
+    .one()
+    .get(Transform).position;
+  return { x: p.x, y: p.y, z: p.z };
 }
 
 /**
@@ -161,6 +209,14 @@ const sectorBreach = defineGameTest({
           .get(Transform).position.y > -1,
     );
 
+    // Named, actionable capsule-collision check: if wall collision, the capsule radius, or the
+    // integrator regresses so the player clips into (or through) level geometry, this fails at the
+    // exact tick with a name — rather than surfacing as an unreadable "the golden hash moved".
+    result.assertInvariant(
+      'player capsule never overlapped a solid wall cell',
+      (w) => wallPenetration(w) <= 1e-9,
+    );
+
     result.assertInvariant(
       'player health stayed above the safe floor',
       (w) =>
@@ -217,6 +273,69 @@ const sectorBreachPitDeath = defineGameTest({
   },
 });
 
+/**
+ * A third playthrough whose only job is to make **capsule-vs-wall collision, axis-separated wall
+ * sliding and the capsule radius** fail by name.
+ *
+ * The winning run walks straight up the middle of a 3-wide corridor and never touches a wall, so
+ * all three of those capabilities could only ever surface as golden-hash drift — the least
+ * actionable signal the engine can produce (CHARTER principle 8). Here the player faces 45° and
+ * holds Forward into the north-east corner of the antechamber, which forces all three:
+ *
+ *  - it must be **stopped** by the north wall (`z` face at 5.5) and the east wall (`x` face at 4.5);
+ *  - between those two contacts it must keep sliding **east** while already pinned **north** —
+ *    that is exactly what axis-separated resolution buys, and a solver that stops both axes on any
+ *    contact freezes `x` at ~3.3 instead of reaching ~4.03;
+ *  - each stop must land one **capsule radius** short of the wall face, not on it.
+ */
+const sectorBreachWallSlide = defineGameTest({
+  name: 'sector breach (probe): the capsule is stopped by walls and slides along them',
+  scene: SCENE,
+  options: { plugin: sectorBreachPlugin, captureHistory: true },
+  ticks: 200,
+  seed: SEED,
+  input: `
+    aim 45 0 @4
+    axis Forward 1 10..160
+  `,
+  expect(result) {
+    // Faces of the two walls the capsule runs into, and the tick-step it travels per axis.
+    const NORTH_FACE = 5.5;
+    const EAST_FACE = 4.5;
+    const RADIUS = 0.4;
+    const STEP = 0.0708; // 6 u/s * sin(45°) / 60 — one tick of travel on each axis
+
+    expectSim(result)
+      .holds(
+        'the capsule was stopped by the north wall, one radius short of its face — not walked through it',
+        (r) => {
+          const end = playerAt(r, 199);
+          return end.z <= NORTH_FACE - RADIUS && end.z > NORTH_FACE - RADIUS - STEP;
+        },
+      )
+      .holds('the capsule was stopped by the east wall, one radius short of its face', (r) => {
+        const end = playerAt(r, 199);
+        return end.x <= EAST_FACE - RADIUS && end.x > EAST_FACE - RADIUS - STEP;
+      })
+      .holds(
+        'it slid east along the north wall instead of sticking on first contact (axis-separated resolution)',
+        (r) => {
+          // t56 is after the north contact (z is already pinned) and well before the east contact.
+          const early = playerAt(r, 56);
+          const late = playerAt(r, 70);
+          return early.z === late.z && late.x - early.x > 0.6;
+        },
+      )
+      .eventNotEmitted('player.died')
+      .eventNotEmitted('level.completed');
+
+    result.assertInvariant(
+      'player capsule never overlapped a solid wall cell',
+      (w) => wallPenetration(w) <= 1e-9,
+    );
+  },
+});
+
 describe('Sector Breach', () => {
   it('completes the playthrough exactly as the spec asserts', async () => {
     await expectGameTest(sectorBreach);
@@ -224,6 +343,10 @@ describe('Sector Breach', () => {
 
   it('dies in the coolant pit when the jump is missed', async () => {
     await expectGameTest(sectorBreachPitDeath);
+  });
+
+  it('is stopped by walls and slides along them', async () => {
+    await expectGameTest(sectorBreachWallSlide);
   });
 
   it('is deterministic: identical hash across independent runs and on replay', async () => {

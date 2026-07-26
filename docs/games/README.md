@@ -67,10 +67,10 @@ and all three `ViewProvider` projections (orthographic, isometric, perspective).
    engine under it) broke, and at least one **negative playthrough** that deliberately loses, so
    `eventNotEmitted('player.died')` in the winning run is not a vacuous assertion.
 
-## Two rules learned from the mode-capability audit
+## Three rules learned from the mode-capability audit
 
 An independent audit ran ~60 source mutations and found that 7 of 12 named mode capabilities could
-be broken with all three game tests green. The two structural causes are worth stating once, here,
+be broken with all three game tests green. The structural causes are worth stating once, here,
 because they apply to any future game in this repo:
 
 1. **A final-state hash is nearly blind to dynamics.** All three runs deliberately end _at rest_ —
@@ -83,6 +83,13 @@ because they apply to any future game in this repo:
 2. **A negative assertion about an event nothing ever emits proves nothing.** `eventNotEmitted` on
    `player.died` passed in all three games even with the emitter deleted. The fix is a second
    playthrough per game that deliberately loses and asserts the death _with its cause_.
+3. **A capability that fails only via hash drift is not covered.** "The golden hash moved" tells an
+   agent that the world diverged and nothing about where or why — the least actionable diagnostic
+   the engine can produce (CHARTER principle 8). Every capability in the "what this game proves"
+   tables must fail through a **named** assertion; the trajectory digest is the safety net beneath
+   them, not the diagnosis. Where the winning run does not naturally exercise a mechanism (fps
+   never touches a wall, so capsule collision and sliding were invisible), add a small **probe
+   playthrough** that does, rather than settling for the hash.
 
 ## Deliberately _not_ covered
 

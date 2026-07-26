@@ -176,6 +176,25 @@ final `position.y === -3` (resting on the pit floor), and no `level.completed`.
 Without it the winning run's `eventNotEmitted('player.died')` is vacuous — it passes even with the
 hazard system deleted, because nothing in the suite ever emits a death.
 
+**A third playthrough exists purely as a collision probe.** `sector breach (probe): the capsule is
+stopped by walls and slides along them` faces 45° and holds Forward into the antechamber's north-east
+corner. The winning run walks straight up the middle of a 3-wide corridor and never touches a wall,
+so capsule-vs-wall collision, axis-separated sliding and the capsule radius could previously only
+surface as golden-hash drift. The probe pins all three **by name**:
+
+| Assertion                                                            | Fails when                                         |
+| -------------------------------------------------------------------- | -------------------------------------------------- |
+| stopped by the north wall, one radius short of its face at z=5.5     | wall collision is gone, or the radius is ignored   |
+| stopped by the east wall, one radius short of its face at x=4.5      | same, on the other axis                            |
+| slid east along the north wall instead of sticking on first contact  | resolution stops both axes on any contact          |
+| `player capsule never overlapped a solid wall cell` (whole-timeline) | the capsule clips into or tunnels through geometry |
+
+The last one also runs as an invariant on the **winning** playthrough. It re-derives the overlap test
+from the extruded grid's `solid` flags rather than calling the mode's `circleHitsSolid` — a test that
+asks the collision solver whether the collision solver was right proves nothing — and reads the grid
+from each tick's world snapshot, so the blast door counts as solid before it opens and passable
+after.
+
 ## Events emitted
 
 | Event             | Payload                         | Emitted by | When                                            |
@@ -377,27 +396,29 @@ previously compared only run-to-run, which proves determinism but adds no regres
 
 ## What this game proves about the engine
 
-| Game element                   | Engine capability exercised                                                                                  |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Turn to the east-wall button   | Yaw `LookState` **steering the hitscan ray direction**                                                       |
-| The 40°-down shot at t100      | Pitch **steering the ray vertically** (the script otherwise never leaves pitch 0)                            |
-| Shooting the button            | `Hitscan` raycast resolving against a specific entity + cooldown                                             |
-| Shooting _at_ the sealed door  | `raycastGrid` DDA wall occlusion — the ray stops at geometry instead of hitting what is behind it            |
-| Blast door opens on hit        | Event-driven world mutation (`door` cells' `solid` flipped in the hashed grid) from a ray hit                |
-| Walking the corridor           | Capsule movement over extruded floorplan geometry, wall sliding                                              |
-| Jumping the coolant pit        | **3D gravity + jump arc + capsule-vs-floor** over a per-tile floor height; `hazard` `Trigger` pit-fall death |
-| The grunt firefight            | `Health` damage from hitscan; two-shot kill math                                                             |
-| Grunt shooting back            | Deterministic, RNG-free enemy AI cadence → `damage.taken`                                                    |
-| Reaching the exit              | Goal `Trigger` volume detection in 3D + one-shot latch (`level.completed` once)                              |
-| Falling in the pit (lose run)  | `hazard` `Trigger` pit-fall death — `player.died{cause:'coolant'}`, proven by a failing playthrough          |
-| Semantic frame of the room     | `ViewProvider` perspective projection (agent "sees" without a GPU)                                           |
-| `hashEquals` + repeated run    | Byte-identical determinism across `sin/cos` look math (ADR-0001)                                             |
-| Trajectory digest              | The whole per-tick timeline, not just the resting state it converges on                                      |
-| Health/`position.y` invariants | Whole-timeline safety properties, not just final state                                                       |
+| Game element                    | Engine capability exercised                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Turn to the east-wall button    | Yaw `LookState` **steering the hitscan ray direction**                                                       |
+| The 40°-down shot at t100       | Pitch **steering the ray vertically** (the script otherwise never leaves pitch 0)                            |
+| Shooting the button             | `Hitscan` raycast resolving against a specific entity + cooldown                                             |
+| Shooting _at_ the sealed door   | `raycastGrid` DDA wall occlusion — the ray stops at geometry instead of hitting what is behind it            |
+| Blast door opens on hit         | Event-driven world mutation (`door` cells' `solid` flipped in the hashed grid) from a ray hit                |
+| Walking the corridor            | Capsule movement over extruded floorplan geometry                                                            |
+| Running into the corner (probe) | **Capsule-vs-wall collision, axis-separated wall sliding, and the capsule radius** — each by name            |
+| Jumping the coolant pit         | **3D gravity + jump arc + capsule-vs-floor** over a per-tile floor height; `hazard` `Trigger` pit-fall death |
+| The grunt firefight             | `Health` damage from hitscan; two-shot kill math                                                             |
+| Grunt shooting back             | Deterministic, RNG-free enemy AI cadence → `damage.taken`                                                    |
+| Reaching the exit               | Goal `Trigger` volume detection in 3D + one-shot latch (`level.completed` once)                              |
+| Falling in the pit (lose run)   | `hazard` `Trigger` pit-fall death — `player.died{cause:'coolant'}`, proven by a failing playthrough          |
+| Semantic frame of the room      | `ViewProvider` perspective projection (agent "sees" without a GPU)                                           |
+| `hashEquals` + repeated run     | Byte-identical determinism across `sin/cos` look math (ADR-0001)                                             |
+| Trajectory digest               | The whole per-tick timeline, not just the resting state it converges on                                      |
+| Health/`position.y` invariants  | Whole-timeline safety properties, not just final state                                                       |
 
-Each row is backed by a mutation that turns it red. The ones that were **not** load-bearing before
-the mode-capability audit are: `raycastGrid` wall occlusion (the whole DDA could `return undefined`),
-pitch (the script never left 0), and the coolant-pit death.
+Each row is backed by a mutation that turns it red **through a named gameplay assertion**, not
+through hash drift. The ones that were not load-bearing before the mode-capability audit are:
+`raycastGrid` wall occlusion (the whole DDA could `return undefined`), pitch (the script never left
+0), the coolant-pit death, capsule-vs-wall collision, axis-separated sliding, and the capsule radius.
 
 > **Known gap (reported to the PM, not fixed here):** the grunt's own `raycastGrid` line-of-sight
 > probe in `gruntAiSystem` is still not independently pinned. Its two lines can be deleted with the

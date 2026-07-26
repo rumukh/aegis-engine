@@ -286,6 +286,10 @@ export default defineGameTest({
       .holds('the guard walks patrolCell(t) on every tick before it alerts (t < 178)', (r) => …)
       .holds('the patrol had carried the guard to (9,5) before it opened fire', (r) => …)
       .holds('a hostile guard holds its ground instead of patrolling on', (r) => …)
+      // The cooldown clock, pinned behaviourally: the guard's 40-tick cadence and the operative's
+      // 30-tick one put the four shots on exactly these ticks.
+      .eventEmitted('attack.fired', 4)
+      .holds('the firefight ran on its golden cadence (shots on ticks 178, 195, 218, 225)', (r) => …)
       // The route is re-resolved against the mutated grid: blocked, then opened, then traversed.
       .holds('the exit was unreachable while the door was sealed, and reachable only after', (r) => …)
       // The whole trajectory, not just the resting state it converges on.
@@ -325,10 +329,17 @@ below 20 on some tick — failing precisely when the AI drifted.
 `GOLDEN_HASH` is a hash of the **final** world, and this run ends at rest — operative parked on the
 exit, guard dead, every order resolved. Two runs whose trajectories differ can therefore converge on
 a byte-identical final state. Measured on this very level: moving the last click from t340 to t420
-changes when the operative walks the entire back half of the map and leaves `GOLDEN_HASH`
-unchanged. `GOLDEN_TRAJECTORY` is `hashString(tickHashes.join('|'))` — core's frozen FNV-1a over the
-per-tick hashes the harness already records — so any changed trajectory goes red. (`tickHashes` were
-previously compared only run-to-run, which proves determinism but adds no regression detection.)
+delays `mission.completed` from t505 to t585 — an 80-tick difference across the entire back half of
+the map — and leaves `GOLDEN_HASH` **byte-identical** at `cb0f07007ad8608a`, while the trajectory
+digest moves from `2c6881a477e2d268` to `3d533c9edb70690f`. `GOLDEN_TRAJECTORY` is
+`hashString(tickHashes.join('|'))` — core's frozen FNV-1a over the per-tick hashes the harness
+already records — so any changed trajectory goes red. (`tickHashes` were previously compared only
+run-to-run, which proves determinism but adds no regression detection.)
+
+The digest is the safety net, not the diagnosis. The named assertions above it come first in the
+chain on purpose: a cooldown-cadence regression should report "the firefight ran on its golden
+cadence" and a frozen patrol should report the guard's cell, because "a hash moved" is the least
+actionable diagnostic the engine can produce (CHARTER principle 8).
 
 ## What this game proves about the engine
 
@@ -341,6 +352,7 @@ previously compared only run-to-run, which proves determinism but adds no regres
 | Cell-by-cell stepping             | `IsoActor` realtime interpolation, integer logical `GridPosition`            |
 | The firefight                     | Shared `Health`, `Attacker` cooldown combat, `enemy.killed` + `damage.taken` |
 | Guard patrol + detection          | Deterministic, RNG-free AI as a pure function of tick, LOS check             |
+| The firefight cadence             | `Attacker.cooldownTicks` clock — the four shots land on their golden ticks   |
 | Door blocks, then opens           | `Blocking` tag mutation forcing pathfinding **re-resolution**                |
 | `path.blocked` mid-run            | Pathfinder correctly reports "no route" on a gated grid, in the winning run  |
 | Switch / exit triggers            | Shared `Trigger`/volume component from `@aegis/content`                      |

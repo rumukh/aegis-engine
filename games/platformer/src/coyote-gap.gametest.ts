@@ -24,7 +24,7 @@
  */
 import { defineGameTest, expectSim } from '@aegis/harness';
 import type { SimResult } from '@aegis/harness';
-import { hashString, Transform } from '@aegis/core';
+import { abs, hashString, Transform } from '@aegis/core';
 import type { StateHash } from '@aegis/core';
 import { BodyState } from '@aegis/mode-platformer';
 import { coyoteGapPlugin } from './plugin.js';
@@ -125,8 +125,19 @@ export default defineGameTest({
           );
         },
       )
-      .holds('the run hit its four beat waypoints in order (see WAYPOINTS)', (r) =>
+      .holds('the run hit its four beat waypoints (see WAYPOINTS)', (r) =>
         WAYPOINTS.every((w) => w.check(playerAt(r, w.tick))),
+      )
+      .holds(
+        'the critter walked its triangle wave (x = 16.7 @t126, 15.75 @t145, 15.1 @t158, 16.3 @t186)',
+        (r) =>
+          CRITTER_WAVE.every(([tick, x]) => {
+            const view = r
+              .at(tick)
+              .query({ has: ['Critter', 'Transform'] })
+              .views()[0];
+            return view !== undefined && abs(view.get(Transform).position.x - x) < 1e-9;
+          }),
       )
       .holds(
         'the per-tick hash timeline matches the golden trajectory (see GOLDEN_TRAJECTORY)',
@@ -178,6 +189,19 @@ function jumpAt(result: SimResult, tick: number): { fromGround: boolean } | unde
   const ev = result.events.history().find((e) => e.type === 'player.jumped' && e.tick === tick);
   return ev?.data as { fromGround: boolean } | undefined;
 }
+
+/**
+ * Four sampled points of the critter's `patrolX` triangle wave (15 ⇄ 17 at 3 u/s, period 80
+ * ticks), as literal world positions. Named, readable evidence that the deterministic patrol is
+ * actually running — freeze it and this says "the critter stopped walking its wave", not "a hash
+ * moved". Ticks are chosen where the wave value is unambiguous (16.0 recurs; these do not).
+ */
+const CRITTER_WAVE: readonly (readonly [number, number])[] = [
+  [126, 16.7],
+  [145, 15.75],
+  [158, 15.1],
+  [186, 16.3],
+];
 
 /**
  * Four mid-run waypoints, one per hard beat. These are what a human reads when the trajectory

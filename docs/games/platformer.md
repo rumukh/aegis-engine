@@ -331,7 +331,10 @@ expectSim(result)
   .holds('the buffered press at t317 was held and fired on the landing tick', (r) => …)
   // Four mid-run beat waypoints (t60 plateau, t126 lava lip, t186 mid-ferry, t300 airborne
   // over the coyote gap) — these are what a human reads when the digest moves.
-  .holds('the run hit its four beat waypoints in order', (r) => …)
+  .holds('the run hit its four beat waypoints', (r) => …)
+  // The critter's patrol wave, as literal sampled positions: freeze the patrol and this says
+  // "the critter stopped walking its wave", not "a hash moved".
+  .holds('the critter walked its triangle wave (x = 16.7 @t126, 15.75 @t145, …)', (r) => …)
   // …and a golden digest of every tick's hash, which nothing can slip past.
   .holds('the per-tick hash timeline matches the golden trajectory', (r) =>
     trajectoryDigest(r.tickHashes) === GOLDEN_TRAJECTORY);
@@ -342,6 +345,10 @@ hashes the harness already records, so the digest is exactly as portable and as 
 hashes it summarises. `tickHashes` were previously only compared run-to-run, which proves
 determinism but adds zero regression detection; pinning them against a stored golden is what turns
 them into a trajectory test.
+
+The named assertions come **first** in the chain deliberately. The digest is the safety net, but a
+broken run should say _what_ broke ("the critter stopped walking its wave") rather than "a hash
+moved" — which is the least actionable diagnostic the engine can produce (CHARTER principle 8).
 
 ## What this game proves about the engine
 

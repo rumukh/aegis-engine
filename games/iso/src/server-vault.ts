@@ -370,10 +370,32 @@ export function trajectoryDigest(tickHashes: readonly StateHash[]): StateHash {
   return hashString(tickHashes.join('|'));
 }
 
+/**
+ * Six literal points of the guard's patrol, as sampled cells rather than as a call back into
+ * {@link patrolCell}. The every-tick loop below compares the world against `patrolCell(t)`, which
+ * catches a frozen or deleted patrol system exactly — but moves with the formula if the formula
+ * itself changes. These literals are the independent pin: they are what the *level design* says
+ * the guard's sweep looks like (1 cell per 20 ticks, east along row 5 from its spawn).
+ */
+const PATROL_WAYPOINTS: readonly (readonly [number, number])[] = [
+  [0, 1],
+  [20, 2],
+  [60, 4],
+  [100, 6],
+  [140, 8],
+  [177, 9],
+];
+
 /** The tick the guard turned hostile in the golden run; before it the patrol is clockwork. */
 const ALERT_TICK = 178;
 /** The cell the guard had patrolled to by the time it alerted (8 legs from its spawn). */
 const ALERT_CELL = { x: 9, y: 5 } as const;
+/**
+ * Every `attack.fired` tick of the golden firefight: guard (40-tick cadence) at t178 and t218,
+ * operative (30-tick cadence) at t195 and t225. Pinning the ticks — not just the hit counts —
+ * is what makes the cooldown clock load-bearing.
+ */
+const FIREFIGHT_TICKS: readonly number[] = [178, 195, 218, 225];
 
 /** The guard's logical cell in the world captured at `tick`. */
 function guardCellAt(result: SimResult, tick: number): { x: number; y: number } {
@@ -401,33 +423,19 @@ export default defineGameTest({
   seed: 'poc-iso',
   input: SERVER_VAULT_SCRIPT,
   expect(result) {
+    // Order matters: the *mechanism* assertions come first so a broken capability names itself
+    // ("the guard stopped walking its patrol") instead of surfacing as a downstream symptom
+    // ("damage.taken was 1"), let alone as a hash mismatch (CHARTER principle 8).
     expectSim(result)
-      .eventEmitted('mission.completed', 1)
-      .eventEmitted('enemy.killed', 1)
-      .eventEmitted('damage.taken', 2)
-      .eventNotEmitted('player.died')
-      .eventEmitted('switch.activated', 1)
-      .eventEmitted('door.opened', 1)
-      // The sealed door is genuinely load-bearing in the *winning* run: the exit is clicked
-      // while it is still Blocking, so the pathfinder must report no route exactly once.
-      .eventEmitted('path.blocked', 1)
-      .entityExists({ has: ['Operative'] })
-      .holds('operative ended on the exit cell (4,7)', (r) => {
-        const g = r
-          .query({ has: ['Operative', 'GridPosition'] })
-          .one()
-          .get(GridPosition);
-        return g.cellX === 4 && g.cellY === 7;
-      })
-      .holds(
-        'operative took the correct damage (30 - 2x5 = 20)',
-        (r) =>
-          r
-            .query({ has: ['Operative', 'Health'] })
-            .one()
-            .get(Health).current === 20,
-      )
       // --- the clockwork patrol actually walks -------------------------------------------
+      .holds(
+        'the guard swept row 5 eastward at 1 cell / 20 ticks (x = 1 @t0, 2 @t20, 4 @t60, 6 @t100, 8 @t140, 9 @t177)',
+        (r) =>
+          PATROL_WAYPOINTS.every(([tick, x]) => {
+            const at = guardCellAt(r, tick);
+            return at.x === x && at.y === 5;
+          }),
+      )
       .holds(
         `the guard walks patrolCell(t) on every tick before it alerts (t < ${ALERT_TICK})`,
         (r) => {
@@ -453,6 +461,23 @@ export default defineGameTest({
         }
         return true;
       })
+      // --- the firefight runs on its golden cadence ---------------------------------------
+      // Named, behavioural pin for the cooldown clock. The guard fires on a 40-tick cadence and
+      // the operative on a 30-tick one, so the four shots land on exactly these ticks. A cadence
+      // regression (cooldowns ticking at the wrong rate, the wrong phase, an extra decrement)
+      // moves them — even when the exchange still nets two hits and the resting state converges,
+      // which is precisely the case a final-state hash cannot see.
+      .eventEmitted('attack.fired', 4)
+      .holds(
+        `the firefight ran on its golden cadence (shots on ticks ${FIREFIGHT_TICKS.join(', ')})`,
+        (r) => {
+          const fired = ticksOf(r, 'attack.fired');
+          return (
+            fired.length === FIREFIGHT_TICKS.length &&
+            fired.every((t, i) => t === FIREFIGHT_TICKS[i])
+          );
+        },
+      )
       // --- the route is re-resolved against the mutated grid ------------------------------
       .holds(
         'the exit was unreachable while the door was sealed, and reachable only after it opened',
@@ -473,7 +498,35 @@ export default defineGameTest({
           );
         },
       )
+      // --- the mission outcome -------------------------------------------------------------
+      .eventEmitted('mission.completed', 1)
+      .eventEmitted('enemy.killed', 1)
+      .eventEmitted('damage.taken', 2)
+      .eventNotEmitted('player.died')
+      .eventEmitted('switch.activated', 1)
+      .eventEmitted('door.opened', 1)
+      // The sealed door is genuinely load-bearing in the *winning* run: the exit is clicked
+      // while it is still Blocking, so the pathfinder must report no route exactly once.
+      .eventEmitted('path.blocked', 1)
+      .entityExists({ has: ['Operative'] })
+      .holds('operative ended on the exit cell (4,7)', (r) => {
+        const g = r
+          .query({ has: ['Operative', 'GridPosition'] })
+          .one()
+          .get(GridPosition);
+        return g.cellX === 4 && g.cellY === 7;
+      })
+      .holds(
+        'operative took the correct damage (30 - 2x5 = 20)',
+        (r) =>
+          r
+            .query({ has: ['Operative', 'Health'] })
+            .one()
+            .get(Health).current === 20,
+      )
       // --- the whole trajectory, not just the resting state -------------------------------
+      // Last on purpose: this is the safety net under the named assertions above, not the
+      // diagnosis. If it is the only thing that fails, something changed that no beat describes.
       .holds(
         'the per-tick hash timeline matches the golden trajectory (see GOLDEN_TRAJECTORY)',
         (r) => trajectoryDigest(r.tickHashes) === GOLDEN_TRAJECTORY,
