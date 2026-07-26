@@ -256,7 +256,7 @@ export const deathSystem: System = {
   phase: 'events',
   run({ world, tick }: TickContext): void {
     for (const ev of world.events.ofType<EntityDiedEvent>('entity.died')) {
-      const e = ev.data.entity as Entity;
+      const e = ev.data.entity;
       if (world.isAlive(e) && world.has(e, Controlled)) {
         const payload: PlayerDiedEvent = { cause: 'guard', tick };
         world.events.emit(PLAYER_DIED, payload);
