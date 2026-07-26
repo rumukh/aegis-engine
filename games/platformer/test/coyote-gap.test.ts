@@ -11,6 +11,7 @@
  * plus the cross-run + `replay()` determinism proof over the whole per-tick hash timeline.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { runScene, runGameTest } from '@aegis/harness';
 import type { GameTest } from '@aegis/harness';
 import coyoteGap, {
@@ -28,6 +29,15 @@ async function expectGameTest(test: GameTest): Promise<void> {
     throw outcome.error ?? new Error('game test failed without an error');
   }
   expect(outcome.passed).toBe(true);
+}
+
+/** The bare commands of an input script: comments, blank lines and indentation removed, sorted. */
+function commandsOf(script: string): string[] {
+  return script
+    .split(/\r?\n/)
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter((line) => line.length > 0)
+    .sort();
 }
 
 describe('Coyote Gap — acceptance', () => {
@@ -73,5 +83,12 @@ describe('Coyote Gap — acceptance', () => {
 
     // ...and the trajectory is pinned against a stored golden, not just compared run-to-run.
     expect(trajectoryDigest(first.tickHashes)).toBe(GOLDEN_TRAJECTORY);
+  });
+
+  it('play/coyote-gap.input mirrors the script the test actually runs (no drift)', () => {
+    // The doc and the playable script live in `play/`, the executed script is the game test's
+    // `input`. They are two copies of one thing, so pin them together.
+    const onDisk = readFileSync('games/platformer/play/coyote-gap.input', 'utf8');
+    expect(commandsOf(onDisk)).toEqual(commandsOf(coyoteGap.input ?? ''));
   });
 });

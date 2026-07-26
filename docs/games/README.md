@@ -44,10 +44,11 @@ do.
   firefight depend on hitscan damage against `Health`.
 
 Between them they exercise: the ECS + fixed-timestep scheduler, seeded determinism (each game pins a
-golden `hashEquals`), the content loader (three scene + tilemap documents), the input DSL (digital
-actions, analog axes, `look`/`aim`, and `click` pointer input — all three input families), the
-event bus (each game asserts on named events), the assertion harness (`expectSim` + whole-timeline
-`assertInvariant`), and all three `ViewProvider` projections (orthographic, isometric, perspective).
+golden `hashEquals` **and** a golden digest of its per-tick hash timeline), the content loader (three
+scene + tilemap documents), the input DSL (digital actions, analog axes, `look`/`aim`, and `click`
+pointer input — all three input families), the event bus (each game asserts on named events,
+including a deliberate loss), the assertion harness (`expectSim` + whole-timeline `assertInvariant`),
+and all three `ViewProvider` projections (orthographic, isometric, perspective).
 
 ## The shared design rules
 
@@ -60,9 +61,28 @@ event bus (each game asserts on named events), the assertion harness (`expectSim
    world state that assertions can read — never a purely visual "feel".
 4. **Deterministic AI.** Every enemy/guard is a pure function of the tick; no `Math.random`, only
    `@aegis/core`'s seeded PRNG if randomness is ever needed (none of these games needs it).
-5. **Each game ships two artifacts that prove it:** a scripted playthrough (`*.input`) that
-   completes it headlessly, and a `defineGameTest` block whose assertions — including at least one
-   whole-timeline invariant — would fail if the game (or the engine under it) broke.
+5. **Each game ships three artifacts that prove it:** a scripted playthrough (`*.input`) that
+   completes it headlessly, a `defineGameTest` block whose assertions — including at least one
+   whole-timeline invariant and a golden **trajectory** digest — would fail if the game (or the
+   engine under it) broke, and at least one **negative playthrough** that deliberately loses, so
+   `eventNotEmitted('player.died')` in the winning run is not a vacuous assertion.
+
+## Two rules learned from the mode-capability audit
+
+An independent audit ran ~60 source mutations and found that 7 of 12 named mode capabilities could
+be broken with all three game tests green. The two structural causes are worth stating once, here,
+because they apply to any future game in this repo:
+
+1. **A final-state hash is nearly blind to dynamics.** All three runs deliberately end _at rest_ —
+   actor parked, velocities zero, orders resolved — so a regression whose trajectory differs but
+   whose resting state converges is invisible to `hashEquals`. Demonstrated on iso: making both
+   combatants' cooldowns tick twice as fast left `damage.taken ×2`, `Health 20` **and** the golden
+   hash byte-identical. Each game therefore also pins a digest of the whole per-tick hash timeline
+   (`hashString(tickHashes.join('|'))`). Comparing `tickHashes` run-to-run — which the suites
+   already did — proves determinism but adds **zero** regression detection.
+2. **A negative assertion about an event nothing ever emits proves nothing.** `eventNotEmitted` on
+   `player.died` passed in all three games even with the emitter deleted. The fix is a second
+   playthrough per game that deliberately loses and asserts the death _with its cause_.
 
 ## Deliberately _not_ covered
 

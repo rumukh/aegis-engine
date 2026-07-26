@@ -18,6 +18,7 @@ import { runGameTest, runScene } from '@aegis/harness';
 import serverVaultTest, {
   GOLDEN_HASH,
   GOLDEN_TRAJECTORY,
+  SERVER_VAULT_SCRIPT,
   serverVaultDeathTest,
   serverVaultPlugin,
   trajectoryDigest,
@@ -25,6 +26,15 @@ import serverVaultTest, {
 } from '../src/server-vault.js';
 
 const SCENE = 'games/iso/levels/server-vault.scene.json';
+
+/** The bare commands of an input script: comments, blank lines and indentation removed, sorted. */
+function commandsOf(script: string): string[] {
+  return script
+    .split(/\r?\n/)
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter((line) => line.length > 0)
+    .sort();
+}
 
 describe('game: The Server Vault (iso PoC acceptance)', () => {
   it('passes its exported defineGameTest as specified', async () => {
@@ -80,5 +90,12 @@ describe('game: The Server Vault (iso PoC acceptance)', () => {
       resources: { IsoGrid: { walls: string[] } };
     };
     expect(scene.resources.IsoGrid.walls).toEqual([...WALL_ROWS]);
+  });
+
+  it('play/server-vault.input mirrors the script the test actually runs (no drift)', () => {
+    // The doc and the playable script live in `play/`, the executed script is the exported
+    // constant. They are two copies of one thing, so pin them together.
+    const onDisk = readFileSync('games/iso/play/server-vault.input', 'utf8');
+    expect(commandsOf(onDisk)).toEqual(commandsOf(SERVER_VAULT_SCRIPT));
   });
 });

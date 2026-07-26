@@ -52,10 +52,15 @@ Derived: an 8 u/s jump under 24 u/s² gravity clears a **2–3 u pit** with marg
 `Fire` press (respecting `cooldownRemaining`), emitting `weapon.fired`, then `hitscan.hit{target}` or
 `hitscan.miss`. A hit on an entity with `Health` subtracts `damage`.
 
-**The blast door** — a `Blocking`-tagged wall segment (game-owned) at the north end of the
-antechamber. A game `DoorSystem` listens for `hitscan.hit` whose `target` is the `Button` panel and
-removes the wall, emitting `door.opened`. The button is on the **east wall**, so the player must
-**yaw right ~90°** to hit it — this is the proof that look direction actually steers the ray.
+**The blast door** — the `=` cell at the corridor mouth (x=0, z=8). It is **not** a `Blocking`-tagged
+entity: `mode-fps` has no `Blocking` tag. It is a legend entry `{ solid: true, door: true }`, so the
+extruded `fps.collision` grid carries a cell with `door: true`. The game's `DoorSystem` listens for
+`hitscan.hit` whose `target` is the `Button` panel and flips `solid` to `false` on every `door` cell,
+then emits `door.opened`. Because `fps.collision` is a world **resource** it is part of the
+serialised, hashed state, so an open door is deterministic simulation state rather than hidden mode
+memory. (See _Level layout_ below for the same mechanism described from the floorplan side.) The
+button is on the **east wall**, so the player must **yaw right ~90°** to hit it — this is the proof
+that look direction actually steers the ray.
 
 **The grunt** — a game `GruntAiSystem` (deterministic, RNG-free):
 
@@ -163,6 +168,14 @@ The breach reads as four beats, each proving one hard thing:
 - **Lose:** any `player.died` event (grunt drained `Health` to 0, or fell in the coolant pit), or
   the run ends without `level.completed`.
 
+**The pit lose path is shipped as a playthrough.** `sector breach (lose): walk into the coolant pit
+without jumping` opens the blast door, jogs north, never jumps, and stops driving Forward at the pit
+(as a fallen player's input would). It asserts `player.died` ×1 with `cause: 'coolant'` at t146, a
+final `position.y === -3` (resting on the pit floor), and no `level.completed`.
+
+Without it the winning run's `eventNotEmitted('player.died')` is vacuous — it passes even with the
+hazard system deleted, because nothing in the suite ever emits a death.
+
 ## Events emitted
 
 | Event             | Payload                         | Emitted by | When                                            |
@@ -187,6 +200,11 @@ the test runs **600 ticks** to leave a wide post-completion tail for the whole-t
 ```text
 # Sector Breach — scripted playthrough (deterministic, tick-addressed).
 
+# 0. Wall-occlusion proof. We spawn facing +Z with the grunt dead ahead at z=17 and nothing but
+#    the sealed blast door between us. The ray must stop at that door (hitscan.hit target "wall",
+#    distance 5.5), never reach the grunt.
+press Fire @4
+
 # 1. Face the east wall panel and shoot it to open the blast door.
 aim 90 0 @8
 press Fire @20
@@ -194,6 +212,12 @@ press Fire @20
 # 2. Face north (into the facility) and advance out of the start room.
 aim 0 0 @32
 axis Forward 1 40..124
+
+# 2b. Vertical-aim proof: nose down 40 degrees and fire straight up the corridor. Level, this shot
+#     would hit the grunt; pitched down it passes under its hitbox and misses.
+aim 0 -40 @96
+press Fire @100
+aim 0 0 @108
 
 # 3. Leap the coolant pit — take off just before its south lip.
 press Jump @124
@@ -212,8 +236,19 @@ Notes for the implementer:
 - The `aim 90 0` / `aim 0 0` pair is the look-drives-the-ray proof; if yaw fails to steer the
   hitscan, the button shot misses, the door never opens, and the run cannot progress — a loud
   failure.
-- Keep the _semantics_ (turn→shoot button, jump the pit, two shots on the grunt) even if tuned tick
-  numbers drift; the assertions below check those, not the exact frames.
+- **Beats 0 and 2b exist to make `raycastGrid` load-bearing.** Before they were added, the entire
+  DDA could `return undefined` unconditionally and Sector Breach still passed: the winning run never
+  once fired through geometry, and the grunt's LOS probe never had a wall to find. The opening shot
+  does fire through geometry, so a dead DDA sends it 14.5 u into the grunt instead of stopping 5.5 u
+  away at the door — which shows up as a third `enemy.damaged` and a failed target assertion. The
+  2b shot closes the matching gap for **pitch**, which the script otherwise pinned at 0 for all 600
+  ticks: level, that ray hits the grunt; at −40° it passes beneath its hitbox.
+- Both extra shots respect the 12-tick weapon cooldown and neither perturbs movement (pitch does not
+  steer the capsule), so the pit jump and the firefight are untouched. **The final state hash is
+  unchanged** by them — which is exactly why the trajectory digest below exists.
+- Keep the _semantics_ (prove the wall stops a ray, turn→shoot button, prove pitch steers a ray,
+  jump the pit, two shots on the grunt) even if tuned tick numbers drift; the assertions below check
+  those, not the exact frames.
 
 ## The gameplay assertions
 
@@ -230,10 +265,14 @@ export default defineGameTest({
   ticks: 600,
   seed: 'poc-fps',
   input: `
+    press Fire @4
     aim 90 0 @8
     press Fire @20
     aim 0 0 @32
     axis Forward 1 40..124
+    aim 0 -40 @96
+    press Fire @100
+    aim 0 0 @108
     press Jump @124
     axis Forward 1 124..170
     press Fire @176
@@ -246,8 +285,15 @@ export default defineGameTest({
       .eventEmitted('enemy.killed', 1) // the grunt actually died
       .eventEmitted('level.completed', 1) // reached the exit, once
       .eventEmitted('damage.taken', 1) // the grunt landed exactly one shot (not zero, not many)
-      .eventNotEmitted('player.died') // survived (pit + firefight)
+      .eventNotEmitted('player.died') // survived (pit + firefight; and see the lose playthrough)
       .entityExists({ has: ['Player'] })
+      // Five shots leave the barrel; exactly two reach the grunt. The other three are the button
+      // and the two occlusion proofs — so a ray that stops being blocked by geometry shows up here
+      // as a third `enemy.damaged`.
+      .eventEmitted('weapon.fired', 5)
+      .eventEmitted('enemy.damaged', 2)
+      .holds('the opening shot stopped at the sealed blast door', (r) => …) // target 'wall', d≈5.5
+      .holds('the 40°-down shot at t100 passed under the grunt rather than through it', (r) => …)
       .holds(
         'player ended in the security room, past the grunt',
         (r) =>
@@ -263,6 +309,10 @@ export default defineGameTest({
             .query({ has: ['Player', 'Health'] })
             .one()
             .get(Health).current === 90, // exact: 0 hits leaves 100, 2 leaves 80 — both fail
+      )
+      .holds(
+        'the per-tick hash timeline matches the golden trajectory',
+        (r) => trajectoryDigest(r.tickHashes) === '1ce5508ff97c0b75',
       )
       .hashEquals('f86540b793f071a3'); // literal golden master, not result.hash (self-referential)
 
@@ -315,18 +365,49 @@ equality fails; if it sprays, the count fails too. Invariant #2 (`Health >= 70` 
 kept as a whole-timeline **safety** property — necessary but, on its own, _not sufficient_ (zero
 damage also satisfies it), which is exactly why the exact pins above were added.
 
+### Why a trajectory digest and not just `hashEquals`
+
+`f86540b793f071a3` is a hash of the **final** world, and this run ends at rest: the player parked in
+the exit trigger, the grunt dead, the weapon cooled down. Runs whose trajectories differ can
+therefore converge on a byte-identical final state — measured here, adding the two occlusion shots
+above changes four ticks' worth of weapon-cooldown and look state and leaves the final hash
+untouched. `trajectoryDigest` is `hashString(tickHashes.join('|'))` — core's frozen FNV-1a over the
+per-tick hashes the harness already records — so any changed trajectory goes red. (`tickHashes` were
+previously compared only run-to-run, which proves determinism but adds no regression detection.)
+
 ## What this game proves about the engine
 
 | Game element                   | Engine capability exercised                                                                                  |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Turn to the east-wall button   | Yaw/pitch `LookState` **steering the hitscan ray direction**                                                 |
+| Turn to the east-wall button   | Yaw `LookState` **steering the hitscan ray direction**                                                       |
+| The 40°-down shot at t100      | Pitch **steering the ray vertically** (the script otherwise never leaves pitch 0)                            |
 | Shooting the button            | `Hitscan` raycast resolving against a specific entity + cooldown                                             |
-| Blast door opens on hit        | Event-driven world mutation (`Blocking` removal) from a ray hit                                              |
+| Shooting _at_ the sealed door  | `raycastGrid` DDA wall occlusion — the ray stops at geometry instead of hitting what is behind it            |
+| Blast door opens on hit        | Event-driven world mutation (`door` cells' `solid` flipped in the hashed grid) from a ray hit                |
 | Walking the corridor           | Capsule movement over extruded floorplan geometry, wall sliding                                              |
 | Jumping the coolant pit        | **3D gravity + jump arc + capsule-vs-floor** over a per-tile floor height; `hazard` `Trigger` pit-fall death |
 | The grunt firefight            | `Health` damage from hitscan; two-shot kill math                                                             |
 | Grunt shooting back            | Deterministic, RNG-free enemy AI cadence → `damage.taken`                                                    |
 | Reaching the exit              | Goal `Trigger` volume detection in 3D + one-shot latch (`level.completed` once)                              |
+| Falling in the pit (lose run)  | `hazard` `Trigger` pit-fall death — `player.died{cause:'coolant'}`, proven by a failing playthrough          |
 | Semantic frame of the room     | `ViewProvider` perspective projection (agent "sees" without a GPU)                                           |
 | `hashEquals` + repeated run    | Byte-identical determinism across `sin/cos` look math (ADR-0001)                                             |
+| Trajectory digest              | The whole per-tick timeline, not just the resting state it converges on                                      |
 | Health/`position.y` invariants | Whole-timeline safety properties, not just final state                                                       |
+
+Each row is backed by a mutation that turns it red. The ones that were **not** load-bearing before
+the mode-capability audit are: `raycastGrid` wall occlusion (the whole DDA could `return undefined`),
+pitch (the script never left 0), and the coolant-pit death.
+
+> **Known gap (reported to the PM, not fixed here):** the grunt's own `raycastGrid` line-of-sight
+> probe in `gruntAiSystem` is still not independently pinned. Its two lines can be deleted with the
+> suite green, because the corridor is straight and open for the whole final 6 u of the approach, so
+> the probe never has a wall to find. Closing it needs level geometry (a pillar the player has to
+> strafe around), which changes the tilemap, the scene, the floorplan diagram and the golden hashes.
+> The `raycastGrid` _function_ is load-bearing via the shot at t4; only that one call site is not.
+>
+> **Second known gap:** `player.died` is not terminal in this game. `hazardSystem` emits the event
+> without zeroing `Health`, and `goalSystem` does not check for a dead player — so a run that keeps
+> driving `Forward` after the pit death climbs back out (the capsule snaps up to the next cell's
+> floor) and reaches the exit at t200. The lose playthrough stops input at the pit, as a fallen
+> player's would, which is honest but sidesteps the issue.

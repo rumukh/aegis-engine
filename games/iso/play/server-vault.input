@@ -10,6 +10,7 @@ click 7,5 @102    # chase it up the corridor. It has swept (1,5) -> (9,5) — ei
                   # turns and spots us at t178, and it freezes on (9,5) the moment it does.
 click 9,5 @195    # attack-move: we let it fire first (t178, t218) and kill it at t225 with two
                   # shots -> enemy.killed, damage.taken x2, Health 20.
+click 9,1 @232    # head for the security switch: cross to the col-7 shaft and climb toward (9,1).
 click 4,7 @300    # try the vault while still climbing the col-9 shaft: the door is sealed, so the
                   # pathfinder honestly reports path.blocked and drops the in-flight order.
 click 9,1 @308    # resume to the security switch; reaching (9,1) at t330 unseals the vault door.

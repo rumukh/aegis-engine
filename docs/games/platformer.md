@@ -42,12 +42,17 @@ coyote gap.
 
 **Enemy "critter"** — a game-owned `PatrolSystem` (deterministic, no RNG):
 
-- Walks horizontally between two solid walls at 3 u/s, reversing `facing` on contact.
-- Position at tick _t_ is a pure function of _t_ → reproducible tick-for-tick.
+- Its position at tick _t_ is a pure function of _t_: `patrolX(t)` is a **triangle wave** between
+  `minX = 15` and `maxX = 17` at 3 u/s (0.05 u/tick, period 80 ticks). It is not a physics body and
+  there is no contact test — it never collides with a wall and never "reverses on contact"; the
+  wave _is_ the turn-around, which is what makes it reproducible tick-for-tick and hashable.
 - **Stomp:** if the player's collider overlaps the critter while the player's `Velocity.dy < 0`
   (descending) and the player's feet are above the critter's centre → `enemy.killed`, and the
   player receives a small bounce (`dy = 10`).
 - **Gore:** any other overlap (side/below) → `damage.taken` then `player.died` the same tick.
+  Proven by the `coyote gap (lose): walk into the critter instead of stomping it` playthrough,
+  which is the winning script minus the stomp press: it must emit `player.died{cause:'critter'}`
+  and **no** `enemy.killed`.
 
 **Moving platform ("the ferry")** — a kinematic solid entity provided and carried by the **mode**
 (see _Engine scope_ below):
@@ -135,9 +140,11 @@ Read left-to-right, the level is six beats, each proving one thing:
    press Jump _just after_ leaving it; the 6-tick coyote window makes the late press valid. Proves
    coyote time is actually implemented (without it the jump is eaten and the player dies in the gap).
 6. **cols 37–45 — the coyote gap + goal.** A 2-tile gap (cols 37–38), a landing platform (cols 39–41,
-   surface y=5), then a +1 goal pillar (cols 42–44, surface y=6) capped by a wall (col 45). Player
-   coyote-jumps the gap, then buffers a jump before touchdown to mount the pillar and enter the goal
-   trigger. Proves jump-buffering and goal detection.
+   surface y=5), then a +1 goal pillar (cols 42–45, surface y=6 — row 6 is solid at 42–45, so the
+   pillar top is 4 tiles wide) capped by the wall column at col 45. Player coyote-jumps the gap,
+   then buffers a jump before touchdown to mount the pillar and enter the goal trigger (centred at
+   x=43.5). Proves jump-buffering and goal detection. The gap has **no hazard volume under it** —
+   falling in drops the player out of the world, which is the `fell` death cause.
 
 ## Win and lose conditions
 
@@ -146,6 +153,20 @@ Read left-to-right, the level is six beats, each proving one thing:
   the run ends without `level.completed`.
 
 Both are machine-checkable purely from the event log; no pixel inspection.
+
+**All three lose paths are shipped as playthroughs**, not just described. `src/coyote-gap.gametest.ts`
+exports three more `defineGameTest`s alongside the winning one, each of which is the winning script
+with exactly one thing removed:
+
+| Playthrough          | Script                           | Asserts                                                         |
+| -------------------- | -------------------------------- | --------------------------------------------------------------- |
+| `spikePitDeathTest`  | no jump at all                   | `player.died{cause:'hazard'}` ×1 at t43, no win                 |
+| `critterGoreTest`    | winning script − `@74`           | `player.died{cause:'critter'}` ×1 at t91, **no** `enemy.killed` |
+| `fellOutOfWorldTest` | winning script − both late jumps | `player.died{cause:'fell'}` ×1 at t319, no win                  |
+
+Without them `eventNotEmitted('player.died')` in the winning run is vacuous: it passes even with
+the death emitter deleted, because nothing in the suite ever emits one. (Verified by mutation: the
+three deaths and the emitter itself are each independently killable, and each kills a test.)
 
 ## Events emitted
 
@@ -208,8 +229,9 @@ Notes for the implementer:
 > through which systems enter the schedule, so there is exactly one way for a game to add behaviour.
 > The bare `platformerPlugin` alone cannot emit the game-semantic events (`enemy.killed`,
 > `player.died`, `level.completed`) — those are game systems. The block below is the **actual**
-> authoritative test; it lives at `packages/mode-platformer/src/coyote-gap.acceptance.test.ts` (which
-> drives it) and `games/platformer/src/coyote-gap.gametest.ts` (which defines it).
+> authoritative test; it lives at `games/platformer/src/coyote-gap.gametest.ts` (which defines it,
+> along with the three lose playthroughs) and `games/platformer/test/coyote-gap.test.ts` (which
+> drives them under vitest).
 
 ```ts
 import { defineGameTest, expectSim } from '@aegis/harness';
@@ -293,6 +315,34 @@ collision or gravity regresses so the player clips through a platform or the pit
 dips below `-4` on some tick and the invariant fails _at that tick_, pointing the implementer at
 exactly when the physics broke.
 
+### The trajectory pins (added after the mode-capability audit)
+
+Everything above describes where the run **ends**, and this run ends at rest: parked on the goal
+pillar, velocity zero, orders resolved. A final-state hash is therefore nearly blind to _dynamics_ —
+a regression whose route differs but whose resting state converges sails straight through it. So the
+game test also pins the shape of the run:
+
+```ts
+expectSim(result)
+  // Coyote time is real: the ledge jump launched in mid-air.
+  .holds('the coyote jump at t288 launched in mid-air (fromGround:false)', (r) => …)
+  // Jump buffering is real: the t317 press produced no jump that tick, the player landed at
+  // t320, and the buffered jump fired from the ground at t321.
+  .holds('the buffered press at t317 was held and fired on the landing tick', (r) => …)
+  // Four mid-run beat waypoints (t60 plateau, t126 lava lip, t186 mid-ferry, t300 airborne
+  // over the coyote gap) — these are what a human reads when the digest moves.
+  .holds('the run hit its four beat waypoints in order', (r) => …)
+  // …and a golden digest of every tick's hash, which nothing can slip past.
+  .holds('the per-tick hash timeline matches the golden trajectory', (r) =>
+    trajectoryDigest(r.tickHashes) === GOLDEN_TRAJECTORY);
+```
+
+`trajectoryDigest` is `hashString(tickHashes.join('|'))` — core's frozen FNV-1a over the per-tick
+hashes the harness already records, so the digest is exactly as portable and as deterministic as the
+hashes it summarises. `tickHashes` were previously only compared run-to-run, which proves
+determinism but adds zero regression detection; pinning them against a stored golden is what turns
+them into a trajectory test.
+
 ## What this game proves about the engine
 
 | Game element                      | Engine capability exercised                                                        |
@@ -307,7 +357,13 @@ exactly when the physics broke.
 | Goal pillar mount                 | `jumpBufferTicks` buffered-press window + `Trigger` goal volume (`@aegis/content`) |
 | Reaching the flag                 | Event emission + one-shot latching (`level.completed` exactly once)                |
 | `hashEquals` + repeated run       | Byte-identical determinism (ADR-0001)                                              |
+| `GOLDEN_TRAJECTORY` digest        | The whole per-tick timeline, not just the resting state it converges on            |
 | `assertInvariant` on `position.y` | Whole-timeline safety property, not just final state                               |
+| The three lose playthroughs       | Hazard death, positional death, and the gore branch — each proven by a failing run |
+
+Each row is backed by a mutation that turns it red. The ones that were **not** load-bearing before
+the audit are: hazard death, fall-out-of-world death, stomp-vs-gore, the `player.died` emitter
+itself, the coyote window, the buffer window, and the critter patrol.
 
 ## Implementation notes (platformer slice, as built)
 
@@ -337,22 +393,23 @@ asked for; numbers reflect the merged code, not the original sketch above.
    `y > -4` invariant + `eventNotEmitted('player.died')` together fail loudly if carry ever regresses:
    a stationary rider would be left over the lava and fall.
 
-4. **`hashEquals(result.hash)` is self-referential** in the spec block (it compares the result to its
-   own hash, so it always passes). Determinism is proven _separately and for real_ in the acceptance
-   test: two independent `runScene` calls produce identical `hash` **and** identical `tickHashes`,
-   and `result.replay()` reproduces both. Consider pinning a literal golden hash centrally if you
-   want the assertion to catch drift.
+4. **`hashEquals(result.hash)` is self-referential** in the game test as shipped (it compares the
+   result to its own hash, so it always passes) — a separate session is replacing it with the
+   literal golden `d813e4e19db7444d`. Determinism is proven _separately and for real_ in the
+   acceptance test: two independent `runScene` calls produce identical `hash` **and** identical
+   `tickHashes`, and `result.replay()` reproduces both. Independently of that, `GOLDEN_TRAJECTORY`
+   (a digest of the whole per-tick hash timeline) **is** a literal golden and does catch drift —
+   including drift a final-state hash cannot see.
 
-5. **`games/*` is not wired into root config** (workspaces, vitest `include`, tsconfig references).
-   The authoritative run therefore lives in the owned package
-   `packages/mode-platformer/src/coyote-gap.acceptance.test.ts` and imports the game by relative path;
-   the game's own `games/platformer/src/coyote-gap.gametest.ts` is not auto-discovered until `games/*`
-   is wired in centrally. Nothing outside `packages/mode-platformer/**` and `games/platformer/**` was
-   touched.
+5. **`games/*` is wired into root config.** Each game is an npm workspace, a tsconfig project
+   reference and part of the root vitest `include`, so `games/platformer/test/coyote-gap.test.ts`
+   runs under `npm run verify` and drives the game's own `defineGameTest`s directly. (An earlier
+   note here described an interim arrangement where the authoritative run lived in
+   `packages/mode-platformer`; that file no longer exists.)
 
 Tuned geometry/timing vs the design sketch: level rebuilt to the column layout in _Level layout_
 above (flat 0–6, spike pit 7–9, plateau 10–19, **lava gap 20–26**, ledge 27–36, coyote gap 37–38,
-landing 39–41, +1 pillar 42–44, wall 45); critter patrols x15–17 (so the stomp lands mid-plateau and
+landing 39–41, +1 pillar 42–45); critter patrols x15–17 (so the stomp lands mid-plateau and
 the bounce stays on it); the ferry runs at 4 u/s so the rider can board, be carried, and step off
 within one crossing; jump apex measured ≈ 2.3 tiles; playthrough presses retuned to @28/@74 (pit,
 stomp) and @288/@317 (coyote, buffer), with the ferry expressed as gapped `hold Right` windows.
