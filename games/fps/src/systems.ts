@@ -12,11 +12,11 @@
 import { Name, Transform } from '@aegis/core';
 import type { Entity, System, Vec3, World } from '@aegis/core';
 import { abs, dot3, length3, normalize3, sub3 } from '@aegis/core/math';
-import { ENTITY_DIED, Health, Trigger, Triggered, pointInTrigger } from '@aegis/content';
+import { ENTITY_DIED, Dead, Health, Trigger, Triggered, pointInTrigger } from '@aegis/content';
 import type { EntityDiedEvent, TriggerData } from '@aegis/content';
 import { FPS_COLLISION, HITSCAN_HIT, Hitscan, raycastGrid } from '@aegis/mode-fps';
 import type { CollisionGrid, HitscanHitEvent } from '@aegis/mode-fps';
-import { Button, Enemy, GruntAi, Player } from './components.js';
+import { Button, Enemy, GruntAi, LethalHit, Player } from './components.js';
 
 // --- semantic event vocabulary -------------------------------------------------------------
 
@@ -192,6 +192,8 @@ export const enemyDamageSystem: System = {
  * Map the generic `entity.died` to the game's semantic deaths: an {@link Enemy} becomes
  * `enemy.killed`, the {@link Player} becomes `player.died`. Runs after `@aegis/content`'s
  * `healthSystem` (which fires `entity.died` once and latches `Dead`), so each maps exactly once.
+ * The player's `cause` comes from the {@link LethalHit} the killing blow latched — `"coolant"` for
+ * the pit, `"killed"` for lethal grunt fire.
  */
 export const deathMappingSystem: System = {
   name: 'game.death.map',
@@ -204,7 +206,8 @@ export const deathMappingSystem: System = {
       if (world.get(entity, Enemy) !== undefined) {
         world.events.emit<EnemyKilledEvent>(ENEMY_KILLED, { name, tick });
       } else if (world.get(entity, Player) !== undefined) {
-        world.events.emit<PlayerDiedEvent>(PLAYER_DIED, { cause: 'killed', tick });
+        const cause = world.get(entity, LethalHit)?.cause ?? 'killed';
+        world.events.emit<PlayerDiedEvent>(PLAYER_DIED, { cause, tick });
       }
     }
   },
@@ -231,27 +234,42 @@ function detectTriggerOnce(
  * The toxic coolant pit: if the player's feet drop into a `hazard` trigger volume, the player
  * dies once. In a completing run the jump clears the pit and this never fires — it is the loud
  * failure a botched jump produces.
+ *
+ * It zeroes `Health` and latches {@link LethalHit} rather than announcing the death itself, so a
+ * pit death is a *real* death: `healthSystem` emits `entity.died` and latches `Dead`, and
+ * `deathMappingSystem` re-spells it as `player.died{cause}`. Before this, a pit death was an event
+ * and nothing more — `Dead` never latched, so `goalSystem` happily completed the level for a
+ * player lying at the bottom of the pit.
  */
 export const hazardSystem: System = {
   name: 'game.hazard',
   phase: 'postUpdate',
-  run({ world, tick }) {
-    const player = world.query({ has: [Player, Transform] }).views()[0];
+  before: ['content.health.death'],
+  run({ world }) {
+    const player = world.query({ has: [Player, Transform, Health], none: [Dead] }).views()[0];
     if (player === undefined) return;
+    const health = player.get(Health);
+    if (health.current <= 0) return;
     const feet = player.get(Transform).position;
     detectTriggerOnce(world, 'hazard', feet, (trigger) => {
       const cause = typeof trigger.data?.['cause'] === 'string' ? trigger.data['cause'] : 'coolant';
-      world.events.emit<PlayerDiedEvent>(PLAYER_DIED, { cause, tick });
+      health.current = 0;
+      world.add(player.entity, LethalHit, { cause });
     });
   },
 };
 
-/** The exit: reaching the goal trigger behind the grunt completes the level, once. */
+/**
+ * The exit: reaching the goal trigger behind the grunt completes the level, once — and only for a
+ * **living** player. The `none: [Dead]` is load-bearing: `fps.intake` has no dead guard (reported
+ * to the PM), so a corpse is still steered, and without this a run that kept walking after dying
+ * would emit `player.died` and `level.completed` together.
+ */
 export const goalSystem: System = {
   name: 'game.goal',
   phase: 'postUpdate',
   run({ world, tick }) {
-    const player = world.query({ has: [Player, Transform] }).views()[0];
+    const player = world.query({ has: [Player, Transform], none: [Dead] }).views()[0];
     if (player === undefined) return;
     const feet = player.get(Transform).position;
     detectTriggerOnce(world, 'goal', feet, () => {

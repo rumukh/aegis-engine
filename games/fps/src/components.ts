@@ -52,10 +52,27 @@ export const GruntAi: ComponentType<GruntAiData> = defineComponent<GruntAiData>(
   }),
 });
 
+/**
+ * The cause of the blow that killed the player, latched on the player the tick it lands.
+ *
+ * Exists so a *hazard* death is a real death and not just an announcement. `hazardSystem` used to
+ * emit `player.died` without touching `Health`, so `Dead` never latched for a pit fall: nothing in
+ * the world knew the player was dead, and a run that kept driving `Forward` climbed back out of
+ * the pit and reached the exit at t200 — emitting `player.died` and `level.completed` in one run.
+ * Now the hazard zeroes `Health` and records the cause here; `@aegis/content`'s `healthSystem`
+ * turns that into `entity.died` + `Dead`, and `deathMappingSystem` re-spells it with this cause.
+ * Mirrors `games/platformer`'s `LethalHit`.
+ */
+export const LethalHit: ComponentType<{ cause: string }> = defineComponent<{ cause: string }>({
+  id: 'LethalHit',
+  defaults: () => ({ cause: 'unknown' }),
+});
+
 /** Every component the game contributes to the registry (in addition to the mode's set). */
 export const GAME_COMPONENTS: readonly ComponentType<unknown>[] = [
   Player,
   Enemy,
   Button,
   GruntAi,
+  LethalHit,
 ] as readonly ComponentType<unknown>[];
