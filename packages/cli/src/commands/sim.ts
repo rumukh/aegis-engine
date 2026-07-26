@@ -1,16 +1,35 @@
 /**
  * Simulation helpers shared by `run`, `inspect`, `record` and `replay`: load and parse a scene
- * against {@link CliIO.cwd}, resolve its mode plugin, and summarise event logs.
+ * against {@link CliIO.cwd}, resolve the {@link ModePlugin} that will actually run it, prove the
+ * scene *can* run under that plugin, and summarise event logs.
+ *
+ * The load-bearing rule here is the one the whole CLI is judged by: **never report a clean run of
+ * a world we did not really simulate.** A scene whose components no registered plugin provides is
+ * refused before tick 0 rather than silently instantiated with those components missing.
  * @packageDocumentation
  */
-import { parseScene } from '@aegis/content';
-import type { SceneFile } from '@aegis/content';
-import { DiagnosticError } from '@aegis/core';
-import type { EventReader, GameEvent } from '@aegis/core';
+import {
+  createRegistry,
+  Dead,
+  Health,
+  Light,
+  Model,
+  parseScene,
+  Sprite,
+  Trigger,
+  Triggered,
+  validateScene,
+} from '@aegis/content';
+import type { ComponentRegistry, SceneFile } from '@aegis/content';
+import { DiagnosticError, Name, Transform } from '@aegis/core';
+import type { Diagnostic, EventReader, GameEvent, World } from '@aegis/core';
 import type { AsciiView, ModePlugin, SemanticFrame, SimResult } from '@aegis/harness';
+import { dirname } from 'node:path';
 import type { CommandContext } from '../command.js';
 import { AegisCliError, CliCode } from '../errors.js';
-import { readText, resolvePath } from './shared.js';
+import { describePluginSource, discoverPluginSpec, loadPlugin } from '../plugin.js';
+import type { ResolvedPlugin } from '../plugin.js';
+import { flagString, readText, resolvePath } from './shared.js';
 
 /** A scene loaded from disk: its absolute path, the path as the user gave it, and the parsed file. */
 export interface LoadedScene {
@@ -28,13 +47,142 @@ export function loadScene(ctx: CommandContext, rel: string): LoadedScene {
   return { abs, ref: rel, scene: parsed.value };
 }
 
-/** Resolve the mode plugin: an explicit `--mode` wins, otherwise the scene's declared mode. */
-export function resolvePlugin(
+/** The base registry the harness always installs, before any plugin components. */
+export function baseRegistry(): ComponentRegistry {
+  return createRegistry(Transform, Name, Sprite, Model, Light, Health, Trigger, Dead, Triggered);
+}
+
+/** The registry a run will actually have: base components plus the plugin's. */
+export function registryFor(plugin: ModePlugin): ComponentRegistry {
+  const registry = baseRegistry();
+  registry.registerAll(plugin.components());
+  return registry;
+}
+
+/** Reject a plugin whose mode disagrees with the scene (or with an explicit `--mode`). */
+function checkModeAgreement(resolved: ResolvedPlugin, sceneMode: string, flagMode?: string): void {
+  const expected = flagMode ?? sceneMode;
+  if (resolved.plugin.mode === expected) return;
+  throw new AegisCliError(
+    CliCode.PluginModeMismatch,
+    `Plugin ${describePluginSource(resolved)} is a "${resolved.plugin.mode}" plugin, but ${
+      flagMode !== undefined
+        ? `--mode ${flagMode} was given`
+        : `the scene declares mode "${sceneMode}"`
+    }.`,
+    {
+      fix: `Point --plugin at a "${expected}" plugin, or drop the mismatching ${flagMode !== undefined ? '--mode' : '--plugin'}.`,
+      data: {
+        pluginMode: resolved.plugin.mode,
+        sceneMode,
+        ...(flagMode !== undefined ? { flagMode } : {}),
+      },
+    },
+  );
+}
+
+/**
+ * Resolve the plugin a simulating command should run, with provenance.
+ *
+ * Precedence: `--plugin` → the nearest `aegis.json` above the scene → the stock plugin for
+ * `--mode`/the scene's mode.
+ */
+export async function resolveRunPlugin(
   ctx: CommandContext,
   scene: SceneFile,
-  flagMode?: string,
-): ModePlugin {
-  return ctx.modes.resolve(flagMode ?? scene.mode);
+  sceneAbs: string,
+  options: {
+    specOverride?: string;
+    overrideSource?: ResolvedPlugin['source'];
+    overrideBaseDirs?: readonly string[];
+  } = {},
+): Promise<ResolvedPlugin> {
+  const { args, io } = ctx;
+  const flagMode = flagString(args, 'mode');
+  const flagSpec = flagString(args, 'plugin');
+  const spec = flagSpec ?? options.specOverride;
+
+  if (spec !== undefined) {
+    const source = flagSpec !== undefined ? 'flag' : (options.overrideSource ?? 'flag');
+    const baseDirs =
+      flagSpec !== undefined ? [io.cwd] : (options.overrideBaseDirs ?? [io.cwd, dirname(sceneAbs)]);
+    const resolved: ResolvedPlugin = {
+      plugin: await loadPlugin(spec, baseDirs, ctx.modes),
+      spec,
+      source,
+    };
+    checkModeAgreement(resolved, scene.mode, flagMode);
+    return resolved;
+  }
+
+  const discovered = discoverPluginSpec(dirname(sceneAbs));
+  if (discovered) {
+    const resolved: ResolvedPlugin = {
+      plugin: await loadPlugin(discovered.spec, [discovered.baseDir], ctx.modes),
+      spec: discovered.spec,
+      source: 'config',
+      configFile: discovered.file,
+    };
+    checkModeAgreement(resolved, scene.mode, flagMode);
+    return resolved;
+  }
+
+  const modeName = flagMode ?? scene.mode;
+  return { plugin: ctx.modes.resolve(modeName), spec: modeName, source: 'mode' };
+}
+
+/**
+ * Refuse to simulate a scene the resolved plugin cannot actually run.
+ *
+ * `instantiateScene` reports an unknown component as a diagnostic and carries on, which is how a
+ * game scene run under a *stock* mode plugin produced a clean, hashed, successful run of a world
+ * missing half its components. Validating against the exact registry the run will use turns that
+ * into a loud, coded failure that names the fix.
+ */
+export function assertSceneRunnable(
+  scene: SceneFile,
+  sceneRef: string,
+  resolved: ResolvedPlugin,
+): void {
+  const validated = validateScene(scene, { registry: registryFor(resolved.plugin) });
+  const errors = validated.diagnostics.filter((d: Diagnostic) => d.severity === 'error');
+  if (errors.length === 0) return;
+
+  const unknown = [
+    ...new Set(
+      errors
+        .map((d) => (d.data as { component?: unknown } | undefined)?.component)
+        .filter((c): c is string => typeof c === 'string'),
+    ),
+  ].sort();
+
+  const detail = errors
+    .slice(0, 5)
+    .map((d) => `  ${d.code} ${d.location?.path ?? ''}: ${d.message}`.trimEnd())
+    .join('\n');
+
+  throw new AegisCliError(
+    CliCode.SceneNotRunnable,
+    `Scene "${sceneRef}" cannot run under plugin ${describePluginSource(resolved)} — ` +
+      `${errors.length} component(s) it uses are not registered by that plugin:\n${detail}`,
+    {
+      fix:
+        `A game ships a composed ModePlugin (the mode plugin plus its own components and systems); ` +
+        `the stock "${resolved.plugin.mode}" plugin does not know ${unknown.length > 0 ? unknown.map((c) => `"${c}"`).join(', ') : 'these components'}. ` +
+        `Pass --plugin <module>#<export> (e.g. --plugin games/iso/dist/server-vault.js#serverVaultPlugin), ` +
+        `or drop an aegis.json next to the game with { "plugin": "./dist/game.js#gamePlugin" }. ` +
+        `Running anyway would simulate a world with those components missing and report success.`,
+      exitCode: 2,
+      data: {
+        scene: sceneRef,
+        plugin: resolved.spec,
+        pluginSource: resolved.source,
+        mode: resolved.plugin.mode,
+        unknownComponents: unknown,
+        diagnostics: errors,
+      },
+    },
+  );
 }
 
 /** Count events by type into a Map (used for greppable histograms and JSON). */
@@ -65,8 +213,46 @@ export function frameOf(result: SimResult, mode: string, tick?: number): Semanti
   }
 }
 
-/** Produce the ASCII view, or a {@link CliCode.ViewUnavailable} error if the mode offers none. */
-export function asciiOf(result: SimResult, mode: string, tick?: number): AsciiView {
+/** The resource ids present in a world, sorted — the evidence behind an "no ASCII view" report. */
+function resourceIds(world: World): string[] {
+  return Object.keys(world.snapshot().resources).sort();
+}
+
+/**
+ * Resources that look like a grid but have no cells (`width` or `height` of 0).
+ *
+ * This is the actual cause of a missing 2D ASCII view: a mode's `init` bakes an *empty* grid
+ * when the scene declares no tilemap, and the view provider then has nothing to rasterise.
+ * Naming the empty grid turns a vague "no ASCII view" into a specific, fixable fact.
+ */
+function emptyGridResources(world: World): string[] {
+  const resources = world.snapshot().resources;
+  return Object.keys(resources)
+    .filter((id) => {
+      const value = resources[id] as { width?: unknown; height?: unknown } | undefined;
+      if (typeof value !== 'object' || value === null) return false;
+      const { width, height } = value;
+      if (typeof width !== 'number' || typeof height !== 'number') return false;
+      return width === 0 || height === 0;
+    })
+    .sort();
+}
+
+/** The scene-side fix for a missing grid, phrased in the mode's own resource vocabulary. */
+const GRID_HINT =
+  'A 2D ASCII view rasterises the collision/nav grid a mode bakes from authored level data. ' +
+  'Embed it in the scene\'s "resources" — "platformer.tilemap": { "aegis": "tilemap/1", … } for ' +
+  'platformer, "IsoGrid": { … } for iso, "fps.floorplan": { … } for fps — then re-run.';
+
+/**
+ * Produce the ASCII view, or an actionable {@link CliCode.ViewUnavailable} error.
+ *
+ * A `ViewProvider` returns `undefined` both when the mode has no ASCII projection *at all* and
+ * when this particular world lacks the grid it would rasterise. Reporting the first when the
+ * truth is the second ("mode platformer has no ASCII view") sends an agent off to rewrite the
+ * mode when the real problem is a scene with no tilemap. So we look at the world and say which.
+ */
+export function asciiOf(result: SimResult, mode: string, tick?: number, world?: World): AsciiView {
   let view: AsciiView | undefined;
   try {
     view = result.ascii(tick);
@@ -77,10 +263,61 @@ export function asciiOf(result: SimResult, mode: string, tick?: number): AsciiVi
       { fix: `The ${mode} view provider may not be implemented yet.`, cause: err },
     );
   }
-  if (!view) {
-    throw new AegisCliError(CliCode.ViewUnavailable, `Mode "${mode}" has no ASCII view.`, {
-      fix: 'Use --frame or --json instead (e.g. fps relies on the semantic frame, not ASCII).',
-    });
+  if (view) return view;
+
+  const at = `at tick ${tick ?? result.tick}`;
+  const resources = world ? resourceIds(world) : undefined;
+  const empty = world ? emptyGridResources(world) : [];
+
+  const [firstEmpty] = empty;
+  if (firstEmpty !== undefined) {
+    throw new AegisCliError(
+      CliCode.ViewUnavailable,
+      `No ASCII view for THIS WORLD — not for the "${mode}" mode: the view provider produced none ${at} because the grid it rasterises is empty (${empty.map((id) => `"${id}"`).join(', ')} has a zero width or height).`,
+      {
+        fix: `${GRID_HINT} The mode baked an empty grid because the scene declares no level data for it.`,
+        data: {
+          mode,
+          tick: tick ?? result.tick,
+          emptyGridResources: empty,
+          ...(resources !== undefined ? { worldResources: resources } : {}),
+          cause: 'world-grid-is-empty',
+        },
+      },
+    );
   }
-  return view;
+
+  if (resources !== undefined && resources.length === 0) {
+    throw new AegisCliError(
+      CliCode.ViewUnavailable,
+      `No ASCII view for THIS WORLD — not for the "${mode}" mode: the view provider produced none ${at}, and the world holds no resources at all, so there is no grid to rasterise.`,
+      {
+        fix: `${GRID_HINT} Use --view frame / --frame for a view that needs no grid.`,
+        data: {
+          mode,
+          tick: tick ?? result.tick,
+          worldResources: resources,
+          cause: 'world-has-no-resources',
+        },
+      },
+    );
+  }
+
+  throw new AegisCliError(
+    CliCode.ViewUnavailable,
+    `No ASCII view for this run: the "${mode}" view provider produced none ${at}${
+      resources !== undefined
+        ? ` for a world holding ${resources.length} resource(s): ${resources.join(', ')}`
+        : ''
+    }. None of those is an empty grid, so this mode most likely provides no ASCII projection at all.`,
+    {
+      fix: `Use --view frame / --frame — the semantic frame is available for every mode.${resources !== undefined && resources.length > 0 ? ` If you expected ASCII, check that one of ${resources.join(', ')} is the grid this mode rasterises.` : ''}`,
+      data: {
+        mode,
+        tick: tick ?? result.tick,
+        ...(resources !== undefined ? { worldResources: resources } : {}),
+        cause: 'provider-returned-none',
+      },
+    },
+  );
 }
