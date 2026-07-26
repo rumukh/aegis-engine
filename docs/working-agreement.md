@@ -47,9 +47,16 @@ Before you hand back, this must pass from the repo root:
 npm run verify
 ```
 
-which runs build + test + lint + dependency-boundary check. "It works on my package" is not
-the gate; the whole workspace is the gate. If you broke something you don't own, that is
-still your problem to report.
+which runs build + **type-check of every test file** + test + lint + dependency-boundary check.
+"It works on my package" is not the gate; the whole workspace is the gate. If you broke something
+you don't own, that is still your problem to report.
+
+The test type-check step (`npm run typecheck:tests`, `tsconfig.tests.json`) exists because every
+`packages/*/tsconfig.json` excludes `*.test.ts` from the build, vitest transpiles without
+type-checking, and eslint is not type-aware — so for a long time `npm run verify` never
+type-checked a single test file. A test fixture could silently drift out of contract with the type
+it claims to exercise, and one had: `packages/mode-fps/src/systems.test.ts` built `InputFrame`s
+missing `released` and `pointer` from the day it was written. Tests are code; they get checked.
 
 Note: `.github/workflows/ci.yml` is documentation of intent — this repo has **no git remote**,
 so GitHub Actions never actually runs. `npm run verify` is the real gate. Keep the workflow
