@@ -925,7 +925,10 @@ describe('World — restore validates its input (minor)', () => {
     expectInvalid((s) => {
       (s.entities as unknown[]).push({ ...(s.entities[0] as object) });
     }, 'entities[1].id');
-    expectInvalid((s) => ((s.allocator as { free: number[] }).free = [0]), 'entities[0].id');
+    expectInvalid(
+      (s) => ((s.allocator as unknown as { free: number[] }).free = [0]),
+      'entities[0].id',
+    );
   });
 
   it('rejects a malformed version, tick, allocator or PRNG state', () => {
@@ -933,8 +936,14 @@ describe('World — restore validates its input (minor)', () => {
     expectInvalid((s) => ((s as { tick: number }).tick = -1), 'tick');
     expectInvalid((s) => ((s as { tick: number }).tick = 1.5), 'tick');
     expectInvalid((s) => ((s as { prng: unknown }).prng = { s: [1, 2, 3, -4] }), 'prng.s');
-    expectInvalid((s) => ((s.allocator as { slots: number[] }).slots = [0]), 'allocator.slots[0]');
-    expectInvalid((s) => ((s.allocator as { free: number[] }).free = [42]), 'allocator.free[0]');
+    expectInvalid(
+      (s) => ((s.allocator as unknown as { slots: number[] }).slots = [0]),
+      'allocator.slots[0]',
+    );
+    expectInvalid(
+      (s) => ((s.allocator as unknown as { free: number[] }).free = [42]),
+      'allocator.free[0]',
+    );
   });
 
   it('still accepts every snapshot the world itself produces', () => {
