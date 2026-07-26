@@ -1,7 +1,14 @@
 /**
- * `@aegis/render-three` — the optional three.js render adapter and browser dev server. A pure
- * consumer of world state; nothing in the simulation depends on it.
+ * `@aegis/render-three` — the optional three.js render adapters.
+ *
+ * A pure consumer of world state: nothing in the simulation depends on it, and attaching it
+ * changes no simulation result (CHARTER principle 2, ADR-0005).
  * @packageDocumentation
  */
 export * from './adapter.js';
-export * from './dev-server.js';
+export * from './adapters/index.js';
+export * from './adapters/platformer.js';
+export * from './adapters/iso.js';
+export * from './adapters/fps.js';
+export * from './appearance.js';
+export * from './primitives.js';
