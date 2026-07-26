@@ -16,8 +16,15 @@
  * `hashEquals` shows both hashes. An agent should be able to act on the message alone.
  * @packageDocumentation
  */
-import type { EventReader, GameEvent, QueryDescriptor, StateHash, World } from '@aegis/core';
-import { Name } from '@aegis/core';
+import type {
+  Entity,
+  EventReader,
+  GameEvent,
+  QueryDescriptor,
+  StateHash,
+  World,
+} from '@aegis/core';
+import { entityGeneration, entityIndex, Name } from '@aegis/core';
 import { runScene } from './run.js';
 import type { RunOptions, SimResult } from './run.js';
 
@@ -67,14 +74,28 @@ function ticksOf(events: EventReader, type: string): number[] {
     .map((e) => e.tick);
 }
 
-/** A short, readable label for one matched entity: `#handle "Name"`. */
+/**
+ * Render a packed entity handle the way the CLI does (`packages/cli/src/format.ts`): `#<index>`
+ * for the common case, `#<index>@<gen>` once a slot has been reused. Core packs `generation` into
+ * the high 32 bits, so a raw handle like `4294967296` is really index 0, generation 1 — unreadable
+ * and indistinguishable from its neighbour. An agent debugging a failed playthrough must see the
+ * *same* name for an entity here as in `aegis inspect`, so the spelling is kept identical across
+ * the whole tool. Presentation only — structured/hashed data keeps the raw packed handle.
+ */
+function formatEntity(handle: number): string {
+  const e = handle as Entity;
+  const generation = entityGeneration(e);
+  return generation === 1 ? `#${entityIndex(e)}` : `#${entityIndex(e)}@${generation}`;
+}
+
+/** A short, readable label for one matched entity: `#0 "Name"` (or `#0@2` when reused). */
 function describeEntity(world: World, entity: number): string {
   const view = world
     .query({ has: [] })
     .views()
     .find((v) => v.entity === entity);
   const name = view?.tryGet(Name)?.value;
-  return name ? `#${entity} "${name}"` : `#${entity}`;
+  return name ? `${formatEntity(entity)} "${name}"` : formatEntity(entity);
 }
 
 /** Sample up to `limit` entities matching `query`, as a readable, comma-separated line. */

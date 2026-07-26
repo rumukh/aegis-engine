@@ -32,7 +32,7 @@ export interface ModePlugin {
    *
    * Optional (and therefore backwards-compatible): a mode with no setup omits it, or may
    * instead do first-tick work in a system guarded on `ctx.tick === 0`. Added in the freeze
-   * pass on the evidence that all three PoC modes need a setup step; see ADR-0010.
+   * pass on the evidence that all three PoC modes need a setup step; see ADR-0009.
    */
   init?(world: World): void;
   /** The projection used to produce semantic frames / ASCII views for this mode. */
