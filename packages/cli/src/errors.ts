@@ -54,6 +54,12 @@ export const CliCode = {
   SceneNotRunnable: 'AEG-CLI-0018',
   /** A tick count so large the run cannot complete in bounded memory/time. */
   TickLimitExceeded: 'AEG-CLI-0019',
+  /**
+   * No plugin was named for a scene that needs one. The scene declares markers the *defaulted*
+   * mode plugin does not provide, so the CLI cannot vouch that the systems which own them ran.
+   * Refusing beats a clean exit 0 over a world whose game layer never executed.
+   */
+  PluginNotResolved: 'AEG-CLI-0020',
 } as const;
 
 /** A CLI diagnostic code value. */

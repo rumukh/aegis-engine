@@ -377,10 +377,35 @@ describe('aegis scaffold produces a runnable game', () => {
     expect(r.code).toBe(0);
     const data = JSON.parse(r.out) as { files: string[] };
     expect(data.files).toEqual([
+      'demo/aegis.json',
       'demo/demo.scene.json',
       'demo/demo.tilemap.json',
       'demo/demo.input',
       'demo/demo.gametest.mjs',
     ]);
+  });
+
+  /**
+   * A scaffolded scene marks its entities (`Player`, `Goal`) with tags no stock mode registers,
+   * so without a plugin declaration the CLI would rightly refuse to run it (`AEG-CLI-0020`).
+   * Emitting `aegis.json` makes the correct configuration the default rather than something the
+   * author has to know about — and is the one line they edit when the game grows its own plugin.
+   */
+  it('emits an aegis.json so the naive invocation resolves a plugin instead of failing', async () => {
+    const dir = makeDir();
+    await cli(['scaffold', 'game', 'demo', '--mode', 'platformer'], dir, realDeps);
+    const config = JSON.parse(readFileSync(join(dir, 'demo', 'aegis.json'), 'utf8')) as {
+      plugin: string;
+    };
+    expect(config.plugin).toBe('platformer');
+
+    // The naive invocation: no --plugin, nothing hand-authored.
+    const ran = await cli(
+      ['run', 'demo/demo.scene.json', '--ticks', '120', '--input', 'demo/demo.input'],
+      dir,
+      realDeps,
+    );
+    expect(ran.code).toBe(0);
+    expect(ran.out).toContain('aegis.json');
   });
 });

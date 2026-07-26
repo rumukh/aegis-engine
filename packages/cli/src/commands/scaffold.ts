@@ -38,8 +38,8 @@ const USAGE = [
   'aegis scaffold <kind> <name> [options]',
   '',
   '  <kind>            game | scene | tilemap | test | prefab.',
-  '                    "game" writes a scene + tilemap + input script + starter GameTest',
-  '                    into <name>/, ready for: aegis validate / run / test.',
+  '                    "game" writes aegis.json + a scene + tilemap + input script + starter',
+  '                    GameTest into <name>/, ready for: aegis validate / run / test.',
   '  --mode <mode>     platformer | iso | fps (default: platformer).',
   '  --out <dir>       Base directory to write into (default: cwd).',
   '  --force           Overwrite existing files.',
@@ -345,11 +345,36 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
   ].join('\n');
 }
 
+/**
+ * The plugin declaration that makes the scaffolded game resolve its own plugin.
+ *
+ * Without this the game would start life running the *stock* mode by default — and because a
+ * scaffolded scene marks its entities (`Player`, `Goal`) with tags no stock mode registers, the
+ * CLI would rightly refuse to run it (`AEG-CLI-0020`). Writing the declaration makes the correct
+ * configuration the default instead of a thing you have to know about, and it is the one line you
+ * edit when the game grows its own composed plugin.
+ */
+function configDoc(name: string, mode: GameMode): string {
+  return doc({
+    plugin: mode,
+    $note: `Replace with "./dist/${name}.js#${pluginIdent(name)}" once this game ships its own composed ModePlugin. 'aegis run/inspect/record/replay' resolve this automatically for any scene in this directory.`,
+  });
+}
+
+/** The conventional export name for a scaffolded game's future composed plugin. */
+function pluginIdent(name: string): string {
+  const parts = name.split(/[^a-zA-Z0-9]+/).filter((p) => p.length > 0);
+  const [first, ...rest] = parts;
+  if (first === undefined) return 'gamePlugin';
+  return first + rest.map((p) => p[0]!.toUpperCase() + p.slice(1)).join('') + 'Plugin';
+}
+
 /** Compute the artifacts for a scaffold kind. */
 function artifactsFor(kind: Kind, name: string, mode: GameMode): Artifact[] {
   switch (kind) {
     case 'game':
       return [
+        { rel: `${name}/aegis.json`, content: configDoc(name, mode) },
         { rel: `${name}/${name}.scene.json`, content: sceneDoc(name, mode) },
         { rel: `${name}/${name}.tilemap.json`, content: tilemapDoc(name, mode) },
         { rel: `${name}/${name}.input`, content: inputDoc(mode) },

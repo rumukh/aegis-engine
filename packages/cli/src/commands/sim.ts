@@ -132,14 +132,14 @@ export async function resolveRunPlugin(
 }
 
 /**
- * Refuse to simulate a scene the resolved plugin cannot actually run.
+ * Refuse to simulate a scene whose components the resolved plugin does not register.
  *
  * `instantiateScene` reports an unknown component as a diagnostic and carries on, which is how a
  * game scene run under a *stock* mode plugin produced a clean, hashed, successful run of a world
  * missing half its components. Validating against the exact registry the run will use turns that
  * into a loud, coded failure that names the fix.
  */
-export function assertSceneRunnable(
+function assertComponentsRegistered(
   scene: SceneFile,
   sceneRef: string,
   resolved: ResolvedPlugin,
@@ -169,8 +169,8 @@ export function assertSceneRunnable(
       fix:
         `A game ships a composed ModePlugin (the mode plugin plus its own components and systems); ` +
         `the stock "${resolved.plugin.mode}" plugin does not know ${unknown.length > 0 ? unknown.map((c) => `"${c}"`).join(', ') : 'these components'}. ` +
-        `Pass --plugin <module>#<export> (e.g. --plugin games/iso/dist/server-vault.js#serverVaultPlugin), ` +
-        `or drop an aegis.json next to the game with { "plugin": "./dist/game.js#gamePlugin" }. ` +
+        `Pass --plugin <module>#<export> (e.g. --plugin @aegis/game-iso#serverVaultPlugin), ` +
+        `or drop an aegis.json next to the game with { "plugin": "@aegis/game-iso#serverVaultPlugin" }. ` +
         `Running anyway would simulate a world with those components missing and report success.`,
       exitCode: 2,
       data: {
@@ -183,6 +183,65 @@ export function assertSceneRunnable(
       },
     },
   );
+}
+
+/**
+ * Refuse a run whose plugin was **defaulted** rather than resolved, when the scene speaks a
+ * vocabulary that default does not know.
+ *
+ * This closes the one hole no content check can reach. A game's iso vocabulary — `Operative`,
+ * `Guard`, `Patrol` — is declared as **tags**, and `@aegis/content` validates component ids
+ * against the registry but deliberately does *not* validate tags, because free-form markers are
+ * legal by design. So the iso PoC scene validates perfectly against the stock iso plugin and used
+ * to run to a clean, hashed exit 0 with an empty event log — its entire semantic layer silently
+ * absent. Printing which plugin ran makes that visible, but a correct line of output an agent
+ * skips past is a record, not a control.
+ *
+ * So the rule is about *confidence*, not about tags: if nobody said which plugin to run, and the
+ * scene needs vocabulary the guess does not provide, the CLI will not guess. It is deliberately
+ * scoped to `source === 'mode'` — an explicit `--plugin` or `aegis.json` is the operator taking
+ * responsibility, including `{ "plugin": "iso" }` to mean "stock really is what I want".
+ */
+function assertPluginResolved(scene: SceneFile, sceneRef: string, resolved: ResolvedPlugin): void {
+  if (resolved.source !== 'mode') return;
+  const registry = registryFor(resolved.plugin);
+  const markers = [...sceneTags(scene)].filter((tag) => !registry.has(tag)).sort();
+  if (markers.length === 0) return;
+
+  const mode = resolved.plugin.mode;
+  throw new AegisCliError(
+    CliCode.PluginNotResolved,
+    `Refusing to run "${sceneRef}": no plugin was named for it, and it declares ${markers.length} marker(s) the default "${mode}" mode plugin does not provide: ${markers.join(', ')}.`,
+    {
+      fix:
+        `No registered system reads those markers, so this run would exercise the "${mode}" mode alone and still exit 0 — the exact silent failure this check exists to prevent. ` +
+        `Name the plugin: --plugin <module>#<export> (e.g. --plugin @aegis/game-${mode}#myGamePlugin), ` +
+        `or declare it once beside the scene in aegis.json: { "plugin": "@aegis/game-${mode}#myGamePlugin" } — ` +
+        `\`aegis scaffold game\` writes that file for you. ` +
+        `If the stock "${mode}" mode genuinely is what you want, say so with { "plugin": "${mode}" } and the markers become yours to consume.`,
+      exitCode: 2,
+      data: {
+        scene: sceneRef,
+        mode,
+        pluginSource: resolved.source,
+        unregisteredMarkers: markers,
+      },
+    },
+  );
+}
+
+/**
+ * Everything that must hold before a scene is simulated: its components must be registered by the
+ * plugin that will run, and that plugin must have been *chosen* rather than defaulted into when
+ * the scene needs more than the default provides.
+ */
+export function assertSceneRunnable(
+  scene: SceneFile,
+  sceneRef: string,
+  resolved: ResolvedPlugin,
+): void {
+  assertComponentsRegistered(scene, sceneRef, resolved);
+  assertPluginResolved(scene, sceneRef, resolved);
 }
 
 /** Count events by type into a Map (used for greppable histograms and JSON). */
