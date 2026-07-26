@@ -43,7 +43,7 @@ Tick rate 60Hz, `dt = 1/60`.
 | `Hitscan.range` | 100 u | ray length |
 | `Hitscan.damage` | 25 | per shot |
 | `Hitscan.cooldownTicks` | 12 | ≥12 ticks between shots (0.2 s) |
-| `Health.current/max` | 100 | player HP |
+| `Health.current/max` | 100 | player HP (`Health` is shared, from `@aegis/content`) |
 
 Derived: an 8 u/s jump under 24 u/s² gravity clears a **2–3 u pit** with margin; the coolant pit is
 2 u across.
@@ -65,20 +65,21 @@ removes the wall, emitting `door.opened`. The button is on the **east wall**, so
 - Dies at `Health ≤ 0` → `enemy.killed`. Two player hits (25+25) kill it; the player expects to
   take **at most one** grunt shot (−10 → Health 90) if it shoots on cue.
 
-**The coolant pit** — a floor gap in the corridor; a `HazardSystem` emits `player.died` if the
-player's feet drop below `y = -1` (fell in). Clearing it requires a jump.
+**The coolant pit** — a `hazard` `Trigger` volume (from `@aegis/content`) in the floor gap; entering
+it emits `player.died` (the player fell in). Clearing it requires a jump.
 
-**Exit** — a `GoalSystem`: player enters the exit trigger volume behind the grunt →
-`level.completed`.
+**Exit** — a `Trigger` volume behind the grunt: the player enters it → `level.completed`.
 
-> **Engine requirement flagged to PM:** 3D level geometry is authored as a **top-down tilemap
-> floorplan** (ADR-0003) that `mode-fps` extrudes — `#` cells become full-height solid walls, `.`
-> is floor, and blank/`T` cells are floor gaps (pits). This keeps fps geometry text-authorable with
-> the same format as the 2D modes. **`mode-fps` must therefore (a) build capsule collision from an
-> extruded floorplan and (b) resolve `Hitscan` rays against both that extruded geometry and against
-> entities (`Button`, grunt).** If the mode instead expects hand-placed 3D "brush" entities, the
-> game can do that, but the floorplan-extrusion convention is far more agent-friendly and is the
-> design assumption here. Please confirm which the mode will support. Flagged.
+> **Engine scope (per PM ruling — confirmed):** 3D level geometry is authored as a **top-down
+> tilemap floorplan** (ADR-0003) that `mode-fps` extrudes — `#` cells become full-height solid
+> walls, `.` is floor. Hand-placed 3D "brush" entities were rejected (they violate charter
+> principle 1 — an agent must author an FPS level by typing ASCII). The floorplan additionally
+> supports an **optional per-tile floor and ceiling height** (a numeric `heights` layer keyed by
+> the same grid), so the coolant pit — and any verticality — is expressible in the same text
+> format: a pit is a tile whose floor height is below 0 (or, for a bottomless gap, a `T` tile with
+> no floor). `mode-fps` therefore (a) builds capsule collision from the extruded, per-tile-height
+> floorplan and (b) resolves `Hitscan` rays against both that geometry and entities (`Button`,
+> grunt). Shared `Health` and the `Trigger`/volume component live in `@aegis/content`.
 
 ## Level layout
 
@@ -91,8 +92,8 @@ Legend:
 ```
 #  wall (extruded, solid + ray-blocking)   .  floor
 P  player spawn (entity, faces +Z)         B  button panel (entity, east wall of Room A)
-=  blast door (Blocking wall, opens on B)  T  toxic pit (floor gap: fall = death)
-G  grunt (entity, Health 50, faces -Z)     E  exit trigger (entity)
+=  blast door (Blocking wall, opens on B)  T  toxic pit (floor height < 0: fall = death)
+G  grunt (entity, Health 50, faces -Z)     E  exit (Trigger volume)
 ```
 
 Top-down floorplan (row 0 = z 20 = far/north; bottom row = z 0 = spawn/south):
@@ -117,6 +118,11 @@ Top-down floorplan (row 0 = z 20 = far/north; bottom row = z 0 = spawn/south):
       |  # . . . . P . . . . #      Room A — antechamber, player faces +Z
     0 |  # # # # # # # # # # #
 ```
+
+The floorplan above is the tilemap's `collision` layer; a parallel **`heights` layer** (same grid)
+makes the verticality explicit: every `.`/wall tile has floor 0 / ceiling 3, while the two `T` tiles
+carry a floor height of `-3` (a pit the player falls into if unjumped). A `hazard` `Trigger` volume
+sits in the pit and a goal `Trigger` sits on `E`.
 
 The breach reads as four beats, each proving one hard thing:
 
@@ -187,7 +193,8 @@ Notes for the implementer:
 
 ```ts
 import { defineGameTest, expectSim } from '@aegis/harness';
-import { fpsPlugin, Health } from '@aegis/mode-fps';
+import { fpsPlugin } from '@aegis/mode-fps';
+import { Health } from '@aegis/content';
 import { Transform } from '@aegis/core';
 
 export default defineGameTest({
@@ -248,10 +255,10 @@ on some tick — failing precisely when the AI drifted.
 | Shooting the button | `Hitscan` raycast resolving against a specific entity + cooldown |
 | Blast door opens on hit | Event-driven world mutation (`Blocking` removal) from a ray hit |
 | Walking the corridor | Capsule movement over extruded floorplan geometry, wall sliding |
-| Jumping the coolant pit | **3D gravity + jump arc + capsule-vs-floor**, pit-fall death |
+| Jumping the coolant pit | **3D gravity + jump arc + capsule-vs-floor** over a per-tile floor height; `hazard` `Trigger` pit-fall death |
 | The grunt firefight | `Health` damage from hitscan; two-shot kill math |
 | Grunt shooting back | Deterministic, RNG-free enemy AI cadence → `damage.taken` |
-| Reaching the exit | Goal detection in 3D + one-shot latch (`level.completed` once) |
+| Reaching the exit | Goal `Trigger` volume detection in 3D + one-shot latch (`level.completed` once) |
 | Semantic frame of the room | `ViewProvider` perspective projection (agent "sees" without a GPU) |
 | `hashEquals` + repeated run | Byte-identical determinism across `sin/cos` look math (ADR-0001) |
 | Health/`position.y` invariants | Whole-timeline safety properties, not just final state |

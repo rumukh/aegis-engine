@@ -14,7 +14,7 @@ behaviour is a pure function of the tick.
 | Doc | Mode | Game | Length | The hard thing it proves |
 | --- | --- | --- | --- | --- |
 | [`platformer.md`](./platformer.md) | `platformer` | **Coyote Gap** | ~360 ticks (~6 s) | Gravity, tile collision, coyote/buffer timing windows, **moving-platform (non-static) collision** |
-| [`iso.md`](./iso.md) | `iso` | **The Server Vault** | ~900 ticks (~15 s) | Grid **pathfinding**, click-to-move, **dynamic repath** on a mutated grid, deterministic patrol + detection |
+| [`iso.md`](./iso.md) | `iso` | **The Server Vault** | ~900 ticks (~15 s) | Grid **pathfinding**, click-to-move, **dynamic repath** on a mutated grid, deterministic patrol + detection, **real-time cooldown combat** (`enemy.killed` + `damage.taken`) |
 | [`fps.md`](./fps.md) | `fps` | **Sector Breach** | ~560 ticks (~9 s) | Look-**steered raycasting/hitscan**, capsule movement, **3D gravity + jump**, `Health` damage |
 
 ## Why these three cover the engine's surface
@@ -29,11 +29,13 @@ do.
   with a dedicated beat, plus a moving platform to prove collision against geometry that isn't the
   static tilemap.
 
-- **Iso → discrete grid reasoning + pathfinding.** The unique risks here are *combinatorial*:
-  finding a route through a maze, re-finding it when the grid changes (a door opens), reporting "no
-  path" honestly, and running a second actor deterministically alongside the player. The Server
-  Vault needs a real A*/BFS (a straight-line mover cannot solve it), mutates the passability grid
-  mid-mission, and makes success depend on timing against a clockwork guard.
+- **Iso → discrete grid reasoning + pathfinding + grid tactics.** The unique risks here are
+  *combinatorial*: finding a route through a maze, re-finding it when the grid changes (a door
+  opens), reporting "no path" honestly, and running a second actor deterministically alongside the
+  player. The Server Vault needs a real A*/BFS (a straight-line mover cannot solve it), mutates the
+  passability grid mid-mission, and makes success depend on timing against a clockwork guard — which,
+  when it spots the operative, becomes a hostile that must be **defeated in real-time cooldown combat**
+  (attack range in cells, per-hit damage, return fire against a shared `Health` pool).
 
 - **FPS → 3D orientation + rays.** The unique risks here are *directional and volumetric*: turning
   the camera and having a hitscan ray actually follow the look vector, moving a capsule through
@@ -66,10 +68,10 @@ event bus (each game asserts on named events), the assertion harness (`expectSim
 
 These are conscious scope cuts, called out so nobody mistakes them for gaps in the games:
 
-- **No grid combat / RPG systems.** `mode-iso` ships movement and pathfinding but **no `Health`,
-  attacks, or turn-order/initiative** (`Health` and `Hitscan` live only in `mode-fps`). The iso PoC
-  is therefore a *stealth/pathing* mission, not a firefight. Turning it into true *Fallout/DA:O*
-  combat would require new engine scope — see the flag below.
+- **No turn-based / initiative combat.** The iso mission is a *real-time-with-cooldown* fight
+  (authentic to Dragon Age: Origins, half our stated iso reference), **not** a turn/action-point
+  system. True turn-based initiative (Fallout-style) is **deferred to v2** and will be recorded in a
+  PM ADR, so `mode-iso` carries a single movement model in v1.
 - **No multi-level / progression.** One level per mode. No save/load of progress, no hub, no menus.
 - **No physics beyond the mode's model.** No ragdolls, no continuous collision, no rigid-body
   stacking (charter anti-goal). Platformer collision is AABB-vs-tile (+ one kinematic platform);
@@ -78,27 +80,32 @@ These are conscious scope cuts, called out so nobody mistakes them for gaps in t
 - **No audio, no particles, no shaders.** Appearance is intentionally crude (principle: the
   renderer is a thin adapter).
 
-## Engine capabilities these designs assume — and the gaps flagged to the PM
+## Engine capabilities these designs assume — resolved with the PM
 
 Each game doc has a "what it proves" table; collectively they assume the engine can do everything in
-those tables. Three assumptions are **not obviously covered by the shipped component surface** and
-are flagged to the PM (repeated here as an index — the details live in each doc):
+those tables. Three assumptions went beyond the originally-shipped component surface and were
+escalated to the PM. **All three were accepted and folded into engine scope**, along with two smaller
+shared-vocabulary gaps — recorded here as an index (details live in each doc):
 
-1. **Platformer — kinematic moving platforms** (`platformer.md`): the player's `TileCollider` must
-   resolve against a **moving solid entity** and be carried by it. If mode collision only handles
-   the static tilemap, the moving-platform beat cannot work. *Fix options:* mode supports kinematic
-   solids, or the game may run a carry system in the `physics` phase after mode collision.
-2. **Iso — no combat surface** (`iso.md`): no `Health`/attack/initiative in `mode-iso`. The PoC is
-   designed around this by being stealth, but if the PM wants grid *combat* in v1, the engine needs
-   a shared `Health` component and a per-cell attack/action-point contract. **This is the most
-   valuable flag** — it is a scope decision only the PM can make, and now is the time.
-3. **FPS — 3D geometry authoring + ray/collision against it** (`fps.md`): the design assumes
-   `mode-fps` builds capsule collision **and** resolves hitscan rays against a **top-down tilemap
-   floorplan extruded to walls** (plus entities). If the mode instead expects hand-placed 3D brush
-   entities, the geometry-authoring story changes. Please confirm the intended representation.
+1. **Platformer — kinematic moving platforms** → **mode-owned.** `mode-platformer` provides kinematic
+   solids that carry a rider (`platformer.md`); the game no longer hand-rolls carry logic. Being
+   carried by a moving solid is core platformer vocabulary, so the mode owns it.
+2. **Iso — grid combat** → **added.** `mode-iso` gains a real-time-with-cooldown attack contract
+   (attack range in cells, per-hit damage, cooldown, return fire) so the Server Vault guard can be
+   engaged and defeated (`iso.md`). This satisfies charter §4.3's Definition of Done ("defeated the
+   enemy, took the correct damage"). Turn-based initiative is deferred to v2 (see *not covered*).
+3. **FPS — 3D geometry authoring + ray/collision against it** → **confirmed + extended.** `mode-fps`
+   builds capsule collision **and** resolves hitscan rays against a **top-down tilemap floorplan
+   extruded to walls** (plus entities), with an **optional per-tile floor/ceiling height** so pits and
+   verticality stay text-authorable (`fps.md`). Hand-placed 3D brushes were rejected (they violate
+   principle 1 — text is the substrate).
 
-Two smaller assumptions, noted but not blocking (games can own them): there is **no generic
-trigger/goal/volume component** in core, so each game implements goal/hazard/switch detection as a
-small game-owned system reading `Transform`/`GridPosition` proximity; and **platformer/iso have no
-`Health`**, so the platformer uses one-hit death (an optional game-owned `Hearts` component could
-make `damage.taken` a multi-hit affair if desired).
+Two smaller gaps were also accepted into `@aegis/content` as shared vocabulary, so the games stop
+copy-pasting per-game systems:
+
+- **Shared `Health`** — moved from `mode-fps` into `@aegis/content` alongside damage/death events, so
+  iso and fps (and any future mode) share one HP pool. The platformer expresses one-hit death as
+  `Health { current: 1 }` rather than a bespoke mechanic.
+- **Shared `Trigger`/volume component** — a generic goal/hazard/switch/exit detection volume in
+  `@aegis/content`. All three games route goal, hazard and switch detection through it instead of a
+  hand-rolled per-game proximity system.

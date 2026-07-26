@@ -33,6 +33,7 @@ World unit = 1 tile. `tileSize: 1`. Tick rate 60Hz, `dt = 1/60`.
 | `coyoteTicks` | 6 | jump still fires up to 6 ticks after leaving a ledge |
 | `jumpBufferTicks` | 6 | a jump pressed up to 6 ticks before landing still fires |
 | `TileCollider` | half 0.4×0.5 | slightly narrower than a tile so corners forgive |
+| `Health` | 1 / 1 | one-hit death (`Health` is shared, from `@aegis/content`) |
 
 Derived: a running jump stays airborne ~32 ticks and travels ~4.3 tiles horizontally, so a **3-tile
 pit is comfortably clearable and a 4-tile pit is at the ragged edge**. The level uses 3-tile gaps.
@@ -45,23 +46,26 @@ pit is comfortably clearable and a 4-tile pit is at the ragged edge**. The level
   player receives a small bounce (`dy = 10`).
 - **Gore:** any other overlap (side/below) → `damage.taken` then `player.died` the same tick.
 
-**Moving platform** — a game-owned `MovingPlatformSystem`:
+**Moving platform** — a kinematic solid entity provided and carried by the **mode** (see *Engine
+scope* below):
 - A 3-tile-wide solid entity that oscillates horizontally over the lava gap between x=27 and x=32
   at 2 u/s, period reproducible from tick count.
-- The player standing on it is **carried** (its horizontal delta is added to the rider). See
-  *Engine requirement* below — this is the one capability base tile-collision may not cover.
+- The player standing on it is **carried** — its horizontal delta is added to the rider by the
+  mode's collision resolution.
 
-**Death** — a game-owned `HazardSystem`: player `Transform.position.y < -4` (fell in a pit) OR
-touching a `hazard` tile OR gored by the critter → `player.died` (once) and the run is over.
+**Death** — the player carries `Health { current: 1, max: 1 }`; any lethal contact sets it to 0,
+emitting `player.died` (once) and ending the run. Lethal contacts are: a `hazard` `Trigger` volume
+(spikes/lava tiles), falling below `Transform.position.y < -4`, or being gored by the critter. One
+HP is the whole mechanic — a platformer death is instant.
 
-**Goal** — a game-owned `GoalSystem`: when the player's collider overlaps the flag entity →
-`level.completed` (once).
+**Goal** — a `Trigger` volume (from `@aegis/content`) on the flag entity: the player's collider
+enters it → `level.completed` (once).
 
-> **Engine requirement flagged to PM:** the moving platform needs the player's `TileCollider` to
-> resolve against a **moving solid entity** and inherit its motion (a kinematic rider). If
-> `mode-platformer` only resolves collisions against the static tilemap, the platform won't carry
-> the player and this section fails. Either the mode supports kinematic solids, or the game must be
-> allowed to run a carry system in the `physics` phase after mode collision. Flagged.
+> **Engine scope (per PM ruling):** the moving platform is **mode-owned**. `mode-platformer` must
+> support **kinematic solids** and carry a rider standing on one — being carried is core platformer
+> vocabulary (both reference games have it), so the game does not hand-roll a carry system. Shared
+> `Health` and the `Trigger`/volume component live in `@aegis/content`. This design assumes all
+> three.
 
 ## Level layout
 
@@ -221,12 +225,12 @@ fails *at that tick*, pointing the implementer at exactly when the physics broke
 | --- | --- |
 | Flat start settles to grounded | Gravity integration + resting contact against static tiles |
 | Jumping the spike step | Jump launch, upward integration, landing on a raised solid |
-| Spike / lava trench death | Tilemap `data.hazard` read + positional death detection |
+| Spike / lava trench death | `hazard` `Trigger` volumes (`@aegis/content`) + positional death (`y < -4`) |
 | Critter patrol | Deterministic, RNG-free AI as a pure function of tick |
 | Stomp vs gore | `Velocity.dy` sign + relative position → branching game event |
-| Moving platform crossing | **Collision vs non-static (kinematic) geometry + rider carry** |
+| Moving platform crossing | **Mode-owned kinematic-solid collision + rider carry** |
 | Coyote-ledge jump | `coyoteTicks` grace window after leaving ground |
-| Goal pillar mount | `jumpBufferTicks` buffered-press window + goal overlap detection |
+| Goal pillar mount | `jumpBufferTicks` buffered-press window + `Trigger` goal volume (`@aegis/content`) |
 | Reaching the flag | Event emission + one-shot latching (`level.completed` exactly once) |
 | `hashEquals` + repeated run | Byte-identical determinism (ADR-0001) |
 | `assertInvariant` on `position.y` | Whole-timeline safety property, not just final state |
