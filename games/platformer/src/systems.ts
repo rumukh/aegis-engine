@@ -6,7 +6,7 @@
  * @packageDocumentation
  */
 import { abs, floor, Transform } from '@aegis/core';
-import type { System, TickContext, World } from '@aegis/core';
+import type { Entity, System, TickContext, World } from '@aegis/core';
 import { Dead, ENTITY_DIED, Health, pointInTrigger, Trigger, Triggered } from '@aegis/content';
 import type { EntityDiedEvent } from '@aegis/content';
 import { TileCollider, Velocity } from '@aegis/mode-platformer';
@@ -140,7 +140,10 @@ const deathMapSystem: System = {
   phase: 'events',
   run({ world, tick }: TickContext): void {
     for (const ev of world.events.ofType<EntityDiedEvent>(ENTITY_DIED)) {
-      const entity = ev.data.entity;
+      // `EntityDiedEvent.entity` is `number` in @aegis/content while the World API takes the
+      // branded `Entity`; `games/iso` narrows the same way. Reported to the PM — the proper fix
+      // is to declare the payload as `Entity` in @aegis/content.
+      const entity = ev.data.entity as Entity;
       if (world.has(entity, Player)) {
         const cause = world.get(entity, LethalHit)?.cause ?? 'unknown';
         world.events.emit(PLAYER_DIED, { cause, tick });
@@ -152,9 +155,9 @@ const deathMapSystem: System = {
 };
 
 /** Whether the player's collider centre is inside a goal trigger. */
-function playerInGoal(world: World): { hit: boolean; entity: number } {
+function playerInGoal(world: World): { hit: boolean; entity: Entity | null } {
   const pv = world.query({ has: [Player, Transform] }).first();
-  if (!pv) return { hit: false, entity: -1 };
+  if (!pv) return { hit: false, entity: null };
   const p = pv.get(Transform).position;
   for (const gv of world.query({ has: [Trigger, Transform], none: [Triggered] }).views()) {
     const trig = gv.get(Trigger);
@@ -162,7 +165,7 @@ function playerInGoal(world: World): { hit: boolean; entity: number } {
     if (pointInTrigger(trig, gv.get(Transform).position, p))
       return { hit: true, entity: gv.entity };
   }
-  return { hit: false, entity: -1 };
+  return { hit: false, entity: null };
 }
 
 /** Emit `level.completed` exactly once, the tick the player enters the goal volume. */
@@ -171,7 +174,7 @@ const goalSystem: System = {
   phase: 'postUpdate',
   run({ world, tick }: TickContext): void {
     const { hit, entity } = playerInGoal(world);
-    if (!hit) return;
+    if (!hit || entity === null) return;
     world.events.emit(LEVEL_COMPLETED, { tick });
     world.add(entity, Triggered);
   },
