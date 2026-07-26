@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { main } from './cli.js';
 import type { CliDeps } from './cli.js';
-import { createModeResolver } from './modes.js';
+import { createModeResolver, defaultModeResolver } from './modes.js';
 import { fakeMode } from './testing/fake-mode.js';
 
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -363,7 +363,7 @@ describe('aegis test', () => {
 });
 
 describe('aegis scaffold', () => {
-  it('scaffolds a game whose generated scene validates', async () => {
+  it('scaffolds a game whose generated scene validates against the real mode', async () => {
     const dir = makeDir();
     const r = await cli(['scaffold', 'game', 'demo', '--mode', 'platformer'], dir);
     expect(r.code).toBe(0);
@@ -371,12 +371,20 @@ describe('aegis scaffold', () => {
     expect(existsSync(join(dir, 'demo', 'demo.tilemap.json'))).toBe(true);
     expect(existsSync(join(dir, 'demo', 'demo.gametest.mjs'))).toBe(true);
 
-    const validated = await cli(
-      ['validate', 'demo/demo.scene.json', 'demo/demo.tilemap.json'],
-      dir,
+    // The scaffolded scene uses the real platformer mode's components, so it must be validated
+    // against the real resolver — the CLI's fake mode does not provide them.
+    let out = '';
+    const code = await main(
+      {
+        argv: ['validate', 'demo/demo.scene.json', 'demo/demo.tilemap.json'],
+        cwd: dir,
+        out: (t) => (out += t),
+        err: () => {},
+      },
+      { modes: defaultModeResolver() },
     );
-    expect(validated.code).toBe(0);
-    expect(validated.out).toContain('no problems found');
+    expect(code).toBe(0);
+    expect(out).toContain('no problems found');
   });
 
   it('--json lists the written files', async () => {
