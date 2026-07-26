@@ -11,7 +11,14 @@ import { canonicalStringify } from '@aegis/core';
 import { runScene } from '@aegis/harness';
 import type { RunOptions } from '@aegis/harness';
 import { Exit } from '../errors.js';
-import { formatAscii, formatFields, formatFrame, json } from '../format.js';
+import {
+  formatAscii,
+  formatEntity,
+  formatFields,
+  formatFrame,
+  entityParts,
+  json,
+} from '../format.js';
 import { describeQuery, parseQuery } from '../query.js';
 import type { Command, CommandContext } from '../command.js';
 import {
@@ -94,6 +101,7 @@ export const inspectCommand: Command = {
     const entities = snapshot.entities.filter((e) => selected.has(Number(e.id)));
 
     if (wantJson) {
+      const jsonEntities = entities.map((e) => ({ ...e, ...entityParts(Number(e.id)) }));
       io.out(
         json({
           scene: loaded.ref,
@@ -104,7 +112,7 @@ export const inspectCommand: Command = {
           query: flagString(args, 'query') ?? null,
           matched: entities.length,
           total: snapshot.entities.length,
-          entities,
+          entities: jsonEntities,
           resources: snapshot.resources,
         }),
       );
@@ -123,7 +131,7 @@ export const inspectCommand: Command = {
       `entities: ${entities.length} of ${snapshot.entities.length}`,
     ];
     for (const e of entities) {
-      lines.push(`#${e.id}${e.name !== undefined ? ` "${e.name}"` : ''}`);
+      lines.push(`${formatEntity(Number(e.id))}${e.name !== undefined ? ` "${e.name}"` : ''}`);
       const ids = Object.keys(e.components).sort();
       for (const id of ids) lines.push(`  ${id} = ${canonicalStringify(e.components[id])}`);
     }
