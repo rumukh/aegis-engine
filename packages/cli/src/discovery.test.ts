@@ -6,7 +6,7 @@
  * at all, and the suite reported `1 passed, 0 failed` and exited 0.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { main } from './cli.js';
@@ -297,22 +297,66 @@ describe('aegis test finds tests an aegis.json declares', () => {
     expect(data).toMatchObject({ filesScanned: 1, total: 1 });
   });
 
-  // The coverage gap that made the auditor's "1 of 3" dangerous: a game exists, and said nothing
-  // about its tests. Discovery can't find them, but it can say that it didn't look.
-  it('names a manifest that declares no tests, so a partial run cannot read as coverage', async () => {
+  // The coverage gap that made the auditor's "1 of 3" dangerous: a game exists, and contributed
+  // nothing. Discovery can't find tests nobody pointed at, but it can say that it didn't look.
+  it('names a game that contributed no test, so a partial run cannot read as coverage', async () => {
     const dir = makeDir();
     writeTest(dir, 'only.gametest.mjs', goodTest(dir, 'the one test'));
+    // A second "game" in its own directory, declaring a plugin and shipping no discoverable test.
+    mkdirSync(join(dir, 'other-game'), { recursive: true });
+    writeFileSync(join(dir, 'other-game', 'aegis.json'), '{ "plugin": "platformer" }\n', 'utf8');
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('contributed no GameTest to this run');
+    expect(r.out).toContain('other-game');
+
+    const asJson = await cli(['test', '--json'], dir);
+    const data = JSON.parse(asJson.out) as { gamesWithoutTests: string[] };
+    expect(data.gamesWithoutTests).toHaveLength(1);
+    expect(data.gamesWithoutTests[0]).toContain('other-game');
+  });
+
+  // The inverse failure, and just as harmful: warning about a game whose tests the default glob
+  // already found. A note that cries wolf gets filtered out, and is then gone for the real case.
+  it('stays silent about a game whose tests the default glob already found', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'covered.gametest.mjs', goodTest(dir, 'found by the glob'));
     writeFileSync(join(dir, 'aegis.json'), '{ "plugin": "platformer" }\n', 'utf8');
 
     const r = await cli(['test'], dir);
     expect(r.code).toBe(0);
-    expect(r.out).toContain('declare(s) no "tests"');
-    expect(r.out).toContain('NOT covered by this run');
-    expect(r.out).toContain('aegis.json');
+    expect(r.out).toContain('PASS found by the glob');
+    expect(r.out).not.toContain('contributed no GameTest');
+  });
 
-    const asJson = await cli(['test', '--json'], dir);
-    const data = JSON.parse(asJson.out) as { manifestsWithoutTests: string[] };
-    expect(data.manifestsWithoutTests).toHaveLength(1);
+  // Regression: a game module plus a re-exporting *.gametest.js are reached by the manifest glob
+  // AND the default glob. Node's module cache returns the SAME object, so it is one test — but
+  // counting it twice would inflate the coverage number, which is the one thing this command
+  // must never do.
+  it('counts one test once when two modules re-export the same object', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'game-module.mjs', goodTest(dir, 'reached two ways'));
+    writeTest(dir, 'thing.gametest.mjs', `export { default } from './game-module.mjs';\n`);
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./game-module.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test', '--json'], dir);
+    expect(r.code).toBe(0);
+    const data = JSON.parse(r.out) as { total: number; passed: number; invalid: number };
+    expect(data).toMatchObject({ total: 1, passed: 1, invalid: 0 });
+  });
+
+  // Two *different* tests sharing a name is the opposite case: every pass/fail line for it is
+  // ambiguous, so it is reported rather than silently collapsed.
+  it('reports two different tests that share a name', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'a.gametest.mjs', goodTest(dir, 'same name'));
+    writeTest(dir, 'b.gametest.mjs', goodTest(dir, 'same name'));
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('share the name "same name"');
+    expect(r.err).toContain('AEG-CLI-0014');
   });
 
   // Regression: `globFiles` returned absolute but UN-normalised paths, so a manifest entry of

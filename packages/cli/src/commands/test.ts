@@ -20,7 +20,7 @@
  * `GameTest`. That is what lets a scaffolded test run from a directory with no `node_modules`.
  * @packageDocumentation
  */
-import { dirname } from 'node:path';
+import { dirname, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runGameTest } from '@aegis/harness';
 import type { GameTest, GameTestResult, ModePlugin, RunOptions, SimResult } from '@aegis/harness';
@@ -110,8 +110,8 @@ interface Discovery {
   filesScanned: number;
   /** Files contributed by `aegis.json` manifests rather than by the glob. */
   filesFromManifests: number;
-  /** `aegis.json` files seen that declare no `tests` — a coverage gap, not an absence. */
-  manifestsWithoutTests: readonly string[];
+  /** `aegis.json` files whose game contributed no discovered test — a coverage gap. */
+  gamesWithoutTests: readonly string[];
   exportsSkipped: number;
   tests: DiscoveredTest[];
   invalid: InvalidTest[];
@@ -281,20 +281,26 @@ function summaryLine(results: readonly GameTestResult[], discovery: Discovery): 
 }
 
 /**
- * The coverage-gap note: an `aegis.json` that declares a plugin but no `tests`.
+ * The coverage-gap note: a game that contributed no tests to this run.
  *
  * A green run covering one of three games is a more dangerous signal than an empty one, because
  * it reads as coverage. Discovery cannot find a `GameTest` in a module nobody pointed at, but it
- * *can* see that a game exists and said nothing about its tests — and saying so is the difference
- * between "3 of 3 ran" and "1 ran, and I never looked at the other two".
+ * *can* see that a game exists and contributed nothing — and saying so is the difference between
+ * "3 ran" and "1 ran, and I never looked at the other two".
+ *
+ * The test is **"did this game's directory contribute a test?"**, not "does this file declare a
+ * `tests` field". A game whose tests the default glob already finds is covered, and warning about
+ * it would be a false alarm — which is not a harmless one: a note that cries wolf gets filtered
+ * out, and then it is no longer there for the case it exists for.
  */
 function coverageNote(discovery: Discovery): string | undefined {
-  const gaps = discovery.manifestsWithoutTests;
+  const gaps = discovery.gamesWithoutTests;
   if (gaps.length === 0) return undefined;
   return (
-    `note: ${gaps.length} aegis.json declare(s) no "tests", so any GameTest they ship is NOT covered by this run:\n` +
+    `note: ${gaps.length} game(s) declare an ${CONFIG_FILENAME} but contributed no GameTest to this run:\n` +
     gaps.map((f) => `        ${f}`).join('\n') +
-    `\n      Add e.g. { "tests": ["./dist/my-game.js"] } to include it.`
+    `\n      Neither the discovery glob nor a "tests" entry found one. Add e.g.` +
+    ` { "tests": ["./dist/*.gametest.js"] } to include it.`
   );
 }
 
@@ -342,7 +348,7 @@ export const testCommand: Command = {
     const discovery: Discovery = {
       filesScanned: files.length,
       filesFromManifests: declared.filter((f) => !globbed.includes(f)).length,
-      manifestsWithoutTests: manifests.filter((m) => !m.declaresTests).map((m) => m.file),
+      gamesWithoutTests: [],
       exportsSkipped: 0,
       tests: [],
       invalid: [],
@@ -359,6 +365,45 @@ export const testCommand: Command = {
     }
     for (const file of files) await collectFromFile(file, discovery);
 
+    // The same test can legitimately be reached twice: a game module plus a re-exporting
+    // `*.gametest.js`, found by a manifest glob and the default glob. Node's module cache returns
+    // the *same object*, so identity tells us it is one test, not two — dedupe silently, because
+    // counting it twice would inflate the coverage number.
+    //
+    // A name shared by two *different* objects is the opposite case and is reported: either it is
+    // one test reached by paths that broke identity, or two genuinely different tests, and in both
+    // cases every later pass/fail line is ambiguous about which one it refers to.
+    const seenTest = new Set<unknown>();
+    const distinct: DiscoveredTest[] = [];
+    for (const test of discovery.tests) {
+      if (seenTest.has(test.test)) continue;
+      seenTest.add(test.test);
+      distinct.push(test);
+    }
+    discovery.tests = distinct;
+
+    const byName = new Map<string, DiscoveredTest[]>();
+    for (const test of discovery.tests) {
+      const found = byName.get(test.test.name);
+      if (found) found.push(test);
+      else byName.set(test.test.name, [test]);
+    }
+    for (const [name, group] of byName) {
+      if (group.length < 2) continue;
+      const first = group[0]!;
+      discovery.tests = discovery.tests.filter((t) => t.test.name !== name || t === first);
+      discovery.invalid.push({
+        file: first.file,
+        exportName: first.exportName,
+        name,
+        problems: [
+          `${group.length} different tests share the name "${name}", so every pass/fail line for it is ambiguous: ` +
+            group.map((t) => `${t.file} [${t.exportName}]`).join(', '),
+          'Rename one of them.',
+        ],
+      });
+    }
+
     // A manifest that declared tests and contributed no GameTest at all is the failure mode this
     // mechanism exists to prevent: a declaration that "worked" while finding nothing.
     for (const manifest of manifests) {
@@ -373,6 +418,16 @@ export const testCommand: Command = {
         ],
       });
     }
+
+    // Coverage is judged per *game*, by whether its directory contributed a test at any point —
+    // by manifest or by the default glob. Warning about a game the glob already covered would be
+    // a false alarm, and a note that cries wolf stops being read.
+    discovery.gamesWithoutTests = manifests
+      .filter((m) => {
+        const dir = dirname(m.file);
+        return !discovery.tests.some((t) => t.file.startsWith(dir + sep));
+      })
+      .map((m) => m.file);
 
     const discovered = discovery.tests.length;
     const discoveredNames = discovery.tests.map((t) => t.test.name);
@@ -435,7 +490,7 @@ export const testCommand: Command = {
           total: results.length + discovery.invalid.length,
           filesScanned: discovery.filesScanned,
           filesFromManifests: discovery.filesFromManifests,
-          manifestsWithoutTests: discovery.manifestsWithoutTests,
+          gamesWithoutTests: discovery.gamesWithoutTests,
           testsDiscovered: discovered,
           testsRun: results.length,
           exportsSkipped: discovery.exportsSkipped,
