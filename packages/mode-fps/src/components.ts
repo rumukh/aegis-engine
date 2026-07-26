@@ -1,6 +1,11 @@
 /**
  * FPS-mode components: a capsule-bodied first-person actor with yaw/pitch look state and a
- * hitscan weapon. Pure data; behaviour lives in the mode's systems.
+ * hitscan weapon, plus a box hit-volume for shootable entities. Pure data; behaviour lives in
+ * the mode's systems.
+ *
+ * Health is intentionally **not** defined here — it is shared and owned by `@aegis/content`
+ * (the harness registers it as a base component). Redefining it locally would collide on the
+ * `"Health"` id at registration time.
  * @packageDocumentation
  */
 import { defineComponent } from '@aegis/core';
@@ -10,7 +15,7 @@ import type { ComponentType, Vec3 } from '@aegis/core';
 export interface CapsuleBodyData {
   /** Capsule radius, world units. */
   radius: number;
-  /** Capsule total height (tip to tip), world units. */
+  /** Capsule total height (feet to head), world units. */
   height: number;
   /** Current velocity, world units per second. */
   velocity: Vec3;
@@ -18,18 +23,16 @@ export interface CapsuleBodyData {
   grounded: boolean;
 }
 
-/** The moving collision volume of an FPS actor. */
+/** The moving collision volume of an FPS actor. `Transform.position` is the capsule's feet. */
 export const CapsuleBody: ComponentType<CapsuleBodyData> = defineComponent<CapsuleBodyData>({
   id: 'CapsuleBody',
   defaults: () => ({ radius: 0.4, height: 1.8, velocity: { x: 0, y: 0, z: 0 }, grounded: false }),
 });
 
-/** Data of {@link FpsController}: first-person movement and look tunables. */
+/** Data of {@link FpsController}: first-person movement tunables. */
 export interface FpsControllerData {
   /** Ground move speed, units/s. */
   moveSpeed: number;
-  /** Look sensitivity, degrees of rotation per unit of `look` delta. */
-  lookSpeedDeg: number;
   /** Downward acceleration, units/s². */
   gravity: number;
   /** Upward speed applied on jump, units/s. */
@@ -38,21 +41,22 @@ export interface FpsControllerData {
   maxPitchDeg: number;
 }
 
-/** Movement/look tunables for a controllable FPS character. */
+/**
+ * Movement tunables for a controllable FPS character.
+ *
+ * There is deliberately **no** look-sensitivity field: the harness `aim`/`look` DSL already
+ * emits `InputFrame.look` deltas in **degrees**, and the look system integrates them 1:1 so
+ * that `aim 90 0` lands exactly on yaw 90°. A sensitivity multiplier here would silently break
+ * every absolute `aim` in a script (see ADR-0004 and the handoff notes).
+ */
 export const FpsController: ComponentType<FpsControllerData> = defineComponent<FpsControllerData>({
   id: 'FpsController',
-  defaults: () => ({
-    moveSpeed: 6,
-    lookSpeedDeg: 0.15,
-    gravity: 24,
-    jumpSpeed: 8,
-    maxPitchDeg: 89,
-  }),
+  defaults: () => ({ moveSpeed: 6, gravity: 24, jumpSpeed: 8, maxPitchDeg: 89 }),
 });
 
 /** Data of {@link LookState}: the accumulated look orientation, in degrees. */
 export interface LookStateData {
-  /** Yaw (turn) in degrees, wrapping in `[0, 360)`. */
+  /** Yaw (turn) in degrees. 0 faces +Z; increasing yaw turns toward +X. */
   yawDeg: number;
   /** Pitch (up/down) in degrees, clamped by {@link FpsControllerData.maxPitchDeg}. */
   pitchDeg: number;
@@ -86,7 +90,7 @@ export const FpsCamera: ComponentType<FpsCameraData> = defineComponent<FpsCamera
 export interface HitscanData {
   /** Maximum ray distance, world units. */
   range: number;
-  /** Damage applied to the first entity hit. */
+  /** Damage applied to the first entity hit that has `Health`. */
   damage: number;
   /** Minimum ticks between shots. */
   cooldownTicks: number;
@@ -94,24 +98,28 @@ export interface HitscanData {
   cooldownRemaining: number;
 }
 
-/** A hitscan weapon resolved by casting a ray from the camera. */
+/** A hitscan weapon resolved by casting a ray from the camera eye along the look direction. */
 export const Hitscan: ComponentType<HitscanData> = defineComponent<HitscanData>({
   id: 'Hitscan',
   defaults: () => ({ range: 100, damage: 25, cooldownTicks: 12, cooldownRemaining: 0 }),
 });
 
-/** Data of {@link Health}: hit points for damageable entities. */
-export interface HealthData {
-  /** Current hit points. */
-  current: number;
-  /** Maximum hit points. */
-  max: number;
+/** Data of {@link HitBox}: an axis-aligned box a hitscan ray can strike. */
+export interface HitBoxData {
+  /** Half-extents of the box, world units. */
+  half: Vec3;
+  /** Offset of the box centre from the entity's `Transform.position`. */
+  offset: Vec3;
 }
 
-/** Hit points; reaching `0` marks the entity dead (handled by mode systems). */
-export const Health: ComponentType<HealthData> = defineComponent<HealthData>({
-  id: 'Health',
-  defaults: () => ({ current: 100, max: 100 }),
+/**
+ * A shootable axis-aligned box. Any entity a ray should be able to hit — the wall panel button,
+ * the security grunt — carries one. Distinct from {@link CapsuleBody} (which is the mover) and
+ * from a `Trigger` (which is volume-overlap detection, not ray intersection).
+ */
+export const HitBox: ComponentType<HitBoxData> = defineComponent<HitBoxData>({
+  id: 'HitBox',
+  defaults: () => ({ half: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 } }),
 });
 
 /** All component types this mode contributes to the registry. */
@@ -121,5 +129,5 @@ export const FPS_COMPONENTS: readonly ComponentType<unknown>[] = [
   LookState,
   FpsCamera,
   Hitscan,
-  Health,
+  HitBox,
 ] as readonly ComponentType<unknown>[];

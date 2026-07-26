@@ -1,0 +1,45 @@
+{
+  "aegis": "tilemap/1",
+  "name": "sector-breach",
+  "width": 11,
+  "height": 21,
+  "tileSize": 1,
+  "legend": {
+    "#": { "solid": true, "data": { "floor": 0, "ceil": 4 } },
+    ".": { "solid": false, "data": { "floor": 0, "ceil": 4 } },
+    "P": { "solid": false, "data": { "floor": 0, "ceil": 4 } },
+    "B": { "solid": false, "data": { "floor": 0, "ceil": 4 } },
+    "G": { "solid": false, "data": { "floor": 0, "ceil": 4 } },
+    "E": { "solid": false, "data": { "floor": 0, "ceil": 4 } },
+    "=": { "solid": true, "data": { "floor": 0, "ceil": 4, "door": true } },
+    "T": { "solid": false, "data": { "floor": -3, "ceil": 4, "hazard": true } }
+  },
+  "layers": [
+    {
+      "name": "collision",
+      "data": [
+        "###########",
+        "#....E....#",
+        "#.........#",
+        "#....G....#",
+        "#.........#",
+        "####...####",
+        "####...####",
+        "####TTT####",
+        "####TTT####",
+        "####...####",
+        "####...####",
+        "####...####",
+        "#####=#####",
+        "#####.#####",
+        "#####.#####",
+        "#.........#",
+        "#.........#",
+        "#.........#",
+        "#....P...B#",
+        "#.........#",
+        "###########"
+      ]
+    }
+  ]
+}

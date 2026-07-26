@@ -1,62 +1,32 @@
 /**
- * The FPS {@link ModePlugin}: capsule movement with gravity/jump, mouse-look accumulation,
+ * The FPS {@link ModePlugin}: capsule movement with 3D gravity/jump, look accumulation,
  * capsule-vs-world collision, and hitscan resolution — projected through a perspective camera.
- * The semantic frame is the primary view; the ASCII view is a coarse depth raster. Declares
- * the pipeline and projection contract; bodies are stubs.
+ * Its `init` extrudes the authored ASCII floorplan into collision geometry once per run; its
+ * systems then resolve movement and rays against that geometry (ADR-0010, ADR-0006).
  * @packageDocumentation
  */
-import { createSchedule, notImplemented } from '@aegis/core';
-import type { GameMode, Schedule, World } from '@aegis/core';
-import type {
-  AsciiView,
-  ModePlugin,
-  SemanticFrame,
-  ViewOptions,
-  ViewProvider,
-} from '@aegis/harness';
+import { createSchedule } from '@aegis/core';
+import type { Schedule, World } from '@aegis/core';
+import type { ModePlugin } from '@aegis/harness';
 import { FPS_COMPONENTS } from './components.js';
+import { FPS_COLLISION, FPS_FLOORPLAN, extrudeFloorplan } from './geometry.js';
+import { FPS_SYSTEMS } from './systems.js';
+import { FpsViewProvider } from './view.js';
 
-/**
- * The FPS system pipeline, in intended execution order.
- *
- * 1. `fps.look` (`input`) — integrate the tick's `look` delta into `LookState`, clamping pitch.
- * 2. `fps.intake` (`input`, after `fps.look`) — map movement actions into a desired horizontal
- *    velocity oriented by `LookState.yawDeg`; latch a jump request; latch a fire request from
- *    the `Fire` action.
- * 3. `fps.gravity` (`update`) — integrate `gravity` into `CapsuleBody.velocity.y`.
- * 4. `fps.integrate` (`physics`, after `fps.gravity`) — sweep the capsule and resolve against
- *    world geometry, updating `grounded`.
- * 5. `fps.hitscan` (`physics`, after `fps.integrate`) — on a fire request off cooldown, cast a
- *    ray from the camera eye along the look direction and apply `Hitscan.damage` to the first
- *    entity with `Health`.
- * 6. `fps.camera` (`postUpdate`) — place the `FpsCamera` at eye height with the look orientation.
- */
-export const FPS_SYSTEMS = [
-  { name: 'fps.look', phase: 'input' },
-  { name: 'fps.intake', phase: 'input', after: ['fps.look'] },
-  { name: 'fps.gravity', phase: 'update' },
-  { name: 'fps.integrate', phase: 'physics', after: ['fps.gravity'] },
-  { name: 'fps.hitscan', phase: 'physics', after: ['fps.integrate'] },
-  { name: 'fps.camera', phase: 'postUpdate' },
-] as const;
-
-/** Build the FPS schedule. */
+/** Build the FPS schedule from the mode's ordered systems. */
 export function fpsSchedule(): Schedule {
-  return createSchedule();
+  return createSchedule().addAll(FPS_SYSTEMS);
 }
 
 /**
- * Perspective projection producing the semantic frame. `asciiView` returns a coarse
- * depth/silhouette raster (fps relies primarily on the structured frame).
+ * Per-run setup: extrude the scene-supplied {@link FPS_FLOORPLAN} floorplan into a
+ * {@link FPS_COLLISION} grid the physics and hitscan systems query. Runs once, after the scene is
+ * instantiated and before tick 0. Deterministic — pure data transformation, no wall-clock or RNG.
  */
-export class FpsViewProvider implements ViewProvider {
-  readonly mode: GameMode = 'fps';
-  semanticFrame(world: World, options?: ViewOptions): SemanticFrame {
-    return notImplemented('FpsViewProvider.semanticFrame');
-  }
-  asciiView(world: World, options?: ViewOptions): AsciiView | undefined {
-    return notImplemented('FpsViewProvider.asciiView');
-  }
+export function initFloorplan(world: World): void {
+  const spec = world.getResource(FPS_FLOORPLAN);
+  if (spec === undefined || spec.width === 0 || spec.height === 0) return;
+  world.setResource(FPS_COLLISION, extrudeFloorplan(spec));
 }
 
 /** The FPS mode plugin. */
@@ -64,5 +34,6 @@ export const fpsPlugin: ModePlugin = {
   mode: 'fps',
   components: () => FPS_COMPONENTS,
   systems: () => fpsSchedule(),
+  init: (world) => initFloorplan(world),
   view: () => new FpsViewProvider(),
 };
