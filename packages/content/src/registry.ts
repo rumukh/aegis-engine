@@ -7,7 +7,6 @@
  * them; a mode contributes its component types to the registry when it is activated.
  * @packageDocumentation
  */
-import { notImplemented } from '@aegis/core';
 import type { ComponentType } from '@aegis/core';
 
 /** A lookup from component id to {@link ComponentType}. */
@@ -26,5 +25,33 @@ export interface ComponentRegistry {
 
 /** Create a registry, optionally seeded with an initial set of component types. */
 export function createRegistry(...types: ComponentType<unknown>[]): ComponentRegistry {
-  return notImplemented(`createRegistry(${types.length} types)`);
+  const map = new Map<string, ComponentType<unknown>>();
+
+  const registry: ComponentRegistry = {
+    register(type: ComponentType<unknown>): ComponentRegistry {
+      const existing = map.get(type.id);
+      if (existing !== undefined && existing !== type) {
+        throw new Error(
+          `[aegis] ComponentRegistry: id "${type.id}" is already registered to a different component type`,
+        );
+      }
+      map.set(type.id, type);
+      return registry;
+    },
+    registerAll(list: Iterable<ComponentType<unknown>>): ComponentRegistry {
+      for (const t of list) registry.register(t);
+      return registry;
+    },
+    get(id: string): ComponentType<unknown> | undefined {
+      return map.get(id);
+    },
+    has(id: string): boolean {
+      return map.has(id);
+    },
+    ids(): readonly string[] {
+      return [...map.keys()].sort();
+    },
+  };
+  registry.registerAll(types);
+  return registry;
 }
