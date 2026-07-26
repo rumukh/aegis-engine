@@ -211,6 +211,14 @@ aegis record … --out run.replay && aegis replay run.replay --verify   # prove 
 The **input script** (`play.input`, ADR-0004) is the agent's hands; the **semantic frame / ASCII
 view** are its eyes; the **assertion API** (§7) is how it knows it succeeded.
 
+Two properties of the input DSL that ADR-0004 leaves implicit and the harness now enforces:
+a recording is rendered in **source order**, because the compiler resolves overlapping `axis` /
+`pointer` writes as last-source-order-wins (so ADR-0004's "lines reorder … independently" holds
+for `hold`/`press`/`release` but not for the analog channels — a script that depends on line
+order raises `AEG-HARNESS-0012`); and statements outside `[0, ticks)` are reported
+(`AEG-HARNESS-0009`…`0011`) rather than silently swallowed, so shortening a run cannot make a
+whole script evaporate into a hash identical to "no input at all".
+
 ## 7. The assertion API — designed backwards from the ideal test
 
 Principle 6 says gameplay is verified by assertions, not eyeballs. We designed the whole harness
@@ -296,8 +304,8 @@ in a query is a loud failure rather than a filter that silently matches nothing,
 able to tell "verified" from "didn't check".
 
 The object all of this reads from is `SimResult` (`harness/run.ts`): `world`, `hash`,
-per-tick `tickHashes`, the `events` reader, `query(...)`, `frame(tick)`, `ascii(tick)`,
-`at(tick)`, and `recording()`/`replay()`.
+per-tick `tickHashes`, the `events` reader, `query(...)`, `frame(tick, viewOptions?)`,
+`ascii(tick, viewOptions?)`, `at(tick)`, and `recording()`/`replay()`.
 
 ## 8. Contracts most likely to be renegotiated
 
@@ -311,6 +319,23 @@ Flagged here and to the PM because five sessions build against them in parallel:
   projection exists.
 - **`SimResult`** (`harness/run.ts`) — the surface every test reads. Additions are cheap;
   renames are expensive. Confirm shape before the game-dev sessions start.
+
+### 8.1 Additive changes made under the freeze (PM-authorised)
+
+All optional, all backwards compatible — no renames, no required fields, no removals:
+
+| Contract         | Addition                                              | Why                                                                                                                                                      |
+| ---------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SemanticFrame`  | `totalEntities?`, `excludedEntities?`                 | A frame that lists 3 of a world's 6 entities was indistinguishable from a 3-entity world. The harness fills a truthful default when a provider does not. |
+| `AsciiView`      | `overlaps?: AsciiOverlap[]`                           | A stacked cell erased the player glyph while the legend still advertised it, reading as "the player despawned".                                          |
+| `SimResult`      | optional `options` argument on `frame()` / `ascii()`  | `ViewOptions.includeOffscreen` and `ViewOptions.ascii` were otherwise unreachable.                                                                       |
+| `Invariant`      | `check` may return `{ ok, actual, expected, detail }` | A bare `false` cannot say what it saw.                                                                                                                   |
+| `GameTestResult` | `assertions`, `checked`                               | Reports what a playthrough actually verified, so "asserted nothing" is not a pass.                                                                       |
+
+`ViewProvider` implementers (`mode-platformer`, `mode-iso`, `mode-fps`) should populate
+`SemanticFrame.totalEntities`/`excludedEntities` where they cull more precisely than the harness's
+default, and `AsciiView.overlaps` where they rasterise by drawing entities in priority order —
+`harness/testing/fake-mode.ts` is the reference implementation of both.
 
 ## 9. Where the ADRs live
 
