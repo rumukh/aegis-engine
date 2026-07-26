@@ -108,3 +108,22 @@ export function formatCliError(error: AegisCliError): string {
   if (error.fix) lines.push(`  fix: ${error.fix}`);
   return lines.join('\n');
 }
+
+/**
+ * The message of a caught value, whatever it is.
+ *
+ * `catch` binds `unknown`, and `(err as Error).message` is a lie the compiler cannot check: a
+ * thrown string or object yields `undefined` inside a diagnostic that is supposed to explain the
+ * failure. Narrowing instead of asserting keeps every message truthful.
+ */
+export function messageOf(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+/** The `errno` code of a caught filesystem error, when it has one. */
+export function errnoOf(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}

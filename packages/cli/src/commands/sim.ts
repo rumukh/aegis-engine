@@ -22,11 +22,11 @@ import {
 } from '@aegis/content';
 import type { ComponentRegistry, EntityDecl, SceneFile } from '@aegis/content';
 import { DiagnosticError, Name, Transform } from '@aegis/core';
-import type { Diagnostic, EventReader, GameEvent, World } from '@aegis/core';
+import type { Diagnostic, EventReader, World } from '@aegis/core';
 import type { AsciiView, ModePlugin, SemanticFrame, SimResult } from '@aegis/harness';
 import { dirname } from 'node:path';
 import type { CommandContext } from '../command.js';
-import { AegisCliError, CliCode } from '../errors.js';
+import { AegisCliError, CliCode, messageOf } from '../errors.js';
 import { describePluginSource, discoverPluginSpec, loadPlugin } from '../plugin.js';
 import type { ResolvedPlugin } from '../plugin.js';
 import { flagString, readText, resolvePath } from './shared.js';
@@ -250,7 +250,7 @@ export function markerReport(composition: RunComposition): string | undefined {
 
 export function eventCounts(events: EventReader): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const e of events.history() as readonly GameEvent[]) {
+  for (const e of events.history()) {
     counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
   }
   return counts;
@@ -269,7 +269,7 @@ export function frameOf(result: SimResult, mode: string, tick?: number): Semanti
     if (err instanceof AegisCliError) throw err;
     throw new AegisCliError(
       CliCode.ViewUnavailable,
-      `Mode "${mode}" cannot produce a semantic frame: ${(err as Error).message}`,
+      `Mode "${mode}" cannot produce a semantic frame: ${messageOf(err)}`,
       { fix: `The ${mode} view provider may not be implemented yet.`, cause: err },
     );
   }
@@ -321,7 +321,7 @@ export function asciiOf(result: SimResult, mode: string, tick?: number, world?: 
   } catch (err) {
     throw new AegisCliError(
       CliCode.ViewUnavailable,
-      `Mode "${mode}" cannot produce an ASCII view: ${(err as Error).message}`,
+      `Mode "${mode}" cannot produce an ASCII view: ${messageOf(err)}`,
       { fix: `The ${mode} view provider may not be implemented yet.`, cause: err },
     );
   }

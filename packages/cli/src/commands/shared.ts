@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import type { ParsedArgs } from '../args.js';
 import type { CliIO } from '../io.js';
-import { AegisCliError, CliCode } from '../errors.js';
+import { AegisCliError, CliCode, errnoOf, messageOf } from '../errors.js';
 
 /** Resolve a possibly-relative path against the command's working directory. */
 export function resolvePath(io: CliIO, p: string): string {
@@ -90,13 +90,15 @@ export function flagChoice<T extends string>(
 ): T {
   const value = flagString(args, key);
   if (value === undefined) return fallback;
-  if (!(choices as readonly string[]).includes(value)) {
+  // `find` narrows to T by construction; `includes` + a cast would only assert the same thing.
+  const match = choices.find((choice) => choice === value);
+  if (match === undefined) {
     throw new AegisCliError(CliCode.InvalidChoice, `Invalid --${key} value "${value}".`, {
       fix: `Use one of: ${choices.join(', ')}.`,
       data: { received: value, choices },
     });
   }
-  return value as T;
+  return match;
 }
 
 /**
@@ -141,16 +143,14 @@ export function readText(absPath: string, io: CliIO): string {
   try {
     return readFileSync(absPath, 'utf8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (errnoOf(err) === 'ENOENT') {
       throw new AegisCliError(CliCode.FileNotFound, `File not found: ${absPath}`, {
         fix: `Check the path (resolved against ${io.cwd}).`,
         cause: err,
       });
     }
-    throw new AegisCliError(
-      CliCode.FileNotFound,
-      `Could not read ${absPath}: ${(err as Error).message}`,
-      { cause: err },
-    );
+    throw new AegisCliError(CliCode.FileNotFound, `Could not read ${absPath}: ${messageOf(err)}`, {
+      cause: err,
+    });
   }
 }

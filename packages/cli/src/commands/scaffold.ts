@@ -410,11 +410,13 @@ export const scaffoldCommand: Command = {
   flags: { mode: 'value', out: 'value', force: 'boolean' },
   run(ctx: CommandContext): Promise<number> {
     const { args, io } = ctx;
-    const kind = requirePositional(args, 0, 'kind', 'aegis scaffold <kind> <name>') as Kind;
-    if (!(KINDS as readonly string[]).includes(kind)) {
-      throw new AegisCliError(CliCode.InvalidChoice, `Unknown scaffold kind "${kind}".`, {
+    const kindArg = requirePositional(args, 0, 'kind', 'aegis scaffold <kind> <name>');
+    // Validate first, then use the narrowed value — never name it `Kind` before it is proven one.
+    const kind = KINDS.find((candidate) => candidate === kindArg);
+    if (kind === undefined) {
+      throw new AegisCliError(CliCode.InvalidChoice, `Unknown scaffold kind "${kindArg}".`, {
         fix: `Use one of: ${KINDS.join(', ')}.`,
-        data: { received: kind, kinds: KINDS },
+        data: { received: kindArg, kinds: KINDS },
       });
     }
     const name = requirePositional(args, 1, 'name', 'aegis scaffold <kind> <name>');

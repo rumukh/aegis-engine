@@ -14,6 +14,20 @@ import type { Diagnostic, Entity } from '@aegis/core';
 import type { AsciiView, SemanticFrame } from '@aegis/harness';
 
 /**
+ * Re-brand a raw packed handle as an {@link Entity}.
+ *
+ * This is a real seam, not a convenience: `WorldSnapshot` serialises an entity handle as a
+ * decimal **string**, and `@aegis/core` exposes `entityIndex`/`entityGeneration` (which take a
+ * branded handle) but **no `Entity` constructor or parser** — core itself brands with
+ * `0 as Entity` for `NULL_ENTITY`. So reading a snapshot back into a handle must re-brand
+ * somewhere. This is the CLI's single such point, named and kept in one place rather than
+ * scattered. Reported to the PM: a checked `toEntity(value: number): Entity` in core removes it.
+ */
+function asEntity(handle: number): Entity {
+  return handle as Entity;
+}
+
+/**
  * Render a packed entity handle in an agent- and human-legible form: `#<index>` for the common
  * case, `#<index>@<gen>` when the generation is not 1 (i.e. the slot has been reused). Core packs
  * `generation` into the high 32 bits, so a raw handle like `4294967296` is really index 0,
@@ -21,14 +35,14 @@ import type { AsciiView, SemanticFrame } from '@aegis/harness';
  * index visually dominant and the generation distinguishable, and stays stable/diffable.
  */
 export function formatEntity(handle: number): string {
-  const e = handle as Entity;
+  const e = asEntity(handle);
   const generation = entityGeneration(e);
   return generation === 1 ? `#${entityIndex(e)}` : `#${entityIndex(e)}@${generation}`;
 }
 
 /** The decomposed parts of a packed handle for `--json`; `id` preserves the raw packed value. */
 export function entityParts(handle: number): { id: string; index: number; generation: number } {
-  const e = handle as Entity;
+  const e = asEntity(handle);
   return { id: String(handle), index: entityIndex(e), generation: entityGeneration(e) };
 }
 

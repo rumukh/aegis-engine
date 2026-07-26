@@ -64,7 +64,8 @@ export function parseArgs(args: readonly string[], spec: FlagSpec = {}): ParsedA
   };
 
   while (i < args.length) {
-    const token = args[i] as string;
+    const token = args[i];
+    if (token === undefined) break;
     if (noMoreFlags || !token.startsWith('-') || token === '-') {
       positionals.push(token);
       i += 1;

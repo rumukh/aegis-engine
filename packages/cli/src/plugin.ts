@@ -23,7 +23,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isGameMode } from '@aegis/core';
 import type { ModePlugin } from '@aegis/harness';
-import { AegisCliError, CliCode } from './errors.js';
+import { AegisCliError, CliCode, messageOf } from './errors.js';
 
 /** Where a resolved plugin came from. */
 export type PluginSource =
@@ -116,7 +116,7 @@ async function importModule(
   } catch (err) {
     throw new AegisCliError(
       CliCode.PluginLoadFailed,
-      `Could not import plugin module "${module}": ${(err as Error).message}`,
+      `Could not import plugin module "${module}": ${messageOf(err)}`,
       {
         fix: isPathSpecifier(module)
           ? 'Build the module first (a TypeScript source that imports sibling ".js" specifiers cannot be imported directly — point --plugin at the compiled output).'
@@ -128,11 +128,22 @@ async function importModule(
   }
 }
 
-/** Names of a module's exports that are runnable {@link ModePlugin}s. */
-function pluginExports(mod: Record<string, unknown>): string[] {
-  return Object.keys(mod)
-    .filter((key) => isModePlugin(mod[key]))
-    .sort();
+/** Names of a module's exports that are runnable {@link ModePlugin}s, with the plugin itself. */
+interface PluginExport {
+  /** The export name. */
+  name: string;
+  /** The plugin, already narrowed by {@link isModePlugin} — no cast needed downstream. */
+  plugin: ModePlugin;
+}
+
+/** Every export of `mod` that satisfies the {@link ModePlugin} contract, sorted by name. */
+function pluginExports(mod: Record<string, unknown>): PluginExport[] {
+  const found: PluginExport[] = [];
+  for (const name of Object.keys(mod).sort()) {
+    const value = mod[name];
+    if (isModePlugin(value)) found.push({ name, plugin: value });
+  }
+  return found;
 }
 
 /** Pick the requested (or the only sensible) plugin export from an imported module. */
@@ -143,6 +154,7 @@ function selectExport(
   module: string,
 ): ModePlugin {
   const candidates = pluginExports(mod);
+  const names = candidates.map((c) => c.name);
   if (exportName !== undefined) {
     const value = mod[exportName];
     if (value === undefined) {
@@ -151,10 +163,10 @@ function selectExport(
         `Module "${module}" has no export named "${exportName}".`,
         {
           fix:
-            candidates.length > 0
-              ? `Exports that are ModePlugins: ${candidates.join(', ')}. Use <module>#<export>.`
+            names.length > 0
+              ? `Exports that are ModePlugins: ${names.join(', ')}. Use <module>#<export>.`
               : `That module exports no ModePlugin at all. Exports found: ${Object.keys(mod).sort().join(', ') || '(none)'}.`,
-          data: { spec, module, exportName, pluginExports: candidates },
+          data: { spec, module, exportName, pluginExports: names },
         },
       );
     }
@@ -163,16 +175,17 @@ function selectExport(
         CliCode.PluginInvalid,
         `Export "${exportName}" of "${module}" is not a ModePlugin.`,
         {
-          fix: `A ModePlugin needs { mode: "platformer" | "iso" | "fps", components(), systems(), view() }.${candidates.length > 0 ? ` Exports that qualify: ${candidates.join(', ')}.` : ''}`,
-          data: { spec, module, exportName, pluginExports: candidates },
+          fix: `A ModePlugin needs { mode: "platformer" | "iso" | "fps", components(), systems(), view() }.${names.length > 0 ? ` Exports that qualify: ${names.join(', ')}.` : ''}`,
+          data: { spec, module, exportName, pluginExports: names },
         },
       );
     }
     return value;
   }
-  if (isModePlugin(mod['default'])) return mod['default'];
+  const fallback = mod['default'];
+  if (isModePlugin(fallback)) return fallback;
   const [only] = candidates;
-  if (candidates.length === 1 && only !== undefined) return mod[only] as ModePlugin;
+  if (candidates.length === 1 && only !== undefined) return only.plugin;
   throw new AegisCliError(
     CliCode.PluginInvalid,
     candidates.length === 0
@@ -182,8 +195,8 @@ function selectExport(
       fix:
         candidates.length === 0
           ? `Export a ModePlugin { mode, components(), systems(), view() }. Exports found: ${Object.keys(mod).sort().join(', ') || '(none)'}.`
-          : `Use --plugin ${module}#${candidates[0]!} (candidates: ${candidates.join(', ')}).`,
-      data: { spec, module, pluginExports: candidates },
+          : `Use --plugin ${module}#${names[0]!} (candidates: ${names.join(', ')}).`,
+      data: { spec, module, pluginExports: names },
     },
   );
 }
@@ -231,7 +244,7 @@ export function discoverPluginSpec(startDir: string): DiscoveredPluginSpec | und
       } catch (err) {
         throw new AegisCliError(
           CliCode.PluginLoadFailed,
-          `Could not read ${file}: ${(err as Error).message}`,
+          `Could not read ${file}: ${messageOf(err)}`,
           {
             fix: `${CONFIG_FILENAME} must be a JSON object, e.g. { "plugin": "./dist/game.js#gamePlugin" }.`,
             cause: err,

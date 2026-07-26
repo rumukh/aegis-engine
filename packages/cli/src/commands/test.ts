@@ -23,8 +23,8 @@
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runGameTest } from '@aegis/harness';
-import type { GameTest, GameTestResult, ModePlugin } from '@aegis/harness';
-import { AegisCliError, CliCode, Exit, formatCliError } from '../errors.js';
+import type { GameTest, GameTestResult, ModePlugin, RunOptions, SimResult } from '@aegis/harness';
+import { AegisCliError, CliCode, Exit, formatCliError, messageOf } from '../errors.js';
 import { json } from '../format.js';
 import { globAll } from '../glob.js';
 import { isModePlugin, loadPlugin } from '../plugin.js';
@@ -56,6 +56,27 @@ const USAGE = [
   '  aegis test --filter completes --reporter tap',
 ].join('\n');
 
+/**
+ * The shape a discovered module actually exports, before the CLI has resolved anything.
+ *
+ * It is deliberately **not** `GameTest`: on disk `options.plugin` may be a *spec string* the CLI
+ * resolves (`'platformer'`, `'./dist/game.js#gamePlugin'`), because a `.mjs` file in a directory
+ * with no `node_modules` cannot import a `ModePlugin` to put there. Modelling that difference as
+ * its own type is what lets discovery validate and then *construct* a real `GameTest` — rather
+ * than casting an unvalidated import into one and hoping.
+ */
+interface RawGameTest {
+  name: string;
+  scene: string;
+  ticks: number;
+  options: Omit<RunOptions, 'ticks' | 'input' | 'seed' | 'plugin'> & {
+    plugin: string | ModePlugin;
+  };
+  seed?: number | string;
+  input?: string;
+  expect(result: SimResult): void | Promise<void>;
+}
+
 /** The required fields of a {@link GameTest}, and the type each must have. */
 const FIELDS: ReadonlyArray<{ key: string; expect: string; check(v: unknown): boolean }> = [
   { key: 'name', expect: 'string', check: (v) => typeof v === 'string' },
@@ -79,7 +100,7 @@ export interface InvalidTest {
 
 /** A discovered test, plus where it came from (so failures can name the file). */
 interface DiscoveredTest {
-  test: GameTest;
+  test: RawGameTest;
   file: string;
   exportName: string;
 }
@@ -139,22 +160,22 @@ function problemsWith(value: unknown): string[] {
   return problems;
 }
 
-/** Resolve a string `options.plugin` to a real plugin, so the harness receives a true GameTest. */
-async function materialise(
-  discovered: DiscoveredTest,
-  ctx: CommandContext,
-): Promise<DiscoveredTest> {
-  const options = discovered.test.options as { plugin?: unknown };
-  if (!(typeof options.plugin === 'string')) return discovered;
-  const plugin: ModePlugin = await loadPlugin(
-    options.plugin,
-    [dirname(discovered.file)],
-    ctx.modes,
-  );
-  return {
-    ...discovered,
-    test: { ...discovered.test, options: { ...discovered.test.options, plugin } },
-  };
+/**
+ * Whether `value` satisfies every rule {@link problemsWith} enforces. A type predicate rather
+ * than a cast: discovery only ever treats an export as a test because the checks passed.
+ */
+function isRawGameTest(value: unknown): value is RawGameTest {
+  return problemsWith(value).length === 0;
+}
+
+/** Resolve a string `options.plugin` to a real plugin, producing a genuine {@link GameTest}. */
+async function materialise(discovered: DiscoveredTest, ctx: CommandContext): Promise<GameTest> {
+  const { plugin } = discovered.test.options;
+  const resolved: ModePlugin =
+    typeof plugin === 'string'
+      ? await loadPlugin(plugin, [dirname(discovered.file)], ctx.modes)
+      : plugin;
+  return { ...discovered.test, options: { ...discovered.test.options, plugin: resolved } };
 }
 
 /** Import a module and classify every export: a test, a broken test, or an unrelated export. */
@@ -166,7 +187,7 @@ async function collectFromFile(abs: string, into: Discovery): Promise<void> {
     into.invalid.push({
       file: abs,
       exportName: '<module>',
-      problems: [`could not be imported: ${(err as Error).message}`],
+      problems: [`could not be imported: ${messageOf(err)}`],
     });
     return;
   }
@@ -174,21 +195,29 @@ async function collectFromFile(abs: string, into: Discovery): Promise<void> {
   for (const [exportName, value] of Object.entries(mod)) {
     if (seen.has(value)) continue;
     seen.add(value);
-    const problems = problemsWith(value);
-    if (problems.length === 0) {
-      into.tests.push({ test: value as GameTest, file: abs, exportName });
-    } else if (looksLikeGameTest(value)) {
-      const name = (value as { name?: unknown }).name;
+    if (isRawGameTest(value)) {
+      into.tests.push({ test: value, file: abs, exportName });
+      continue;
+    }
+    if (looksLikeGameTest(value)) {
+      const name = nameOf(value);
       into.invalid.push({
         file: abs,
         exportName,
-        ...(typeof name === 'string' ? { name } : {}),
-        problems,
+        ...(name !== undefined ? { name } : {}),
+        problems: problemsWith(value),
       });
     } else {
       into.exportsSkipped += 1;
     }
   }
+}
+
+/** A malformed export's `name`, when it has a usable one. */
+function nameOf(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const name = (value as Record<string, unknown>)['name'];
+  return typeof name === 'string' ? name : undefined;
 }
 
 /** The stable-coded error a malformed test produces, rendered into every reporter. */
@@ -293,22 +322,24 @@ export const testCommand: Command = {
     }
 
     // Resolve string plugin specs before running; a bad spec is a broken test, not a crash.
-    const runnable: DiscoveredTest[] = [];
+    const runnable: GameTest[] = [];
+    const materialised: DiscoveredTest[] = [];
     for (const test of discovery.tests) {
       try {
         runnable.push(await materialise(test, ctx));
+        materialised.push(test);
       } catch (err) {
         discovery.invalid.push({
           file: test.file,
           exportName: test.exportName,
           name: test.test.name,
           problems: [
-            `options.plugin could not be resolved: ${err instanceof AegisCliError ? `${err.code} ${err.message}` : (err as Error).message}`,
+            `options.plugin could not be resolved: ${err instanceof AegisCliError ? `${err.code} ${err.message}` : messageOf(err)}`,
           ],
         });
       }
     }
-    discovery.tests = runnable;
+    discovery.tests = materialised;
 
     if (discovery.tests.length === 0 && discovery.invalid.length === 0) {
       const filtered = filter !== undefined && discovered > 0;
@@ -333,7 +364,7 @@ export const testCommand: Command = {
     }
 
     const results: GameTestResult[] = [];
-    for (const { test } of discovery.tests) results.push(await runGameTest(test));
+    for (const test of runnable) results.push(await runGameTest(test));
     const failed = results.filter((r) => !r.passed).length;
 
     if (reporter === 'json') {
