@@ -186,54 +186,22 @@ function assertComponentsRegistered(
 }
 
 /**
- * Refuse a run whose plugin was **defaulted** rather than resolved, when the scene speaks a
- * vocabulary that default does not know.
- *
- * This closes the one hole no content check can reach. A game's iso vocabulary — `Operative`,
- * `Guard`, `Patrol` — is declared as **tags**, and `@aegis/content` validates component ids
- * against the registry but deliberately does *not* validate tags, because free-form markers are
- * legal by design. So the iso PoC scene validates perfectly against the stock iso plugin and used
- * to run to a clean, hashed exit 0 with an empty event log — its entire semantic layer silently
- * absent. Printing which plugin ran makes that visible, but a correct line of output an agent
- * skips past is a record, not a control.
- *
- * So the rule is about *confidence*, not about tags: if nobody said which plugin to run, and the
- * scene needs vocabulary the guess does not provide, the CLI will not guess. It is deliberately
- * scoped to `source === 'mode'` — an explicit `--plugin` or `aegis.json` is the operator taking
- * responsibility, including `{ "plugin": "iso" }` to mean "stock really is what I want".
- */
-function assertPluginResolved(scene: SceneFile, sceneRef: string, resolved: ResolvedPlugin): void {
-  if (resolved.source !== 'mode') return;
-  const registry = registryFor(resolved.plugin);
-  const markers = [...sceneTags(scene)].filter((tag) => !registry.has(tag)).sort();
-  if (markers.length === 0) return;
-
-  const mode = resolved.plugin.mode;
-  throw new AegisCliError(
-    CliCode.PluginNotResolved,
-    `Refusing to run "${sceneRef}": no plugin was named for it, and it declares ${markers.length} marker(s) the default "${mode}" mode plugin does not provide: ${markers.join(', ')}.`,
-    {
-      fix:
-        `No registered system reads those markers, so this run would exercise the "${mode}" mode alone and still exit 0 — the exact silent failure this check exists to prevent. ` +
-        `Name the plugin: --plugin <module>#<export> (e.g. --plugin @aegis/game-${mode}#myGamePlugin), ` +
-        `or declare it once beside the scene in aegis.json: { "plugin": "@aegis/game-${mode}#myGamePlugin" } — ` +
-        `\`aegis scaffold game\` writes that file for you. ` +
-        `If the stock "${mode}" mode genuinely is what you want, say so with { "plugin": "${mode}" } and the markers become yours to consume.`,
-      exitCode: 2,
-      data: {
-        scene: sceneRef,
-        mode,
-        pluginSource: resolved.source,
-        unregisteredMarkers: markers,
-      },
-    },
-  );
-}
-
-/**
  * Everything that must hold before a scene is simulated: its components must be registered by the
- * plugin that will run, and that plugin must have been *chosen* rather than defaulted into when
- * the scene needs more than the default provides.
+ * plugin that will run.
+ *
+ * Note what is deliberately **not** here. An earlier revision also refused when the plugin had
+ * been *defaulted* and the scene declared markers that default did not provide — closing the iso
+ * hole by failing. The PM ruled against it, and the reasoning is the boundary rather than the
+ * convenience: `@aegis/content` validates component ids against the registry and deliberately
+ * does *not* validate tags, because free-form markers are legal by design. A CLI that hard-failed
+ * on an unregistered tag would enforce, in one tool and invisibly to every other consumer of a
+ * scene, a content rule that content itself declines to enforce. If free-form tags are wrong,
+ * that is a content decision, made once, in the layer that owns it.
+ *
+ * So the iso hole is closed by making the plugin **resolve** instead — an `aegis.json` beside the
+ * scene, which `aegis scaffold game` now writes and which the shipped games are getting — with
+ * {@link markerReport} as the honest answer for a hand-authored scene that has neither that nor
+ * `--plugin`.
  */
 export function assertSceneRunnable(
   scene: SceneFile,
@@ -241,9 +209,7 @@ export function assertSceneRunnable(
   resolved: ResolvedPlugin,
 ): void {
   assertComponentsRegistered(scene, sceneRef, resolved);
-  assertPluginResolved(scene, sceneRef, resolved);
 }
-
 /** Count events by type into a Map (used for greppable histograms and JSON). */
 
 /**

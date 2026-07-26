@@ -235,13 +235,17 @@ describe('aegis run --plugin (the game plugin extension point)', () => {
   });
 });
 
-describe('the naive invocation must not silently run stock', () => {
+describe('the naive invocation, and what makes it correct', () => {
   /**
    * The scene shape that defeats every content check: the game's vocabulary is *tags*
    * (`Operative`, `Guard`), and `@aegis/content` validates component ids against the registry but
    * deliberately does **not** validate tags, because free-form markers are legal by design. So
-   * this scene validates perfectly against the stock plugin, and used to run to a clean hashed
-   * exit 0 with an empty event log — its whole semantic layer silently absent.
+   * this scene validates perfectly against the stock plugin and runs to a clean hashed exit 0
+   * with its semantic layer absent.
+   *
+   * The CLI does **not** hard-fail on that (PM ruling: failing on an unregistered tag would
+   * enforce, in one tool, a content rule content itself declines to enforce). It closes the hole
+   * by making the plugin *resolve* — and reports honestly when nothing resolved it.
    */
   const TAGGED_SCENE = {
     ...GAME_SCENE,
@@ -254,54 +258,54 @@ describe('the naive invocation must not silently run stock', () => {
     ],
   };
 
-  // THE criterion: no --plugin and no aegis.json must resolve the game's plugin or FAIL.
-  // Printing a correct provenance line and exiting 0 is a record, not a control.
-  it('refuses to run when no plugin was named and the scene needs one', async () => {
+  it('names what did not run when nothing resolved a plugin', async () => {
     const dir = makeDir(TAGGED_SCENE);
     const r = await cli(['run', 'level.scene.json', '--ticks', '5'], dir);
-    expect(r.code).toBe(2);
-    expect(r.err).toContain('AEG-CLI-0020');
-    expect(r.err).toContain('Guard, Operative');
-    expect(r.err).toContain('--plugin');
-    expect(r.err).toContain('aegis.json');
-    // Nothing was simulated, so nothing can be mistaken for a result.
-    expect(r.out).toBe('');
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/^plugin\s+: platformer \(stock mode plugin — no --plugin given\)$/m);
+    expect(r.out).toMatch(/^systems\s+: \d+$/m);
+    expect(r.out).toMatch(/^markers\s+: Guard, Operative$/m);
+    expect(r.out).toContain('no system reads them');
+    // `Player` IS provided by the fake mode, so it must not be listed.
+    expect(r.out).not.toContain('Player,');
   });
 
-  it('refuses on inspect, record and replay too, not just run', async () => {
-    const dir = makeDir(TAGGED_SCENE);
-    for (const argv of [
-      ['inspect', 'level.scene.json', '--tick', '5'],
-      ['record', 'level.scene.json', '--out', 'r.replay.json', '--ticks', '5'],
-    ]) {
-      const r = await cli(argv, dir);
-      expect(r.code).toBe(2);
-      expect(r.err).toContain('AEG-CLI-0020');
-    }
-  });
-
-  it('runs once the plugin is named explicitly', async () => {
+  it('resolves the plugin when it is named explicitly', async () => {
     const dir = makeDir(TAGGED_SCENE);
     const r = await cli(
       ['run', 'level.scene.json', '--ticks', '5', '--plugin', './game-plugin.mjs#gamePlugin'],
       dir,
     );
     expect(r.code).toBe(0);
+    expect(r.out).toContain('(--plugin)');
   });
 
-  // The escape hatch has to exist and has to be honest: naming the stock mode is the operator
-  // saying "yes, stock really is what I want", and the markers become theirs to consume.
-  it('runs once an aegis.json declares the plugin — including the stock mode by name', async () => {
+  // This is the shape the shipped games are getting, and the one `aegis scaffold game` writes:
+  // the naive invocation becomes correct rather than merely honest.
+  it('resolves the plugin from an aegis.json with no flag at all', async () => {
+    const dir = makeDir(TAGGED_SCENE);
+    writeFileSync(
+      join(dir, 'aegis.json'),
+      '{ "plugin": "./game-plugin.mjs#gamePlugin" }\n',
+      'utf8',
+    );
+    const r = await cli(['run', 'level.scene.json', '--ticks', '5'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('aegis.json');
+    expect(r.out).toContain('game-plugin.mjs#gamePlugin');
+  });
+
+  it('accepts an aegis.json that names the stock mode, and still reports the markers', async () => {
     const dir = makeDir(TAGGED_SCENE);
     writeFileSync(join(dir, 'aegis.json'), '{ "plugin": "platformer" }\n', 'utf8');
     const r = await cli(['run', 'level.scene.json', '--ticks', '5'], dir);
     expect(r.code).toBe(0);
     expect(r.out).toContain('aegis.json');
-    // Still reported, so "I accepted stock" never becomes "I forgot".
+    // "I accepted stock" must never quietly become "I forgot".
     expect(r.out).toMatch(/^markers\s+: Guard, Operative$/m);
   });
 
-  it('does not fire for a scene whose markers the default plugin does provide', async () => {
+  it('says nothing about markers when the plugin provides them all', async () => {
     const dir = makeDir({
       ...GAME_SCENE,
       entities: [{ ...GAME_SCENE.entities[0]!, tags: ['Player'] }],
@@ -331,7 +335,6 @@ describe('run composition is reported, not assumed', () => {
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/^markers\s+: Guard, Operative$/m);
     expect(r.out).toContain('no system reads them');
-    // `Player` IS provided by the fake mode, so it must not be listed.
     expect(r.out).not.toContain('Player,');
   });
 
