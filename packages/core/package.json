@@ -1,0 +1,26 @@
+{
+  "name": "@aegis/core",
+  "version": "0.0.0",
+  "description": "Deterministic ECS core: fixed-timestep scheduler, seeded PRNG, event bus, world serialisation, query API and state hashing. Zero runtime dependencies; runs headless in Node with no DOM.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./math": {
+      "types": "./dist/math/index.d.ts",
+      "import": "./dist/math/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  }
+}
