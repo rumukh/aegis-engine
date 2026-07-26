@@ -27,7 +27,7 @@ import type { GameTest, GameTestResult, ModePlugin, RunOptions, SimResult } from
 import { AegisCliError, CliCode, Exit, formatCliError, messageOf } from '../errors.js';
 import { json } from '../format.js';
 import { globAll } from '../glob.js';
-import { isModePlugin, loadPlugin } from '../plugin.js';
+import { CONFIG_FILENAME, discoverTestManifests, isModePlugin, loadPlugin } from '../plugin.js';
 import type { Command, CommandContext } from '../command.js';
 import { flagChoice, flagString } from './shared.js';
 
@@ -108,6 +108,10 @@ interface DiscoveredTest {
 /** What a discovery pass actually examined — reported in full by every reporter. */
 interface Discovery {
   filesScanned: number;
+  /** Files contributed by `aegis.json` manifests rather than by the glob. */
+  filesFromManifests: number;
+  /** `aegis.json` files seen that declare no `tests` — a coverage gap, not an absence. */
+  manifestsWithoutTests: readonly string[];
   exportsSkipped: number;
   tests: DiscoveredTest[];
   invalid: InvalidTest[];
@@ -266,11 +270,31 @@ function renderTap(results: readonly GameTestResult[], discovery: Discovery): st
 /** The one-line statement of what discovery checked — printed by pretty and TAP. */
 function summaryLine(results: readonly GameTestResult[], discovery: Discovery): string {
   const failed = results.filter((r) => !r.passed).length;
+  const fromManifests =
+    discovery.filesFromManifests > 0 ? `, ${discovery.filesFromManifests} via aegis.json` : '';
   return (
     `${results.length - failed} passed, ${failed} failed, ${discovery.invalid.length} invalid ` +
     `of ${results.length + discovery.invalid.length} — ` +
-    `${discovery.filesScanned} file(s) scanned, ${discovery.tests.length} test(s) found, ` +
+    `${discovery.filesScanned} file(s) scanned${fromManifests}, ${discovery.tests.length} test(s) found, ` +
     `${discovery.exportsSkipped} unrelated export(s) skipped`
+  );
+}
+
+/**
+ * The coverage-gap note: an `aegis.json` that declares a plugin but no `tests`.
+ *
+ * A green run covering one of three games is a more dangerous signal than an empty one, because
+ * it reads as coverage. Discovery cannot find a `GameTest` in a module nobody pointed at, but it
+ * *can* see that a game exists and said nothing about its tests — and saying so is the difference
+ * between "3 of 3 ran" and "1 ran, and I never looked at the other two".
+ */
+function coverageNote(discovery: Discovery): string | undefined {
+  const gaps = discovery.manifestsWithoutTests;
+  if (gaps.length === 0) return undefined;
+  return (
+    `note: ${gaps.length} aegis.json declare(s) no "tests", so any GameTest they ship is NOT covered by this run:\n` +
+    gaps.map((f) => `        ${f}`).join('\n') +
+    `\n      Add e.g. { "tests": ["./dist/my-game.js"] } to include it.`
   );
 }
 
@@ -289,6 +313,8 @@ function renderPretty(results: readonly GameTestResult[], discovery: Discovery):
     for (const problem of i.problems) lines.push(`     - ${problem}`);
   }
   lines.push(`-- ${summaryLine(results, discovery)}`);
+  const note = coverageNote(discovery);
+  if (note !== undefined) lines.push(note);
   return lines.join('\n');
 }
 
@@ -301,7 +327,13 @@ export const testCommand: Command = {
   async run(ctx: CommandContext): Promise<number> {
     const { args, io } = ctx;
     const patterns = args.positionals.length > 0 ? [...args.positionals] : DEFAULT_PATTERNS;
-    const files = globAll(patterns, io.cwd);
+    const globbed = globAll(patterns, io.cwd);
+
+    // A game's test does not always live in a file named *.gametest.*; the iso PoC default-exports
+    // its GameTest from the module that also exports its plugin. Manifests let it say so.
+    const manifests = discoverTestManifests(io.cwd, globAll([`**/${CONFIG_FILENAME}`], io.cwd));
+    const declared = manifests.flatMap((m) => m.modules);
+    const files = [...new Set([...globbed, ...declared])].sort();
 
     const filter = flagString(args, 'filter');
     const reporter =
@@ -309,10 +341,22 @@ export const testCommand: Command = {
 
     const discovery: Discovery = {
       filesScanned: files.length,
+      filesFromManifests: declared.filter((f) => !globbed.includes(f)).length,
+      manifestsWithoutTests: manifests.filter((m) => m.modules.length === 0).map((m) => m.file),
       exportsSkipped: 0,
       tests: [],
       invalid: [],
     };
+    // A declared test module that does not exist is a broken declaration, never a silent absence.
+    for (const manifest of manifests) {
+      for (const entry of manifest.missing) {
+        discovery.invalid.push({
+          file: manifest.file,
+          exportName: '<tests>',
+          problems: [`declares a test module that does not exist: ${entry}`],
+        });
+      }
+    }
     for (const file of files) await collectFromFile(file, discovery);
 
     const discovered = discovery.tests.length;
@@ -375,6 +419,8 @@ export const testCommand: Command = {
           invalid: discovery.invalid.length,
           total: results.length + discovery.invalid.length,
           filesScanned: discovery.filesScanned,
+          filesFromManifests: discovery.filesFromManifests,
+          manifestsWithoutTests: discovery.manifestsWithoutTests,
           testsDiscovered: discovered,
           testsRun: results.length,
           exportsSkipped: discovery.exportsSkipped,

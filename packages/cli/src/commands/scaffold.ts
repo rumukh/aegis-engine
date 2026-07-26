@@ -14,6 +14,8 @@
  * 3. The starter test has **no bare imports**. A scaffolded directory has no `node_modules`, so
  *    `import ... from '@aegis/harness'` fails with `Cannot find package`. It names its plugin as
  *    a string instead, which `aegis test` resolves — the same extension point as `--plugin`.
+ * 4. An `aegis.json` declares both the plugin and the test, so the naive `aegis run` resolves a
+ *    plugin instead of silently falling back to stock, and `aegis test` counts this game.
  *
  * Writes are atomic: every target is checked before anything is written, and a mid-write failure
  * removes what this invocation created rather than leaving a half-scaffolded directory.
@@ -357,7 +359,8 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
 function configDoc(name: string, mode: GameMode): string {
   return doc({
     plugin: mode,
-    $note: `Replace with "./dist/${name}.js#${pluginIdent(name)}" once this game ships its own composed ModePlugin. 'aegis run/inspect/record/replay' resolve this automatically for any scene in this directory.`,
+    tests: [`./${name}.gametest.mjs`],
+    $note: `Replace "plugin" with "./dist/${name}.js#${pluginIdent(name)}" once this game ships its own composed ModePlugin, and point "tests" at wherever its GameTests end up. 'aegis run/inspect/record/replay' resolve the plugin automatically for any scene in this directory, and 'aegis test' picks up the declared tests wherever they live.`,
   });
 }
 

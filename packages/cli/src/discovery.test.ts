@@ -268,6 +268,65 @@ describe('aegis test discovery reporting', () => {
   });
 });
 
+describe('aegis test finds tests an aegis.json declares', () => {
+  /**
+   * A game's acceptance test does not always live in a file named `*.gametest.*`: the iso PoC
+   * default-exports its `GameTest` from the same module that exports its plugin, which is the
+   * natural place for it. Filename-only discovery therefore under-reports — and a green run
+   * covering one of three games reads as coverage while being the opposite.
+   */
+  it('discovers a GameTest in a module the manifest points at', async () => {
+    const dir = makeDir();
+    // Named so the default glob can never match it — only the declaration can find it.
+    writeTest(dir, 'game-module.mjs', goodTest(dir, 'declared test'));
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./game-module.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('PASS declared test');
+    expect(r.out).toContain('1 via aegis.json');
+  });
+
+  it('counts a manifest module once when the glob also matched it', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'both.gametest.mjs', goodTest(dir, 'counted once'));
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./both.gametest.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test', '--json'], dir);
+    const data = JSON.parse(r.out) as { filesScanned: number; total: number };
+    expect(data).toMatchObject({ filesScanned: 1, total: 1 });
+  });
+
+  // The coverage gap that made the auditor's "1 of 3" dangerous: a game exists, and said nothing
+  // about its tests. Discovery can't find them, but it can say that it didn't look.
+  it('names a manifest that declares no tests, so a partial run cannot read as coverage', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'only.gametest.mjs', goodTest(dir, 'the one test'));
+    writeFileSync(join(dir, 'aegis.json'), '{ "plugin": "platformer" }\n', 'utf8');
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('declare(s) no "tests"');
+    expect(r.out).toContain('NOT covered by this run');
+    expect(r.out).toContain('aegis.json');
+
+    const asJson = await cli(['test', '--json'], dir);
+    const data = JSON.parse(asJson.out) as { manifestsWithoutTests: string[] };
+    expect(data.manifestsWithoutTests).toHaveLength(1);
+  });
+
+  it('reports a declared test module that does not exist instead of dropping it', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'only.gametest.mjs', goodTest(dir, 'the one test'));
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./gone.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('declares a test module that does not exist: ./gone.mjs');
+    expect(r.err).toContain('AEG-CLI-0014');
+  });
+});
+
 describe('aegis scaffold produces a runnable game', () => {
   // Regression: the generated tilemap was never referenced by the generated scene, so the level
   // had no ground, no collision, --ascii failed, and 120 ticks produced no motion at all.

@@ -52,6 +52,11 @@ export interface ResolvedPlugin {
 interface AegisConfig {
   /** `<module>#<export>` or a bare mode name. Relative modules resolve against the config file. */
   plugin?: unknown;
+  /**
+   * Modules that export {@link GameTest}s, relative to this file. Lets a game whose test lives in
+   * its own module — rather than in a separate `*.gametest.js` — still be found by `aegis test`.
+   */
+  tests?: unknown;
 }
 
 /** The config filename walked up from a scene's directory. */
@@ -274,4 +279,61 @@ export function describePluginSource(resolved: ResolvedPlugin): string {
     case 'mode':
       return `${resolved.spec} (stock mode plugin — no --plugin given)`;
   }
+}
+
+/** An `aegis.json` found while scanning for game tests. */
+export interface TestManifest {
+  /** Absolute path of the `aegis.json`. */
+  file: string;
+  /** Absolute paths of the modules it declares under `tests`, in declaration order. */
+  modules: readonly string[];
+  /** Declared entries that do not exist on disk — reported, never silently dropped. */
+  missing: readonly string[];
+}
+
+/** Read one config's `tests` entries as a string list, tolerating a bare string. */
+function testEntries(config: AegisConfig): string[] {
+  const { tests } = config;
+  if (typeof tests === 'string') return [tests];
+  if (!Array.isArray(tests)) return [];
+  return tests.filter((entry): entry is string => typeof entry === 'string');
+}
+
+/**
+ * Every `aegis.json` under `cwd` that declares `tests`, with its entries resolved.
+ *
+ * A game's acceptance test does not always live in a file named `*.gametest.*` — the iso PoC
+ * default-exports its `GameTest` from the same module that exports its plugin, which is the
+ * natural place for it. Discovery by filename alone therefore under-reports, and a green
+ * `aegis test` covering one of three games reads as coverage while being the opposite. A game
+ * declares where its tests are, in the same file where it already declares its plugin; discovery
+ * stays explicit rather than importing every built module to see what falls out.
+ */
+export function discoverTestManifests(cwd: string, files: readonly string[]): TestManifest[] {
+  const manifests: TestManifest[] = [];
+  for (const file of files) {
+    let config: AegisConfig;
+    try {
+      config = JSON.parse(readFileSync(file, 'utf8')) as AegisConfig;
+    } catch (err) {
+      throw new AegisCliError(
+        CliCode.PluginLoadFailed,
+        `Could not read ${file}: ${messageOf(err)}`,
+        {
+          fix: `${CONFIG_FILENAME} must be a JSON object, e.g. { "tests": ["./dist/game.js"] }.`,
+          cause: err,
+        },
+      );
+    }
+    const dir = dirname(file);
+    const modules: string[] = [];
+    const missing: string[] = [];
+    for (const entry of testEntries(config)) {
+      const abs = isAbsolute(entry) ? entry : resolve(dir, entry);
+      if (existsSync(abs)) modules.push(abs);
+      else missing.push(entry);
+    }
+    manifests.push({ file, modules, missing });
+  }
+  return manifests;
 }
