@@ -1,9 +1,10 @@
 /**
- * `@aegis/render-three` — the optional three.js render adapters, plus the real-time plumbing that
- * lets a human drive the same deterministic simulation a script does.
+ * `@aegis/render-three` — the optional three.js render adapter and browser dev server.
  *
  * A pure consumer of world state: nothing in the simulation depends on it, and attaching it
- * changes no simulation result (CHARTER principle 2, ADR-0005).
+ * changes no simulation result (CHARTER principle 2, ADR-0005). Import the adapters anywhere;
+ * the dev server is Node-only because it hosts an HTTP server, so the browser client imports the
+ * adapter modules directly rather than through this barrel.
  * @packageDocumentation
  */
 export * from './adapter.js';
@@ -18,3 +19,6 @@ export * from './protocol.js';
 export * from './loop.js';
 export * from './live-input.js';
 export * from './session.js';
+export * from './games.js';
+export * from './pages.js';
+export * from './dev-server.js';
