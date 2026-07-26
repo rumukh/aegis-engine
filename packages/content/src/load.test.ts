@@ -195,9 +195,13 @@ describe('validateScene', () => {
     const unknown = r.diagnostics.filter((d) => d.code === ContentCode.UnknownField);
     expect(unknown).toHaveLength(1);
     expect(unknown[0]?.location?.path).toBe('prefabs["grunt"].components.Velocity.speed');
+    // Provenance is the whole value of this message: forty entities can share one prefab, so
+    // "Velocity has no field speed" on its own leaves you asking which of them is broken.
+    expect(unknown[0]?.message).toContain('instantiated by entity "a"');
+    expect(unknown[0]?.data?.['prefab']).toBe('grunt');
+    expect(unknown[0]?.data?.['instantiatedBy']).toBe('a');
     // The defect is in the prefab, which the resolver supplied without a path — naming the
-    // scene file here would send an agent to edit a document that does not contain it. The
-    // path is what locates it, and it is rooted at the prefab, not at either entity.
+    // scene file here would send an agent to edit a document that does not contain it.
     expect(unknown[0]?.location?.file).toBeUndefined();
   });
 
@@ -216,7 +220,10 @@ describe('validateScene', () => {
     };
     const d = validateScene(scene, { registry: registry(), prefabs }).diagnostics[0];
     expect(d?.code).toBe(ContentCode.UnknownComponent);
-    expect(d?.message).toContain('Prefab "grunt" (instantiated by entity "a")');
+    expect(d?.message).toContain(
+      'Prefab "grunt" (instantiated by entity "a") uses unknown component "Bogus"',
+    );
+    expect(d?.data?.['instantiatedBy']).toBe('a');
   });
 
   it('validates a prefab document on its own, against its own file', () => {

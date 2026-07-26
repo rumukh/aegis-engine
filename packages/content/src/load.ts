@@ -382,9 +382,13 @@ export interface ValidateOptions {
   prefabs?: PrefabResolver;
   /**
    * Optional registry of known resource ids. When supplied, a scene setting an id that is not
-   * registered is an error (with a did-you-mean); when omitted, resource ids are not checked,
-   * because there is no way to tell an unknown id from one belonging to a package the caller
-   * did not mention.
+   * registered is an error (with a did-you-mean); when omitted, resource ids are **not
+   * checked at all**, because there is no way to tell an unknown id from one belonging to a
+   * package the caller did not mention.
+   *
+   * Note that `runScene` does not supply one today, so this is inert in the shipped run path
+   * — see {@link ResourceRegistry} for the two changes that activate it (a `ModePlugin`
+   * contract addition plus the three modes declaring their resources), deferred to v2.
    */
   resources?: ResourceRegistry;
   /**
@@ -429,26 +433,49 @@ interface SemanticContext {
   checkedPrefabs: Set<string>;
 }
 
+/** Where a `componentId -> data` map lives, and who owns it. */
+interface ComponentMapScope {
+  /** JSON path of the components object itself. */
+  path: string;
+  /** Names the owner in the unknown-component message ("Entity \"hero\""). */
+  subject: string;
+  /**
+   * The document the map really lives in. `undefined` for a prefab, because a
+   * {@link PrefabResolver} hands back a {@link PrefabFile} with no path — and naming the
+   * *scene* would send an agent to edit a file that does not contain the defect.
+   */
+  file: string | undefined;
+  /**
+   * Set when the map came from a prefab. Field-level diagnostics are stamped with it, because
+   * "Component Velocity has no field speed" is useless on its own when forty entities share
+   * one prefab: you need to know which document authored it and where to see it go wrong.
+   */
+  prefab?: { name: string; instantiatedBy: string };
+}
+
+/** Stamp a prefab-sourced diagnostic with the provenance the message cannot otherwise carry. */
+function withPrefabProvenance(
+  diag: Diagnostic,
+  prefab: { name: string; instantiatedBy: string },
+): Diagnostic {
+  return {
+    ...diag,
+    message: `Prefab "${prefab.name}" (instantiated by entity "${prefab.instantiatedBy}"): ${diag.message}`,
+    data: { ...(diag.data ?? {}), prefab: prefab.name, instantiatedBy: prefab.instantiatedBy },
+  };
+}
+
 /**
  * Validate one `componentId -> data` map: first that every id resolves, then that each
- * component's data matches that component's own shape (`schema.ts`). `subject` names whatever
- * owns the map ("Entity \"hero\"", "Prefab \"enemy\"") so the message reads naturally.
- */
-/**
- * Validate one `componentId -> data` map: first that every id resolves, then that each
- * component's data matches that component's own shape (`schema.ts`). `subject` names whatever
- * owns the map ("Entity \"hero\"", "Prefab \"enemy\"") so the message reads naturally, and
- * `file` is the document the map actually lives in — which is *not* the scene when the map
- * came from a prefab the resolver supplied.
+ * component's data matches that component's own shape (`schema.ts`).
  */
 function validateComponentMap(
   components: Readonly<Record<string, ComponentData>>,
-  path: string,
-  subject: string,
+  scope: ComponentMapScope,
   ctx: SemanticContext,
-  file: string | undefined,
 ): void {
   const { registry } = ctx.options;
+  const { file, path, prefab } = scope;
   for (const cid of Object.keys(components)) {
     const type = registry.get(cid);
     if (type === undefined) {
@@ -456,7 +483,7 @@ function validateComponentMap(
       ctx.diags.push(
         diagnostic(
           ContentCode.UnknownComponent,
-          `${subject} uses unknown component "${cid}"${
+          `${scope.subject} uses unknown component "${cid}"${
             suggestion === undefined ? '' : ` - did you mean "${suggestion}"?`
           }`,
           {
@@ -464,6 +491,9 @@ function validateComponentMap(
             data: {
               component: cid,
               ...(suggestion === undefined ? {} : { suggestion }),
+              ...(prefab === undefined
+                ? {}
+                : { prefab: prefab.name, instantiatedBy: prefab.instantiatedBy }),
               known: registry.ids(),
             },
             fix:
@@ -476,8 +506,9 @@ function validateComponentMap(
       continue;
     }
     // The id resolves, so the component's own schema can now check the authored data.
+    const found = validateComponentData(type, components[cid], { path: `${path}.${cid}`, file });
     ctx.diags.push(
-      ...validateComponentData(type, components[cid], { path: `${path}.${cid}`, file }),
+      ...(prefab === undefined ? found : found.map((d) => withPrefabProvenance(d, prefab))),
     );
   }
 }
@@ -500,17 +531,20 @@ function validateEntitySemantics(decls: readonly EntityDecl[], path: string, ctx
         );
       } else if (!ctx.checkedPrefabs.has(decl.prefab)) {
         // A prefab is authored content too, and its data is merged in ahead of the entity's:
-        // a typo there breaks every instance. Check it once, wherever it is first referenced.
-        // The location deliberately carries **no file**: a resolver hands back a PrefabFile
-        // with no path, and the one file we do know (the scene) is not where the defect is.
+        // a typo there breaks every instance. Check it once, wherever it is first referenced,
+        // and stamp what comes back with that reference so the report names an entity that
+        // will visibly misbehave.
         ctx.checkedPrefabs.add(decl.prefab);
         if (resolved.components) {
           validateComponentMap(
             resolved.components,
-            `prefabs["${decl.prefab}"].components`,
-            `Prefab "${decl.prefab}" (instantiated by entity "${decl.id}")`,
+            {
+              path: `prefabs["${decl.prefab}"].components`,
+              subject: `Prefab "${decl.prefab}" (instantiated by entity "${decl.id}")`,
+              file: undefined,
+              prefab: { name: decl.prefab, instantiatedBy: decl.id },
+            },
             ctx,
-            undefined,
           );
         }
       }
@@ -518,10 +552,8 @@ function validateEntitySemantics(decls: readonly EntityDecl[], path: string, ctx
     if (decl.components) {
       validateComponentMap(
         decl.components,
-        `${p}.components`,
-        `Entity "${decl.id}"`,
+        { path: `${p}.components`, subject: `Entity "${decl.id}"`, file: ctx.file },
         ctx,
-        ctx.file,
       );
     }
     if (decl.children) validateEntitySemantics(decl.children, `${p}.children`, ctx);
@@ -580,12 +612,12 @@ export function validatePrefab(
     checkedPrefabs: new Set<string>(),
   };
   if (prefab.components) {
+    // Validated as its own document here, so the location names the prefab's own file and no
+    // instantiating entity exists to attribute it to.
     validateComponentMap(
       prefab.components,
-      'components',
-      `Prefab "${prefab.name}"`,
+      { path: 'components', subject: `Prefab "${prefab.name}"`, file: options.file },
       ctx,
-      options.file,
     );
   }
   if (prefab.children) validateEntitySemantics(prefab.children, 'children', ctx);
