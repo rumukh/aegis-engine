@@ -331,7 +331,7 @@ export const testCommand: Command = {
 
     // A game's test does not always live in a file named *.gametest.*; the iso PoC default-exports
     // its GameTest from the module that also exports its plugin. Manifests let it say so.
-    const manifests = discoverTestManifests(io.cwd, globAll([`**/${CONFIG_FILENAME}`], io.cwd));
+    const manifests = discoverTestManifests(globAll([`**/${CONFIG_FILENAME}`], io.cwd));
     const declared = manifests.flatMap((m) => m.modules);
     const files = [...new Set([...globbed, ...declared])].sort();
 
@@ -342,22 +342,37 @@ export const testCommand: Command = {
     const discovery: Discovery = {
       filesScanned: files.length,
       filesFromManifests: declared.filter((f) => !globbed.includes(f)).length,
-      manifestsWithoutTests: manifests.filter((m) => m.modules.length === 0).map((m) => m.file),
+      manifestsWithoutTests: manifests.filter((m) => !m.declaresTests).map((m) => m.file),
       exportsSkipped: 0,
       tests: [],
       invalid: [],
     };
-    // A declared test module that does not exist is a broken declaration, never a silent absence.
+    // A declared entry that resolves to nothing is a broken declaration, never a silent absence.
     for (const manifest of manifests) {
-      for (const entry of manifest.missing) {
+      for (const entry of manifest.unresolved) {
         discovery.invalid.push({
           file: manifest.file,
           exportName: '<tests>',
-          problems: [`declares a test module that does not exist: ${entry}`],
+          problems: [`declares a test module that resolves to nothing: ${entry}`],
         });
       }
     }
     for (const file of files) await collectFromFile(file, discovery);
+
+    // A manifest that declared tests and contributed no GameTest at all is the failure mode this
+    // mechanism exists to prevent: a declaration that "worked" while finding nothing.
+    for (const manifest of manifests) {
+      if (!manifest.declaresTests || manifest.modules.length === 0) continue;
+      const contributed = discovery.tests.some((t) => manifest.modules.includes(t.file));
+      if (contributed) continue;
+      discovery.invalid.push({
+        file: manifest.file,
+        exportName: '<tests>',
+        problems: [
+          `declares tests, and the ${manifest.modules.length} module(s) it resolved to export no GameTest at all`,
+        ],
+      });
+    }
 
     const discovered = discovery.tests.length;
     const discoveredNames = discovery.tests.map((t) => t.test.name);

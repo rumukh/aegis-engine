@@ -1,0 +1,4 @@
+{
+  "plugin": "@aegis/game-platformer#coyoteGapPlugin",
+  "tests": ["./dist/*.gametest.js"]
+}

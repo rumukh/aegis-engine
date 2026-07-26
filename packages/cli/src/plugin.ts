@@ -24,6 +24,7 @@ import { pathToFileURL } from 'node:url';
 import { isGameMode } from '@aegis/core';
 import type { ModePlugin } from '@aegis/harness';
 import { AegisCliError, CliCode, messageOf } from './errors.js';
+import { globFiles, isGlob } from './glob.js';
 
 /** Where a resolved plugin came from. */
 export type PluginSource =
@@ -285,10 +286,12 @@ export function describePluginSource(resolved: ResolvedPlugin): string {
 export interface TestManifest {
   /** Absolute path of the `aegis.json`. */
   file: string;
-  /** Absolute paths of the modules it declares under `tests`, in declaration order. */
+  /** Absolute paths of the modules its `tests` entries resolved to, sorted. */
   modules: readonly string[];
-  /** Declared entries that do not exist on disk — reported, never silently dropped. */
-  missing: readonly string[];
+  /** Entries that resolved to nothing — reported, never silently dropped. */
+  unresolved: readonly string[];
+  /** Whether the file declared a `tests` field at all. */
+  declaresTests: boolean;
 }
 
 /** Read one config's `tests` entries as a string list, tolerating a bare string. */
@@ -300,16 +303,21 @@ function testEntries(config: AegisConfig): string[] {
 }
 
 /**
- * Every `aegis.json` under `cwd` that declares `tests`, with its entries resolved.
+ * Every `aegis.json` in `files`, with its `tests` entries resolved.
  *
  * A game's acceptance test does not always live in a file named `*.gametest.*` — the iso PoC
  * default-exports its `GameTest` from the same module that exports its plugin, which is the
  * natural place for it. Discovery by filename alone therefore under-reports, and a green
  * `aegis test` covering one of three games reads as coverage while being the opposite. A game
- * declares where its tests are, in the same file where it already declares its plugin; discovery
- * stays explicit rather than importing every built module to see what falls out.
+ * declares where its tests are, in the same file where it already declares its plugin.
+ *
+ * Entries may be globs (`./dist/*.gametest.js`), so a declaration survives the test being renamed
+ * or split — these games are authored by other sessions and do move. An entry that resolves to
+ * **nothing** is an error rather than an empty contribution: a discovery mechanism that reports
+ * success when it found nothing is worse than no mechanism, because a passing run cannot then be
+ * told apart from a silent one.
  */
-export function discoverTestManifests(cwd: string, files: readonly string[]): TestManifest[] {
+export function discoverTestManifests(files: readonly string[]): TestManifest[] {
   const manifests: TestManifest[] = [];
   for (const file of files) {
     let config: AegisConfig;
@@ -320,20 +328,28 @@ export function discoverTestManifests(cwd: string, files: readonly string[]): Te
         CliCode.PluginLoadFailed,
         `Could not read ${file}: ${messageOf(err)}`,
         {
-          fix: `${CONFIG_FILENAME} must be a JSON object, e.g. { "tests": ["./dist/game.js"] }.`,
+          fix: `${CONFIG_FILENAME} must be a JSON object, e.g. { "tests": ["./dist/*.gametest.js"] }.`,
           cause: err,
         },
       );
     }
     const dir = dirname(file);
-    const modules: string[] = [];
-    const missing: string[] = [];
-    for (const entry of testEntries(config)) {
-      const abs = isAbsolute(entry) ? entry : resolve(dir, entry);
-      if (existsSync(abs)) modules.push(abs);
-      else missing.push(entry);
+    const entries = testEntries(config);
+    const modules = new Set<string>();
+    const unresolved: string[] = [];
+    for (const entry of entries) {
+      const matched = isGlob(entry)
+        ? globFiles(entry, dir)
+        : [isAbsolute(entry) ? entry : resolve(dir, entry)].filter((p) => existsSync(p));
+      if (matched.length === 0) unresolved.push(entry);
+      for (const m of matched) modules.add(m);
     }
-    manifests.push({ file, modules, missing });
+    manifests.push({
+      file,
+      modules: [...modules].sort(),
+      unresolved,
+      declaresTests: entries.length > 0,
+    });
   }
   return manifests;
 }

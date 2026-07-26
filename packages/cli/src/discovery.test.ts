@@ -315,14 +315,67 @@ describe('aegis test finds tests an aegis.json declares', () => {
     expect(data.manifestsWithoutTests).toHaveLength(1);
   });
 
-  it('reports a declared test module that does not exist instead of dropping it', async () => {
+  // Regression: `globFiles` returned absolute but UN-normalised paths, so a manifest entry of
+  // `./dist/x.js` yielded `…\game\.\dist\x.js` while the default glob yielded `…\game\dist\x.js`.
+  // Same file, different string: de-duplication missed it and `import()` loaded it twice, so one
+  // game test was discovered and run as two identical entries.
+  it('counts a file once when a manifest and the default glob resolve it differently', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'dup.gametest.mjs', goodTest(dir, 'counted exactly once'));
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./dup.gametest.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test', '--json'], dir);
+    const data = JSON.parse(r.out) as { total: number; filesScanned: number };
+    expect(data).toMatchObject({ total: 1, filesScanned: 1 });
+  });
+
+  it('reports a declared test entry that resolves to nothing instead of dropping it', async () => {
     const dir = makeDir();
     writeTest(dir, 'only.gametest.mjs', goodTest(dir, 'the one test'));
     writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./gone.mjs"] }\n', 'utf8');
 
     const r = await cli(['test'], dir);
     expect(r.code).toBe(1);
-    expect(r.out).toContain('declares a test module that does not exist: ./gone.mjs');
+    expect(r.out).toContain('resolves to nothing: ./gone.mjs');
+    expect(r.err).toContain('AEG-CLI-0014');
+  });
+
+  it('reports a glob that matches nothing — the silent-success failure mode', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'only.gametest.mjs', goodTest(dir, 'the one test'));
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./nowhere/*.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('resolves to nothing: ./nowhere/*.mjs');
+  });
+
+  // A glob is what makes a declaration survive the test being renamed or split — these games are
+  // authored by other sessions and do move.
+  it('accepts a glob and picks up whatever it matches', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'alpha.mjs', goodTest(dir, 'alpha test'));
+    writeTest(dir, 'beta.mjs', goodTest(dir, 'beta test'));
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./*.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('PASS alpha test');
+    expect(r.out).toContain('PASS beta test');
+    expect(r.out).toContain('2 via aegis.json');
+  });
+
+  // The hazard a glob introduces: it resolves to real files that happen to export no GameTest,
+  // so the declaration "works" while finding nothing. That must not read as success.
+  it('reports a declaration whose modules export no GameTest at all', async () => {
+    const dir = makeDir();
+    writeTest(dir, 'other.gametest.mjs', goodTest(dir, 'unrelated but real'));
+    writeTest(dir, 'notatest.mjs', 'export const helper = { unrelated: true };\n');
+    writeFileSync(join(dir, 'aegis.json'), '{ "tests": ["./notatest.mjs"] }\n', 'utf8');
+
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('export no GameTest at all');
     expect(r.err).toContain('AEG-CLI-0014');
   });
 });
