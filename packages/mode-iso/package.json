@@ -1,0 +1,27 @@
+{
+  "name": "@aegis/mode-iso",
+  "version": "0.0.0",
+  "description": "Isometric / 3-quarter tactical mode: grid world, pathfinding contracts, click-to-move semantics as data, camera rig and iso semantic-frame/ASCII view provider.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*",
+    "@aegis/harness": "*"
+  }
+}

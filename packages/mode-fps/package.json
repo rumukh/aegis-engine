@@ -1,0 +1,27 @@
+{
+  "name": "@aegis/mode-fps",
+  "version": "0.0.0",
+  "description": "First-person 3D mode: perspective camera rig, capsule movement, raycasting/hitscan contracts, spatial conventions and fps semantic-frame view provider.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*",
+    "@aegis/harness": "*"
+  }
+}

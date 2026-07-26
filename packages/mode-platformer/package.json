@@ -1,0 +1,27 @@
+{
+  "name": "@aegis/mode-platformer",
+  "version": "0.0.0",
+  "description": "2D side-scroller mode: camera rig, movement controller, tile collision and spatial conventions, plus the platformer semantic-frame/ASCII view provider.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*",
+    "@aegis/harness": "*"
+  }
+}
