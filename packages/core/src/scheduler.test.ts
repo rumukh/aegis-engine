@@ -68,6 +68,50 @@ describe('scheduler ordering', () => {
   });
 });
 
+/**
+ * Minor — a `before`/`after` entry naming no registered system used to be silently ignored, so
+ * the constraint read as satisfied while the system quietly degraded to insertion order.
+ */
+describe('scheduler — unresolvable ordering constraints are not silent', () => {
+  it('rejects a misspelled system name outright', () => {
+    const s = createSchedule();
+    s.add(recordingSystem('content.health.death', [], 'postUpdate'));
+    s.add(recordingSystem('game.combat', [], 'postUpdate', { after: ['content.health.deth'] }));
+    // Pre-fix: resolved() succeeded and quietly used insertion order.
+    expect(() => s.resolved()).toThrow(/Did you mean "content\.health\.death"/);
+  });
+
+  it('rejects a misspelled name in `before` as well', () => {
+    const s = createSchedule();
+    s.add(recordingSystem('physics.integrate', [], 'physics'));
+    s.add(recordingSystem('physics.forces', [], 'physics', { before: ['physics.integrat'] }));
+    expect(() => s.resolved()).toThrow(/Did you mean "physics\.integrate"/);
+  });
+
+  it('reports a genuinely absent dependency as data instead of throwing', () => {
+    // A partial schedule (a unit test registering some of a mode's systems) is legitimate.
+    const s = createSchedule();
+    s.add(recordingSystem('fps.intake', [], 'update', { after: ['fps.look'] }));
+    expect(() => s.resolved()).not.toThrow();
+    expect(s.unresolved()).toEqual([{ system: 'fps.intake', kind: 'after', name: 'fps.look' }]);
+  });
+
+  it('reports nothing for a complete schedule', () => {
+    const s = createSchedule();
+    s.add(recordingSystem('a', [], 'update'));
+    s.add(recordingSystem('b', [], 'update', { after: ['a'] }));
+    expect(s.unresolved()).toEqual([]);
+  });
+
+  it('accepts a cross-phase constraint without flagging it', () => {
+    const s = createSchedule();
+    s.add(recordingSystem('early', [], 'input'));
+    s.add(recordingSystem('later', [], 'cleanup', { after: ['early'] }));
+    expect(s.resolved().map((x) => x.name)).toEqual(['early', 'later']);
+    expect(s.unresolved()).toEqual([]);
+  });
+});
+
 function s2log(): string[] {
   return [];
 }

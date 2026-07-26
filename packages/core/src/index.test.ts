@@ -31,7 +31,9 @@ describe('@aegis/core public surface', () => {
   it('exposes stable constants', () => {
     expect(NULL_ENTITY).toBe(0);
     expect(EMPTY_INPUT_FRAME.pointer).toBeNull();
-    expect(PI).toBeCloseTo(Math.PI);
+    // `toBeCloseTo` defaults to 2 decimal places, so `PI = 3.14` used to pass here.
+    expect(PI).toBe(3.141592653589793);
+    expect(PI).toBe(Math.PI);
   });
 
   it('registers the universal Transform component with a stable id', () => {

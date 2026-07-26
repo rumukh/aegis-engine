@@ -32,11 +32,15 @@ const bannedMathProps = [
   'sinh',
   'cosh',
   'tanh',
-].map((property) => ({
+];
+
+const bannedMathMessage =
+  'Non-deterministic or platform-dependent. Use @aegis/core deterministic math (see ADR-0001).';
+
+const restrictedMathProperties = bannedMathProps.map((property) => ({
   object: 'Math',
   property,
-  message:
-    'Non-deterministic or platform-dependent. Use @aegis/core deterministic math (see ADR-0001).',
+  message: bannedMathMessage,
 }));
 
 /**
@@ -58,8 +62,9 @@ const bannedMathProps = [
  * `hashEquals(h)` evades it, so it catches the idiom as written and copied, not every possible
  * spelling of a self-comparison. That bypass is deliberately **not demonstrated anywhere in the
  * repository** — there are zero occurrences of a run's own hash reaching `hashEquals`, by any
- * spelling. An author blocked by this rule will grep for how others satisfied it, and a working
- * example of the bypass is the next thing that would be copied.
+ * spelling, and `packages/harness/src/golden-hash.invariant.test.ts` is the runner for that claim,
+ * since this selector cannot check it. An author blocked by this rule will grep for how others
+ * satisfied it, and a working example of the bypass is the next thing that would be copied.
  */
 const noSelfReferentialGoldenHash = {
   selector:
@@ -73,6 +78,22 @@ const noWallClockDate = {
   selector: "NewExpression[callee.name='Date']",
   message: 'Wall-clock time breaks determinism (ADR-0001).',
 };
+
+// `no-restricted-properties` sees `Math.sin` and, in this ESLint version, also
+// `const { sin } = Math` and `Math['sin']`. It does **not** see two forms that were verified to
+// slip through: aliasing the object (`const M = Math; M.sin(x)`) and a non-literal computed key
+// (`const k = 'sin'; Math[k](x)`). Neither has a legitimate use in a simulation package — core
+// exposes its own math surface — so both are banned outright rather than enumerated.
+const restrictedMathSyntax = [
+  {
+    selector: "MemberExpression[computed=true][object.name='Math']",
+    message: `${bannedMathMessage} Computed access to Math is banned outright, because a non-literal key evades the property rule.`,
+  },
+  {
+    selector: "VariableDeclarator[init.name='Math']",
+    message: `${bannedMathMessage} Aliasing or destructuring Math is banned outright, because an alias evades the property rule.`,
+  },
+];
 
 export default tseslint.config(
   {
@@ -132,16 +153,30 @@ export default tseslint.config(
       ],
       'no-restricted-properties': [
         'error',
-        ...bannedMathProps,
+        ...restrictedMathProperties,
         {
           object: 'performance',
           property: 'now',
           message: 'Wall-clock time breaks determinism (ADR-0001).',
         },
       ],
-      // Flat config replaces a rule's options wholesale rather than merging them, so each block
-      // that sets `no-restricted-syntax` must restate every selector it wants to keep.
-      'no-restricted-syntax': ['error', noWallClockDate, noSelfReferentialGoldenHash],
+      // Flat config *replaces* a rule's options rather than merging them, so every selector that
+      // must apply to these files has to live in this one array. Declaring any of them in another
+      // block that also matches would silently drop the rest — and a lint rule that has stopped
+      // firing does not fail, it just checks less, so `npm run verify` is green either way.
+      //
+      // All three families are therefore restated here: the wall-clock ban, the two Math evasions,
+      // and the golden-hash ban. That last one is also set by the earlier `**/*.ts` block, which
+      // matches these files too; this block wins because it comes later, so omitting it here would
+      // silently disarm the golden-hash rule for the entire simulation substrate and all three
+      // games. The hazard is therefore order-dependent as well as co-location-dependent: moving
+      // these two blocks past each other, or adding a third matching block below, breaks it.
+      'no-restricted-syntax': [
+        'error',
+        noWallClockDate,
+        ...restrictedMathSyntax,
+        noSelfReferentialGoldenHash,
+      ],
     },
   },
   {
