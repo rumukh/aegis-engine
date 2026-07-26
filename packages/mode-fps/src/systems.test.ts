@@ -163,6 +163,79 @@ describe('capsule-vs-wall collision', () => {
   });
 });
 
+// M5. The collision test was a test of the *destination point* only, so a single tick's
+// displacement larger than the wall could not see it: from x = 3.0 against a wall spanning
+// [3.5, 4.5] with radius 0.4, a step of 1.8 was blocked and 2.0 went clean through. At 60 Hz that
+// is moveSpeed >= 120, or any knockback or scripted velocity. `mode-platformer` already sweeps.
+describe('capsule-vs-wall collision — no tunnelling at speed', () => {
+  /** One row, wall at col 4 — world x in [3.5, 4.5]. Everything else is open. */
+  function wallSpanning3half(): FloorplanSpec {
+    return {
+      width: 12,
+      height: 1,
+      tileSize: 1,
+      origin: { x: 0, z: 0 },
+      rows: ['....#.......'],
+      legend: {
+        '.': { solid: false, floor: 0, ceil: 4 },
+        '#': { solid: true, floor: 0, ceil: 4 },
+      },
+    };
+  }
+
+  /** Place a capsule at x = 3 and drive it east at `speed` for `ticks`; report the final x. */
+  function driveEast(speed: number, ticks: number): { x: number; vx: number } {
+    const world = createWorld({ seed: `tunnel-${speed}` });
+    world.setResource(FPS_COLLISION, extrudeFloorplan(wallSpanning3half()));
+    const actor = spawnActor(world, { x: 3, y: 0, z: 0 });
+    const sim = createSimulation({
+      world,
+      schedule: createSchedule().addAll([integrateSystem]),
+      tickRate: TICK_RATE,
+    });
+    world.get(actor, CapsuleBody)!.velocity = { x: speed, y: 0, z: 0 };
+    for (let t = 0; t < ticks; t++) sim.step(frame({ tick: t }));
+    return {
+      x: world.get(actor, Transform)!.position.x,
+      vx: world.get(actor, CapsuleBody)!.velocity.x,
+    };
+  }
+
+  it('does not pass through the wall on a single 2.0-unit step (the measured tunnel)', () => {
+    // speed * dt = 120 / 60 = 2.0, the exact step the audit tunnelled with.
+    const after = driveEast(120, 1);
+    expect(after.x).toBeLessThanOrEqual(3.1); // wall face 3.5 minus the 0.4 radius
+    expect(after.vx).toBe(0);
+  });
+
+  it('holds for every speed from a walk to a scripted launch', () => {
+    for (let speed = 6; speed <= 3000; speed += 37) {
+      const after = driveEast(speed, 1);
+      expect(after.x + 0.4).toBeLessThanOrEqual(3.5 + 1e-9);
+    }
+  });
+
+  it('never ends up east of the wall however long it pushes', () => {
+    const after = driveEast(240, 60);
+    expect(after.x).toBeLessThanOrEqual(3.1);
+  });
+
+  it('is unchanged for a step that already fits inside the capsule radius', () => {
+    // The ordinary case (and every tick of the shipped game): one sub-step, identical arithmetic.
+    const world = createWorld({ seed: 'nosplit' });
+    world.setResource(FPS_COLLISION, extrudeFloorplan(wallSpanning3half()));
+    const actor = spawnActor(world, { x: 0, y: 0, z: 0 });
+    const sim = createSimulation({
+      world,
+      schedule: createSchedule().addAll([integrateSystem]),
+      tickRate: TICK_RATE,
+    });
+    world.get(actor, CapsuleBody)!.velocity = { x: 6, y: 0, z: 0 };
+    sim.step(frame({ tick: 0 }));
+    expect(world.get(actor, Transform)!.position.x).toBe(0 + 6 / TICK_RATE);
+  });
+});
+
 describe('hitscan steered by look direction', () => {
   /** A shooter at origin and a shootable, damageable target 3 units east. */
   function scene(seed: string): { world: World; shooter: Entity; target: Entity } {
