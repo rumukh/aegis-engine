@@ -46,13 +46,17 @@ const bannedMathProps = [
  * itself: it is vacuously true, can never fail, and pins nothing — while reading exactly like a
  * determinism regression test. See docs/architecture.md §7.
  *
- * **The scope is the rule, not the pattern.** The same line is *correct* inside `@aegis/harness`'s
- * own tests, where `expectSim` is the subject under test and feeding it a matching hash is
- * precisely how you assert "accepts a correct hash without throwing". Everywhere else — games,
- * modes, the CLI — `expectSim` is a tool being used to pin a golden master, and the
- * self-comparison is always a defect. So the ban is lifted for `packages/harness/src/**` *.test.ts
- * by location, in preference to inline exemptions, which are exactly the thing that would get
- * copy-pasted into a game test later.
+ * **Absolute: no location scoping, no exemptions.** The idiom was found independently four times,
+ * which is the evidence that human attention is the wrong control for it — so the rule must have
+ * no special case for anyone to imitate. A rule that is legal in the package that authors the
+ * exemplars would not have stopped this, and an inline `eslint-disable` is exactly what the next
+ * author copies (and is forbidden by docs/working-agreement.md §4 anyway). The one place the
+ * pattern was legitimate — a harness test where the hash is incidental, not the subject — reads
+ * better with the value captured into a named local, so nothing needed an exception.
+ *
+ * Known limit, stated rather than implied: this is syntactic. `const h = r.hash` followed by
+ * `hashEquals(h)` evades it, so it catches the idiom as written and copied, not every possible
+ * spelling of a self-comparison.
  */
 const noSelfReferentialGoldenHash = {
   selector:
@@ -135,16 +139,6 @@ export default tseslint.config(
       // Flat config replaces a rule's options wholesale rather than merging them, so each block
       // that sets `no-restricted-syntax` must restate every selector it wants to keep.
       'no-restricted-syntax': ['error', noWallClockDate, noSelfReferentialGoldenHash],
-    },
-  },
-  {
-    // The harness's own tests are the one place `expectSim` is the *subject* rather than the tool,
-    // so `hashEquals(result.hash)` there is the correct way to assert "accepts a matching hash
-    // without throwing" — see the note on `noSelfReferentialGoldenHash`. The determinism selectors
-    // still apply. Must stay after the block above, which this narrows.
-    files: ['packages/harness/src/**/*.test.ts', 'packages/harness/test/**/*.ts'],
-    rules: {
-      'no-restricted-syntax': ['error', noWallClockDate],
     },
   },
   {
