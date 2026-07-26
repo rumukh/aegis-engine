@@ -605,6 +605,27 @@ function quote(cmd: InputCommand): string {
 }
 
 /**
+ * Whether compiled frames are indistinguishable from no input at all — every action set empty,
+ * no edges, no axes, no look delta, no pointer. This is the exact condition the "the script did
+ * nothing" error is about, so it is measured on the compiled output rather than guessed from
+ * which spans intersect the window: `release A @0` for an action that was never held,
+ * `aim 0 0 @0` and `look 0 0 @t` all sit *inside* the window and still contribute nothing, and
+ * counting them as effective would silently disarm the check for every other statement.
+ */
+function framesAreIdle(frames: readonly InputFrame[]): boolean {
+  return frames.every(
+    (f) =>
+      f.pressed.length === 0 &&
+      f.released.length === 0 &&
+      Object.keys(f.actions).length === 0 &&
+      Object.keys(f.axes).length === 0 &&
+      f.look.dx === 0 &&
+      f.look.dy === 0 &&
+      f.pointer === null,
+  );
+}
+
+/**
  * Report statements that the tick window silently swallowed.
  *
  * {@link forEachTick} clamps, and the pointer/`aim` compilers `continue`, so a statement outside
@@ -614,9 +635,8 @@ function quote(cmd: InputCommand): string {
  *
  * **Severity:** a swallowed statement is normally a `warning`, because running a *prefix* of a
  * playthrough is a first-class workflow (`aegis inspect --tick 90` on a 400-tick script leaves
- * every later statement inactive on purpose). When **no** statement in the script had any effect
- * at all, the script as a whole is an `error`: the run is then indistinguishable from one with no
- * input, which is never what the author meant.
+ * every later statement inactive on purpose). When the script compiles to nothing at all — the
+ * run is then indistinguishable from one with no input — they are `error`s instead.
  */
 function checkAgainstWindow(
   commands: readonly InputCommand[],
@@ -624,13 +644,18 @@ function checkAgainstWindow(
 ): readonly Diagnostic[] {
   const n = totalTicks < 0 ? 0 : totalTicks;
   const window = `[0, ${n})`;
-  const effective = commands.filter((cmd) => {
+  const swallowed = (cmd: InputCommand): boolean => {
     const { start, end } = spanOf(cmd);
-    return (end > n ? n : end) > (start < 0 ? 0 : start);
-  }).length;
+    return (end > n ? n : end) <= (start < 0 ? 0 : start);
+  };
+  // Only worth compiling when something was actually dropped; an intact script emits nothing.
   // `ticks: 0` steps nothing at all, so no statement *can* apply; that is a degenerate window,
   // not a mis-authored script.
-  const scriptDidNothing = n > 0 && commands.length > 0 && effective === 0;
+  const scriptDidNothing =
+    n > 0 &&
+    commands.length > 0 &&
+    commands.some(swallowed) &&
+    framesAreIdle(compileFrames(commands, n));
   const diags: Diagnostic[] = [];
 
   for (const cmd of commands) {

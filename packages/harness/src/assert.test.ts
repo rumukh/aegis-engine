@@ -223,28 +223,56 @@ describe('expectSim — failure messages are actionable', () => {
  */
 describe('unresolvable component references are a loud error, not a silent no-op', () => {
   let result: SimResult;
+  /** The same level, but the player never fires — so the enemy is ALIVE at full health. */
+  let enemyAlive: SimResult;
   beforeAll(async () => {
     result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
+    enemyAlive = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 60,
+      input: 'hold Right 0..60',
+    });
   });
 
   it('"assert every enemy is dead" cannot pass on a world where the enemy is alive', () => {
-    // The enemy IS dead here (Fire @1 kills it), but the query is misspelled, so the assertion
-    // was passing for the wrong reason. Prove the typo is now rejected outright.
-    expect(() => expectSim(result).entityCount({ has: ['Enmy'] }, 0)).toThrow(
+    // The scenario verbatim: the enemy is alive at full health, and the assertion meant to catch
+    // that is `entityCount({ has: ['Enmy'] }, 0)`. Pre-fix it passed, because the typo matched
+    // nothing and 0 === 0.
+    expect(enemyAlive.query({ has: ['Enemy'] }).count()).toBe(1); // it really is still there
+    expect(enemyAlive.world.query({ has: ['Enmy'] }).count()).toBe(0); // …and the typo sees none
+    expect(() => expectSim(enemyAlive).entityCount({ has: ['Enmy'] }, 0)).toThrow(
       UnknownComponentError,
     );
-    // …while the correctly-spelled version is a real check that still works.
-    expect(() => expectSim(result).entityCount({ has: ['Enemy'] }, 1)).not.toThrow();
+    // The correctly-spelled assertion is a real check, and it correctly fails on this world.
+    expect(() => expectSim(enemyAlive).entityCount({ has: ['Enemy'] }, 0)).toThrow(
+      GameAssertionError,
+    );
   });
 
-  it('a mistyped none: exclusion is rejected instead of being quietly dropped', () => {
+  it('rejects a typo in every clause — has, any and none', () => {
+    // `none:` is the dangerous one: an unresolvable exclusion silently *widens* the result set,
+    // so a filter written to narrow a query stops filtering with no sign that it stopped.
+    expect(result.world.query({ has: ['Player'], none: ['Player'] }).count()).toBe(0);
+    expect(result.world.query({ has: ['Player'], none: ['Playr'] }).count()).toBe(1); // widened
     expect(() => expectSim(result).entityCount({ has: ['Player'], none: ['Playr'] }, 1)).toThrow(
+      UnknownComponentError,
+    );
+    expect(() => expectSim(result).entityExists({ has: ['Playr'] })).toThrow(UnknownComponentError);
+    expect(() => expectSim(result).entityExists({ any: ['Playr', 'Enmy'] })).toThrow(
       UnknownComponentError,
     );
     // The real exclusion still works and still excludes.
     expect(() =>
       expectSim(result).entityCount({ has: ['Player'], none: ['Player'] }, 0),
     ).not.toThrow();
+  });
+
+  it('names the clause a typo appeared in, so a bad none: is not mistaken for a bad has:', () => {
+    const msg = messageFrom(() =>
+      expectSim(result).entityCount({ has: ['Player'], none: ['Playr'] }, 1),
+    );
+    expect(msg).toContain('"Playr" (in none:) is not a registered component');
+    expect(msg).toContain('Did you mean "Player"?');
   });
 
   it('names the unknown component, the clause, a near-miss and the registered set', () => {

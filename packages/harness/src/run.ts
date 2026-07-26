@@ -51,8 +51,12 @@ import type { Recording } from './replay.js';
 import { formatInputScript, scriptFromCommands } from './input-script.js';
 import { describeRun, renderValue, summariseWorld, toOutcome } from './report.js';
 import type { CheckResult } from './report.js';
-import { recordAssertion, registerKnownComponents, unknownComponentRefs } from './verification.js';
-import { explainUnknownRefs } from './verification.js';
+import {
+  explainUnknownRefs,
+  recordAssertion,
+  registerKnownComponents,
+  unknownComponentRefs,
+} from './verification.js';
 import type { AsciiView, SemanticFrame, ViewOptions, Viewport } from './view.js';
 
 /** A named invariant checked every tick during a run. */
@@ -107,17 +111,20 @@ export interface RunOptions {
    * Called with any diagnostics raised while compiling the input script against `ticks` —
    * statements the tick window swallowed, spans it clipped, `look` deltas it applied only a
    * fraction of, and order-sensitive overlaps. See {@link InputScript.check}.
+   *
+   * This is the whole fix for "a statement outside `[0, ticks)` vanishes silently": the run's
+   * *behaviour* is unchanged (a script that did nothing still produces the same hash as no input
+   * at all — that is correct), what changes is that the tooling now says so out loud.
    */
   onInputDiagnostics?: (diagnostics: readonly Diagnostic[]) => void;
   /**
-   * Permit an input script that had **no effect whatsoever** — every statement fell outside
-   * `[0, ticks)`, making the run identical to one with no input at all. Reported through
-   * {@link RunOptions.onInputDiagnostics} either way; by default it also aborts the run, because
-   * silently simulating nothing is how "I shortened the run and the whole script evaporated"
-   * hides. A script that *partly* applied (a deliberate prefix run) only ever warns.
-   * Defaults to `false`.
+   * Treat `error`-severity input diagnostics as fatal — i.e. abort with a `DiagnosticError` when
+   * **no** statement in the script had any effect, making the run identical to one with no input.
+   * Off by default: reporting is the fix, and running a prefix of a playthrough
+   * (`aegis inspect --tick 90` on a 400-tick script) is a first-class workflow that must keep
+   * working. Opt in for CI, where a script that silently evaporated is never intended.
    */
-  allowIneffectiveInput?: boolean;
+  strictInput?: boolean;
 }
 
 /** The inspectable outcome of a run — the object every gameplay test reads. */
@@ -500,9 +507,13 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
  * computes its own (more precise) counts keeps them.
  */
 function withEntityCensus(frame: SemanticFrame, world: World): SemanticFrame {
-  if (frame.totalEntities !== undefined) return frame;
-  const total = world.entityCount;
-  return { ...frame, totalEntities: total, excludedEntities: total - frame.entities.length };
+  if (frame.totalEntities !== undefined && frame.excludedEntities !== undefined) return frame;
+  const total = frame.totalEntities ?? world.entityCount;
+  return {
+    ...frame,
+    totalEntities: total,
+    excludedEntities: frame.excludedEntities ?? total - frame.entities.length,
+  };
 }
 
 /** Resolve raw {@link RunOptions} + a scene into a fully-resolved, executable run. */
@@ -526,9 +537,9 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
   const { frames, script, diagnostics } = resolveInput(options.input, ticks);
   if (diagnostics.length > 0) {
     options.onInputDiagnostics?.(diagnostics);
-    const errors = diagnostics.filter((d) => d.severity === 'error');
-    if (errors.length > 0 && options.allowIneffectiveInput !== true) {
-      throw new DiagnosticError(errors);
+    if (options.strictInput === true) {
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      if (errors.length > 0) throw new DiagnosticError(errors);
     }
   }
   const view: ViewOptions = {

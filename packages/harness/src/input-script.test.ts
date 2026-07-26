@@ -301,6 +301,69 @@ describe('formatInputScript — round-trip preserves compiled frames (regression
 });
 
 /**
+ * The round-trip guarantee, stated once and checked over a corpus.
+ *
+ * This is deliberately a **pure input-script property** — no runner, no recording, no replay.
+ * Record→replay agreeing is a *consequence* of this holding; it is not the proof, and a runner
+ * that re-used already-compiled frames could make replay pass while the formatter stayed
+ * unfaithful. `parse → format → parse` producing identical compiled frames is the thing that has
+ * to be true.
+ */
+describe('formatInputScript — the round-trip property, over a corpus', () => {
+  const corpus: readonly [name: string, source: string][] = [
+    [
+      'the shipped platformer script (statements out of tick order)',
+      'press Jump @28\npress Jump @74\nhold Right 0..126\nhold Right 138..152\nhold Right 190..400\npress Jump @288\npress Jump @317',
+    ],
+    [
+      'the shipped iso script (four pointer clicks)',
+      'click 1,2 @2\nclick 1,5 @40\nclick 9,1 @72\nclick 4,7 @300',
+    ],
+    [
+      'the shipped fps script (aim, axis spans, presses)',
+      'aim 90 0 @8\npress Fire @20\naim 0 0 @32\naxis Forward 1 40..124\npress Jump @124\naxis Forward 1 124..170\npress Fire @176\npress Fire @192\naxis Forward 1 210..320',
+    ],
+    ['overlapping axis writes, specific-before-general', 'axis Move -1 5..8\naxis Move 1 0..10'],
+    ['overlapping axis writes, general-before-specific', 'axis Move 1 0..10\naxis Move -1 5..8'],
+    ['two clicks on one tick', 'click 9,1 @2\nclick 1,5 @2'],
+    ['a click and a point on one tick', 'click 9,1 @2\npoint 1,5 @2'],
+    ['two aims on one tick', 'aim 90 0 @1\naim 10 0 @1'],
+    ['aims interleaved with looks', 'look 5 0 @0\naim 20 0 @2\nlook -3 1 @1\naim -10 5 @4'],
+    ['non-associative look accumulation', 'look 9007199254740992 0 @0\nlook 1 0 @0\nlook 1 0 @0'],
+    ['releases bounded by later holds', 'hold A 0..10\nrelease A @4\nhold A 6..8\nrelease A @9'],
+    [
+      'fractional and negative values',
+      'axis X -0.5 0..4\nlook -0.125 0.375 1..3\nclick -2.5,3.25 @2',
+    ],
+    ['exponent-formatted values', 'axis X 1e-7 0..2\naxis Y 1e21 0..2\nlook 1e-7 1e21 @1'],
+    ['single-tick spans written as ranges', 'hold A 3..4\naxis X 1 3..4\nlook 1 2 3..4'],
+    ['single-tick spans written with @', 'hold A @3\naxis X 1 @3\nlook 1 2 @3'],
+    ['comments and blank lines', '# lead\n\nhold A 0..3   # trailing\n\n# tail\npress B @1'],
+    ['an action named like a verb', 'hold hold 0..3\npress press @1\nrelease release @2'],
+    [
+      'everything at once, reversed',
+      'release Right @59\npoint 5,6 @3\nclick 3,4 @2\naim 45 10 @30\nlook 90 0 5..7\naxis MoveX -0.5 10..20\npress Jump @28\nhold Right 0..60',
+    ],
+  ];
+
+  it.each(corpus)('%s', (_name, source) => {
+    const first = parseInputScript(source);
+    expect(first.ok, `parse failed: ${JSON.stringify(first.diagnostics)}`).toBe(true);
+    const formatted = formatInputScript(first.value!);
+
+    const second = parseInputScript(formatted);
+    expect(second.ok, `re-parse failed: ${JSON.stringify(second.diagnostics)}`).toBe(true);
+
+    // The property, at several window sizes: shorter than the script, exactly it, and longer.
+    for (const ticks of [1, 5, 60, 401]) {
+      expect(second.value!.frames(ticks)).toEqual(first.value!.frames(ticks));
+    }
+    // …and formatting is idempotent, so a re-recorded session is byte-stable.
+    expect(formatInputScript(second.value!)).toBe(formatted);
+  });
+});
+
+/**
  * F4: statements outside `[0, ticks)` are silently swallowed by the compiler's clamping, so a
  * 60-tick run with `press Jump @500` hashes byte-identically to a run with no input at all.
  * `check(totalTicks)` is the channel that makes that visible.
@@ -332,6 +395,34 @@ describe('InputScript.check — statements the tick window swallowed', () => {
   it('never errors on a 0-tick window, where no statement can apply by definition', () => {
     const diags = parseInputScript('press Jump @5').value!.check(0);
     expect(diags.every((d) => d.severity === 'warning')).toBe(true);
+  });
+
+  /**
+   * The severity is decided on the **compiled frames**, not on which spans happen to intersect
+   * the window. A statement can sit inside the window and still contribute nothing — a `release`
+   * for an action that was never held, a zero `look`, an `aim` at the value already there — and
+   * counting those as "the script did something" would silently downgrade every genuinely
+   * swallowed statement to a warning, disarming the check for the whole file.
+   */
+  it.each([
+    ['a release for an action that was never held', 'release Jump @0'],
+    ['a zero look delta', 'look 0 0 @0'],
+    ['an aim at the value already there', 'aim 0 0 @0'],
+  ])('is not disarmed by an in-window no-op: %s', (_name, noop) => {
+    const source = `${noop}\npress Jump @500\nhold Right 200..300`;
+    const script = parseInputScript(source).value!;
+    // The no-op really is inside the window, and the script really does compile to nothing.
+    expect(script.frames(60)).toEqual(parseInputScript('').value!.frames(60));
+    const swallowed = script.check(60).filter((d) => d.code === 'AEG-HARNESS-0009');
+    expect(swallowed).toHaveLength(2);
+    expect(swallowed.every((d) => d.severity === 'error')).toBe(true);
+  });
+
+  it('stays a warning when an in-window statement really did something', () => {
+    const script = parseInputScript('press Jump @1\npress Jump @500').value!;
+    const swallowed = script.check(60).filter((d) => d.code === 'AEG-HARNESS-0009');
+    expect(swallowed).toHaveLength(1);
+    expect(swallowed[0]!.severity).toBe('warning');
   });
 
   it('reports a clipped span as a warning naming the ticks that never ran', () => {

@@ -16,6 +16,7 @@ import type { SceneFile } from '@aegis/content';
 import type { Diagnostic, World } from '@aegis/core';
 import { InvariantError, runScene, replayRecording } from './run.js';
 import { parseInputScript } from './input-script.js';
+import type { ModePlugin } from './plugin.js';
 import { parseRecording, serializeRecording } from './replay.js';
 import { fakeMode, FakeReady } from './testing/fake-mode.js';
 
@@ -215,46 +216,45 @@ describe('runScene — live invariants', () => {
  * F4: `forEachTick` clamps and the pointer/`aim` compilers `continue`, so a statement outside
  * `[0, ticks)` silently never happens. A 60-tick run with `press Jump @500` hashed identically to
  * a run with no input at all — the most likely authoring mistake in the DSL, and invisible.
- * Every test here passes silently (no diagnostics, no throw) on the pre-fix code.
+ *
+ * The identical hash is *correct*; what was missing is the tooling saying so. So the fix here is
+ * the diagnostic channel, not a change in what the simulation does. Every test in this block sees
+ * no diagnostics at all on the pre-fix code.
  */
 describe('runScene — input the tick window would have swallowed', () => {
-  it('aborts a run whose statements all fall outside the window', async () => {
-    await expect(
-      runScene(level(), {
-        plugin: fakeMode,
-        ticks: 60,
-        input: 'press Jump @500\nhold Right 200..300',
-      }),
-    ).rejects.toThrow(/AEG-HARNESS-0009/);
-  });
-
-  it('proves the swallowed script really was a no-op (identical hash to no input at all)', async () => {
-    const ignored = await runScene(level(), {
+  it('still produces the same hash as no input at all — and now says so out loud', async () => {
+    const seen: Diagnostic[] = [];
+    const swallowed = await runScene(level(), {
       plugin: fakeMode,
       ticks: 60,
       input: 'press Jump @500\nhold Right 200..300',
-      allowIneffectiveInput: true,
-    });
-    const idle = await runScene(level(), { plugin: fakeMode, ticks: 60 });
-    expect(ignored.hash).toBe(idle.hash);
-  });
-
-  it('does not abort a deliberate prefix run, but still reports what it dropped', async () => {
-    // `aegis inspect --tick 90` on a 400-tick script is a core workflow: the later statements are
-    // meant to be inactive, so this warns rather than failing.
-    const seen: Diagnostic[] = [];
-    const result = await runScene(level(), {
-      plugin: fakeMode,
-      ticks: 20,
-      input: 'hold Right 0..60\npress Fire @1\npress Jump @300',
       onInputDiagnostics: (d) => seen.push(...d),
     });
-    expect(result.tick).toBe(20);
-    expect(seen.map((d) => d.code).sort()).toEqual(['AEG-HARNESS-0009', 'AEG-HARNESS-0010']);
-    expect(seen.every((d) => d.severity === 'warning')).toBe(true);
+    const idle = await runScene(level(), { plugin: fakeMode, ticks: 60 });
+
+    // Behaviour is unchanged: the script really did nothing, and the hash proves it.
+    expect(swallowed.hash).toBe(idle.hash);
+    // What changed is that this is no longer silent.
+    expect(seen).toHaveLength(2);
+    expect(seen.every((d) => d.code === 'AEG-HARNESS-0009')).toBe(true);
+    expect(seen.every((d) => d.severity === 'error')).toBe(true); // nothing applied at all
+    expect(seen[0]!.message).toContain('"press Jump @500"');
+    expect(seen[0]!.message).toContain('identical to one with the statement deleted');
+    expect(seen[0]!.location?.line).toBe(1);
   });
 
-  it('reports clipped spans and fractional look deltas as warnings without aborting', async () => {
+  it('aborts only when the caller opts into strictInput', async () => {
+    const ineffective = 'press Jump @500\nhold Right 200..300';
+    await expect(
+      runScene(level(), { plugin: fakeMode, ticks: 60, input: ineffective, strictInput: true }),
+    ).rejects.toThrow(/AEG-HARNESS-0009/);
+    // …and without it the run completes exactly as it always did.
+    await expect(
+      runScene(level(), { plugin: fakeMode, ticks: 60, input: ineffective }),
+    ).resolves.toBeDefined();
+  });
+
+  it('reports clipped spans and fractional look deltas as warnings', async () => {
     const seen: Diagnostic[] = [];
     const result = await runScene(level(), {
       plugin: fakeMode,
@@ -266,6 +266,22 @@ describe('runScene — input the tick window would have swallowed', () => {
     expect(seen.map((d) => d.code).sort()).toEqual(['AEG-HARNESS-0010', 'AEG-HARNESS-0011']);
     expect(seen.every((d) => d.severity === 'warning')).toBe(true);
     expect(seen.find((d) => d.code === 'AEG-HARNESS-0011')!.message).toContain('45° of 90° yaw');
+  });
+
+  it('does not treat a deliberate prefix run as an error, even under strictInput', async () => {
+    // `aegis inspect --tick 20` on a longer script: the later statements are meant to be
+    // inactive, so they are reported but never fatal.
+    const seen: Diagnostic[] = [];
+    const result = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 20,
+      input: 'hold Right 0..60\npress Fire @1\npress Jump @300',
+      strictInput: true,
+      onInputDiagnostics: (d) => seen.push(...d),
+    });
+    expect(result.tick).toBe(20);
+    expect(seen.map((d) => d.code).sort()).toEqual(['AEG-HARNESS-0009', 'AEG-HARNESS-0010']);
+    expect(seen.every((d) => d.severity === 'warning')).toBe(true);
   });
 
   it('says nothing for a script that fits its window', async () => {
@@ -394,6 +410,32 @@ describe('SimResult — history and the view pipeline', () => {
     // …and with nothing excluded the counts agree.
     const all = result.frame(undefined, { includeOffscreen: true });
     expect(all.excludedEntities).toBe(0);
+  });
+
+  it('fills each census field independently, never overwriting a provider that set one', async () => {
+    // A provider that computes a more precise total (or a more precise exclusion count) keeps it;
+    // the harness only fills the field that is missing.
+    const world = (await runScene(level(), { plugin: fakeMode, ticks: 5 })).world;
+    const base = fakeMode.view().semanticFrame(world);
+    for (const provided of [
+      { totalEntities: 99 },
+      { excludedEntities: 7 },
+      { totalEntities: 99, excludedEntities: 7 },
+    ]) {
+      const partial: ModePlugin = {
+        ...fakeMode,
+        view: () => ({
+          ...fakeMode.view(),
+          semanticFrame: (w) => ({ ...fakeMode.view().semanticFrame(w), ...provided }),
+        }),
+      };
+      const frame = (await runScene(level(), { plugin: partial, ticks: 5 })).frame();
+      expect(frame.totalEntities).toBe(provided.totalEntities ?? world.entityCount);
+      expect(frame.excludedEntities).toBe(
+        provided.excludedEntities ??
+          (provided.totalEntities ?? world.entityCount) - base.entities.length,
+      );
+    }
   });
 
   it('reports ASCII cells where one entity covered another', async () => {
