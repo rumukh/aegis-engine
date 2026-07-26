@@ -14,7 +14,8 @@ import { createEventBus } from './events.js';
 import { createPrng } from './prng.js';
 import { hashSnapshot } from './hash.js';
 import { CoreDiagnosticCode } from './codes.js';
-import { deepClone, deepCloneSerialisable, NonFiniteValueError } from './clone.js';
+import { assertFinite, deepClone, deepCloneSerialisable, NonFiniteValueError } from './clone.js';
+import { nonFiniteAtWrite } from './component.js';
 import { DiagnosticError } from './diagnostics.js';
 import { RESET_LOG, SET_TICK } from './internal.js';
 import type { ComponentInstance, ComponentType, ResourceType } from './component.js';
@@ -168,8 +169,29 @@ function refId(ref: ComponentRef): string {
   return typeof ref === 'string' ? ref : ref.id;
 }
 
-/** Raise a structured {@link CoreDiagnosticCode.InvalidSnapshot} for `path`. */
-function invalidSnapshot(path: string, message: string, fix: string): DiagnosticError {
+/** Rejection raised when a non-finite value is written into a resource. */
+function nonFiniteAtWriteResource(resourceId: string, err: NonFiniteValueError): DiagnosticError {
+  const where = `resources.${resourceId}${err.path === '' ? '' : `.${err.path}`}`;
+  return new DiagnosticError([
+    {
+      code: CoreDiagnosticCode.NonFiniteState,
+      severity: 'error',
+      message:
+        `Cannot write a non-finite number (${String(err.value)}) to ${where}. World state must ` +
+        `serialise to JSON (CHARTER principle 4), and JSON has no representation for ` +
+        `NaN or ±Infinity — it would be silently written out as null.`,
+      location: { path: where },
+      fix: `Guard the computation that produced ${String(err.value)} before setting the resource.`,
+      data: { entity: null, component: resourceId, path: where, value: String(err.value) },
+    },
+  ]);
+}
+
+/** Raise a structured {@link CoreDiagnosticCode.InvalidSnapshot} for `path`. */ function invalidSnapshot(
+  path: string,
+  message: string,
+  fix: string,
+): DiagnosticError {
   return new DiagnosticError([
     {
       code: CoreDiagnosticCode.InvalidSnapshot,
@@ -386,6 +408,16 @@ export function createWorld(config: WorldConfig): World {
   }
 
   function spawn(...components: ComponentInstance[]): Entity {
+    // Validate every value BEFORE allocating: a mid-spawn throw would otherwise leave the
+    // allocator holding a half-built entity, perturbing every future entity id.
+    for (const c of components) {
+      try {
+        assertFinite(c.value);
+      } catch (err) {
+        if (err instanceof NonFiniteValueError) throw nonFiniteAtWrite(c.type.id, err);
+        throw err;
+      }
+    }
     const slot = allocSlot();
     liveCount++;
     for (const c of components) {
@@ -419,6 +451,19 @@ export function createWorld(config: WorldConfig): World {
   function add<T>(entity: Entity, type: ComponentType<T>, value?: Partial<T>): void {
     if (!isAlive(entity)) {
       throw new Error(`[aegis] World.add: entity ${String(entity)} is not alive`);
+    }
+    // Check the caller's input here, where the entity is known, so the diagnostic names the
+    // row and not just the component. `create` re-checks the merged result (catching a
+    // non-finite that came from `defaults()`), with component-level context.
+    if (value !== undefined) {
+      try {
+        assertFinite(value);
+      } catch (err) {
+        if (err instanceof NonFiniteValueError) {
+          throw nonFiniteAtWrite(type.id, err, String(entity));
+        }
+        throw err;
+      }
     }
     storeSet(store(type.id), entityIndex(entity), type.create(value));
   }
@@ -454,8 +499,16 @@ export function createWorld(config: WorldConfig): World {
   function setResource<T>(type: ResourceType<T>, value: T): void {
     // Deep-copy on the way in, symmetric with how `spawn` clones component values, so a
     // caller-owned object (e.g. a nested field of a SceneFile) is never aliased into world
-    // state where the simulation would mutate it in place.
-    resources.set(type.id, deepClone(value));
+    // state where the simulation would mutate it in place. Non-finite values are rejected
+    // here rather than at `snapshot()`, so the error names the code that produced them.
+    try {
+      resources.set(type.id, deepCloneSerialisable(value));
+    } catch (err) {
+      if (err instanceof NonFiniteValueError) {
+        throw nonFiniteAtWriteResource(type.id, err);
+      }
+      throw err;
+    }
   }
 
   function getResource<T>(type: ResourceType<T>): T | undefined {

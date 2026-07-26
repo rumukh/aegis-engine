@@ -8,15 +8,30 @@
  * `JSON.stringify` maps `NaN` and `±Infinity` to `null`. Because `snapshot()` laundered every
  * value through it before {@link "./serialize".canonicalStringify} ever saw them, the
  * non-finite guard in the canonical encoder could never fire on the world path — the state
- * hash was blind to exactly the values you most want it to catch, and snapshot→restore was
- * silently lossy (a live `Infinity` came back as `null`, so `v * 2 + 1` was `Infinity` before
- * a round trip and `1` after, breaking the round-trip contract the determinism proof rests on).
+ * hash was blind to exactly the values you most want it to catch.
  *
- * These clones preserve every value bit-for-bit — `NaN` and `±Infinity` included — so the
- * guard fires as designed and a NaN introduced by a divide-by-zero or a `sqrt` of a negative
- * surfaces at the next `snapshot()` instead of vanishing. `-0` is the one deliberate
- * exception: it is normalised to `0`, matching the canonical encoder, so that stored state
- * never holds a value the state hash cannot distinguish.
+ * ## Where non-finite values are caught, and why it takes two mechanisms
+ *
+ * Non-finite values are **rejected at the write boundary** (`spawn`, `add`, `setResource`,
+ * `ComponentType.create`), so they are unrepresentable in world state and the
+ * snapshot→restore question never arises. That is also the best diagnostic: the error fires at
+ * the code that produced the `NaN`.
+ *
+ * But a system mutating a stored component in place — `world.get(e, C).v = 0 / 0`, the single
+ * most common way a simulation produces `NaN` — touches no write boundary and no clone at all.
+ * That is why these clones must still *preserve* non-finite values rather than launder them:
+ * preserving is what makes the guard in `canonicalStringify` reachable from `snapshot()` and
+ * `hash()`, which is the only place a live-mutated `NaN` can be caught without proxying every
+ * component read. `snapshot()` turns that into a locating diagnostic naming the entity, the
+ * component and the JSON path.
+ *
+ * Note what is deliberately *not* attempted: making snapshot→restore preserve a non-finite
+ * value. `JSON.stringify({v: Infinity})` is `'{"v":null}'` by specification, and CHARTER
+ * principle 4 requires the world to serialise to JSON, so a world that can hold a non-finite
+ * value cannot round-trip. Rejecting at the boundary is what makes that contradiction moot.
+ *
+ * `-0` is the one deliberate normalisation: it is mapped to `0`, matching the canonical
+ * encoder, so that stored state never holds a value the state hash cannot distinguish.
  * @packageDocumentation
  */
 
@@ -60,6 +75,34 @@ export function deepClone<T>(value: T): T {
  */
 export function deepCloneSerialisable<T>(value: T): T {
   return cloneValue(value, 0, true, '') as T;
+}
+
+/**
+ * Throw a {@link NonFiniteValueError} if `value` contains `NaN` or `±Infinity`, without
+ * copying it.
+ *
+ * Used where a caller-supplied clone will run next: checking the *input* means a component
+ * that supplies a lossy `clone` cannot hide a non-finite value by flattening it to `null` on
+ * the way past the write boundary.
+ */
+export function assertFinite(value: unknown, path = ''): void {
+  if (value === null) return;
+  const t = typeof value;
+  if (t === 'number') {
+    const n = value as number;
+    if (!Number.isFinite(n)) throw new NonFiniteValueError(path, n);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) assertFinite(value[i], `${path}[${i}]`);
+    return;
+  }
+  if (t === 'object') {
+    const obj = value as Record<string, unknown>;
+    for (const key of Object.keys(obj)) {
+      assertFinite(obj[key], path === '' ? key : `${path}.${key}`);
+    }
+  }
 }
 
 function cloneValue(value: unknown, depth: number, checked: boolean, path: string): unknown {

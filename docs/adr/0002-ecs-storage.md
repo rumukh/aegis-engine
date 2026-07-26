@@ -39,7 +39,11 @@ iteration order and hashing get subtle), and a **sparse set per component**.
   resources, in a canonical, key-sorted form. This is both the save format and the hash input.
   Component values are copied **structurally**, not through `JSON.parse(JSON.stringify(...))`:
   the JSON round-trip maps `NaN`/`±Infinity` to `null`, which made both the save and the state
-  hash silently lossy exactly where they most needed to be exact (ADR-0001).
+  hash silently lossy exactly where they most needed to be exact (ADR-0001). Because JSON has no
+  representation for a non-finite number, such a value is **rejected at the write boundary**
+  (`spawn`, `add`, `setResource`, `ComponentType.create`) rather than stored and then discovered
+  later; the structural clone still preserves them so that a value written in place by a system,
+  which touches no boundary, is caught at `snapshot()`.
 - **Queries are declarative** (`core/query.ts`): `world.query({ has: [...], any: [...], none: [...] })`,
   returning a `QueryResult` that is directly **iterable** (`for (const view of result)`) and also
   offers `.views()`, `.entities()`, `.first()`, `.one()`, `.count()` and `.forEach()`. Component
@@ -54,10 +58,11 @@ iteration order and hashing get subtle), and a **sparse set per component**.
   archetype store; extremely large worlds (100k+ entities) are not the design target (anti-goal:
   keep the simulation understandable), so this is acceptable.
 - **Constraint for implementers:** component data must be **plain, JSON-serialisable data** — no
-  class instances, functions, or cyclic refs — because it is cloned via structural copy and hashed
-  by canonical JSON. Behaviour lives in systems, never on components. Non-plain data is now
-  _rejected_ at the point it enters the world rather than silently canonicalised (a `Date` has no
-  enumerable own keys and used to hash as `{}`).
+  class instances, functions, cyclic refs, or non-finite numbers — because it is cloned via
+  structural copy and hashed by canonical JSON. Behaviour lives in systems, never on components.
+  Non-plain data is now _rejected_ at the point it enters the world rather than silently
+  canonicalised (a `Date` has no enumerable own keys and used to hash as `{}`), and
+  `NaN`/`±Infinity` are rejected with `AEG-CORE-0001` naming the component and JSON path.
 - **Constraint for implementers:** a slot can be recycled at most `MAX_ENTITY_GENERATION`
   (`2^21 - 1`) times. A handle is a float64 with 53 exact integer bits; 32 go to the index, which
   leaves 21 for the generation. Past that, `generation * 2^32 + index` rounds and two distinct

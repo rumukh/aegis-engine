@@ -16,7 +16,47 @@
  * ```
  * @packageDocumentation
  */
-import { deepClone } from './clone.js';
+import { assertFinite, deepClone, deepCloneSerialisable, NonFiniteValueError } from './clone.js';
+import { CoreDiagnosticCode } from './codes.js';
+import { DiagnosticError } from './diagnostics.js';
+
+/**
+ * Build the structured rejection raised when a non-finite value is written into a component.
+ *
+ * Rejecting here rather than at `snapshot()` is the whole point of the write boundary: the
+ * error fires at the code that produced the `NaN`, not several ticks later at the hash.
+ */
+export function nonFiniteAtWrite(
+  componentId: string,
+  err: NonFiniteValueError,
+  entity?: string,
+): DiagnosticError {
+  const where =
+    entity === undefined
+      ? `${componentId}${err.path === '' ? '' : `.${err.path}`}`
+      : `entities[${entity}].components.${componentId}${err.path === '' ? '' : `.${err.path}`}`;
+  return new DiagnosticError([
+    {
+      code: CoreDiagnosticCode.NonFiniteState,
+      severity: 'error',
+      message:
+        `Cannot write a non-finite number (${String(err.value)}) to ${where}. World state must ` +
+        `serialise to JSON (CHARTER principle 4), and JSON has no representation for ` +
+        `NaN or ±Infinity — it would be silently written out as null.`,
+      location: { path: where },
+      fix:
+        `Guard the computation that produced ${String(err.value)} — a divide-by-zero, a sqrt of ` +
+        `a negative, an uninitialised accumulator, or an out-of-domain angle. Clamp the input, ` +
+        `or use a sentinel the format can hold (null, or a finite bound).`,
+      data: {
+        entity: entity ?? null,
+        component: componentId,
+        path: where,
+        value: String(err.value),
+      },
+    },
+  ]);
+}
 
 /** A component value paired with its type, ready to attach to an entity. */
 export interface ComponentInstance<T = unknown> {
@@ -86,16 +126,29 @@ export interface ComponentDefinition<T extends object> {
  * @returns A callable {@link ComponentType}.
  */
 export function defineComponent<T extends object>(def: ComponentDefinition<T>): ComponentType<T> {
-  const clone = def.clone ?? ((value: T): T => deepClone(value));
+  const custom = def.clone;
+  const clone = custom ?? ((value: T): T => deepClone(value));
   const create = (init?: Partial<T>): T => {
-    // Merge `init` over defaults, then deep-copy the result through `clone` so no
-    // caller-owned nested object is ever retained by reference in world state. The spread
-    // alone is shallow: two instances built from one literal would alias the same nested
-    // objects, and the simulation would mutate the caller's data in place. Correctness over
-    // the extra copy — deterministic, owned state is this engine's whole point.
+    // Merge `init` over defaults, then deep-copy the result so no caller-owned nested object
+    // is ever retained by reference in world state. The spread alone is shallow: two instances
+    // built from one literal would alias the same nested objects, and the simulation would
+    // mutate the caller's data in place. Correctness over the extra copy — deterministic,
+    // owned state is this engine's whole point.
     const base = def.defaults();
-    const merged = init ? { ...base, ...init } : base;
-    return clone(merged as T);
+    const merged = (init ? { ...base, ...init } : base) as T;
+    try {
+      if (custom === undefined) {
+        // Clone and check in one pass.
+        return deepCloneSerialisable(merged);
+      }
+      // Check the *input* before handing it to a caller-supplied clone, so a lossy clone
+      // cannot hide a non-finite value by flattening it to `null` on the way past.
+      assertFinite(merged);
+      return custom(merged);
+    } catch (err) {
+      if (err instanceof NonFiniteValueError) throw nonFiniteAtWrite(def.id, err);
+      throw err;
+    }
   };
   const type = ((init?: Partial<T>): ComponentInstance<T> => ({
     type,

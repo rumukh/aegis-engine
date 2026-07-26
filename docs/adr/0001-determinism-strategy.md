@@ -99,9 +99,28 @@ single check, but it changes the meaning of every stored replay and every pinned
 and it would make the digest depend on whether event recording happened to be enabled. Two
 explicit digests say what they cover.
 
-Snapshotting also **enforces** finiteness: a component or resource holding `NaN`/`±Infinity`
-raises `AEG-CORE-0001` naming the entity, component and JSON path, instead of being laundered to
-`null` by a JSON round-trip on its way into the hash.
+Snapshotting also **enforces** finiteness, in two places, because one is not enough:
+
+1. **Rejected at the write boundary.** `spawn`, `add`, `setResource` and `ComponentType.create`
+   raise `AEG-CORE-0001` naming the component and JSON path (and the entity, where one exists)
+   rather than accepting `NaN`/`±Infinity`. Non-finite is therefore unrepresentable in world
+   state, and the error fires at the code that produced it — principle 8's whole purpose. The
+   check runs on the _input_, before any caller-supplied `ComponentType.clone`, so a lossy
+   clone cannot smuggle a value past it.
+2. **Preserved by the clone, caught at `snapshot()`.** A system mutating a stored component in
+   place — `world.get(e, C).v = 0 / 0`, the most common way a simulation produces `NaN` —
+   touches no write boundary and no clone. The clones therefore _preserve_ non-finite values
+   rather than laundering them through `JSON.parse(JSON.stringify(…))`, which is what makes
+   the guard in `canonicalStringify` reachable from `snapshot()`/`hash()`/`clone()`; those turn
+   it into a locating diagnostic naming entity, component and path.
+
+**Explicitly not attempted:** making snapshot→restore preserve a non-finite value.
+`JSON.stringify({v: Infinity})` is `'{"v":null}'` by specification, and principle 4 requires the
+world to serialise to JSON, so a world that _can_ hold a non-finite value cannot round-trip.
+Rejecting at the boundary is what dissolves that contradiction rather than papering over it.
+Sentinel-encoding (`{"$nonfinite":"Infinity"}`) was also rejected: it changes the snapshot format
+_and_ the hash input, invalidating every stored replay and every pinned `GOLDEN_HASH` — an
+enormous blast radius for a value class the engine should never hold.
 
 ## Consequences
 
