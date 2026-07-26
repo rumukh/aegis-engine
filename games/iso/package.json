@@ -1,0 +1,24 @@
+{
+  "name": "@aegis/game-iso",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Server Vault — the proof-of-concept isometric game built on @aegis/mode-iso.",
+  "main": "./dist/server-vault.js",
+  "types": "./dist/server-vault.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/server-vault.d.ts",
+      "import": "./dist/server-vault.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*",
+    "@aegis/harness": "*",
+    "@aegis/mode-iso": "*"
+  }
+}

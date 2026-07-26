@@ -10,6 +10,6 @@
     { "path": "../../packages/core" },
     { "path": "../../packages/content" },
     { "path": "../../packages/harness" },
-    { "path": "../../packages/mode-iso" }
+    { "path": "../../packages/mode-platformer" }
   ]
 }

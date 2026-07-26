@@ -5,8 +5,8 @@ on:
   pull_request:
 
 jobs:
-  build:
-    name: build / test / lint (${{ matrix.os }})
+  verify:
+    name: verify (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -26,11 +26,13 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
-      - name: Test
-        run: npm test
-
-      - name: Lint
-        run: npm run lint
+      # `npm run verify` is the project's one real gate (docs/working-agreement.md §3):
+      # tsc -b over every workspace project, then the whole vitest suite — which now includes
+      # the three PoC games under games/ (CHARTER §4.3) — then eslint, the dependency-boundary
+      # check and prettier. Invoking it as a single step is deliberate: it makes it impossible
+      # for this workflow to drift out of sync with the gate everyone runs locally.
+      #
+      # `npm test` re-runs the build through its `pretest` hook, so the suite can never race a
+      # stale or half-written `dist`.
+      - name: Verify (build + test + lint)
+        run: npm run verify

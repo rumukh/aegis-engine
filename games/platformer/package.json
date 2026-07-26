@@ -1,0 +1,24 @@
+{
+  "name": "@aegis/game-platformer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Coyote Gap — the proof-of-concept 2D platformer built on @aegis/mode-platformer.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*",
+    "@aegis/harness": "*",
+    "@aegis/mode-platformer": "*"
+  }
+}

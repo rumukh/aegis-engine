@@ -8,13 +8,16 @@
     "node": ">=20"
   },
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "games/*"
   ],
   "scripts": {
-    "clean": "rimraf \"packages/*/dist\" \"packages/*/*.tsbuildinfo\" \"*.tsbuildinfo\"",
+    "clean": "rimraf --glob \"packages/*/dist\" \"packages/*/*.tsbuildinfo\" \"games/*/dist\" \"games/*/*.tsbuildinfo\" \"*.tsbuildinfo\"",
     "build": "tsc -b",
     "rebuild": "npm run clean && npm run build",
+    "pretest": "npm run build",
     "test": "vitest run",
+    "pretest:watch": "npm run build",
     "test:watch": "vitest",
     "verify": "npm run build && npm run test && npm run lint",
     "lint": "npm run lint:code && npm run lint:deps && npm run format:check",
@@ -33,5 +36,8 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0",
     "vitest": "^3.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true
   }
 }
