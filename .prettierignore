@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+*.tsbuildinfo
+package-lock.json
+CHANGELOG.md
+
+# Binding project documents — owned by the PM, never reformat.
+CHARTER.md
+ENVIRONMENT.md

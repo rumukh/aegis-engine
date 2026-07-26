@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/content" },
+    { "path": "./packages/harness" },
+    { "path": "./packages/mode-platformer" },
+    { "path": "./packages/mode-iso" },
+    { "path": "./packages/mode-fps" },
+    { "path": "./packages/render-three" },
+    { "path": "./packages/cli" }
+  ]
+}
