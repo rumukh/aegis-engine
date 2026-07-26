@@ -56,20 +56,28 @@ export interface ComponentDefinition<T extends object> {
  *
  * This is the one piece of registration infrastructure `@aegis/core` implements outright:
  * downstream packages must be able to *declare* component types at module load. It carries
- * no gameplay behaviour. `create` applies a shallow merge of `init` over the defaults —
- * replace a nested object wholesale rather than deep-merging it. `clone` defaults to a
- * JSON round-trip, which is exact for plain-data components (the only kind allowed).
+ * no gameplay behaviour. `create` applies a shallow *merge* of `init` over the defaults —
+ * a nested object is replaced wholesale rather than deep-merged — and then deep-copies the
+ * result so no caller-owned object is ever aliased into world state. `clone` defaults to a
+ * JSON round-trip, which is exact for plain-data components (the only kind allowed), and is
+ * the single cloning path used by both `create` and snapshotting.
  *
  * @typeParam T - The component's data shape.
  * @param def - Id, defaults factory and optional clone.
  * @returns A callable {@link ComponentType}.
  */
 export function defineComponent<T extends object>(def: ComponentDefinition<T>): ComponentType<T> {
-  const create = (init?: Partial<T>): T => {
-    const base = def.defaults();
-    return init ? { ...base, ...init } : base;
-  };
   const clone = def.clone ?? ((value: T): T => JSON.parse(JSON.stringify(value)) as T);
+  const create = (init?: Partial<T>): T => {
+    // Merge `init` over defaults, then deep-copy the result through `clone` so no
+    // caller-owned nested object is ever retained by reference in world state. The spread
+    // alone is shallow: two instances built from one literal would alias the same nested
+    // objects, and the simulation would mutate the caller's data in place. Correctness over
+    // the extra copy — deterministic, owned state is this engine's whole point.
+    const base = def.defaults();
+    const merged = init ? { ...base, ...init } : base;
+    return clone(merged as T);
+  };
   const type = ((init?: Partial<T>): ComponentInstance<T> => ({
     type,
     value: create(init),
