@@ -8,7 +8,6 @@
  * only on state, which is what makes {@link "./hash".hashSnapshot} reproducible.
  * @packageDocumentation
  */
-import { notImplemented } from './util.js';
 import type { PrngState } from './prng.js';
 
 /** Serialised form of one entity. */
@@ -33,6 +32,22 @@ export interface WorldSnapshot {
   readonly resources: Readonly<Record<string, unknown>>;
   /** PRNG state, so a restored world continues the same stream. */
   readonly prng: PrngState;
+  /**
+   * Entity-allocator state: the generation of every slot ever created and the free-slot
+   * list. Capturing it makes {@link "./world".World.restore} reconstruct the allocator
+   * exactly, so a restored world hands out the *same* future entity ids as an uninterrupted
+   * run — the property the determinism proof relies on. (Addition to the original contract;
+   * see the core handoff notes.)
+   */
+  readonly allocator: AllocatorSnapshot;
+}
+
+/** Serialised state of the entity allocator. */
+export interface AllocatorSnapshot {
+  /** Generation counter for every slot index `0..slots.length-1`. */
+  readonly slots: readonly number[];
+  /** Free slot indices, in pop order (the next spawn reuses the last element). */
+  readonly free: readonly number[];
 }
 
 /**
@@ -40,10 +55,63 @@ export interface WorldSnapshot {
  * `NaN`/`Infinity`. This is the exact byte source the state hash is computed over.
  */
 export function canonicalStringify(value: unknown): string {
-  return notImplemented('canonicalStringify');
+  const out: string[] = [];
+  encodeCanonical(value, out);
+  return out.join('');
+}
+
+/** Recursively append the canonical encoding of `value` to `out`. */
+function encodeCanonical(value: unknown, out: string[]): void {
+  if (value === null) {
+    out.push('null');
+    return;
+  }
+  const t = typeof value;
+  if (t === 'number') {
+    const n = value as number;
+    if (!Number.isFinite(n)) {
+      throw new Error(
+        `[aegis] canonicalStringify: non-finite number (${String(n)}) is not serialisable`,
+      );
+    }
+    // Normalise -0 to 0 so the byte stream depends only on numeric value.
+    out.push(JSON.stringify(Object.is(n, -0) ? 0 : n));
+    return;
+  }
+  if (t === 'string' || t === 'boolean') {
+    out.push(JSON.stringify(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    out.push('[');
+    for (let i = 0; i < value.length; i++) {
+      if (i > 0) out.push(',');
+      encodeCanonical(value[i], out);
+    }
+    out.push(']');
+    return;
+  }
+  if (t === 'object') {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    out.push('{');
+    let first = true;
+    for (const key of keys) {
+      const v = obj[key];
+      if (v === undefined) continue; // JSON drops undefined-valued keys
+      if (!first) out.push(',');
+      first = false;
+      out.push(JSON.stringify(key));
+      out.push(':');
+      encodeCanonical(v, out);
+    }
+    out.push('}');
+    return;
+  }
+  throw new Error(`[aegis] canonicalStringify: value of type "${t}" is not serialisable`);
 }
 
 /** Parse a canonical JSON string produced by {@link canonicalStringify}. */
 export function canonicalParse<T = unknown>(text: string): T {
-  return notImplemented('canonicalParse');
+  return JSON.parse(text) as T;
 }

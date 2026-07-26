@@ -3,7 +3,7 @@
  * iso modes and by the 2D semantic frame. All operations are deterministic.
  * @packageDocumentation
  */
-import { notImplemented } from '../util.js';
+import { sqrt } from './scalar.js';
 
 /** A 2D vector. Plain data so it serialises directly into a world snapshot. */
 export interface Vec2 {
@@ -46,10 +46,12 @@ export function lengthSq2(v: Vec2): number {
 
 /** Euclidean length (uses deterministic sqrt). */
 export function length2(v: Vec2): number {
-  return notImplemented('vec2.length2');
+  return sqrt(v.x * v.x + v.y * v.y);
 }
 
 /** Unit vector in the direction of `v`, or `(0,0)` if `v` is zero-length. */
 export function normalize2(v: Vec2): Vec2 {
-  return notImplemented('vec2.normalize2');
+  const len = sqrt(v.x * v.x + v.y * v.y);
+  if (len === 0) return { x: 0, y: 0 };
+  return { x: v.x / len, y: v.y / len };
 }

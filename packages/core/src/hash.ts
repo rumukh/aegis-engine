@@ -11,18 +11,33 @@
  * The algorithm is frozen: changing it is a breaking change to every stored replay.
  * @packageDocumentation
  */
-import { notImplemented } from './util.js';
+import { canonicalStringify } from './serialize.js';
 import type { WorldSnapshot } from './serialize.js';
 
 /** A 16-char lowercase-hex digest of world state. */
 export type StateHash = string;
 
+const FNV_OFFSET_64 = 0xcbf29ce484222325n;
+const FNV_PRIME_64 = 0x100000001b3n;
+const MASK_64 = 0xffffffffffffffffn;
+
 /** Hash a full world snapshot. */
 export function hashSnapshot(snapshot: WorldSnapshot): StateHash {
-  return notImplemented('hashSnapshot');
+  return hashString(canonicalStringify(snapshot));
 }
 
-/** Hash an already-canonicalised string (lower level; most callers use {@link hashSnapshot}). */
+/**
+ * Hash an already-canonicalised string (lower level; most callers use {@link hashSnapshot}).
+ *
+ * FNV-1a over the string's UTF-16 code units, processed low-byte-then-high-byte so the digest
+ * depends only on the (platform-independent) string content, never on any text encoder.
+ */
 export function hashString(canonical: string): StateHash {
-  return notImplemented('hashString');
+  let h = FNV_OFFSET_64;
+  for (let i = 0; i < canonical.length; i++) {
+    const code = canonical.charCodeAt(i);
+    h = ((h ^ BigInt(code & 0xff)) * FNV_PRIME_64) & MASK_64;
+    h = ((h ^ BigInt(code >>> 8)) * FNV_PRIME_64) & MASK_64;
+  }
+  return h.toString(16).padStart(16, '0');
 }

@@ -13,13 +13,13 @@ Read this together with `CHARTER.md` (what we are building, and the nine princip
 A package's public contract is owned by exactly one session at a time — the one implementing
 it. Nobody else edits it.
 
-| Files | Owner |
-| --- | --- |
-| `packages/core/**`, `packages/content/**` | the core session |
-| `packages/harness/**`, `packages/cli/**` | the harness session |
-| `packages/mode-<x>/**` | that mode's session |
-| `games/<x>/**` | that game's session |
-| `packages/render-three/**` | the renderer session |
+| Files                                            | Owner                              |
+| ------------------------------------------------ | ---------------------------------- |
+| `packages/core/**`, `packages/content/**`        | the core session                   |
+| `packages/harness/**`, `packages/cli/**`         | the harness session                |
+| `packages/mode-<x>/**`                           | that mode's session                |
+| `games/<x>/**`                                   | that game's session                |
+| `packages/render-three/**`                       | the renderer session               |
 | root config, `scripts/`, `docs/adr/`, `.github/` | the PM (or a session the PM names) |
 
 **You may read anything. You may only write files you own.**
@@ -32,7 +32,7 @@ three-way merge conflict in a load-bearing interface.
 
 ## 2. Never ship untestable code
 
-You must be able to *run* what you build. If the thing you depend on is only a stub, say so
+You must be able to _run_ what you build. If the thing you depend on is only a stub, say so
 immediately rather than writing a large body of code that has never executed.
 
 This is why the early waves are deliberately serial: `core` must really work before the
