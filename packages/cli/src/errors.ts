@@ -32,6 +32,28 @@ export const CliCode = {
   TestFailed: 'AEG-CLI-0010',
   /** An unknown `--view`/`--reporter`/`kind` enum value was given. */
   InvalidChoice: 'AEG-CLI-0011',
+  /** A flag the command does not declare was passed (typo, or wrong command). */
+  UnknownFlag: 'AEG-CLI-0012',
+  /** The first argument is not a subcommand. */
+  UnknownCommand: 'AEG-CLI-0013',
+  /**
+   * A discovered module exports something that is *almost* a `GameTest` — it would have been
+   * silently skipped, hiding a red test. A broken test is a failure, never an absence.
+   */
+  InvalidGameTest: 'AEG-CLI-0014',
+  /** A `--plugin <module>#<export>` module could not be imported. */
+  PluginLoadFailed: 'AEG-CLI-0015',
+  /** A resolved plugin export is missing or is not a `ModePlugin`. */
+  PluginInvalid: 'AEG-CLI-0016',
+  /** A plugin's `mode` disagrees with the scene's mode or an explicit `--mode`. */
+  PluginModeMismatch: 'AEG-CLI-0017',
+  /**
+   * The scene cannot run under the resolved plugin — it uses components no registered plugin
+   * provides. Refusing beats simulating a world whose systems were never installed.
+   */
+  SceneNotRunnable: 'AEG-CLI-0018',
+  /** A tick count so large the run cannot complete in bounded memory/time. */
+  TickLimitExceeded: 'AEG-CLI-0019',
 } as const;
 
 /** A CLI diagnostic code value. */
