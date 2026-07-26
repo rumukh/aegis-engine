@@ -422,6 +422,61 @@ describe('World — C1 acceptance criteria (no laundering on any entry path)', (
     expect(canonicalStringify({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
   });
 
+  it('puts an actual non-finite number in the LIVE STORE on every write path', () => {
+    // Checking the snapshot document is necessary but not sufficient: the snapshot is itself
+    // downstream of the clone, so a launderer surviving on the `add` path reads clean through
+    // it. This probes the live store directly on every way a value can enter the world.
+    const Cfg = defineResource<{ v: number }>('Cfg', () => ({ v: 0 }));
+    const live: [string, unknown][] = [];
+
+    const w1 = createWorld({ seed: 1 });
+    live.push(['spawn', w1.get(w1.spawn(Vel({ x: Infinity })), Vel)?.x]);
+
+    const w2 = createWorld({ seed: 1 });
+    const e2 = w2.spawn();
+    w2.add(e2, Vel, { x: Infinity });
+    live.push(['add', w2.get(e2, Vel)?.x]);
+
+    // The component factory itself — the launderer that lived at component.ts:70.
+    live.push(['ComponentType.create', Vel.create({ x: Infinity }).x]);
+
+    const w3 = createWorld({ seed: 1 });
+    w3.setResource(Cfg, { v: Infinity });
+    live.push(['setResource', w3.getResource(Cfg)?.v]);
+
+    const w4 = createWorld({ seed: 1 });
+    const e4 = w4.spawn(Vel({ x: 1 }));
+    w4.getOrThrow(e4, Vel).x = Infinity;
+    live.push(['live mutation', w4.get(e4, Vel)?.x]);
+
+    for (const [path, value] of live) {
+      // Type-strict: a string "Infinity" or a { __nonFinite } sentinel does not count.
+      expect({ path, type: typeof value, finite: Number.isFinite(value as number) }).toEqual({
+        path,
+        type: 'number',
+        finite: false,
+      });
+      expect(value).toBe(Infinity);
+    }
+  });
+
+  it('closes the live/restored divergence the hash could not see', () => {
+    // Pre-fix: a live world holding Infinity and a world restored from its own snapshot
+    // holding null hashed identically, so determinism.test.ts's "serialise -> deserialise ->
+    // continue equals an uninterrupted run" was comparing two genuinely different worlds and
+    // passing. The corruption was invisible to the instrument built to detect it.
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(Vel({ x: 1 }));
+    w.getOrThrow(e, Vel).x = Infinity;
+    expect(w.get(e, Vel)?.x).toBe(Infinity);
+
+    // There is now no snapshot to diverge from: the corrupt world cannot be serialised at all,
+    // so no pair of worlds can compare equal while holding different values.
+    expect(() => w.snapshot()).toThrow(DiagnosticError);
+    expect(() => w.hash()).toThrow(DiagnosticError);
+    expect(() => w.clone()).toThrow(DiagnosticError);
+  });
+
   it('normalises -0 to 0 on every path, so state never holds what the hash cannot see', () => {
     // Deliberate. The JSON round-trip collapsed -0 to 0 on every write path, which is why the
     // audit found no -0 hash divergence. A *faithful* structural clone would let -0 into live
@@ -478,22 +533,33 @@ describe('World — C1 acceptance criteria (no laundering on any entry path)', (
 /**
  * C2 — regression guard against the *half* fix and against the wrong acceptance criterion.
  *
- * The mechanism is **slot-reuse aliasing**, not use-after-despawn. By the time the row is read
- * nothing is dead: `makeView` packed a *fresh, valid* handle to whoever occupies the slot now,
- * so `get`/`tryGet`/`has`/`isAlive` all agreed — about the wrong entity. A liveness check
- * cannot detect that, and "all three accessors agree" passes on the broken code.
+ * The mechanism is **slot-reuse aliasing**: `makeQueryResult` retained only slot indices, and
+ * every accessor re-derived a handle from the slot at call time against the *live* generation
+ * table. A query result was a set of slots pretending to be a set of entities.
  *
- * The criterion is therefore **identity**: the row must carry the handle captured at `query()`
- * time, and reading through it must yield *that entity's* data or refuse — never the current
- * occupant's. Every assertion below is against the impostor's sentinel value (`999`), not
- * against `isAlive`.
+ * That produces two manifestations with **opposite liveness signatures**, which is why a
+ * liveness-based criterion cannot cover both:
+ *
+ * - **(a) view materialised _before_ the mutation** — `{get: IMPOSTOR, tryGet: IMPOSTOR,
+ *   has: true, isAlive: false}`. The row's own handle is dead, yet it reads live data.
+ * - **(b) query captured before, materialised _after_** — `{get: IMPOSTOR, tryGet: IMPOSTOR,
+ *   has: true, isAlive: true}`, and the row's handle *equals* the reborn entity's. Nothing is
+ *   dead; every accessor agrees; `count()` stays at the pre-mutation size and `entities()`
+ *   reports the impostor as a member. Silent substitution, not a dropped row.
+ *
+ * A liveness fix closes (a) and leaves (b) wide open. So every assertion here is against the
+ * impostor's sentinel value and the query-time handle — never against `isAlive`. Both variants
+ * are covered: {@link afterSlotReuse} is (b), {@link eagerViewAfterReuse} is (a).
  */
 describe('World — C2 acceptance criteria (slot-reuse aliasing: identity, not liveness)', () => {
   const Tag = defineComponent<{ v: number }>({ id: 'Tag', defaults: () => ({ v: 0 }) });
   const ORIGINAL = 1;
   const IMPOSTOR = 999;
 
-  /** Query, then despawn the sole match and let a new entity take its slot. */
+  /**
+   * Variant (b): query captured while the match was alive, consumed after its slot was reused.
+   * Pre-fix every accessor reported the reborn entity as a live member of the result.
+   */
   function afterSlotReuse(): {
     world: ReturnType<typeof createWorld>;
     result: ReturnType<ReturnType<typeof createWorld>['query']>;
@@ -511,7 +577,11 @@ describe('World — C2 acceptance criteria (slot-reuse aliasing: identity, not l
     return { world, result, original, impostor };
   }
 
-  /** A view materialised *before* the reuse, still held afterwards. */
+  /**
+   * Variant (a): a view materialised *before* the mutation, still held afterwards. Pre-fix its
+   * own handle was already dead (`isAlive: false`) while `has` still reported `true` — the
+   * opposite liveness signature to variant (b).
+   */
   function eagerViewAfterReuse(): {
     view: EntityView;
     original: number;
@@ -575,6 +645,31 @@ describe('World — C2 acceptance criteria (slot-reuse aliasing: identity, not l
       expect(extract(result)).toEqual([]);
     });
   }
+
+  it('variant (b): a surviving sibling still resolves, only the reused row goes', () => {
+    // The sharpest form of the criterion: pre-fix `count()` stayed at 2 and `entities()`
+    // reported the reborn entity as a member — silent substitution. The result must now report
+    // the untouched match exactly as before, and must not substitute anything for the other.
+    const w = createWorld({ seed: 1 });
+    const doomed = w.spawn(Tag({ v: ORIGINAL }));
+    const survivor = w.spawn(Tag({ v: 7 }));
+    const result = w.query({ has: [Tag] });
+    expect(result.count()).toBe(2);
+
+    w.despawn(doomed);
+    const reborn = w.spawn(Tag({ v: IMPOSTOR }));
+    expect(w.isAlive(reborn as never)).toBe(true); // nothing is dead when we read
+
+    expect(result.count()).toBe(1);
+    expect(result.entities()).toEqual([survivor]);
+    expect(result.entities()).not.toContain(reborn);
+    expect([...result].map((v) => v.get(Tag).v)).toEqual([7]);
+    expect(result.views().map((v) => v.get(Tag).v)).toEqual([7]);
+    expect(result.first()?.entity).toBe(survivor);
+    expect(result.one().get(Tag).v).toBe(7);
+    // And a fresh query does see the reborn entity — the result is scoped, not poisoned.
+    expect(w.query({ has: [Tag] }).entities()).toEqual([reborn, survivor]);
+  });
 
   it('covers every accessor on QueryResult — a new one cannot be added uncovered', () => {
     // The defect was five accessors each independently re-deriving the handle from the slot,
