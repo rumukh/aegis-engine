@@ -1,13 +1,25 @@
 /**
  * `aegis scaffold` — generate a new game skeleton (or a single document) so an agent can go from
- * nothing to a runnable, valid game in one command (CHARTER principle 9).
+ * nothing to a **runnable** game in one command (CHARTER principle 9).
  *
- * `scaffold game` writes a scene, a tilemap and a starter `GameTest` for the chosen mode; the
- * scene and tilemap validate immediately (they use only base components + tags), and the starter
- * test is wired to the mode's plugin so it runs as soon as that mode is implemented.
+ * The bar here is not "writes files"; it is that `scaffold → validate → run → test` all succeed
+ * on the output, from a directory that is not this repository. That forces three things the
+ * previous template got wrong:
+ *
+ * 1. The scene **embeds its tilemap** under `resources`, exactly as the shipped games do — a
+ *    tilemap file that nothing references gives a level with no ground, no collision and no
+ *    ASCII view.
+ * 2. An **input script** is written, because a scene with no input is a player standing still;
+ *    "it ran and nothing happened" is not a working scaffold.
+ * 3. The starter test has **no bare imports**. A scaffolded directory has no `node_modules`, so
+ *    `import ... from '@aegis/harness'` fails with `Cannot find package`. It names its plugin as
+ *    a string instead, which `aegis test` resolves — the same extension point as `--plugin`.
+ *
+ * Writes are atomic: every target is checked before anything is written, and a mid-write failure
+ * removes what this invocation created rather than leaving a half-scaffolded directory.
  * @packageDocumentation
  */
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { GAME_MODES } from '@aegis/core';
 import type { GameMode } from '@aegis/core';
@@ -19,11 +31,15 @@ import { flagBool, flagChoice, flagString, requirePositional, resolvePath } from
 const KINDS = ['game', 'scene', 'tilemap', 'test', 'prefab'] as const;
 type Kind = (typeof KINDS)[number];
 
+/** How many ticks the scaffolded test and input script cover. */
+const TICKS = 120;
+
 const USAGE = [
   'aegis scaffold <kind> <name> [options]',
   '',
   '  <kind>            game | scene | tilemap | test | prefab.',
-  '                    "game" writes a scene + tilemap + starter GameTest into <name>/.',
+  '                    "game" writes a scene + tilemap + input script + starter GameTest',
+  '                    into <name>/, ready for: aegis validate / run / test.',
   '  --mode <mode>     platformer | iso | fps (default: platformer).',
   '  --out <dir>       Base directory to write into (default: cwd).',
   '  --force           Overwrite existing files.',
@@ -46,34 +62,183 @@ function doc(value: unknown): string {
   return JSON.stringify(value, null, 2) + '\n';
 }
 
-/** A minimal scene that validates against the base registry (Transform + Trigger + tags only). */
+// --- per-mode level data ----------------------------------------------------------------------
+
+/**
+ * The platformer's authored collision tilemap: solid ground along the bottom two rows.
+ * Row 0 is the top; world Y counts up from the bottom row, so the ground surface is at y = 2.
+ */
+function platformerTilemap(name: string): Record<string, unknown> {
+  const open = '.'.repeat(24);
+  const solid = '#'.repeat(24);
+  return {
+    aegis: 'tilemap/1',
+    name,
+    width: 24,
+    height: 8,
+    tileSize: 1,
+    legend: { '.': {}, '#': { solid: true, sprite: 'ground' } },
+    layers: [{ name: 'collision', data: [open, open, open, open, open, open, solid, solid] }],
+  };
+}
+
+/** The iso mode's authored grid resource: a walled room with a doorway. */
+function isoGrid(): Record<string, unknown> {
+  return {
+    width: 10,
+    height: 8,
+    tileSize: 1,
+    walls: [
+      '##########',
+      '#........#',
+      '#..####..#',
+      '#........#',
+      '#..####..#',
+      '#........#',
+      '#........#',
+      '##########',
+    ],
+  };
+}
+
+/** The fps mode's authored floorplan: a corridor from the spawn to the exit. */
+function fpsFloorplan(): Record<string, unknown> {
+  const wall = '#########';
+  const open = '#.......#';
+  return {
+    width: 9,
+    height: 20,
+    tileSize: 1,
+    origin: { x: -4, z: 0 },
+    rows: [wall, ...Array.from({ length: 18 }, () => open), wall],
+    legend: {
+      '#': { solid: true, floor: 0, ceil: 4 },
+      '.': { solid: false, floor: 0, ceil: 4 },
+    },
+  };
+}
+
+/** The scene document for `mode`, with its level data embedded under `resources`. */
 function sceneDoc(name: string, mode: GameMode): string {
+  const meta = {
+    description: `Scaffolded ${mode} scene — replace with your level.`,
+    scaffold: `aegis scaffold game ${name} --mode ${mode}`,
+  };
+  if (mode === 'iso') {
+    return doc({
+      aegis: 'scene/1',
+      name,
+      mode,
+      seed: 1,
+      resources: { IsoGrid: isoGrid() },
+      entities: [
+        {
+          id: 'player',
+          tags: ['Player', 'Controlled'],
+          components: {
+            GridPosition: { cellX: 1, cellY: 1, progress: 0 },
+            IsoActor: { speed: 4, moveMode: 'realtime' },
+            Health: { current: 10, max: 10 },
+          },
+        },
+        {
+          id: 'goal',
+          tags: ['Goal'],
+          components: {
+            Transform: { position: { x: 8, y: 6, z: 0 } },
+            Trigger: { kind: 'goal', shape: 'box', half: { x: 0.5, y: 0.5, z: 0.5 }, once: true },
+          },
+        },
+        {
+          id: 'camera',
+          components: { IsoCamera: { target: 'player', viewHeight: 16, yawDegrees: 45 } },
+        },
+      ],
+      meta,
+    });
+  }
+  if (mode === 'fps') {
+    return doc({
+      aegis: 'scene/1',
+      name,
+      mode,
+      seed: 1,
+      resources: { 'fps.floorplan': fpsFloorplan() },
+      entities: [
+        {
+          id: 'player',
+          tags: ['Player'],
+          components: {
+            Transform: { position: { x: 0, y: 0, z: 1.5 } },
+            CapsuleBody: {
+              radius: 0.4,
+              height: 1.8,
+              velocity: { x: 0, y: 0, z: 0 },
+              grounded: false,
+            },
+            FpsController: { moveSpeed: 6, gravity: 24, jumpSpeed: 8, maxPitchDeg: 89 },
+            LookState: { yawDeg: 0, pitchDeg: 0 },
+            FpsCamera: { eyeHeight: 1.6, fovDegrees: 75, near: 0.1, far: 1000 },
+            Health: { current: 100, max: 100 },
+          },
+        },
+        {
+          id: 'goal',
+          tags: ['Goal'],
+          components: {
+            Transform: { position: { x: 0, y: 0, z: 17 } },
+            Trigger: { kind: 'goal', shape: 'box', half: { x: 1.5, y: 1.5, z: 1 }, once: true },
+          },
+        },
+      ],
+      meta,
+    });
+  }
   return doc({
     aegis: 'scene/1',
     name,
     mode,
     seed: 1,
+    resources: { 'platformer.tilemap': platformerTilemap(name) },
     entities: [
       {
         id: 'player',
         tags: ['Player'],
-        components: { Transform: { position: { x: 2, y: 0, z: 0 } } },
+        components: {
+          Transform: { position: { x: 2.5, y: 3.5, z: 0 } },
+          Velocity: { dx: 0, dy: 0 },
+          PlatformerController: {},
+          BodyState: {},
+          TileCollider: { halfWidth: 0.4, halfHeight: 0.5 },
+          Health: { current: 1, max: 1 },
+        },
       },
       {
         id: 'goal',
         tags: ['Goal'],
         components: {
-          Transform: { position: { x: 12, y: 0, z: 0 } },
-          Trigger: { kind: 'goal', shape: 'box', half: { x: 1, y: 2, z: 1 }, once: true },
+          Transform: { position: { x: 20.5, y: 2.5, z: 0 } },
+          Trigger: { kind: 'goal', shape: 'box', half: { x: 1, y: 1, z: 1 }, once: true },
+        },
+      },
+      {
+        id: 'camera',
+        components: {
+          Transform: { position: { x: 2.5, y: 4, z: 10 } },
+          PlatformerCamera: { target: 'player', deadzoneX: 3, deadzoneY: 2, viewHeight: 12 },
         },
       },
     ],
-    meta: { description: `Scaffolded ${mode} scene — replace with your level.` },
+    meta,
   });
 }
 
-/** A small, well-formed collision tilemap. */
-function tilemapDoc(name: string): string {
+/**
+ * The standalone tilemap document. For the platformer this is byte-identical to the copy the
+ * scene embeds, so editing one and re-embedding it is a clean diff.
+ */
+function tilemapDoc(name: string, mode: GameMode): string {
+  if (mode === 'platformer') return doc(platformerTilemap(name));
   return doc({
     aegis: 'tilemap/1',
     name,
@@ -95,25 +260,87 @@ function prefabDoc(name: string): string {
   });
 }
 
-/** A starter GameTest, wired to the mode's plugin and referencing the scene cwd-independently. */
+/** The scripted playthrough: the mode's way of saying "move for a while". */
+function inputDoc(mode: GameMode): string {
+  const header = [
+    `# Scripted input for the scaffolded ${mode} game (ADR-0004 DSL).`,
+    '# Run it with:  aegis run <scene> --ticks ' + TICKS + ' --input <this file>',
+    '',
+  ];
+  if (mode === 'iso') return [...header, 'click 8,6 @2', ''].join('\n');
+  if (mode === 'fps') return [...header, `axis Forward 1 0..${TICKS}`, ''].join('\n');
+  return [...header, `hold Right 0..${TICKS}`, ''].join('\n');
+}
+
+/** The assertion body of the starter test, phrased in the mode's own vocabulary. */
+function assertionsFor(mode: GameMode): string[] {
+  if (mode === 'iso') {
+    return [
+      `    const actor = result.query({ has: ['Player', 'GridPosition'] }).one();`,
+      `    const cell = actor.get('GridPosition');`,
+      `    if (cell.cellX === 1 && cell.cellY === 1) {`,
+      `      throw new Error('the operative never left its start cell (1,1) — check the input script');`,
+      `    }`,
+    ];
+  }
+  if (mode === 'fps') {
+    return [
+      `    const player = result.query({ has: ['Player', 'CapsuleBody'] }).one();`,
+      `    const body = player.get('CapsuleBody');`,
+      `    if (!body.grounded) throw new Error('the player is not standing on the floor — is fps.floorplan embedded in the scene?');`,
+      `    const z = player.get('Transform').position.z;`,
+      `    if (z <= 1.5) throw new Error('the player never moved forward (z=' + z + ')');`,
+    ];
+  }
+  return [
+    `    const player = result.query({ has: ['Player', 'BodyState'] }).one();`,
+    `    if (!player.get('BodyState').grounded) {`,
+    `      throw new Error('the player is not standing on solid ground — is platformer.tilemap embedded in the scene resources?');`,
+    `    }`,
+    `    const x = player.get('Transform').position.x;`,
+    `    if (x <= 2.5) throw new Error('the player never moved right (x=' + x + ')');`,
+  ];
+}
+
+/**
+ * A starter GameTest that runs from the scaffolded directory.
+ *
+ * Deliberately import-free apart from `node:url`: a freshly scaffolded folder has no
+ * `node_modules`, so a bare `@aegis/harness` import cannot resolve. `options.plugin` is the
+ * plugin *spec* `aegis test` resolves — swap it for `'./dist/my-game.js#myGamePlugin'` once the
+ * game grows its own systems.
+ */
 function testDoc(name: string, mode: GameMode, sceneRel: string): string {
   return [
-    `// Starter GameTest for "${name}" (${mode}). Run with: aegis test`,
-    `import { defineGameTest, expectSim } from '@aegis/harness';`,
-    `import { ${mode}Plugin } from '@aegis/mode-${mode}';`,
+    `// Starter GameTest for "${name}" (${mode}).`,
+    `//`,
+    `//   aegis test                       # from this directory`,
+    `//   aegis test "**/*.gametest.mjs"   # or point it at a glob`,
+    `//`,
+    `// No package imports: a scaffolded folder has no node_modules, so this file names its`,
+    `// plugin as a string and lets the CLI resolve it. Once your game ships its own composed`,
+    `// ModePlugin, change options.plugin to './dist/${name}.js#${name.replace(/[^a-zA-Z0-9]/g, '')}Plugin'`,
+    `// and the same test keeps working. Inside a workspace that HAS @aegis/harness installed you`,
+    `// can instead import { defineGameTest, expectSim } for compile-time checking and richer`,
+    `// failure messages.`,
     `import { fileURLToPath } from 'node:url';`,
     ``,
     `const scene = fileURLToPath(new URL('./${sceneRel}', import.meta.url));`,
     ``,
-    `export default defineGameTest({`,
-    `  name: '${name} spawns the player',`,
+    `export default {`,
+    `  name: '${name} plays for ${TICKS} ticks',`,
     `  scene,`,
-    `  ticks: 120,`,
-    `  options: { plugin: ${mode}Plugin },`,
+    `  ticks: ${TICKS},`,
+    `  seed: 1,`,
+    `  options: { plugin: '${mode}' },`,
+    `  input: \`${inputDoc(mode)
+      .split('\n')
+      .filter((l) => l.length > 0 && !l.startsWith('#'))
+      .join('\\n')}\`,`,
     `  expect(result) {`,
-    `    expectSim(result).entityExists({ has: ['Player'] });`,
+    ...assertionsFor(mode),
     `  },`,
-    `});`,
+    `};`,
     ``,
   ].join('\n');
 }
@@ -124,13 +351,14 @@ function artifactsFor(kind: Kind, name: string, mode: GameMode): Artifact[] {
     case 'game':
       return [
         { rel: `${name}/${name}.scene.json`, content: sceneDoc(name, mode) },
-        { rel: `${name}/${name}.tilemap.json`, content: tilemapDoc(name) },
+        { rel: `${name}/${name}.tilemap.json`, content: tilemapDoc(name, mode) },
+        { rel: `${name}/${name}.input`, content: inputDoc(mode) },
         { rel: `${name}/${name}.gametest.mjs`, content: testDoc(name, mode, `${name}.scene.json`) },
       ];
     case 'scene':
       return [{ rel: `${name}.scene.json`, content: sceneDoc(name, mode) }];
     case 'tilemap':
-      return [{ rel: `${name}.tilemap.json`, content: tilemapDoc(name) }];
+      return [{ rel: `${name}.tilemap.json`, content: tilemapDoc(name, mode) }];
     case 'prefab':
       return [{ rel: `${name}.prefab.json`, content: prefabDoc(name) }];
     case 'test':
@@ -138,11 +366,48 @@ function artifactsFor(kind: Kind, name: string, mode: GameMode): Artifact[] {
   }
 }
 
+/**
+ * Write every artifact or none of them.
+ *
+ * Writing one at a time and throwing on the first clash left a half-scaffolded directory that
+ * could only be finished with `--force` — a scaffold that fails should leave nothing behind.
+ */
+function writeAll(baseDir: string, artifacts: readonly Artifact[], force: boolean): string[] {
+  if (!force) {
+    const clashes = artifacts.filter((a) => existsSync(resolve(baseDir, a.rel)));
+    const [first] = clashes;
+    if (first !== undefined) {
+      throw new AegisCliError(
+        CliCode.OutputExists,
+        `Refusing to overwrite ${clashes.length} existing file(s): ${clashes.map((c) => c.rel).join(', ')}.`,
+        {
+          fix: 'Pass --force to overwrite, or choose a different name/--out. Nothing was written.',
+          data: { paths: clashes.map((c) => c.rel) },
+        },
+      );
+    }
+  }
+  const written: string[] = [];
+  try {
+    for (const artifact of artifacts) {
+      const abs = resolve(baseDir, artifact.rel);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, artifact.content, 'utf8');
+      written.push(artifact.rel);
+    }
+  } catch (err) {
+    for (const rel of written) rmSync(resolve(baseDir, rel), { force: true });
+    throw err;
+  }
+  return written;
+}
+
 /** `aegis scaffold` — generate a new game skeleton or single document from a template. */
 export const scaffoldCommand: Command = {
   name: 'scaffold',
   summary: 'Generate a game, scene, tilemap, prefab or test from a template.',
   usage: USAGE,
+  flags: { mode: 'value', out: 'value', force: 'boolean' },
   run(ctx: CommandContext): Promise<number> {
     const { args, io } = ctx;
     const kind = requirePositional(args, 0, 'kind', 'aegis scaffold <kind> <name>') as Kind;
@@ -154,29 +419,30 @@ export const scaffoldCommand: Command = {
     }
     const name = requirePositional(args, 1, 'name', 'aegis scaffold <kind> <name>');
     const mode = flagChoice(args, 'mode', GAME_MODES, 'platformer');
-    const force = flagBool(args, 'force');
     const baseDir = resolvePath(io, flagString(args, 'out') ?? '.');
 
-    const artifacts = artifactsFor(kind, name, mode);
-    const written: string[] = [];
-    for (const artifact of artifacts) {
-      const abs = resolve(baseDir, artifact.rel);
-      if (existsSync(abs) && !force) {
-        throw new AegisCliError(CliCode.OutputExists, `Refusing to overwrite ${artifact.rel}.`, {
-          fix: 'Pass --force to overwrite, or choose a different name/--out.',
-          data: { path: artifact.rel },
-        });
-      }
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, artifact.content, 'utf8');
-      written.push(artifact.rel);
-    }
+    const written = writeAll(baseDir, artifactsFor(kind, name, mode), flagBool(args, 'force'));
 
     if (flagBool(args, 'json')) {
       io.out(json({ kind, name, mode, out: flagString(args, 'out') ?? '.', files: written }));
     } else {
+      const next =
+        kind === 'game'
+          ? [
+              '',
+              'next:',
+              `  aegis validate ${name}/${name}.scene.json`,
+              `  aegis run ${name}/${name}.scene.json --ticks ${TICKS} --input ${name}/${name}.input --ascii`,
+              `  aegis test "${name}/*.gametest.mjs"`,
+            ]
+          : [];
       io.out(
-        [`scaffolded ${kind} "${name}" (${mode}):`, ...written.map((f) => `  ${f}`), ''].join('\n'),
+        [
+          `scaffolded ${kind} "${name}" (${mode}):`,
+          ...written.map((f) => `  ${f}`),
+          ...next,
+          '',
+        ].join('\n'),
       );
     }
     return Promise.resolve(Exit.Ok);
