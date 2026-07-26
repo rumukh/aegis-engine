@@ -67,8 +67,11 @@ in sync with it anyway, so the project is CI-ready the day it gets a remote.
 Principle 3 in the charter. Concretely:
 
 - No `Date.now()`, `performance.now()`, `Math.random()`, or `Math.sin`/`cos`/`tan`/`atan2`
-  etc. in any simulation package. ESLint enforces this as an **error**; do not add an
-  eslint-disable to get around it. Use `@aegis/core/math`.
+  etc. in any simulation package **or in `games/*`** — including their tests. ESLint enforces
+  this as an **error**; do not add an eslint-disable to get around it. Use `@aegis/core/math`.
+  (`games/*` was outside the rule's `files` glob until it was extended; game code is where the
+  AI, patrols, damage and win conditions live, so it is exactly the code whose non-determinism
+  would corrupt a golden hash.)
 - No iteration over unordered structures where order affects results.
 - No wall-clock time in gameplay. Time is ticks.
 
