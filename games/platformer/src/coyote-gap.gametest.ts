@@ -158,16 +158,12 @@ export default defineGameTest({
  * the chain reports through the assertion API, while the determinism test fails alongside the
  * per-tick timeline comparison, which says *when* the run diverged rather than only that it did.
  *
- * The chain used to end `.hashEquals(result.hash)`, copied from the ideal test in
- * `docs/architecture.md` §7. That compares the run to itself: vacuously true, unable to fail, and
- * pinning nothing, while reading exactly like a determinism regression test. ESLint now rejects it
- * (`no-restricted-syntax`).
- *
- * What the literal buys, precisely: the acceptance runner already proves *intra-run* determinism
- * (two runs plus `replay()`, compared over the whole per-tick hash timeline), so that dimension
- * was never unprotected. This is the **cross-commit** golden master — it catches a change that is
- * still perfectly deterministic but is now deterministically doing something *different*.
- * Re-derive it from a green run and update it deliberately if the physics, the scene or the
+ * The chain above used to read `hashEquals(result.hash)`, copied from the ideal test in
+ * `docs/architecture.md` §7: a comparison of the run to itself, vacuously true and unable to fail,
+ * while reading exactly like a determinism regression test. ESLint now rejects that form
+ * (`no-restricted-syntax`). What a literal buys is precisely the **cross-commit** master — the
+ * per-tick proof in `test/` already covered *intra-run* determinism, which was never unprotected.
+ * Re-derive this from a green run and update it deliberately if the physics, the scene or the
  * script change on purpose.
  */
 export const GOLDEN_HASH = 'd813e4e19db7444d';

@@ -458,25 +458,46 @@ asked for; numbers reflect the merged code, not the original sketch above.
    `y > -4` invariant + `eventNotEmitted('player.died')` together fail loudly if carry ever regresses:
    a stationary rider would be left over the lava and fall.
 
-4. **The golden hash is a pinned literal, not `result.hash`.** The spec block above used to end
-   `.hashEquals(result.hash)` — copied from `docs/architecture.md` §7 — which compares the result to
-   its own hash and therefore always passes. It is now
-   `hashEquals(GOLDEN_HASH)` against the measured literal `d813e4e19db7444d`, exported from
+4. **Two golden literals, pinning two different things.** The spec block above used to end
+   `.hashEquals(result.hash)` — copied from `docs/architecture.md` §7 — which compares the result
+   to its own hash and therefore always passes. It now pins `GOLDEN_HASH`
+   (`d813e4e19db7444d`) and `GOLDEN_TRAJECTORY` (`79d373c4785825ca`), both exported from
    `games/platformer/src/coyote-gap.gametest.ts`, and ESLint rejects the self-referential form
-   (`no-restricted-syntax`). Be precise about what each half buys: the acceptance test already
-   proved determinism _for real_ — two independent `runScene` calls produce identical `hash` **and**
-   identical `tickHashes`, and `result.replay()` reproduces both — so **intra-run** determinism was
-   never unprotected. What the literal adds is the **cross-commit** golden master: it catches a
+   (`no-restricted-syntax`).
+
+   Be precise about what each one buys, because they are not interchangeable and neither is
+   redundant:
+
+   | Instrument                            | Catches                                              | Blind to                |
+   | ------------------------------------- | ---------------------------------------------------- | ----------------------- |
+   | `hashEquals(result.hash)`             | nothing — it compares the run to itself              | everything              |
+   | `GOLDEN_HASH` (final state)           | cross-commit end-state drift, **including cross-OS** | timing that reconverges |
+   | `GOLDEN_TRAJECTORY` (per-tick digest) | divergence anywhere in the timeline                  | —                       |
+
+   The middle row's blind spot is measured, not theoretical: moving one iso click from t340 to
+   t420 shifted `mission.completed` by 80 ticks and left that game's final hash **byte-identical**.
+   A run can end in exactly the right place having taken a different route, and only the
+   trajectory digest sees it.
+
+   And note what was _never_ unprotected: `games/platformer/test/coyote-gap.test.ts` already proved
+   determinism for real — two independent `runScene` calls produce identical `hash` **and**
+   identical `tickHashes`, and `result.replay()` reproduces both. That is **intra-run**
+   determinism. What a pinned literal adds is the **cross-commit** golden master: it catches a
    change that is still perfectly deterministic but is now deterministically doing something
-   _different_. `GOLDEN_TRAJECTORY`, a digest of the whole per-tick hash timeline, catches drift a
-   final-state hash cannot see at all — the run ends at rest, so a different route to the same
-   resting state is invisible to `GOLDEN_HASH` and caught by the trajectory.
+   _different_. It is also the only assertion shape that can pass on one OS and fail on another,
+   since a self-comparison goes green on both while the two disagree.
 
 5. **`games/*` is wired into root config.** Each game is an npm workspace, a tsconfig project
    reference and part of the root vitest `include`, so `games/platformer/test/coyote-gap.test.ts`
-   runs under `npm run verify` and drives the game's own `defineGameTest`s directly. (An earlier
+   runs under `npm run verify` and drives the game's own `defineGameTest` directly. (An earlier
    note here described an interim arrangement where the authoritative run lived in
    `packages/mode-platformer`; that file no longer exists.)
+
+   The vitest `include` globs **both** `games/*/src/**` and `games/*/test/**`, and the distinction
+   matters when you add a game test. All three `defineGameTest`s now live in `src/` as
+   `*.gametest.ts`, because a game's `tsconfig.json` excludes `test/` from the build: a game test
+   parked in `test/` never reaches `dist`, so vitest finds it but **`aegis test` cannot**. Put the
+   `defineGameTest` in `src/` and its vitest runner in `test/`.
 
 Tuned geometry/timing vs the design sketch: level rebuilt to the column layout in _Level layout_
 above (flat 0–6, spike pit 7–9, plateau 10–19, **lava gap 20–26**, ledge 27–36, coyote gap 37–38,
