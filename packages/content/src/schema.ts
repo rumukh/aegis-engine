@@ -101,13 +101,20 @@ function kindOf(value: unknown): FieldKind | 'undefined' {
 function show(value: unknown): string {
   if (typeof value === 'number' && !Number.isFinite(value)) return String(value);
   if (value === undefined) return 'undefined';
-  let text: string;
-  try {
-    text = JSON.stringify(value) ?? String(value);
-  } catch {
-    text = String(value);
-  }
+  const text = json(value);
   return text.length > 60 ? `${text.slice(0, 57)}...` : text;
+}
+
+/**
+ * Full, untruncated JSON — for text the author is meant to *copy*, where {@link show}'s
+ * ellipsis would hand them syntactically invalid JSON.
+ */
+function json(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 /**
@@ -227,11 +234,14 @@ function unknownField(
   candidates: readonly string[],
 ): void {
   const dot = fieldPath.lastIndexOf('.');
-  const subject =
-    dot < 0 ? `has no field "${key}"` : `field "${fieldPath.slice(0, dot)}" has no key "${key}"`;
+  const nested = dot >= 0;
+  const subject = nested
+    ? `field "${fieldPath.slice(0, dot)}" has no key "${key}"`
+    : `has no field "${key}"`;
   const suggestion = suggestName(key, candidates);
   const hint = suggestion === undefined ? '.' : ` - did you mean "${suggestion}"?`;
-  const list = candidates.length > 0 ? candidates.join(', ') : '(none: it is a marker component)';
+  const none = nested ? '(none: that object declares no keys)' : '(none: it is a marker component)';
+  const list = candidates.length > 0 ? candidates.join(', ') : none;
   check.diagnostics.push(
     diagnostic(
       ContentCode.UnknownField,
@@ -310,7 +320,7 @@ function incompleteNested(
       `Component "${check.componentId}" field "${fieldPath}" is missing ${names}. Nested objects are merged one level deep only, so this replaces the default ${show(expected)} wholesale and leaves ${names} undefined at runtime, where every comparison against them silently fails.`,
       {
         location: { file: check.file, path: jsonPath },
-        fix: `Write the complete object: ${show(complete)} - or drop "${fieldPath}" entirely to keep the default.`,
+        fix: `Write the complete object: ${json(complete)} - or drop "${fieldPath}" entirely to keep the default.`,
         data: {
           component: check.componentId,
           field: fieldPath,
@@ -350,7 +360,14 @@ function invalidEnum(
   );
 }
 
-/** Check a nested object: it must be **key-complete**, because the merge is only one deep. */
+/**
+ * Check a nested object: it must be **key-complete**, because the merge is only one deep.
+ *
+ * An *empty* default object is the one exception: it declares no keys, so it carries no schema
+ * to check against and is treated as a free-form map (the same reading as an
+ * `optional: { x: 'object' }` declaration). Reporting every key of a blackboard as unknown
+ * against zero candidates would be noise, not a diagnostic.
+ */
 function checkNested(
   check: Check,
   expected: Record<string, unknown>,
@@ -359,6 +376,7 @@ function checkNested(
   jsonPath: string,
 ): void {
   const expectedKeys = Object.keys(expected);
+  if (expectedKeys.length === 0) return;
   const missing = expectedKeys.filter((key) => !hasOwn(actual, key));
   if (missing.length > 0) {
     incompleteNested(check, fieldPath, jsonPath, expected, actual, missing);
@@ -487,7 +505,12 @@ export function validateComponentData(
       unknownField(check, key, key, jsonPath, check.fields);
       continue;
     }
-    const allowed = schema?.enums?.[key];
+    // `key` comes from authored JSON, so an object-literal default can legitimately own a key
+    // like `constructor`. Index the enum table only through hasOwn, or the inherited
+    // `Object.prototype` member comes back and `allowed.includes` throws — turning a content
+    // typo into a crash, which this layer must never do.
+    const enums = schema?.enums;
+    const allowed = enums !== undefined && hasOwn(enums, key) ? enums[key] : undefined;
     if (allowed !== undefined && typeof value === 'string' && !allowed.includes(value)) {
       invalidEnum(check, key, jsonPath, allowed, value);
     }

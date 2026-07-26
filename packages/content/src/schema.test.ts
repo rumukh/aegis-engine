@@ -243,6 +243,60 @@ describe('validateComponentData', () => {
       validateComponentData(Trigger, { data: { anything: [1, { deep: true }] } }, where),
     ).toEqual([]);
   });
+
+  it('treats an EMPTY nested default as a free-form map, not a closed key set', () => {
+    // A blackboard/params component declares no nested keys, so there is nothing to check
+    // against — reporting every authored key as unknown would be noise, not a diagnostic.
+    const Meta = defineComponent<{ bag: Record<string, unknown>; n: number }>({
+      id: 'Meta',
+      defaults: () => ({ bag: {}, n: 0 }),
+    });
+    expect(
+      validateComponentData(Meta, { bag: { anything: 1, nested: { deep: true } } }, where),
+    ).toEqual([]);
+    // The field itself is still type-checked.
+    expect(validateComponentData(Meta, { bag: 'nope' }, where)[0]?.code).toBe(
+      ContentCode.TypeMismatch,
+    );
+  });
+
+  it('never throws on a field name that collides with an Object.prototype member', () => {
+    // `key` comes from authored JSON; an unguarded `enums[key]` lookup would return the
+    // inherited function and blow up inside validation, which must never throw for content.
+    const Blueprint = defineComponent<{ constructor: string; tier: string }>({
+      id: 'Blueprint',
+      defaults: () => ({ constructor: 'wall', tier: 'a' }),
+    });
+    describeComponent(Blueprint, { enums: { tier: ['a', 'b'] } });
+    expect(() => validateComponentData(Blueprint, { constructor: 'floor' }, where)).not.toThrow();
+    expect(validateComponentData(Blueprint, { constructor: 'floor' }, where)).toEqual([]);
+    expect(validateComponentData(Blueprint, { tier: 'z' }, where)[0]?.code).toBe(
+      ContentCode.InvalidFieldValue,
+    );
+  });
+
+  it('quotes a complete object the author can paste back, however wide', () => {
+    // The fix text is instructions to copy, so it must never be elided into invalid JSON.
+    const Wide = defineComponent<{ box: Record<string, number> }>({
+      id: 'Wide',
+      defaults: () => ({
+        box: { alpha: 1, beta: 2, gamma: 3, delta: 4, epsilon: 5, zeta: 6, eta: 7 },
+      }),
+    });
+    const d = validateComponentData(Wide, { box: { alpha: 9 } }, where)[0];
+    expect(d?.code).toBe(ContentCode.IncompleteNestedObject);
+    const quoted = /Write the complete object: (\{.*?\}) - or drop/.exec(d?.fix ?? '')?.[1];
+    expect(quoted).toBeDefined();
+    expect(JSON.parse(quoted as string)).toEqual({
+      alpha: 9,
+      beta: 2,
+      gamma: 3,
+      delta: 4,
+      epsilon: 5,
+      zeta: 6,
+      eta: 7,
+    });
+  });
 });
 
 describe('validation runs on the whole document', () => {

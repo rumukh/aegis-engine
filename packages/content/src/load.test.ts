@@ -190,23 +190,48 @@ describe('validateScene', () => {
         { id: 'b', prefab: 'grunt' },
       ],
     };
-    const r = validateScene(scene, { registry: registry(), prefabs });
+    const r = validateScene(scene, { registry: registry(), prefabs, file: 'level.scene.json' });
     expect(r.ok).toBe(false);
     const unknown = r.diagnostics.filter((d) => d.code === ContentCode.UnknownField);
     expect(unknown).toHaveLength(1);
     expect(unknown[0]?.location?.path).toBe('prefabs["grunt"].components.Velocity.speed');
+    // The defect is in the prefab, which the resolver supplied without a path — naming the
+    // scene file here would send an agent to edit a document that does not contain it. The
+    // path is what locates it, and it is rooted at the prefab, not at either entity.
+    expect(unknown[0]?.location?.file).toBeUndefined();
   });
 
-  it('validates a prefab document on its own', () => {
+  it('names the referencing entity when a prefab uses an unknown component id', () => {
+    const prefabs: PrefabResolver = {
+      resolve: (name) =>
+        name === 'grunt'
+          ? ({ aegis: 'prefab/1', name: 'grunt', components: { Bogus: {} } } satisfies PrefabFile)
+          : undefined,
+    };
+    const scene: SceneFile = {
+      aegis: 'scene/1',
+      name: 'S',
+      mode: 'platformer',
+      entities: [{ id: 'a', prefab: 'grunt' }],
+    };
+    const d = validateScene(scene, { registry: registry(), prefabs }).diagnostics[0];
+    expect(d?.code).toBe(ContentCode.UnknownComponent);
+    expect(d?.message).toContain('Prefab "grunt" (instantiated by entity "a")');
+  });
+
+  it('validates a prefab document on its own, against its own file', () => {
     const prefab: PrefabFile = {
       aegis: 'prefab/1',
       name: 'grunt',
       components: { Velocity: { dx: 'fast' } },
     };
-    const r = validatePrefab(prefab, opts());
+    const r = validatePrefab(prefab, { registry: registry(), file: 'grunt.prefab.json' });
     expect(r.ok).toBe(false);
     expect(r.diagnostics[0]?.code).toBe(ContentCode.TypeMismatch);
-    expect(r.diagnostics[0]?.location?.path).toBe('components.Velocity.dx');
+    expect(r.diagnostics[0]?.location).toEqual({
+      file: 'grunt.prefab.json',
+      path: 'components.Velocity.dx',
+    });
   });
 });
 
@@ -219,7 +244,7 @@ describe('resource ids', () => {
     entities: [],
   });
 
-  it('flags an unknown resource id with a did-you-mean', () => {
+  it('flags an unknown resource id with a did-you-mean, at an unambiguous path', () => {
     const resources = createResourceRegistry('platformer.tilemap', 'platformer.collision');
     const r = validateScene(scene({ 'platformer.tilemp': {} }), {
       registry: registry(),
@@ -230,9 +255,10 @@ describe('resource ids', () => {
     const d = r.diagnostics[0];
     expect(d?.code).toBe(ContentCode.UnknownResource);
     expect(d?.message).toContain('did you mean "platformer.tilemap"?');
+    // Resource ids are dotted, so the bracket form is the only path that reads back correctly.
     expect(d?.location).toEqual({
       file: 'level.scene.json',
-      path: 'resources.platformer.tilemp',
+      path: 'resources["platformer.tilemp"]',
     });
     expect(d?.data?.['known']).toEqual(['platformer.collision', 'platformer.tilemap']);
   });

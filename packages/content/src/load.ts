@@ -434,11 +434,19 @@ interface SemanticContext {
  * component's data matches that component's own shape (`schema.ts`). `subject` names whatever
  * owns the map ("Entity \"hero\"", "Prefab \"enemy\"") so the message reads naturally.
  */
+/**
+ * Validate one `componentId -> data` map: first that every id resolves, then that each
+ * component's data matches that component's own shape (`schema.ts`). `subject` names whatever
+ * owns the map ("Entity \"hero\"", "Prefab \"enemy\"") so the message reads naturally, and
+ * `file` is the document the map actually lives in — which is *not* the scene when the map
+ * came from a prefab the resolver supplied.
+ */
 function validateComponentMap(
   components: Readonly<Record<string, ComponentData>>,
   path: string,
   subject: string,
   ctx: SemanticContext,
+  file: string | undefined,
 ): void {
   const { registry } = ctx.options;
   for (const cid of Object.keys(components)) {
@@ -452,7 +460,7 @@ function validateComponentMap(
             suggestion === undefined ? '' : ` - did you mean "${suggestion}"?`
           }`,
           {
-            location: { file: ctx.file, path: `${path}.${cid}` },
+            location: { file, path: `${path}.${cid}` },
             data: {
               component: cid,
               ...(suggestion === undefined ? {} : { suggestion }),
@@ -469,7 +477,7 @@ function validateComponentMap(
     }
     // The id resolves, so the component's own schema can now check the authored data.
     ctx.diags.push(
-      ...validateComponentData(type, components[cid], { path: `${path}.${cid}`, file: ctx.file }),
+      ...validateComponentData(type, components[cid], { path: `${path}.${cid}`, file }),
     );
   }
 }
@@ -493,19 +501,28 @@ function validateEntitySemantics(decls: readonly EntityDecl[], path: string, ctx
       } else if (!ctx.checkedPrefabs.has(decl.prefab)) {
         // A prefab is authored content too, and its data is merged in ahead of the entity's:
         // a typo there breaks every instance. Check it once, wherever it is first referenced.
+        // The location deliberately carries **no file**: a resolver hands back a PrefabFile
+        // with no path, and the one file we do know (the scene) is not where the defect is.
         ctx.checkedPrefabs.add(decl.prefab);
         if (resolved.components) {
           validateComponentMap(
             resolved.components,
             `prefabs["${decl.prefab}"].components`,
-            `Prefab "${decl.prefab}"`,
+            `Prefab "${decl.prefab}" (instantiated by entity "${decl.id}")`,
             ctx,
+            undefined,
           );
         }
       }
     }
     if (decl.components) {
-      validateComponentMap(decl.components, `${p}.components`, `Entity "${decl.id}"`, ctx);
+      validateComponentMap(
+        decl.components,
+        `${p}.components`,
+        `Entity "${decl.id}"`,
+        ctx,
+        ctx.file,
+      );
     }
     if (decl.children) validateEntitySemantics(decl.children, `${p}.children`, ctx);
   });
@@ -528,7 +545,9 @@ function validateResources(
           suggestion === undefined ? '' : ` - did you mean "${suggestion}"?`
         } Nothing reads an unregistered resource, so whatever it configures keeps its default.`,
         {
-          location: { file: ctx.file, path: `resources.${id}` },
+          // Resource ids are dotted by convention ("platformer.tilemap"), so the bracket form
+          // is the only unambiguous path: `resources.platformer.tilemp` reads as three steps.
+          location: { file: ctx.file, path: `resources[${JSON.stringify(id)}]` },
           data: {
             resource: id,
             ...(suggestion === undefined ? {} : { suggestion }),
@@ -561,7 +580,13 @@ export function validatePrefab(
     checkedPrefabs: new Set<string>(),
   };
   if (prefab.components) {
-    validateComponentMap(prefab.components, 'components', `Prefab "${prefab.name}"`, ctx);
+    validateComponentMap(
+      prefab.components,
+      'components',
+      `Prefab "${prefab.name}"`,
+      ctx,
+      options.file,
+    );
   }
   if (prefab.children) validateEntitySemantics(prefab.children, 'children', ctx);
 
