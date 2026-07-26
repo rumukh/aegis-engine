@@ -278,8 +278,15 @@ function inputDoc(mode: GameMode): string {
 function assertionsFor(mode: GameMode): string[] {
   if (mode === 'iso') {
     return [
-      `    const actor = result.query({ has: ['Player', 'GridPosition'] }).one();`,
-      `    const cell = actor.get('GridPosition');`,
+      `    // A whole-timeline safety property. If the IsoGrid resource were missing or the`,
+      `    // pathfinder walked the operative off the board, this fails on the exact tick it broke.`,
+      `    result.assertInvariant('the operative stays inside the grid', (world) => {`,
+      `      const cell = world.query({ has: ['Player', 'GridPosition'] }).one().get('GridPosition');`,
+      `      return cell.cellX >= 0 && cell.cellX < 10 && cell.cellY >= 0 && cell.cellY < 8;`,
+      `    });`,
+      ``,
+      `    // An end-state check: the click order in the input script must actually have moved it.`,
+      `    const cell = result.query({ has: ['Player', 'GridPosition'] }).one().get('GridPosition');`,
       `    if (cell.cellX === 1 && cell.cellY === 1) {`,
       `      throw new Error('the operative never left its start cell (1,1) — check the input script');`,
       `    }`,
@@ -287,17 +294,33 @@ function assertionsFor(mode: GameMode): string[] {
   }
   if (mode === 'fps') {
     return [
-      `    const player = result.query({ has: ['Player', 'CapsuleBody'] }).one();`,
-      `    const body = player.get('CapsuleBody');`,
-      `    if (!body.grounded) throw new Error('the player is not standing on the floor — is fps.floorplan embedded in the scene?');`,
-      `    const z = player.get('Transform').position.z;`,
+      `    // A whole-timeline safety property, chosen because it is genuinely falsifiable: remove`,
+      `    // "fps.floorplan" from the scene and the capsule has nothing to stand on, so this fails`,
+      `    // at tick 0 rather than 120 ticks later. Prefer an invariant a real regression breaks —`,
+      `    // "y never drops below the floor" reads well but stays true here, because without`,
+      `    // collision geometry the body simply never moves.`,
+      `    result.assertInvariant('the player is standing on the floor every tick', (world) => {`,
+      `      return world.query({ has: ['Player', 'CapsuleBody'] }).one().get('CapsuleBody').grounded;`,
+      `    });`,
+      ``,
+      `    // An end-state check: the input script drives Forward, so z must have advanced.`,
+      `    const z = result.query({ has: ['Player', 'Transform'] }).one().get('Transform').position.z;`,
       `    if (z <= 1.5) throw new Error('the player never moved forward (z=' + z + ')');`,
     ];
   }
   return [
+    `    // A whole-timeline safety property. Remove "platformer.tilemap" from the scene's`,
+    `    // resources and the player falls through the world — this fails on the exact tick it`,
+    `    // happened, which is what makes an invariant more useful than an end-state check.`,
+    `    result.assertInvariant('the player never falls out of the world', (world) => {`,
+    `      const y = world.query({ has: ['Player', 'Transform'] }).one().get('Transform').position.y;`,
+    `      return y > -5;`,
+    `    });`,
+    ``,
+    `    // An end-state check: the input script holds Right, so the player must have advanced.`,
     `    const player = result.query({ has: ['Player', 'BodyState'] }).one();`,
     `    if (!player.get('BodyState').grounded) {`,
-    `      throw new Error('the player is not standing on solid ground — is platformer.tilemap embedded in the scene resources?');`,
+    `      throw new Error('the player is not standing on solid ground — is platformer.tilemap in the scene resources?');`,
     `    }`,
     `    const x = player.get('Transform').position.x;`,
     `    if (x <= 2.5) throw new Error('the player never moved right (x=' + x + ')');`,
@@ -311,6 +334,13 @@ function assertionsFor(mode: GameMode): string[] {
  * `node_modules`, so a bare `@aegis/harness` import cannot resolve. `options.plugin` is the
  * plugin *spec* `aegis test` resolves — swap it for `'./dist/my-game.js#myGamePlugin'` once the
  * game grows its own systems.
+ *
+ * That constraint shapes the assertions, and the shape is the lesson. `result.assertInvariant()`
+ * is a method on the result object, so it needs no import — and the harness **counts** it, which
+ * matters: a game test that executes zero counted assertions is failed outright, on the grounds
+ * that a run proving nothing must never report green. Hand-rolled `if (…) throw` checks are real
+ * and do fail the test, but the harness cannot see them, so it cannot tell you what was verified.
+ * A template that used only those would teach every scaffolded game to be invisible to the audit.
  */
 function testDoc(name: string, mode: GameMode, sceneRel: string): string {
   return [
@@ -321,10 +351,12 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
     `//`,
     `// No package imports: a scaffolded folder has no node_modules, so this file names its`,
     `// plugin as a string and lets the CLI resolve it. Once your game ships its own composed`,
-    `// ModePlugin, change options.plugin to './dist/${name}.js#${name.replace(/[^a-zA-Z0-9]/g, '')}Plugin'`,
-    `// and the same test keeps working. Inside a workspace that HAS @aegis/harness installed you`,
-    `// can instead import { defineGameTest, expectSim } for compile-time checking and richer`,
-    `// failure messages.`,
+    `// ModePlugin, change options.plugin to './dist/${name}.js#${pluginIdent(name)}'`,
+    `// and the same test keeps working.`,
+    `//`,
+    `// Inside a workspace that HAS @aegis/harness installed, import { defineGameTest, expectSim }`,
+    `// and express these as an expectSim(result) chain — it type-checks the shape at compile time`,
+    `// and gives richer failure messages. The assertions below say the same things without it.`,
     `import { fileURLToPath } from 'node:url';`,
     ``,
     `const scene = fileURLToPath(new URL('./${sceneRel}', import.meta.url));`,
@@ -334,7 +366,8 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
     `  scene,`,
     `  ticks: ${TICKS},`,
     `  seed: 1,`,
-    `  options: { plugin: '${mode}' },`,
+    `  // captureHistory lets assertInvariant re-check every tick, not just the last one.`,
+    `  options: { plugin: '${mode}', captureHistory: true },`,
     `  input: \`${inputDoc(mode)
       .split('\n')
       .filter((l) => l.length > 0 && !l.startsWith('#'))

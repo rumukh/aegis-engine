@@ -233,8 +233,11 @@ describe('aegis test discovery reporting', () => {
         `  name: 'import-free test',`,
         `  scene: '${scene}',`,
         `  ticks: 5,`,
-        `  options: { plugin: 'platformer' },`,
-        `  expect(result) { if (result.query({ has: ['Player'] }).count() !== 1) throw new Error('no player'); },`,
+        `  options: { plugin: 'platformer', captureHistory: true },`,
+        `  expect(result) {`,
+        `    result.assertInvariant('the player exists on every tick', (world) =>`,
+        `      world.query({ has: ['Player'] }).count() === 1);`,
+        `  },`,
         `};`,
         ``,
       ].join('\n'),
@@ -525,6 +528,56 @@ describe('aegis scaffold produces a runnable game', () => {
     const forced = await cli(['scaffold', 'scene', 'demo', '--force'], dir);
     expect(forced.code).toBe(0);
     expect(readFileSync(join(dir, 'demo.scene.json'), 'utf8')).toContain('scene/1');
+  });
+
+  /**
+   * The scaffold is a template every future game is copied from, so a weak assertion here
+   * propagates forever. The harness fails any game test that executes zero *counted* assertions,
+   * on the grounds that a run proving nothing must never report green — and the first merge of
+   * that guard against this template caught it emitting exactly such a test.
+   *
+   * Both halves matter and are checked separately below: the generated test must **pass** on the
+   * game as scaffolded, and must **fail** when the game is broken.
+   */
+  it.each(['platformer', 'iso', 'fps'] as const)(
+    'generates a %s test that the harness counts as a real assertion',
+    async (mode) => {
+      const dir = makeDir();
+      const name = `inv${mode}`;
+      await cli(['scaffold', 'game', name, '--mode', mode], dir, realDeps);
+
+      const source = readFileSync(join(dir, name, `${name}.gametest.mjs`), 'utf8');
+      // assertInvariant is audited by the harness AND needs no import — the only assertion form
+      // that satisfies both constraints a scaffolded folder imposes.
+      expect(source).toContain('result.assertInvariant(');
+      expect(source).toContain('captureHistory: true');
+
+      const passed = await cli(['test', `${name}/*.gametest.mjs`], dir, realDeps);
+      expect(passed.code).toBe(0);
+      expect(passed.out).not.toContain('ZERO assertions');
+    },
+  );
+
+  it.each([
+    ['platformer', 'platformer.tilemap'],
+    ['iso', 'IsoGrid'],
+    ['fps', 'fps.floorplan'],
+  ] as const)('generates a %s test that goes red when the game breaks', async (mode, resource) => {
+    const dir = makeDir();
+    const name = `brk${mode}`;
+    await cli(['scaffold', 'game', name, '--mode', mode], dir, realDeps);
+
+    // Break the game the way a real regression would: remove the level data its systems read.
+    const scenePath = join(dir, name, `${name}.scene.json`);
+    const scene = JSON.parse(readFileSync(scenePath, 'utf8')) as {
+      resources: Record<string, unknown>;
+    };
+    delete scene.resources[resource];
+    writeFileSync(scenePath, JSON.stringify(scene, null, 2), 'utf8');
+
+    const r = await cli(['test', `${name}/*.gametest.mjs`], dir, realDeps);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('FAIL');
   });
 
   it('--json lists every written file', async () => {
