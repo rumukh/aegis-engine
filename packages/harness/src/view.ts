@@ -66,10 +66,17 @@ export interface VisibleEntity {
   bounds?: { width: number; height: number };
   /** Render/sort layer. */
   layer: number;
-  /** Whether the entity is fully hidden behind nearer geometry. */
-  occluded: boolean;
-  /** Fraction of the entity visible, `0` (hidden) … `1` (fully visible). */
-  visibleFraction: number;
+  /**
+   * Whether the entity is fully hidden behind nearer geometry. **Optional** (frozen ruling):
+   * only the fps mode computes occlusion; the 2D modes leave it `undefined`. Treat absent as
+   * "not known to be occluded".
+   */
+  occluded?: boolean;
+  /**
+   * Fraction of the entity visible, `0` (hidden) … `1` (fully visible). **Optional** (frozen
+   * ruling): fps-only, like {@link VisibleEntity.occluded}. Treat absent as fully visible.
+   */
+  visibleFraction?: number;
   /** Optional single-character glyph used when rasterising to {@link AsciiView}. */
   glyph?: string;
 }

@@ -5,7 +5,7 @@
  * interface, never on a concrete mode.
  * @packageDocumentation
  */
-import type { ComponentType, GameMode, Schedule } from '@aegis/core';
+import type { ComponentType, GameMode, Schedule, World } from '@aegis/core';
 import type { ViewProvider } from './view.js';
 
 /** Everything a mode contributes to a simulation. */
@@ -22,6 +22,19 @@ export interface ModePlugin {
    * Called once per run; must be pure with respect to global state.
    */
   systems(): Schedule;
+  /**
+   * Optional per-run setup, called **once** by the harness after the scene has been
+   * instantiated into `world` and before tick 0. This is where a mode derives run-scoped
+   * state that is cheaper to build once than every tick: the fps mode extrudes the authored
+   * floorplan tilemap into collision geometry, the iso mode bakes a navigation grid, and the
+   * platformer spawns its mode-owned moving platforms. Must be deterministic — use
+   * `world.random` and `@aegis/core/math`, never wall-clock or `Math.random`.
+   *
+   * Optional (and therefore backwards-compatible): a mode with no setup omits it, or may
+   * instead do first-tick work in a system guarded on `ctx.tick === 0`. Added in the freeze
+   * pass on the evidence that all three PoC modes need a setup step; see ADR-0010.
+   */
+  init?(world: World): void;
   /** The projection used to produce semantic frames / ASCII views for this mode. */
   view(): ViewProvider;
 }
