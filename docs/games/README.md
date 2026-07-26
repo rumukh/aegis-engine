@@ -88,23 +88,18 @@ empty one it replaced, because it reads as coverage. The discovery guard in
 `games/platformer/test` now enumerates `games/` from disk and fails, naming the game, if any of
 them — including a fourth added later — stops being reachable.
 
-Each game directory also carries an `aegis.json` naming its composed plugin:
+Each game directory also carries an `aegis.json` naming its composed plugin — and, via a `tests`
+glob, where its playthroughs live. Those manifests are authored and owned by the CLI session, so
+their exact shape is documented with the CLI rather than restated here; treat that as the source of
+truth.
 
-```json
-{ "plugin": "./dist/server-vault.js#serverVaultPlugin" }
-```
-
-This closes a related trap. Without it, `aegis run games/iso/levels/server-vault.scene.json` exits
-**0** with an empty event log: the scene validates perfectly against the stock `isoPlugin`, and
-because `Operative`/`Guard`/`Patrol` are tags, no component check can detect that the game layer
-never ran. With the file present the CLI resolves the right plugin by default rather than by the
-user remembering a flag. The three declarations are:
-
-| Game               | `aegis.json` `plugin`                      |
-| ------------------ | ------------------------------------------ |
-| `games/platformer` | `./dist/index.js#coyoteGapPlugin`          |
-| `games/iso`        | `./dist/server-vault.js#serverVaultPlugin` |
-| `games/fps`        | `./dist/index.js#sectorBreachPlugin`       |
+What they buy is worth recording, because it closes a trap the game layer cannot close on its own.
+Without a manifest, `aegis run games/iso/levels/server-vault.scene.json` exits **0** with an empty
+event log: the scene validates perfectly against the stock `isoPlugin`, and because
+`Operative`/`Guard`/`Patrol` are tags, no component check can detect that the game layer never ran.
+The manifest makes the CLI resolve the composed plugin by default rather than by the user
+remembering a flag. Its `tests` glob does the same job for `aegis test`, pointing at the
+`*.gametest` modules in the table above.
 
 ## Six rules learned from the mode-capability audit
 
