@@ -1,0 +1,83 @@
+# Working agreement
+
+Rules for every session on this project. The PM enforces these. They exist because up to
+four sessions work in parallel, and the failure modes of parallel agentic development are
+predictable: interface drift, merge collisions on shared files, and untested code landing
+because the thing it depends on wasn't runnable yet.
+
+Read this together with `CHARTER.md` (what we are building, and the nine principles) and
+`ENVIRONMENT.md` (corp npm proxy, Windows, Node + TypeScript only).
+
+## 1. Contract ownership
+
+A package's public contract is owned by exactly one session at a time — the one implementing
+it. Nobody else edits it.
+
+| Files | Owner |
+| --- | --- |
+| `packages/core/**`, `packages/content/**` | the core session |
+| `packages/harness/**`, `packages/cli/**` | the harness session |
+| `packages/mode-<x>/**` | that mode's session |
+| `games/<x>/**` | that game's session |
+| `packages/render-three/**` | the renderer session |
+| root config, `scripts/`, `docs/adr/`, `.github/` | the PM (or a session the PM names) |
+
+**You may read anything. You may only write files you own.**
+
+If you need a change in a file you do not own — especially a `@aegis/harness` interface —
+**do not edit it and do not work around it with a cast or a local re-declaration.** Stop,
+report it to the PM with the reason, and keep going on something else. The PM applies the
+change centrally so every parallel session gets it at once. A five-minute wait beats a
+three-way merge conflict in a load-bearing interface.
+
+## 2. Never ship untestable code
+
+You must be able to *run* what you build. If the thing you depend on is only a stub, say so
+immediately rather than writing a large body of code that has never executed.
+
+This is why the early waves are deliberately serial: `core` must really work before the
+harness is built on it, and `runScene` must really work before three mode sessions and three
+game sessions build on it. Every session after wave 2 inherits a base it can actually execute.
+
+## 3. The gate
+
+Before you hand back, this must pass from the repo root:
+
+```
+npm run verify
+```
+
+which runs build + test + lint + dependency-boundary check. "It works on my package" is not
+the gate; the whole workspace is the gate. If you broke something you don't own, that is
+still your problem to report.
+
+Note: `.github/workflows/ci.yml` is documentation of intent — this repo has **no git remote**,
+so GitHub Actions never actually runs. `npm run verify` is the real gate. Keep the workflow
+in sync with it anyway, so the project is CI-ready the day it gets a remote.
+
+## 4. Determinism is not negotiable
+
+Principle 3 in the charter. Concretely:
+
+- No `Date.now()`, `performance.now()`, `Math.random()`, or `Math.sin`/`cos`/`tan`/`atan2`
+  etc. in any simulation package. ESLint enforces this as an **error**; do not add an
+  eslint-disable to get around it. Use `@aegis/core/math`.
+- No iteration over unordered structures where order affects results.
+- No wall-clock time in gameplay. Time is ticks.
+
+If determinism forces you into an awkward design, take the awkward design.
+
+## 5. Branch and handoff
+
+- One branch per session. Commit in logical increments with real messages.
+- Do not merge to `main` yourself. The PM reviews, verifies and merges.
+- When you finish, reply to the PM with: what you built, **what you verified and how**,
+  decisions you made that others must know about, anything you deferred, and any contract
+  you are unsure about. Be specific about uncertainty — a flagged risk is cheap, a silent
+  wrong assumption is expensive.
+
+## 6. Scope discipline
+
+Build what your brief asks for. If you spot something else broken, report it — don't
+opportunistically fix it in your branch, because that is how two sessions end up editing the
+same file. Charter anti-goals (no GUI editor, no graphics arms race) apply to everyone.
