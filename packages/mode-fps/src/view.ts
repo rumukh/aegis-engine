@@ -173,8 +173,7 @@ function buildSemanticFrame(world: World, options?: ViewOptions): SemanticFrame 
     const tags = tagsFromComponents(ent.components);
 
     const box = ent.components['HitBox'] as
-      | { half: { x: number; y: number; z: number } }
-      | undefined;
+      { half: { x: number; y: number; z: number } } | undefined;
     const halfX = box ? box.half.x : 0.5;
     const halfY = box ? box.half.y : 0.5;
     const bounds =

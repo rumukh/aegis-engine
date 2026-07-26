@@ -186,7 +186,12 @@ export function ceilHeightAt(grid: CollisionGrid, x: number, z: number): number 
  * horizontal capsule-vs-wall test: the capsule is a vertical cylinder, so at a given height its
  * footprint is a circle.
  */
-export function circleHitsSolid(grid: CollisionGrid, x: number, z: number, radius: number): boolean {
+export function circleHitsSolid(
+  grid: CollisionGrid,
+  x: number,
+  z: number,
+  radius: number,
+): boolean {
   const half = grid.tileSize * 0.5;
   const minCol = round((x - radius - grid.origin.x) / grid.tileSize);
   const maxCol = round((x + radius - grid.origin.x) / grid.tileSize);

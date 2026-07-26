@@ -2,14 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, createSimulation, createSchedule, Transform } from '@aegis/core';
 import type { World, InputFrame, Entity, Vec3, GameEvent } from '@aegis/core';
 import { Health } from '@aegis/content';
-import {
-  CapsuleBody,
-  FpsCamera,
-  FpsController,
-  Hitscan,
-  HitBox,
-  LookState,
-} from './components.js';
+import { CapsuleBody, FpsCamera, FpsController, Hitscan, HitBox, LookState } from './components.js';
 import { FPS_COLLISION, extrudeFloorplan } from './geometry.js';
 import type { FloorplanSpec } from './geometry.js';
 import {
@@ -24,7 +17,6 @@ import {
 import type { HitscanHitEvent } from './systems.js';
 
 const TICK_RATE = 60;
-const DT = 1 / TICK_RATE;
 
 /** An open floor `w × h` of `.` tiles (floor 0, ceil 4), origin at the SW corner cell. */
 function openFloor(w: number, h: number): FloorplanSpec {
@@ -199,12 +191,13 @@ describe('hitscan steered by look direction', () => {
   it('hits the target when the look points at it (yaw 90 = +X)', () => {
     const { world, target } = scene('hit');
     // Aim east.
-    for (const v of world.query({ has: [LookState, Hitscan] }).views()) v.get(LookState).yawDeg = 90;
+    for (const v of world.query({ has: [LookState, Hitscan] }).views())
+      v.get(LookState).yawDeg = 90;
     fireOnce(world, 0);
     expect(world.get(target, Health)!.current).toBe(75);
-    const hits = world.events.history().filter((e) => e.type === HITSCAN_HIT) as GameEvent<
-      HitscanHitEvent
-    >[];
+    const hits = world.events
+      .history()
+      .filter((e) => e.type === HITSCAN_HIT) as GameEvent<HitscanHitEvent>[];
     expect(hits.some((e) => e.data.distance < 3)).toBe(true);
   });
 
@@ -248,9 +241,9 @@ describe('hitscan steered by look direction', () => {
     );
     fireOnce(world, 0);
     expect(world.get(target, Health)!.current).toBe(100); // wall absorbed the shot
-    const hits = world.events.history().filter((e) => e.type === HITSCAN_HIT) as GameEvent<
-      HitscanHitEvent
-    >[];
+    const hits = world.events
+      .history()
+      .filter((e) => e.type === HITSCAN_HIT) as GameEvent<HitscanHitEvent>[];
     expect(hits[0]!.data.target).toBe('wall');
   });
 
@@ -270,7 +263,8 @@ describe('hitscan steered by look direction', () => {
 
   it('respects the cooldown between shots', () => {
     const { world, target } = scene('cooldown');
-    for (const v of world.query({ has: [LookState, Hitscan] }).views()) v.get(LookState).yawDeg = 90;
+    for (const v of world.query({ has: [LookState, Hitscan] }).views())
+      v.get(LookState).yawDeg = 90;
     const sim = createSimulation({
       world,
       schedule: createSchedule().addAll([hitscanSystem]),

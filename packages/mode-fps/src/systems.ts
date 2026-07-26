@@ -13,14 +13,7 @@ import { Name, Transform } from '@aegis/core';
 import type { Entity, System, Vec3, World } from '@aegis/core';
 import { clamp, quatFromEuler, DEG2RAD } from '@aegis/core/math';
 import { Health } from '@aegis/content';
-import {
-  CapsuleBody,
-  FpsCamera,
-  FpsController,
-  Hitscan,
-  HitBox,
-  LookState,
-} from './components.js';
+import { CapsuleBody, FpsCamera, FpsController, Hitscan, HitBox, LookState } from './components.js';
 import {
   FPS_COLLISION,
   ceilHeightAt,
