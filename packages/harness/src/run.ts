@@ -298,12 +298,12 @@ function resolveInput(
       diagnostics: [...parsed.diagnostics, ...script.check(ticks)],
     };
   }
-  if (Array.isArray(input)) {
-    const frames = input as readonly InputFrame[];
-    return { frames, diagnostics: [] };
+  // `in` rather than `Array.isArray`: the latter's `arg is any[]` signature does not remove a
+  // `readonly InputFrame[]` from the union, which is what previously forced a cast here.
+  if ('frames' in input) {
+    return { frames: input.frames(ticks), script: input, diagnostics: input.check(ticks) };
   }
-  const script = input as InputScript;
-  return { frames: script.frames(ticks), script, diagnostics: script.check(ticks) };
+  return { frames: input, diagnostics: [] };
 }
 
 /** An input source that serves compiled frames, padding out-of-range ticks with an idle frame. */

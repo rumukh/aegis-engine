@@ -6,6 +6,7 @@ import {
   GameAssertionError,
   InvariantError,
 } from './index.js';
+import { fakeMode } from './testing/fake-mode.js';
 
 describe('@aegis/harness public surface', () => {
   it('exposes the runner and input parser', () => {
@@ -17,7 +18,7 @@ describe('@aegis/harness public surface', () => {
     const test = defineGameTest({
       name: 'reaches the goal',
       scene: 'scenes/level1.scene.json',
-      options: { plugin: undefined as never },
+      options: { plugin: fakeMode },
       ticks: 120,
       input: 'hold Right 0..90',
       expect: () => {},

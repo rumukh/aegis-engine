@@ -290,9 +290,23 @@ export interface GameTestResult {
   checked: readonly string[];
 }
 
+/** Normalise an unknown thrown value into an `Error` without pretending a non-Error is one. */
+function asError(thrown: unknown): Error {
+  return thrown instanceof Error ? thrown : new Error(String(thrown));
+}
+
+/** What a run actually verified: the assertions recorded against it, as reportable fields. */
+function auditOf(result: SimResult): Pick<GameTestResult, 'assertions' | 'checked'> {
+  const records = assertionsFor(result);
+  return {
+    assertions: records.length,
+    checked: records.map((r) => `${r.kind}: ${r.detail}`),
+  };
+}
+
 /** Run a single {@link GameTest} headlessly and capture its outcome (never throws). */
 export async function runGameTest(test: GameTest): Promise<GameTestResult> {
-  let result: SimResult | undefined;
+  let result: SimResult;
   try {
     result = await runScene(test.scene, {
       ...test.options,
@@ -304,33 +318,25 @@ export async function runGameTest(test: GameTest): Promise<GameTestResult> {
     return {
       name: test.name,
       passed: false,
-      error: err as Error,
+      error: asError(err),
       ticks: test.ticks,
       assertions: 0,
       checked: [],
     };
   }
-  /** What the `expect` block (and the run's live invariants) actually verified. */
-  const audit = (): Pick<GameTestResult, 'assertions' | 'checked'> => {
-    const records = assertionsFor(result as SimResult);
-    return {
-      assertions: records.length,
-      checked: records.map((r) => `${r.kind}: ${r.detail}`),
-    };
-  };
   try {
     await test.expect(result);
   } catch (err) {
     return {
       name: test.name,
       passed: false,
-      error: err as Error,
+      error: asError(err),
       result,
       ticks: test.ticks,
-      ...audit(),
+      ...auditOf(result),
     };
   }
-  const checked = audit();
+  const checked = auditOf(result);
   if (checked.assertions === 0) {
     // A green tick here would be the worst lie the harness can tell: the run completed, nothing
     // was verified, and the report says the playthrough is proven.

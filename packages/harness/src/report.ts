@@ -70,11 +70,14 @@ export function renderOutcome(outcome: CheckOutcome): string {
  * and indistinguishable from its neighbour. An agent debugging a failed playthrough must see the
  * *same* name for an entity here as in `aegis inspect`, so the spelling is kept identical across
  * the whole tool. Presentation only — structured/hashed data keeps the raw packed handle.
+ *
+ * Takes a branded {@link Entity} rather than a bare `number`: every caller already has one (query
+ * results and `EntityView.entity` are branded), so widening to `number` here would only discard
+ * the protection at the point where a slot index could be mistaken for a live handle.
  */
-export function formatEntity(handle: number): string {
-  const e = handle as Entity;
-  const generation = entityGeneration(e);
-  return generation === 1 ? `#${entityIndex(e)}` : `#${entityIndex(e)}@${generation}`;
+export function formatEntity(entity: Entity): string {
+  const generation = entityGeneration(entity);
+  return generation === 1 ? `#${entityIndex(entity)}` : `#${entityIndex(entity)}@${generation}`;
 }
 
 /** A short, readable label for a matched entity view: `#0 "hero"` (or `#0@2` when reused). */
@@ -84,7 +87,7 @@ export function describeEntityView(view: EntityView): string {
 }
 
 /** A short, readable label for one entity handle: `#0 "hero"` (or `#0@2` when reused). */
-export function describeEntity(world: World, entity: number): string {
+export function describeEntity(world: World, entity: Entity): string {
   const view = world
     .query({ has: [] })
     .views()
