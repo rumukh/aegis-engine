@@ -1,0 +1,9 @@
+# The Server Vault — scripted playthrough (ADR-0004 input DSL).
+# The exact tuned script the acceptance test runs. `click x,y @tick` fires a primary
+# pointer click at grid cell (x,y) on that tick; a click on empty ground is a move order,
+# a click on the guard's cell is an attack-move. See patrolCell() for the guard's position.
+
+click 1,2 @2      # step into the corridor mouth; the guard (at 1,5) spots us at t18 and opens fire
+click 1,5 @40     # attack-move onto the guard; we trade at Chebyshev 3 and kill it by t70 (took 2 hits, HP 20)
+click 9,1 @72     # cross to the security switch; reaching (9,1) at t297 unseals the vault door
+click 4,7 @300    # breach the now-open door and reach the exit; mission completes at t465

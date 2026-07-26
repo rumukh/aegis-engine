@@ -1,0 +1,27 @@
+{
+  "aegis": "tilemap/1",
+  "name": "The Server Vault",
+  "width": 12,
+  "height": 9,
+  "tileSize": 1,
+  "legend": {
+    "#": { "solid": true, "sprite": "wall" },
+    ".": { "solid": false, "sprite": "floor" }
+  },
+  "layers": [
+    {
+      "name": "collision",
+      "data": [
+        "############",
+        "#...#...#..#",
+        "#.#.#.#.#..#",
+        "#.#...#...##",
+        "#.###.#.##.#",
+        "#..........#",
+        "####.#######",
+        "#..........#",
+        "############"
+      ]
+    }
+  ]
+}
