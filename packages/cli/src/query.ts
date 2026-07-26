@@ -27,7 +27,8 @@ export function parseQuery(expr: string): QueryDescriptor {
     let list = token;
     if (colon >= 0) {
       const prefix = token.slice(0, colon);
-      if (!(CLAUSES as readonly string[]).includes(prefix)) {
+      const matched = CLAUSES.find((candidate) => candidate === prefix);
+      if (matched === undefined) {
         throw new AegisCliError(
           CliCode.InvalidFlagValue,
           `Unknown query clause "${prefix}" in --query.`,
@@ -37,7 +38,7 @@ export function parseQuery(expr: string): QueryDescriptor {
           },
         );
       }
-      clause = prefix as Clause;
+      clause = matched;
       list = token.slice(colon + 1);
     }
     for (const id of list.split(',').map((s) => s.trim())) {
