@@ -1,16 +1,18 @@
 /**
- * Authoritative acceptance test for the platformer slice. Lives in this owned package (auto-discovered
- * by the root vitest run) and drives the *game* — the composed `coyoteGapPlugin` from `games/platformer`
- * — through the spec's `defineGameTest` (CHARTER principle 7: the game is the mode's acceptance test).
+ * Acceptance test for "Coyote Gap" — the platformer PoC, run headless with no pixels.
  *
- * Wiring note for the PM: `games/*` is not part of the root workspaces / vitest include / tsconfig
- * references, so the game's own `.gametest.ts` is not auto-run. Until that is wired centrally, this
- * package hosts the authoritative run and imports the game by relative path. The mode `tsconfig.json`
- * excludes `*.test.ts`, so `tsc -b` never sees this cross-package import (no TS6059).
+ * Discovered by the root vitest run (root `vitest.config.ts` globs every game's `test` directory),
+ * so the game is exercised by `npm run verify` exactly like every package is. CHARTER principle 7:
+ * the game is the mode's acceptance test, and CHARTER §4.3 requires the scripted playthrough to
+ * run headlessly with gameplay assertions.
+ *
+ * The game's own `coyote-gap.gametest.ts` is a *specification* (an exported `defineGameTest`), not
+ * a vitest file; this is the runner that executes it, plus the cross-run + `replay()` determinism
+ * proof over the whole per-tick hash timeline.
  */
 import { describe, it, expect } from 'vitest';
 import { runScene, runGameTest } from '@aegis/harness';
-import coyoteGap from '../../../games/platformer/src/coyote-gap.gametest.js';
+import coyoteGap from '../src/coyote-gap.gametest.js';
 
 describe('Coyote Gap — acceptance', () => {
   it('completes the level and satisfies every gameplay assertion', async () => {
