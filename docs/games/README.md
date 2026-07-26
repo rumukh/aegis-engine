@@ -44,10 +44,11 @@ do.
   firefight depend on hitscan damage against `Health`.
 
 Between them they exercise: the ECS + fixed-timestep scheduler, seeded determinism (each game pins a
-golden `hashEquals`), the content loader (three scene + tilemap documents), the input DSL (digital
-actions, analog axes, `look`/`aim`, and `click` pointer input — all three input families), the
-event bus (each game asserts on named events), the assertion harness (`expectSim` + whole-timeline
-`assertInvariant`), and all three `ViewProvider` projections (orthographic, isometric, perspective).
+golden `hashEquals` **and** a golden digest of its per-tick hash timeline), the content loader (three
+scene + tilemap documents), the input DSL (digital actions, analog axes, `look`/`aim`, and `click`
+pointer input — all three input families), the event bus (each game asserts on named events,
+including a deliberate loss), the assertion harness (`expectSim` + whole-timeline `assertInvariant`),
+and all three `ViewProvider` projections (orthographic, isometric, perspective).
 
 ## The shared design rules
 
@@ -60,9 +61,113 @@ event bus (each game asserts on named events), the assertion harness (`expectSim
    world state that assertions can read — never a purely visual "feel".
 4. **Deterministic AI.** Every enemy/guard is a pure function of the tick; no `Math.random`, only
    `@aegis/core`'s seeded PRNG if randomness is ever needed (none of these games needs it).
-5. **Each game ships two artifacts that prove it:** a scripted playthrough (`*.input`) that
-   completes it headlessly, and a `defineGameTest` block whose assertions — including at least one
-   whole-timeline invariant — would fail if the game (or the engine under it) broke.
+5. **Each game ships three artifacts that prove it:** a scripted playthrough (`*.input`) that
+   completes it headlessly, a `defineGameTest` block whose assertions — including at least one
+   whole-timeline invariant and a golden **trajectory** digest — would fail if the game (or the
+   engine under it) broke, and at least one **negative playthrough** that deliberately loses, so
+   `eventNotEmitted('player.died')` in the winning run is not a vacuous assertion.
+
+## Running a game from the CLI
+
+`aegis test` discovers, by default, every compiled module whose name ends in `.gametest.js` (or
+`.mjs`/`.cjs`) and runs **every** `GameTest` that module exports. So each game keeps its
+playthroughs in a `src/*.gametest.ts`:
+
+| Game               | Discovery module                | Exports                                             |
+| ------------------ | ------------------------------- | --------------------------------------------------- |
+| `games/platformer` | `src/coyote-gap.gametest.ts`    | the winning run + 4 lose playthroughs               |
+| `games/iso`        | `src/server-vault.gametest.ts`  | re-exports the 2 tests defined in `server-vault.ts` |
+| `games/fps`        | `src/sector-breach.gametest.ts` | the winning run, the lose run, the collision probe  |
+
+They live in `src/`, not `test/`, because each game's `tsconfig.json` excludes `test/` from the
+build — a `defineGameTest` parked there is never compiled and therefore never discovered. That was
+the state until recently: iso defined its tests in `src/server-vault.ts` (which does not match the
+convention) and fps defined its inside a vitest file, so `aegis test` ran **the platformer alone**
+and exited 0 with a green summary. A gate covering one of three PoCs is a _worse_ signal than the
+empty one it replaced, because it reads as coverage. The discovery guard in
+`games/platformer/test` now enumerates `games/` from disk and fails, naming the game, if any of
+them — including a fourth added later — stops being reachable.
+
+Each game directory also carries an `aegis.json` naming its composed plugin — and, via a `tests`
+glob, where its playthroughs live. Those manifests are authored and owned by the CLI session, so
+their exact shape is documented with the CLI rather than restated here; treat that as the source of
+truth.
+
+What they buy is worth recording, because it closes a trap the game layer cannot close on its own.
+Without a manifest, `aegis run games/iso/levels/server-vault.scene.json` exits **0** with an empty
+event log: the scene validates perfectly against the stock `isoPlugin`, and because
+`Operative`/`Guard`/`Patrol` are tags, no component check can detect that the game layer never ran.
+The manifest makes the CLI resolve the composed plugin by default rather than by the user
+remembering a flag. Its `tests` glob does the same job for `aegis test`, pointing at the
+`*.gametest` modules in the table above.
+
+## Six rules learned from the mode-capability audit
+
+An independent audit ran ~60 source mutations and found that 7 of 12 named mode capabilities could
+be broken with all three game tests green. The structural causes are worth stating once, here,
+because they apply to any future game in this repo:
+
+1. **A final-state hash is nearly blind to dynamics.** All three runs deliberately end _at rest_ —
+   actor parked, velocities zero, orders resolved — so a regression whose trajectory differs but
+   whose resting state converges is invisible to `hashEquals`. Demonstrated on iso: making both
+   combatants' cooldowns tick twice as fast left `damage.taken ×2`, `Health 20` **and** the golden
+   hash byte-identical. Each game therefore also pins a digest of the whole per-tick hash timeline
+   (`hashString(tickHashes.join('|'))`). Comparing `tickHashes` run-to-run — which the suites
+   already did — proves determinism but adds **zero** regression detection.
+2. **A negative assertion about an event nothing ever emits proves nothing.** `eventNotEmitted` on
+   `player.died` passed in all three games even with the emitter deleted. The fix is a second
+   playthrough per game that deliberately loses and asserts the death _with its cause_.
+3. **A capability that fails only via hash drift is not covered.** "The golden hash moved" tells an
+   agent that the world diverged and nothing about where or why — the least actionable diagnostic
+   the engine can produce (CHARTER principle 8). Every capability in the "what this game proves"
+   tables must fail through a **named** assertion; the trajectory digest is the safety net beneath
+   them, not the diagnosis. Where the winning run does not naturally exercise a mechanism (fps
+   never touches a wall, so capsule collision and sliding were invisible), add a small **probe
+   playthrough** that does, rather than settling for the hash.
+4. **"The dead thing stops participating" has as many facets as there are systems touching it.**
+   A check aimed at one facet goes green on every other. A corpse that stops responding to input
+   but keeps accumulating gravity is still broken; so is one that stops moving but still completes
+   the level. Assert **each** facet, and assert it **over a window of ticks** — a single-tick check
+   passes on a body that merely happens to be momentarily stationary. `docs/games/platformer.md`
+   carries the worked enumeration, system by system, with the owner of each.
+5. **Be as deliberate about what a losing run _reports_ as about what it asserts.** The renderer
+   session found the dead-player defect only because its capture reported dead-entity counts
+   instead of silently photographing a lost run — the first screenshot showed a corpse standing on
+   a plateau looking perfectly healthy. Prefer assertions whose failure message names the thing
+   (`entityCount({ has: ['Player', 'Dead'] }, 1)` prints the matched entities; a bare `holds` prints
+   only its label), and put the measured numbers in the label.
+6. **A partial gate is worse than no gate.** `aegis test` found the platformer, ran five green
+   playthroughs and exited 0 while two of the three PoCs were invisible to it — a summary that
+   reads as coverage. The empty result it replaced was at least honestly broken. Whenever a gate
+   enumerates something, make the enumeration itself testable: the discovery guard reads `games/`
+   from disk rather than hard-coding three names, so it fails on the _fourth_ game nobody
+   remembered to wire up.
+
+## What the game layer does not cover, and why that is correct
+
+These games are the modes' acceptance tests, so it is tempting to read "all three games green" as
+"the engine is validated". It is not, and the boundary is worth stating rather than leaving to be
+rediscovered.
+
+Four engine fixes landed in `main` on the night this was written. Reverting each one in a scratch
+copy leaves **every game test green**:
+
+| Reverted fix                                                      | Why no PoC notices                                                                                                                  |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `mode-iso`: `lineOfSight` made symmetric                          | the Server Vault's sightlines run straight along a row or column; the tie-break only diverges on shallow diagonals                  |
+| `mode-iso`: `lineOfSight` rejects a start inside geometry         | it cannot arise — the whole-timeline invariant _"operative is always on a passable cell"_ guarantees no actor is ever inside a wall |
+| `mode-fps`: capsule collision sub-stepped so bodies cannot tunnel | Sector Breach moves at 6 u/s ≈ 0.1 u/tick against 1 u cells; nothing in it travels far enough in one tick to tunnel                 |
+| `mode-fps`: ray origin cell seeded by direction                   | it needs an eye sitting exactly on a cell boundary firing negative; the player stands on cell centres                               |
+
+In each case the game _structurally cannot produce the input_, and the fix is pinned where it
+belongs — in the mode's own unit tests, on the pure function. That is the right altitude: a property
+of `lineOfSight` is `grid.test.ts`'s job, not a level designer's. It also explains why none of the
+six golden hashes moved when those fixes merged: not luck, and not a stale pin.
+
+The general rule: **a game test proves the capabilities the game exercises, and says nothing
+whatever about the rest.** So when a mode fix lands and the games stay green, that is not evidence
+the fix works — it is evidence the games do not reach it. Reverting the fix and watching for red
+takes minutes and tells you which.
 
 ## Deliberately _not_ covered
 

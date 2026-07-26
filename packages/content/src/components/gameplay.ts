@@ -14,6 +14,7 @@
  */
 import { defineComponent, defineTag, Name } from '@aegis/core';
 import type { ComponentType, Entity, System, Vec3 } from '@aegis/core';
+import { describeComponent } from '../schema.js';
 
 /** Data of {@link Health}. */
 export interface HealthData {
@@ -80,6 +81,15 @@ export const Trigger: ComponentType<TriggerData> = defineComponent<TriggerData>(
     radius: 0.5,
     once: true,
   }),
+});
+
+// `data` is optional and so absent from the defaults, which would make schema validation read
+// it as an unknown field; `shape` is a closed set a bare string default cannot express, and a
+// mistyped one ("spere") would silently be treated as a box. `kind` is deliberately *not*
+// listed: TriggerKind is open by design, so a mode may invent its own kinds.
+describeComponent(Trigger, {
+  optional: { data: 'object' },
+  enums: { shape: ['box', 'sphere'] },
 });
 
 /** Latch marking a `once` {@link Trigger} that has already fired. */
