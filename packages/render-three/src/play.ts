@@ -1,15 +1,15 @@
 /**
- * The dev-server entry point: `node packages/render-three/play.mjs`.
+ * The dev-server entry point. Game-agnostic: it serves whatever catalogue it is handed.
  *
- * Loads the three PoC games' **composed** plugins and scenes, serves them, and prints the URLs.
- * Nothing here is part of a headless run or a gameplay assertion — this is the human's door.
+ * The three PoC games are wired up by `packages/render-three/poc-games.mjs`, which is the
+ * composition root — the renderer is engine and may not depend on a game (see `./catalog.ts`).
  * @packageDocumentation
  */
-import { loadPocGames } from './games.js';
 import { startDevServer } from './dev-server.js';
+import type { GameDefinition } from './catalog.js';
 
 /** Read `--flag value` / `--flag=value` from `argv`. */
-function flag(argv: readonly string[], name: string): string | undefined {
+export function flag(argv: readonly string[], name: string): string | undefined {
   const prefix = `--${name}`;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -19,14 +19,17 @@ function flag(argv: readonly string[], name: string): string | undefined {
   return undefined;
 }
 
-/** Start the server and report where it is. */
-export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-  const portArg = flag(argv, 'port');
-  const games = await loadPocGames();
+/** Start the server for `games` and report where it is. */
+export async function play(
+  games: readonly GameDefinition[],
+  argv: readonly string[] = process.argv.slice(2),
+): Promise<void> {
+  const port = flag(argv, 'port');
+  const host = flag(argv, 'host');
   const server = await startDevServer({
     games,
-    ...(portArg !== undefined ? { port: Number(portArg) } : {}),
-    ...(flag(argv, 'host') !== undefined ? { host: flag(argv, 'host') as string } : {}),
+    ...(port !== undefined ? { port: Number(port) } : {}),
+    ...(host !== undefined ? { host } : {}),
   });
 
   console.log(`\n  Aegis dev server  ${server.url}\n`);
@@ -43,5 +46,3 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 }
-
-await main();

@@ -1,0 +1,76 @@
+/**
+ * The dev server's catalogue: what it needs to know about a playable thing.
+ *
+ * Deliberately game-agnostic. `@aegis/render-three` is *engine* — `scripts/check-deps.mjs`
+ * enforces that nothing under `packages/` may depend on anything under `games/`, by package name
+ * or by relative path ("the engine must NEVER depend on a game"). So this module defines the
+ * shape of a catalogue entry and knows how to read a scene document, and the **caller** supplies
+ * the entries. Wiring the three PoC games is a composition root's job, not the renderer's; see
+ * `packages/render-three/poc-games.mjs`.
+ * @packageDocumentation
+ */
+import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DiagnosticError } from '@aegis/core';
+import type { GameMode } from '@aegis/core';
+import { parseScene } from '@aegis/content';
+import type { SceneFile } from '@aegis/content';
+import type { ModePlugin } from '@aegis/harness';
+import type { ModeBindings } from './bindings.js';
+
+/** One playable entry in the dev server's catalogue. */
+export interface GameDefinition {
+  /** URL slug, e.g. `"iso"`. */
+  id: string;
+  /** Display title, e.g. `"The Server Vault"`. */
+  title: string;
+  /** One-line pitch shown on the landing page. */
+  blurb: string;
+  /** The mode whose adapter draws it. */
+  mode: GameMode;
+  /**
+   * The plugin to run. For a game this must be its **composed** plugin (the mode's systems plus
+   * the game's own); the bare mode plugin would give a world with physics and no game rules.
+   */
+  plugin: ModePlugin;
+  /** The parsed scene document. */
+  scene: SceneFile;
+  /** Seed override; defaults to the scene's. */
+  seed?: number | string;
+  /** Fixed ticks per second. Defaults to `60`. */
+  tickRate?: number;
+  /** How a human drives it. */
+  bindings: ModeBindings;
+  /** What "winning" looks like, shown in the HUD. */
+  objective: string;
+}
+
+/** Read and parse a scene document, throwing structured diagnostics on failure. */
+export async function loadScene(path: string): Promise<SceneFile> {
+  const text = await readFile(path, 'utf8');
+  const parsed = parseScene(text, path);
+  if (!parsed.ok || parsed.value === undefined) throw new DiagnosticError(parsed.diagnostics);
+  return parsed.value;
+}
+
+/**
+ * Find the repository root by walking up from this module until a directory holds both
+ * `packages` and `node_modules` — which is exactly the precondition for serving `/vendor`, since
+ * that maps `/vendor/@aegis/<pkg>` to `packages/<pkg>` and `/vendor/three` to the installed
+ * package. Works from `src/` under vitest and from `dist/` when built.
+ */
+export function findRepoRoot(from: string = fileURLToPath(import.meta.url)): string {
+  let dir = dirname(from);
+  for (let depth = 0; depth < 12; depth++) {
+    if (existsSync(join(dir, 'packages')) && existsSync(join(dir, 'node_modules'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(
+    `[aegis:render-three] could not locate the repository root above ${from} ` +
+      '(expected a directory containing both "packages" and "node_modules" — run npm install).',
+  );
+}

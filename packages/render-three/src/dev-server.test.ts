@@ -14,11 +14,11 @@ import { platformerPlugin } from '@aegis/mode-platformer';
 import { isoPlugin } from '@aegis/mode-iso';
 import { startDevServer, resolveVendorPath } from './dev-server.js';
 import type { DevServer } from './dev-server.js';
-import { findRepoRoot } from './games.js';
+import { findRepoRoot } from './catalog.js';
 import { BINDINGS } from './bindings.js';
 import { escapeHtml, importMap } from './pages.js';
 import type { FrameResponse } from './protocol.js';
-import type { GameDefinition } from './games.js';
+import type { GameDefinition } from './catalog.js';
 import { ISO_SCENE, PLATFORMER_SCENE } from './testing/scenes.js';
 
 const repoRoot = findRepoRoot();

@@ -9,7 +9,7 @@
  * third-party runtime dependency" intact: nothing else was added to make pixels happen.
  * @packageDocumentation
  */
-import type { GameDefinition } from './games.js';
+import type { GameDefinition } from './catalog.js';
 import { SESSION_CONTROLS } from './bindings.js';
 import type { BootConfig } from './protocol.js';
 
