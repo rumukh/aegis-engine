@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, defineComponent, defineTag, Name, Transform } from '@aegis/core';
-import type { Diagnostic } from '@aegis/core';
+import type { ComponentType, Diagnostic } from '@aegis/core';
 import { createRegistry } from './registry.js';
 import { instantiateScene, validateScene } from './load.js';
 import { ContentCode } from './diagnostics.js';
@@ -119,6 +119,104 @@ describe('componentFields / describeComponent', () => {
     describeComponent(a, { optional: { extra: 'string' } });
     expect(componentSchema(a)?.optional).toEqual({ extra: 'string' });
     expect(componentSchema(b)).toBeUndefined();
+  });
+});
+
+describe('a mis-keyed declaration is loud, not silent', () => {
+  // Identity keying is what stops three modules' `Velocity` from crosstalking, but it can also
+  // miss: declare against one module's copy, register another's, and the component falls
+  // through to the undeclared path where optional fields become hard errors. That is the same
+  // silent-rejection defect this layer exists to prevent, so it must not be silent itself.
+
+  /** Two independently-defined components sharing an id — the hazard, in miniature. */
+  function twoVelocities() {
+    const shape = () => ({ dx: 0, dy: 0 });
+    return {
+      declared: defineComponent<{ dx: number; dy: number }>({ id: 'Velocity', defaults: shape }),
+      other: defineComponent<{ dx: number; dy: number }>({ id: 'Velocity', defaults: shape }),
+    };
+  }
+
+  const scene = (): SceneFile => ({
+    aegis: 'scene/1',
+    name: 'S',
+    mode: 'platformer',
+    entities: [{ id: 'e', components: { Velocity: { dx: 1 } } }],
+  });
+
+  it('warns when the registered component is not the one that was declared', () => {
+    const { declared, other } = twoVelocities();
+    describeComponent(declared, { optional: { boost: 'number' } });
+
+    const r = validateScene(scene(), { registry: createRegistry(other) });
+    const warning = r.diagnostics.find((d) => d.code === ContentCode.SchemaKeyMismatch);
+    expect(warning).toBeDefined();
+    expect(warning?.severity).toBe('warning');
+    expect(warning?.data?.['component']).toBe('Velocity');
+    expect(warning?.fix).toContain('the exact ComponentType that is registered');
+    // A warning, not an error: two unrelated components may legitimately share an id, and only
+    // the author can tell the cases apart. The scene still loads.
+    expect(r.ok).toBe(true);
+  });
+
+  it('names the consequence the warning predicts', () => {
+    const { declared, other } = twoVelocities();
+    describeComponent(declared, { optional: { boost: 'number' } });
+    // Authored against the declaration's promise, but validated against the other object.
+    expect(validateComponentData(declared, { boost: 2 }, { path: 'c' })).toEqual([]);
+    expect(validateComponentData(other, { boost: 2 }, { path: 'c' })[0]?.code).toBe(
+      ContentCode.UnknownField,
+    );
+  });
+
+  it('stays quiet when the declared component is the registered one', () => {
+    const { declared } = twoVelocities();
+    describeComponent(declared, { optional: { boost: 'number' } });
+    const r = validateScene(scene(), { registry: createRegistry(declared) });
+    expect(r.diagnostics).toEqual([]);
+  });
+
+  it('stays quiet for a component nobody has ever declared', () => {
+    const plain = defineComponent<{ dx: number; dy: number }>({
+      id: 'Undeclared',
+      defaults: () => ({ dx: 0, dy: 0 }),
+    });
+    const s: SceneFile = {
+      aegis: 'scene/1',
+      name: 'S',
+      mode: 'platformer',
+      entities: [{ id: 'e', components: { Undeclared: { dx: 1 } } }],
+    };
+    expect(validateScene(s, { registry: createRegistry(plain) }).diagnostics).toEqual([]);
+  });
+
+  it('reports once per validation, not once per entity that uses the component', () => {
+    const { declared, other } = twoVelocities();
+    describeComponent(declared, { optional: { boost: 'number' } });
+    const many: SceneFile = {
+      aegis: 'scene/1',
+      name: 'S',
+      mode: 'platformer',
+      entities: [
+        { id: 'a', components: { Velocity: { dx: 1 } } },
+        { id: 'b', components: { Velocity: { dx: 2 } } },
+        { id: 'c', components: { Velocity: { dx: 3 } } },
+      ],
+    };
+    const r = validateScene(many, { registry: createRegistry(other) });
+    expect(r.diagnostics.filter((d) => d.code === ContentCode.SchemaKeyMismatch)).toHaveLength(1);
+  });
+
+  it('every component this package declares is keyed to the object it registers', () => {
+    // The audit, as a test: each declared component resolves out of a real registry to the
+    // very object its schema was recorded against.
+    const r = createRegistry(Transform, Name, Sprite, Model, Light, Health, Trigger);
+    for (const type of [Sprite, Model, Light, Trigger]) {
+      expect(r.get(type.id)).toBe(type);
+      expect(componentSchema(type)).toBeDefined();
+    }
+    const s: SceneFile = { aegis: 'scene/1', name: 'S', mode: 'platformer', entities: [] };
+    expect(validateScene(s, { registry: r }).diagnostics).toEqual([]);
   });
 });
 
@@ -366,7 +464,16 @@ describe('positive control: valid content must still validate clean', () => {
   it('whatever a component itself produces must validate — for every component we own', () => {
     // The strongest general form: `type.create()` is by definition canonical, so if validation
     // ever rejects it, validation is wrong. Catches over-strictness in one assertion.
-    for (const type of [Transform, Name, Sprite, Model, Light, Health, Trigger]) {
+    const owned: readonly ComponentType<unknown>[] = [
+      Transform,
+      Name,
+      Sprite,
+      Model,
+      Light,
+      Health,
+      Trigger,
+    ];
+    for (const type of owned) {
       expect(validateComponentData(type, type.create(), { path: 'c' })).toEqual([]);
       // ...and every single field of it, authored on its own as a partial.
       for (const [key, value] of Object.entries(type.create() as Record<string, unknown>)) {

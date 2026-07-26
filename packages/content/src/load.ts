@@ -25,7 +25,7 @@ import type {
   World,
 } from '@aegis/core';
 import { ContentCode, diagnostic } from './diagnostics.js';
-import { suggestName, validateComponentData } from './schema.js';
+import { componentSchema, isDescribedId, suggestName, validateComponentData } from './schema.js';
 import type { ComponentData, EntityDecl, PrefabFile, SceneFile, TilemapFile } from './scene.js';
 import type { ComponentRegistry, ResourceRegistry } from './registry.js';
 
@@ -560,6 +560,40 @@ function validateEntitySemantics(decls: readonly EntityDecl[], path: string, ctx
   });
 }
 
+/**
+ * Warn about a component whose schema declaration is almost certainly keyed against a
+ * *different* component object with the same id.
+ *
+ * Schemas are keyed by identity (`schema.ts`), which is what stops three modules' `Velocity`
+ * from crosstalking — but identity keying can also miss, and a miss is silent: the component
+ * falls through to the undeclared path, where its optional fields become hard "unknown field"
+ * errors. That is the same silent-rejection failure this layer exists to prevent, so it is
+ * reported rather than left to be discovered as a mysterious false positive. A warning, not an
+ * error: two unrelated components may legitimately share an id (a game's `Player` and a test
+ * mode's, say), and only the author can say which case this is.
+ */
+function checkSchemaDeclarations(ctx: SemanticContext): void {
+  const { registry } = ctx.options;
+  for (const id of registry.ids()) {
+    const type = registry.get(id);
+    if (type === undefined) continue;
+    if (componentSchema(type) !== undefined) continue; // declared against this exact object
+    if (!isDescribedId(id)) continue; // nobody ever declared anything under this name
+    ctx.diags.push(
+      diagnostic(
+        ContentCode.SchemaKeyMismatch,
+        `Component "${id}" is registered with no schema of its own, but describeComponent() was called for a different component object with the same id. Schemas are keyed by component identity, so this registration is validated against its defaults alone and any optional field the declaration was meant to permit will be reported as an unknown field.`,
+        {
+          severity: 'warning',
+          location: { file: ctx.file },
+          data: { component: id },
+          fix: `Call describeComponent() with the exact ComponentType that is registered — declare it directly below the definition — or ignore this if two unrelated components legitimately share the id "${id}".`,
+        },
+      ),
+    );
+  }
+}
+
 /** Validate the resource ids a scene sets, when the caller supplied a resource registry. */
 function validateResources(
   resources: Readonly<Record<string, unknown>>,
@@ -614,6 +648,7 @@ export function validatePrefab(
   if (prefab.components) {
     // Validated as its own document here, so the location names the prefab's own file and no
     // instantiating entity exists to attribute it to.
+    checkSchemaDeclarations(ctx);
     validateComponentMap(
       prefab.components,
       { path: 'components', subject: `Prefab "${prefab.name}"`, file: options.file },
@@ -660,6 +695,7 @@ export function validateScene(scene: SceneFile, options: ValidateOptions): Valid
   }
   const ctx: SemanticContext = { options, diags, file, checkedPrefabs: new Set<string>() };
   const seen = new Set<string>();
+  checkSchemaDeclarations(ctx);
   collectEntityIds(scene.entities ?? [], 'entities', diags, seen, file);
   if (scene.resources) validateResources(scene.resources, ctx);
   validateEntitySemantics(scene.entities ?? [], 'entities', ctx);

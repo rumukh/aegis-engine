@@ -61,17 +61,45 @@ export interface ComponentSchema {
 
 /**
  * Schemas are keyed by component **identity**, not by id: two packages may legitimately define
- * different components sharing an id (several test modes define their own `Velocity`), and a
- * WeakMap keeps those from colliding — and lets an entry die with its type.
+ * different components sharing an id (`Velocity` exists in three modules, `Player` and `Patrol`
+ * in two games each — see docs/working-agreement.md §1, "component ids are scoped to a run"),
+ * and a WeakMap keeps those from colliding — and lets an entry die with its type.
+ *
+ * Identity keying is stricter than id keying, which means it can also *miss*: declare against
+ * one module's `Velocity`, register another's, and the lookup falls through to the undeclared
+ * path — where unknown keys are a hard error — reproducing the very defect this layer exists
+ * to prevent, on a different component. {@link isDescribedId} exists to make that miss loud;
+ * `validateScene` turns it into a warning.
  */
 const schemas = new WeakMap<ComponentType<unknown>, ComponentSchema>();
 
 /**
+ * Ids that *some* component object has declared a schema for. Deliberately keyed by id and
+ * never pruned: it holds no component references (so it cannot pin a type in memory) and is
+ * only ever used to answer "was a declaration made under this name?" — the question that turns
+ * a mis-keyed declaration from a silent fall-through into a diagnostic.
+ */
+const describedIds = new Map<string, number>();
+
+/**
  * Declare the schema facts `type.create()` cannot express. Call it directly below the
- * component's definition; calling it twice for one type replaces the earlier declaration.
+ * component's definition — that placement is what makes the identity keying reliable — and
+ * never from another module against an imported copy. Calling it twice for one type replaces
+ * the earlier declaration.
  */
 export function describeComponent<T>(type: ComponentType<T>, schema: ComponentSchema): void {
-  schemas.set(type as ComponentType<unknown>, schema);
+  const key = type as ComponentType<unknown>;
+  if (!schemas.has(key)) describedIds.set(type.id, (describedIds.get(type.id) ?? 0) + 1);
+  schemas.set(key, schema);
+}
+
+/**
+ * Whether any component object has declared a schema under `id`. A registered component that
+ * has *no* schema of its own while its id is described elsewhere is the signature of a
+ * mis-keyed {@link describeComponent} call.
+ */
+export function isDescribedId(id: string): boolean {
+  return describedIds.has(id);
 }
 
 /** The {@link ComponentSchema} declared for `type`, if any. */

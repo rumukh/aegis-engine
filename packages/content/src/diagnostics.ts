@@ -47,6 +47,12 @@ export const ContentCode = {
   UnknownResource: 'AEG-CONTENT-0014',
   /** A field's value is outside the closed set of values the component declares for it. */
   InvalidFieldValue: 'AEG-CONTENT-0015',
+  /**
+   * A registered component has no declared schema, but {@link describeComponent} was called for
+   * a *different* component object carrying the same id — so the declaration is almost
+   * certainly keyed against another module's copy and is being silently ignored.
+   */
+  SchemaKeyMismatch: 'AEG-CONTENT-0016',
 } as const;
 
 /** A content diagnostic code value. */
