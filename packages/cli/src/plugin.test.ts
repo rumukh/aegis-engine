@@ -10,16 +10,23 @@
  * `npm run build` has run (as `npm run verify` does).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { main } from './cli.js';
 import type { CliDeps } from './cli.js';
 import { createModeResolver } from './modes.js';
 import { isModePlugin } from './plugin.js';
 import { fakeMode } from './testing/fake-mode.js';
 
-const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
+import {
+  makeFixtureDir,
+  PACKAGE_ROOT,
+  removeFixtureDir,
+  sweepStaleFixtures,
+} from './testing/fixtures.js';
+
+sweepStaleFixtures();
 const FAKE_MODE_DIST = pathToFileURL(join(PACKAGE_ROOT, 'dist', 'testing', 'fake-mode.js')).href;
 
 const deps: CliDeps = { modes: createModeResolver([fakeMode]) };
@@ -105,7 +112,7 @@ const createdDirs: string[] = [];
 
 /** A throwaway working directory holding the game scene and the composed plugin module. */
 function makeDir(scene: unknown = GAME_SCENE): string {
-  const dir = mkdtempSync(join(PACKAGE_ROOT, 'plugintest-'));
+  const dir = makeFixtureDir();
   createdDirs.push(dir);
   writeFileSync(join(dir, 'level.scene.json'), JSON.stringify(scene, null, 2), 'utf8');
   writeFileSync(join(dir, 'game-plugin.mjs'), GAME_PLUGIN, 'utf8');
@@ -116,7 +123,7 @@ function makeDir(scene: unknown = GAME_SCENE): string {
 afterEach(() => {
   while (createdDirs.length > 0) {
     const dir = createdDirs.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+    if (dir) removeFixtureDir(dir);
   }
 });
 

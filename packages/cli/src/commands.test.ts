@@ -6,15 +6,22 @@
  * assume `npm run build` has run (as `npm run verify` does).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { main } from './cli.js';
 import type { CliDeps } from './cli.js';
 import { createModeResolver, defaultModeResolver } from './modes.js';
 import { fakeMode } from './testing/fake-mode.js';
 
-const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
+import {
+  makeFixtureDir,
+  PACKAGE_ROOT,
+  removeFixtureDir,
+  sweepStaleFixtures,
+} from './testing/fixtures.js';
+
+sweepStaleFixtures();
 const FAKE_MODE_DIST = pathToFileURL(join(PACKAGE_ROOT, 'dist', 'testing', 'fake-mode.js')).href;
 
 const deps: CliDeps = { modes: createModeResolver([fakeMode]) };
@@ -74,7 +81,7 @@ const createdDirs: string[] = [];
 
 /** Make a throwaway working directory seeded with the scene + input fixtures. */
 function makeDir(): string {
-  const dir = mkdtempSync(join(PACKAGE_ROOT, 'clitest-'));
+  const dir = makeFixtureDir();
   createdDirs.push(dir);
   writeFileSync(join(dir, 'level.scene.json'), JSON.stringify(SCENE, null, 2), 'utf8');
   writeFileSync(join(dir, 'walk.input'), INPUT, 'utf8');
@@ -84,7 +91,7 @@ function makeDir(): string {
 afterEach(() => {
   while (createdDirs.length > 0) {
     const dir = createdDirs.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+    if (dir) removeFixtureDir(dir);
   }
 });
 
