@@ -9,7 +9,8 @@
  * Event `data` must be plain, serialisable data (same rule as components).
  * @packageDocumentation
  */
-import { notImplemented } from './util.js';
+import { CLEAR_TICK } from './internal.js';
+import type { ManagedEventBus } from './internal.js';
 
 /** A single emitted event, stamped with the tick on which it was emitted. */
 export interface GameEvent<T = unknown> {
@@ -55,5 +56,39 @@ export interface EventBusOptions {
 
 /** Create an event bus. */
 export function createEventBus(options?: EventBusOptions): EventBus {
-  return notImplemented('createEventBus');
+  const record = options?.record ?? false;
+  let current: GameEvent[] = [];
+  const log: GameEvent[] = [];
+  let tick = 0;
+
+  const bus: ManagedEventBus = {
+    emit<T>(type: string, data: T): void {
+      const event: GameEvent<T> = { type, data, tick };
+      current.push(event as GameEvent);
+      if (record) log.push(event as GameEvent);
+    },
+    thisTick(): readonly GameEvent[] {
+      return current;
+    },
+    ofType<T = unknown>(type: string): readonly GameEvent<T>[] {
+      return current.filter((e) => e.type === type) as GameEvent<T>[];
+    },
+    history(): readonly GameEvent[] {
+      return log;
+    },
+    count(type: string): number {
+      let n = 0;
+      for (const e of log) if (e.type === type) n++;
+      return n;
+    },
+    contains(type: string): boolean {
+      for (const e of log) if (e.type === type) return true;
+      return false;
+    },
+    [CLEAR_TICK](nextTick: number): void {
+      current = [];
+      tick = nextTick;
+    },
+  };
+  return bus;
 }
