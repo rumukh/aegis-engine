@@ -114,6 +114,28 @@ describe('expectSim — a passing run chains fluently', () => {
         .hashEquals(GOLDEN_HASH_POC_FAKE),
     ).not.toThrow();
   });
+
+  /**
+   * The guard for the instrument. A pinned golden is only worth anything if `hashEquals`
+   * *discriminates between two genuine states* — rejecting an obviously-fake string is a far
+   * weaker property, and the one already covered by the message test below.
+   *
+   * That stronger property is load-bearing well beyond this file: a pinned literal is the only
+   * assertion shape that can pass on one OS and fail on another, so `ci.yml`'s Ubuntu leg — the
+   * sole mechanism capable of validating ADR-0001's own-transcendentals bet — rests on it. A
+   * self-comparison goes green on both platforms while the platforms disagree.
+   *
+   * Both constants are real measured goldens for the same scene, input and tick count, differing
+   * only by seed. So this fails if `hashEquals` ever stops distinguishing two plausible siblings,
+   * which is exactly the failure that would silently hollow out the cross-OS check.
+   */
+  it('a pinned golden hash discriminates between two genuine states', async () => {
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
+    expect(() => expectSim(result).hashEquals(GOLDEN_HASH_POC_FAKE)).not.toThrow();
+    expect(() => expectSim(result).hashEquals(GOLDEN_HASH_POC_PLATFORMER)).toThrow(
+      GameAssertionError,
+    );
+  });
 });
 
 describe('expectSim — failure messages are actionable', () => {

@@ -26,7 +26,14 @@
 import type { EventReader, GameEvent, QueryDescriptor, StateHash } from '@aegis/core';
 import { runScene } from './run.js';
 import type { RunOptions, SimResult } from './run.js';
-import { describeEntity, describeRun, renderOutcome, summariseWorld, toOutcome } from './report.js';
+import {
+  asError,
+  describeEntity,
+  describeRun,
+  renderOutcome,
+  summariseWorld,
+  toOutcome,
+} from './report.js';
 import type { CheckResult } from './report.js';
 import {
   assertionsFor,
@@ -288,11 +295,6 @@ export interface GameTestResult {
   assertions: number;
   /** One readable line per assertion that ran, in order — what the test actually checked. */
   checked: readonly string[];
-}
-
-/** Normalise an unknown thrown value into an `Error` without pretending a non-Error is one. */
-function asError(thrown: unknown): Error {
-  return thrown instanceof Error ? thrown : new Error(String(thrown));
 }
 
 /** What a run actually verified: the assertions recorded against it, as reportable fields. */

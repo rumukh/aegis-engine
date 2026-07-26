@@ -11,6 +11,18 @@
 import { entityGeneration, entityIndex, Name } from '@aegis/core';
 import type { Entity, EntityView, World } from '@aegis/core';
 
+/** Normalise an unknown thrown value into an `Error`, without pretending a non-Error is one.
+ *
+ * `catch (err)` binds `unknown`, and the reflex `(err as Error).message` yields `undefined` for
+ * anything that isn't an `Error` — inside the very diagnostic whose job is to explain the failure.
+ * Where that is safe, it is safe *because of a fact about the call site* (e.g. `JSON.parse` without
+ * a reviver throws only `SyntaxError`), and a fact about a call site can change. This is
+ * unconditional.
+ */
+export function asError(thrown: unknown): Error {
+  return thrown instanceof Error ? thrown : new Error(String(thrown));
+}
+
 /**
  * What a predicate actually observed.
  *
