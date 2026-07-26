@@ -296,4 +296,50 @@ describe('instantiateScene', () => {
     expect(result.ok).toBe(false);
     expect(w.entityCount).toBe(0);
   });
+
+  it('never aliases the source SceneFile into the world (no in-place corruption)', () => {
+    // The harness hit this for real: instantiation aliased the scene's nested objects into
+    // the world, so a system mutating a component corrupted the caller's SceneFile and broke
+    // replay/reuse. Core's defensive copy fixes it at the root; this proves it end-to-end.
+    const scene: SceneFile = {
+      aegis: 'scene/1',
+      name: 'S',
+      mode: 'platformer',
+      resources: { Gravity: { y: -1 } },
+      entities: [{ id: 'hero', components: { Transform: { position: { x: 3, y: 4, z: 5 } } } }],
+    };
+    const w = createWorld({ seed: 1 });
+    const result = build(scene, w);
+    expect(result.ok).toBe(true);
+    const hero = result.entities['hero'] as never;
+
+    // Simulate systems mutating world-owned state in place.
+    w.getOrThrow(hero, Transform).position.x = 999;
+    const grav = w.getResource<{ y: number }>({ id: 'Gravity', create: () => ({ y: 0 }) });
+    if (grav) grav.y = -999;
+
+    // The authoring document must be untouched — safe to reuse / replay.
+    expect(scene.entities[0]?.components?.['Transform']).toEqual({
+      position: { x: 3, y: 4, z: 5 },
+    });
+    expect(scene.resources?.['Gravity']).toEqual({ y: -1 });
+  });
+
+  it('two entities from ONE shared component literal do not share state', () => {
+    const shared = { position: { x: 1, y: 1, z: 1 } };
+    const scene: SceneFile = {
+      aegis: 'scene/1',
+      name: 'S',
+      mode: 'platformer',
+      entities: [
+        { id: 'a', components: { Transform: shared } },
+        { id: 'b', components: { Transform: shared } },
+      ],
+    };
+    const w = createWorld({ seed: 1 });
+    const result = build(scene, w);
+    expect(result.ok).toBe(true);
+    w.getOrThrow(result.entities['a'] as never, Transform).position.x = 42;
+    expect(w.getOrThrow(result.entities['b'] as never, Transform).position.x).toBe(1);
+  });
 });
