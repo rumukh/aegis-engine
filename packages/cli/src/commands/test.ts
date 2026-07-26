@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { runGameTest } from '@aegis/harness';
 import type { GameTest, GameTestResult } from '@aegis/harness';
 import { AegisCliError, CliCode, Exit } from '../errors.js';
-import { decomposeHandlesInText, json } from '../format.js';
+import { json } from '../format.js';
 import { globAll } from '../glob.js';
 import type { Command, CommandContext } from '../command.js';
 import { flagChoice, flagString } from './shared.js';
@@ -75,8 +75,7 @@ function renderTap(results: readonly GameTestResult[]): string {
     lines.push(`${r.passed ? 'ok' : 'not ok'} ${i + 1} - ${r.name}`);
     if (!r.passed && r.error) {
       lines.push('  ---', '  message: |');
-      for (const line of decomposeHandlesInText(r.error.message).split('\n'))
-        lines.push(`    ${line}`);
+      for (const line of r.error.message.split('\n')) lines.push(`    ${line}`);
       lines.push('  ...');
     }
   });
@@ -89,8 +88,7 @@ function renderPretty(results: readonly GameTestResult[]): string {
   for (const r of results) {
     lines.push(`${r.passed ? 'PASS' : 'FAIL'} ${r.name} (${r.ticks} ticks)`);
     if (!r.passed && r.error) {
-      for (const line of decomposeHandlesInText(r.error.message).split('\n'))
-        lines.push(`     ${line}`);
+      for (const line of r.error.message.split('\n')) lines.push(`     ${line}`);
     }
   }
   const failed = results.filter((r) => !r.passed).length;
@@ -140,7 +138,7 @@ export const testCommand: Command = {
             name: r.name,
             passed: r.passed,
             ticks: r.ticks,
-            ...(r.error ? { error: decomposeHandlesInText(r.error.message) } : {}),
+            ...(r.error ? { error: r.error.message } : {}),
           })),
         }),
       );

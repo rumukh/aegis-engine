@@ -312,9 +312,9 @@ describe('aegis test', () => {
     expect(r.out).toContain('Expected at least one entity matching has:[Dragon]');
   });
 
-  it('decomposes packed handles in harness failure messages (pretty + json)', async () => {
+  it('renders decomposed handles in harness failure messages (pretty + json)', async () => {
     const dir = makeDir();
-    // entityCount fails while the Player DOES match, so the harness samples it as `#<packed> "name"`.
+    // entityCount fails while the Player DOES match, so the harness samples it as `#<handle> "name"`.
     writeGameTest(
       dir,
       'count.gametest.mjs',
@@ -325,7 +325,8 @@ describe('aegis test', () => {
     const r = await cli(['test'], dir);
     expect(r.code).toBe(1);
     expect(r.out).toContain('Matched entities:');
-    // The sampled handle is decomposed, not the raw packed integer.
+    // The CLI passes harness text through verbatim; the handle is decomposed at the source
+    // (@aegis/harness describeEntity), NOT patched by the CLI. Packed form must be absent.
     expect(r.out).toContain('#0 "hero"');
     expect(r.out).not.toContain('#4294967296');
 
