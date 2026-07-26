@@ -8,10 +8,10 @@
 > the operating manual: the loop, end to end, with the traps marked.
 
 **Every command and every output block in this guide was executed against this repository**, at
-`main` = `ded72c8`. Where something does not work, it says so instead of showing what it ought to
+`main` = `ffa3f1a`. Where something does not work, it says so instead of showing what it ought to
 do. The list of known rough edges is [§9](#9-known-rough-edges) — read it before you trust a
-command, and re-check anything marked "in flight", because several fixes are on branches that had
-not landed when this was measured.
+command. This repository moves fast: six rough edges listed here a few hours before writing had
+been fixed by the time it was finished. Re-measure rather than trust.
 
 Transcripts beginning `$ node .tmp/…` came from throwaway probe scripts written to a scratch
 directory while this guide was being checked; they are not files in the repository. Where the
@@ -62,18 +62,18 @@ Four properties define everything else:
 
 Be honest with yourself about this table before planning any work.
 
-| You want to…                              | Can you? | How                                                                                                   |
-| ----------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------- |
-| Author a level                            | Yes      | Write a `*.scene.json` with an inline ASCII tilemap                                                   |
-| Schema-check content before running       | Yes      | `aegis validate` → stable `AEG-CONTENT-nnnn` codes                                                    |
-| Drive a game without a keyboard           | Yes      | The input-script DSL (`hold`, `press`, `click`, `aim`, …)                                             |
-| Watch the world at any tick               | Yes      | `aegis inspect --view world` — the entire world serialises to JSON                                    |
-| "See" a 2D level                          | Yes      | `aegis inspect --view ascii` — a character grid with a legend                                         |
-| "See" a 3D scene                          | Partly   | The semantic frame: projected screen positions, depth, occlusion. No pixels.                          |
-| Prove a playthrough completes             | Yes      | `defineGameTest` + `expectSim` + `assertInvariant`                                                    |
-| Reproduce a run exactly                   | Yes      | `aegis record` / `aegis replay`; hashes are byte-identical across runs                                |
-| Run a **game's own** systems from the CLI | **No**   | `aegis run` resolves only the three stock modes — see [§3.4](#34-how-a-plugin-actually-reaches-a-run) |
-| Judge whether a jump "feels good"         | **No**   | Nothing in this engine gives you feel. Assert on measurable beats instead.                            |
+| You want to…                              | Can you? | How                                                                                                     |
+| ----------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| Author a level                            | Yes      | Write a `*.scene.json` with an inline ASCII tilemap                                                     |
+| Schema-check content before running       | Yes      | `aegis validate` → stable `AEG-CONTENT-nnnn` codes                                                      |
+| Drive a game without a keyboard           | Yes      | The input-script DSL (`hold`, `press`, `click`, `aim`, …)                                               |
+| Watch the world at any tick               | Yes      | `aegis inspect --view world` — the entire world serialises to JSON                                      |
+| "See" a 2D level                          | Yes      | `aegis inspect --view ascii` — a character grid with a legend                                           |
+| "See" a 3D scene                          | Partly   | The semantic frame: projected screen positions, depth, occlusion. No pixels.                            |
+| Prove a playthrough completes             | Yes      | `defineGameTest` + `expectSim` + `assertInvariant`                                                      |
+| Reproduce a run exactly                   | Yes      | `aegis record` / `aegis replay`; hashes are byte-identical across runs                                  |
+| Run a **game's own** systems from the CLI | Yes      | `aegis.json` beside the scene, or `--plugin <module>#<export>` ([§3.4](#34-how-a-plugin-reaches-a-run)) |
+| Judge whether a jump "feels good"         | **No**   | Nothing in this engine gives you feel. Assert on measurable beats instead.                              |
 
 ### 1.3 The package graph
 
@@ -168,7 +168,7 @@ Add --json to most commands for machine-readable output.
 Everything from here to [§6](#6-writing-a-game-test-that-can-actually-fail) uses one tiny game,
 **Ledge Hop**: run right, jump a three-tile gap, land on the far ledge. It uses only stock
 `platformer` components, which means the whole CLI works on it — that will matter in
-[§3.4](#34-how-a-plugin-actually-reaches-a-run).
+[§3.4](#34-how-a-plugin-reaches-a-run).
 
 Create `ledge-hop/ledge-hop.scene.json` at the repo root, exactly as follows.
 
@@ -231,6 +231,19 @@ Create `ledge-hop/ledge-hop.scene.json` at the repo root, exactly as follows.
 A real, shipped game lives in `games/<name>/` next to the three PoCs, with `levels/`, `play/`,
 `src/` and `test/` directories and a workspace `package.json`. The repo root is used here only
 so the tutorial cannot collide with anyone's package.
+
+It also needs an `aegis.json` beside it, or the CLI will refuse to run it
+([§3.4](#34-how-a-plugin-reaches-a-run)). Ledge Hop uses only stock components, so the stock
+plugin is the honest answer — `ledge-hop/aegis.json`:
+
+```json
+{
+  "plugin": "platformer",
+  "tests": ["./*.gametest.mjs"]
+}
+```
+
+`aegis scaffold game` writes that file for you; this one is hand-written because the scene is.
 
 ### 2.2 Scene anatomy
 
@@ -479,55 +492,91 @@ would be silently mis-instantiated by the other. If you hit this error you have 
 registry for two games. Build one per game. Never rename a component to dodge it, and never
 `delete`/re-register to force it through.
 
-### 3.4 How a plugin actually reaches a run
+### 3.4 How a plugin reaches a run
 
-There are three doors into a run, and the CLI is not one of them for your plugin.
+Your plugin is a JavaScript value. Three things need to get hold of it, and each has its own door.
 
-| Door                                                       | Accepts your composed plugin?                 |
-| ---------------------------------------------------------- | --------------------------------------------- |
-| `runScene(scene, { plugin, … })` — from a test or a script | **Yes**                                       |
-| `defineGameTest({ options: { plugin } })` + `aegis test`   | **Yes** (the plugin rides inside the literal) |
-| `aegis run` / `inspect` / `validate` / `record` / `replay` | **No**                                        |
+| Door                                                       | How the plugin arrives                                               |
+| ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| `runScene(scene, { plugin, … })` — a test or a script      | You pass the value directly                                          |
+| `defineGameTest({ options: { plugin } })` + `aegis test`   | The value rides inside the literal, or is named as a string          |
+| `aegis run` / `inspect` / `validate` / `record` / `replay` | Named as a **string** the CLI imports — this is what `aegis.json` is |
 
-The CLI resolves a plugin from the scene's `mode` string through a fixed table of the three
-**stock** mode plugins. There is no project config, no `--plugin` flag, and no `aegis.json` — that
-file does not exist anywhere in this repository. The consequence is not theoretical:
+The CLI resolves a plugin three ways, in precedence order:
 
-```
-$ npx aegis validate games/platformer/levels/coyote-gap.scene.json
-error AEG-CONTENT-0005 at entities[1].components.Patrol: Entity "critter" uses unknown component "Patrol"
-  fix: Register the component type, or fix the component id.
--- 1 error(s), 0 warning(s), 0 info in games/platformer/levels/coyote-gap.scene.json
-```
+1. **`--plugin <module>#<export>`** — explicit, dynamically imported.
+2. **`aegis.json`** next to (or above) the scene: `{ "plugin": "<module>#<export>" }`.
+3. **Nothing** — the stock plugin for the scene's `mode`.
 
-```
-$ npx aegis validate games/fps/levels/sector-breach.scene.json
-error AEG-CONTENT-0005 at entities[2].components.GruntAi: Entity "grunt" uses unknown component "GruntAi"
-  fix: Register the component type, or fix the component id.
--- 1 error(s), 0 warning(s), 0 info in games/fps/levels/sector-breach.scene.json
+Declare it once and every command picks it up. `games/platformer/aegis.json` in full:
+
+```json
+{
+  "plugin": "@aegis/game-platformer#coyoteGapPlugin",
+  "tests": ["./dist/*.gametest.js"]
+}
 ```
 
-Both scenes are correct. The CLI simply cannot see the components their plugins register.
-
-The iso PoC _does_ validate — but only because it keeps its markers in `tags`, which are
-synthesised rather than resolved ([§2.5](#25-trap-tags-are-permissive-components-are-strict)).
-Running it through the CLI still executes the bare mode, so nothing happens:
+With that beside the scene, the CLI drives the real game — and **says which plugin it used and how
+many systems that installed**, so you can never be quietly running something else:
 
 ```
-$ npx aegis run games/iso/levels/server-vault.scene.json --ticks 60
+$ npx aegis run games/iso/levels/server-vault.scene.json --ticks 960 --input games/iso/play/server-vault.input
 scene    : games/iso/levels/server-vault.scene.json
 mode     : iso
-ticks    : 60
+plugin   : @aegis/game-iso#serverVaultPlugin (aegis.json: …/games/iso/aegis.json)
+systems  : 12
+ticks    : 960
 seed     : poc-iso
-hash     : 5bf1d3dc39919b88
+hash     : cb0f07007ad8608a
 entities : 6
 events:
-  (no events)
+  cell.entered ×27
+  move.ordered ×6
+  path.resolved ×5
+  attack.fired ×4
+  damage.taken ×2
+  enemy.damaged ×2
+  trigger.entered ×2
+  attack.ordered ×1
+  door.opened ×1
+  enemy.killed ×1
+  entity.died ×1
+  guard.alerted ×1
+  mission.completed ×1
+  path.blocked ×1
+  switch.activated ×1
 ```
 
-**So: for a game with its own systems, your observation tool is a six-line Node script, not the
-CLI.** See [§5.6](#56-observing-a-game-that-has-its-own-plugin). Keep this in mind when you choose
-where to put game logic: anything you can express with stock components stays CLI-drivable.
+The `--plugin` flag overrides it and reports its own provenance (`(--plugin)` instead of the
+config path), which is what you want for a one-off:
+
+```
+$ npx aegis run games/platformer/levels/coyote-gap.scene.json --ticks 400 --input games/platformer/play/coyote-gap.input --plugin '@aegis/game-platformer#coyoteGapPlugin'
+scene    : games/platformer/levels/coyote-gap.scene.json
+mode     : platformer
+plugin   : @aegis/game-platformer#coyoteGapPlugin (--plugin)
+systems  : 11
+ticks    : 400
+seed     : poc-platformer
+hash     : d813e4e19db7444d
+entities : 7
+```
+
+#### The refusal is the important part
+
+Forget to name a plugin and the CLI **stops**, rather than running the bare mode and exiting `0`:
+
+```
+$ npx aegis inspect ledge-hop/ledge-hop.scene.json --tick 5 --query "has:Player"
+error [AEG-CLI-0020]: Refusing to run "ledge-hop/ledge-hop.scene.json": no plugin was named for it, and it declares 1 marker(s) the default "platformer" mode plugin does not provide: Player.
+  fix: No registered system reads those markers, so this run would exercise the "platformer" mode alone and still exit 0 — the exact silent failure this check exists to prevent. Name the plugin: --plugin <module>#<export> (e.g. --plugin @aegis/game-platformer#myGamePlugin), or declare it once beside the scene in aegis.json: { "plugin": "@aegis/game-platformer#myGamePlugin" } — `aegis scaffold game` writes that file for you. If the stock "platformer" mode genuinely is what you want, say so with { "plugin": "platformer" } and the markers become yours to consume.
+```
+
+Read that error as the shape of a good diagnostic, not just an obstacle. The failure it prevents —
+a run that completes, hashes and exits `0` while the entire semantic layer never executed — is
+invisible by construction, so the tool refuses rather than guessing. If the stock mode really is
+what you want, saying `{ "plugin": "platformer" }` is an explicit answer, not a workaround.
 
 ---
 
@@ -669,12 +718,40 @@ Add `--json` to almost anything for machine-readable output. Prefer it: you get 
 instead of a formatted table.
 
 **Read a green result carefully: "I checked and found nothing" and "I never looked" print the
-same.** `aegis test` reports what it ran — `-- 10 passed, 0 failed of 10` — and says nothing about
-what it did not reach. A spec in a directory the build excludes contributes nothing and raises no
-complaint ([§6.6](#66-the-template)), so the summary shrinks silently and still reads as success.
-Before you trust a green run, check the count and check your game is named in it. (A coverage note
-that reports the gap is in flight on the CLI branch; on this revision the summary is the only
-signal you get.)
+same.** `aegis test` now tells you both — the summary reports what it scanned, not just what
+passed:
+
+```
+$ npx aegis test
+PASS sector breach: shoot the door, jump the pit, kill the grunt, reach the exit (600 ticks)
+PASS sector breach (lose): walk into the coolant pit without jumping (300 ticks)
+PASS sector breach (probe): the capsule is stopped by walls and slides along them (200 ticks)
+PASS server vault: win the firefight, open the door, reach the exit (960 ticks)
+PASS server vault (lose): stand in the guard’s fire and die (300 ticks)
+PASS coyote gap (lose): a corpse driven to the flag does not finish the level (400 ticks)
+PASS coyote gap (lose): walk into the critter instead of stomping it (140 ticks)
+PASS coyote gap: stomp, ferry across the lava, coyote-jump, buffer onto the flag (400 ticks)
+PASS coyote gap (lose): miss the coyote jump and fall out of the world (360 ticks)
+PASS coyote gap (lose): run into the spike pit without jumping (120 ticks)
+-- 10 passed, 0 failed, 0 invalid of 10 — 4 file(s) scanned, 1 via aegis.json, 10 test(s) found, 34 unrelated export(s) skipped
+```
+
+`4 file(s) scanned` is the number that matters. A spec in a directory the build excludes
+contributes nothing ([§6.6](#66-the-template)); without the scan count a green run would shrink
+silently and still read as success. Check the count, and check your game is named in the list.
+
+It will also tell you outright when a game declared an `aegis.json` but contributed no test:
+
+```
+note: 1 game(s) declare an aegis.json but contributed no GameTest to this run:
+        …/games/fps/aegis.json
+      Neither the discovery glob nor a "tests" entry found one. Add e.g. { "tests": ["./dist/*.gametest.js"] } to include it.
+```
+
+Note also what those ten tests _are_: five of them are **lose cases** — a corpse driven to the flag
+that does not finish the level, an operative standing in the guard's fire until it dies, a capsule
+sliding along a wall. A suite that only proves the happy path passes when the failure conditions
+stop working.
 
 ### 5.2 Run
 
@@ -682,6 +759,8 @@ signal you get.)
 $ npx aegis run ledge-hop/ledge-hop.scene.json --ticks 120 --input ledge-hop/play.input
 scene    : ledge-hop/ledge-hop.scene.json
 mode     : platformer
+plugin   : platformer (aegis.json: …/ledge-hop/aegis.json)
+systems  : 5
 ticks    : 120
 seed     : ledge-hop
 hash     : ff0c3d6ee3f19d81
@@ -689,13 +768,25 @@ entities : 2
 events:
   player.landed ×2
   player.jumped ×1
+markers  : Player
+           ^ no registered plugin provides these, so no system reads them. That is expected
+             for markers your own systems will consume; if they belong to a game whose systems
+             should be running, pass --plugin <module>#<export> or add an aegis.json beside
+             the scene.
 ```
+
+Four lines of that output are provenance, and they are the most useful part. `plugin` and
+`systems` tell you _what actually ran_ — five systems, so the stock platformer pipeline and
+nothing else. `markers` names every component id in the scene that no registered system reads:
+here `Player` is a tag our own assertions query and no system consumes, which is fine and
+expected. On a real game a name in that list means a system you thought was installed is not.
 
 The **event histogram is the fastest read on whether a beat happened at all.** `player.jumped ×1`
 means the jump input was consumed; `player.landed ×2` means the initial touchdown plus the far
 ledge.
 
-`--hash` prints only the hash, for scripting. `--seed` overrides the scene's seed.
+`--hash` prints only the hash, for scripting. `--seed` overrides the scene's seed. `--plugin`
+overrides `aegis.json` ([§3.4](#34-how-a-plugin-reaches-a-run)).
 
 ### 5.3 See a 2D level
 
@@ -729,9 +820,11 @@ view is richer, because the mode draws its nav grid, doors and trigger volumes:
 $ npx aegis run games/iso/levels/server-vault.scene.json --ticks 60 --ascii
 scene    : games/iso/levels/server-vault.scene.json
 mode     : iso
+plugin   : @aegis/game-iso#serverVaultPlugin (aegis.json: …/games/iso/aegis.json)
+systems  : 12
 ticks    : 60
 seed     : poc-iso
-hash     : 5bf1d3dc39919b88
+hash     : 77eb885f841099ca
 entities : 6
 events:
   (no events)
@@ -741,7 +834,7 @@ events:
 #.#.#.#.#..#
 #.#...#...##
 #.###.#.##.#
-#G.........#
+#..G.......#
 ####D#######
 #...X......#
 ############
@@ -755,8 +848,9 @@ events:
   X = exit / objective trigger volume
 ```
 
-(The event log is empty because the CLI ran the bare `iso` mode without the game's systems —
-see [§3.4](#34-how-a-plugin-actually-reaches-a-run). The level geometry is real.)
+(The event log is empty because this run supplied no input script — the operative is still on its
+spawn at tick 60. The guard has moved: `game.patrol` is running, which the `systems : 12` line
+confirms.)
 
 **Trap: the ASCII raster clamps.** An entity outside the grid is drawn at the nearest border cell,
 which looks exactly like an entity standing inside a wall. Here is a run whose jump was too late,
@@ -766,12 +860,16 @@ so the player fell into the pit and out of the world:
 $ npx aegis run ledge-hop/ledge-hop.scene.json --ticks 120 --input ledge-hop/try.input --ascii
 scene    : ledge-hop/ledge-hop.scene.json
 mode     : platformer
+plugin   : platformer (aegis.json: …/ledge-hop/aegis.json)
+systems  : 5
 ticks    : 120
 seed     : ledge-hop
 hash     : ab17f454d635f288
 entities : 2
 events:
   player.landed ×1
+markers  : Player
+           ^ no registered plugin provides these, so no system reads them. …
 # ascii tick=120 24x8
 ........................
 ........................
@@ -793,17 +891,20 @@ events:
   o = other entity
 ```
 
-(`ledge-hop/try.input` is the same script with `press Jump @70`.)
+(`ledge-hop/try.input` is the same script with `press Jump @70`. The `markers` note is elided
+after its first line here; it is the same four-line block shown in [§5.2](#52-run).)
 
 The `@` looks like it is embedded in the ground. It is not — it is 20 units below the map:
 
 ```
 $ npx aegis inspect ledge-hop/ledge-hop.scene.json --tick 120 --input ledge-hop/try.input --view world --query "has:Player"
-scene : ledge-hop/ledge-hop.scene.json
-mode  : platformer
-tick  : 120
-seed  : ledge-hop
-hash  : ab17f454d635f288
+scene   : ledge-hop/ledge-hop.scene.json
+mode    : platformer
+plugin  : platformer (aegis.json: …/ledge-hop/aegis.json)
+systems : 5
+tick    : 120
+seed    : ledge-hop
+hash    : ab17f454d635f288
 query: has:[Player]
 entities: 1 of 2
 #0 "player"
@@ -814,12 +915,7 @@ entities: 1 of 2
   TileCollider = {"halfHeight":0.5,"halfWidth":0.4,"offsetX":0,"offsetY":0}
   Transform = {"position":{"x":18.19999999999998,"y":-20.75,"z":0},"rotation":{"w":1,"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}}
   Velocity = {"dx":8,"dy":-30}
-resources:
 ```
-
-(Two further lines follow, dumping the whole baked collision grid and the whole tilemap. They are
-cut here only because they are 3 KB of booleans — that is rough edge 7, not an elision of
-anything interesting.)
 
 `dy: -30` is terminal velocity, `airborneTicks: 61`, `grounded: false`. **ASCII is a summary;
 `--view world` is the ground truth.** Never conclude from ASCII alone.
@@ -903,11 +999,13 @@ Verification is **on by default**; `--no-verify` reports a mismatch without fail
 never "flaky" — it is a determinism bug (a clock, an unseeded random, an unordered iteration), and
 the harness names the first divergent tick.
 
-### 5.6 Observing a game that has its own plugin
+### 5.6 Going beyond the CLI
 
-Since the CLI cannot load your plugin ([§3.4](#34-how-a-plugin-actually-reaches-a-run)), write a
-throwaway script. This is the shape to reach for; it is what produced several transcripts in this
-guide.
+The CLI can now drive your game ([§3.4](#34-how-a-plugin-reaches-a-run)), so reach for it first.
+But it only exposes what its flags expose. The moment you want a value it does not print — the
+world at tick 400, a specific component's field over time, a derived digest — write a throwaway
+script against `runScene` instead. That is not a workaround; it is the same API the CLI is built
+on, and it is what produced several transcripts in this guide.
 
 ```js
 // probe.mjs — run from the repo root: node probe.mjs
@@ -926,6 +1024,10 @@ console.log(result.hash, result.query({ has: ['Operative'] }).count());
 console.log(result.ascii(400)?.rows.join('\n')); // the level at tick 400
 for (const e of result.events.history()) console.log(e.tick, e.type);
 ```
+
+Note the difference from the CLI path: here the plugin is the **imported value**, not a string.
+Inside the workspace that is simpler and type-checked; the string form exists so that a tool with
+only a config file to read can still name it.
 
 `SimResult` is the whole observation surface:
 
@@ -1078,14 +1180,13 @@ had moved. The trajectory pin caught it.
 
 All three PoCs now carry both pins plus the same digest helper, which uses `hashString` from
 `@aegis/core` — the same frozen FNV-1a the world hash uses, so the digest is exactly as portable
-and deterministic as the hashes it summarises. Copy this shape rather than inventing your own, so
-digests are comparable across games:
+and deterministic as the hashes it summarises. This is `trajectoryDigest` as it appears verbatim in
+[`games/platformer/src/coyote-gap.gametest.ts`](./games/platformer/src/coyote-gap.gametest.ts)
+(and identically in the iso and fps specs). Copy this rather than inventing your own — the
+separator is part of the convention, and a different one yields digests that silently match
+nobody:
 
 ```ts
-import { hashString } from '@aegis/core';
-import type { StateHash } from '@aegis/core';
-
-/** Digest a run's per-tick hash timeline into one comparable value. */
 export function trajectoryDigest(tickHashes: readonly StateHash[]): StateHash {
   return hashString(tickHashes.join('|'));
 }
@@ -1121,10 +1222,10 @@ failure mode.** Re-run your test with:
 Both should turn your test red. If either stays green, your assertions describe the _scene file_,
 not the _game_.
 
-This is not hypothetical: it is what the starter test from `aegis scaffold game` does on this
-revision. That test does contain a real-looking assertion — it is not empty — but the fact it
-checks is established by scene instantiation and cannot be changed by anything that happens
-afterwards:
+This is not hypothetical, and it is why the technique is worth internalising rather than the
+particular defect. Until very recently the starter test from `aegis scaffold game` failed exactly
+this check: it contained a real-looking assertion whose fact was established by scene
+instantiation, so it passed with the simulation deleted. Measured on that template:
 
 ```
 as generated            passed=true  ticks=120
@@ -1132,18 +1233,29 @@ with 0 ticks            passed=true  ticks=0
 with every system gone  passed=true  ticks=120
 ```
 
-One hundred and twenty ticks of simulation, and removing all of it changes nothing. That is the
-same disease as [§6.2](#62-rule-2--an-equality-assertion-is-an-oracle-only-if-the-two-sides-have-independent-provenance)
-in a different costume — the assertion and the thing it checks share an ancestor (the scene file)
-that the run never touches.
+One hundred and twenty ticks of simulation, and removing all of it changed nothing. That is
+[§6.2](#62-rule-2--an-equality-assertion-is-an-oracle-only-if-the-two-sides-have-independent-provenance)
+in a different costume — the assertion and the thing it checked shared an ancestor (the scene
+file) that the run never touched.
 
-A richer scaffold template that emits real `assertInvariant` checks is in flight on the CLI
-branch; it is not on `main` at the time of writing, so **re-run the two mutations on whatever the
-scaffolder gives you rather than assuming.** That is the point of the technique: it is cheap
-enough to apply to every test you did not personally watch fail, including generated ones.
+The current template passes, and the harness now catches the degenerate case outright:
 
-Here is the same pair of mutations run against the Ledge Hop test in [§6.6](#66-the-template),
-which is what passing this check looks like:
+```
+as generated            passed=true
+with 0 ticks            passed=false  <- [aegis] assertInvariant("the player never falls out of the world") on a 0-tick run: there is no tick to check, so this would pass for any predicate — including () => false. Give the run at least 1 tick.
+with every system gone  passed=false  <- the player is not standing on solid ground — is platformer.tilemap in the scene resources?
+```
+
+That first message is worth reading twice. The harness does not merely fail; it explains _why the
+assertion was vacuous_ — "this would pass for any predicate, including `() => false`". Apply the
+same standard to your own tests.
+
+One wrinkle if you try this on a scaffolded test: it names its plugin as a **string** for the CLI
+to resolve, so `runGameTest` cannot run it directly (`plugin.components is not a function`).
+Substitute the plugin object first — `{ ...spec, options: { ...spec.options, plugin: platformerPlugin } }`
+— then mutate.
+
+Here is the same pair run against the Ledge Hop test in [§6.6](#66-the-template):
 
 ```
 as written              passed=true
@@ -1416,33 +1528,32 @@ scaffold ──▶ author ──▶ run ──▶ observe ──▶ assert ─�
 ```
 $ npx aegis scaffold game ledge-hop --mode platformer
 scaffolded game "ledge-hop" (platformer):
+  ledge-hop/aegis.json
   ledge-hop/ledge-hop.scene.json
   ledge-hop/ledge-hop.tilemap.json
+  ledge-hop/ledge-hop.input
   ledge-hop/ledge-hop.gametest.mjs
+
+next:
+  aegis validate ledge-hop/ledge-hop.scene.json
+  aegis run ledge-hop/ledge-hop.scene.json --ticks 120 --input ledge-hop/ledge-hop.input --ascii
+  aegis test "ledge-hop/*.gametest.mjs"
 ```
 
-Treat the output as a shape reminder, not a working game. The scaffolded scene validates clean but
-does nothing: the player has no controller, no gravity and no collision grid, and the emitted
-`*.tilemap.json` is an orphan that nothing loads ([§2.3](#23-trap-the-tilemap-must-be-inline),
-[§9](#9-known-rough-edges)). With no tilemap there is not even a picture to look at:
+That output runs as generated: the scene has a wired-in tilemap and a controlled player, the
+`aegis.json` names the plugin so nothing is silently skipped, and the starter test carries a real
+`assertInvariant` plus end-state checks. Run the `next:` commands before editing anything — they
+are the loop in miniature, and seeing them green tells you the toolchain works before you start
+changing things.
 
-```
-$ npx aegis validate ledge-hop/ledge-hop.scene.json
-ok ledge-hop/ledge-hop.scene.json: no problems found
+Two habits to keep even so. **Mutation-check the generated test** ([§6.5](#65-mutation-check-your-own-test));
+it passes today, and the reason to check is that you did not watch it fail. And **the emitted
+`*.tilemap.json` is still a standalone document** — the scene carries its own inline copy under
+`resources`, so editing the `.tilemap.json` file alone changes nothing
+([§2.3](#23-trap-the-tilemap-must-be-inline)).
 
-$ npx aegis run ledge-hop/ledge-hop.scene.json --ticks 120 --ascii
-error [AEG-CLI-0009]: Mode "platformer" has no ASCII view.
-  fix: Use --frame or --json instead (e.g. fps relies on the semantic frame, not ASCII).
-```
-
-**The generated `*.gametest.mjs` is the part to be most careful with.** It passes immediately,
-which makes it look like a working starting point, and on this revision its single assertion cannot
-fail for any reason connected to the run — see the measurement in
-[§6.5](#65-mutation-check-your-own-test). A richer template is in flight on the CLI branch; either
-way, mutation-check what you are given before you build on it.
-
-Replace the scene and the test with [§2.1](#21-the-running-example) and
-[§6.6](#66-the-template).
+The rest of this walkthrough uses the hand-authored Ledge Hop scene from
+[§2.1](#21-the-running-example), which adds a gap to jump so there is something to debug.
 
 ### Step 2 — author, and validate before running
 
@@ -1508,35 +1619,58 @@ expensive.
 Verified on this revision. Each is a real limitation, not a caveat about how you are holding it.
 If you plan around them you will lose no time; if you assume they are fixed you will lose hours.
 
-| #   | Rough edge                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Work around it by…                                                                                                                                                                                                              |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **`aegis run`/`inspect`/`validate`/`record`/`replay` cannot load a game's composed plugin.** They resolve only the three stock mode plugins. `games/platformer` and `games/fps` scenes therefore fail `aegis validate` outright.                                                                                                                                                                                                                                                                                                         | Using `runScene` from a script or a test ([§5.6](#56-observing-a-game-that-has-its-own-plugin)).                                                                                                                                |
-| 2   | **There is no `aegis.json`.** No project config exists in the tree and the CLI has no mechanism to read one; there is no `--plugin` flag either. Per-game manifests were added and then removed again in `ded72c8` ("the CLI session owns them"), so this is expected to change — re-check before relying on it.                                                                                                                                                                                                                         | Passing the plugin in code.                                                                                                                                                                                                     |
-| 3   | **A spec the build excludes is invisible to `aegis test`, silently.** The CLI globs compiled `dist/*.gametest.{js,mjs,cjs}`; every `games/*/tsconfig.json` excludes `test/`. A spec in the wrong directory produces no error — just a green run over fewer games than you think. Fixed for the three PoCs and now guarded by `games/platformer/test/gametest-discovery.test.ts`.                                                                                                                                                         | Putting the spec in `games/<name>/src/<name>.gametest.ts` ([§6.6](#66-the-template)), and checking `aegis test` names your game.                                                                                                |
-| 4   | **`aegis scaffold game` output does not run, and its starter test cannot fail.** No controller or gravity on the player, no tilemap wired into the scene, and the emitted `*.tilemap.json` is an orphan — so nothing moves and `--ascii` fails with `AEG-CLI-0009: Mode "platformer" has no ASCII view`. The generated `*.gametest.mjs` passes immediately, and keeps passing with `ticks: 0` and with every system removed ([§6.5](#65-mutation-check-your-own-test)). A richer template is in flight on the CLI branch, not on `main`. | Copying [§2.1](#21-the-running-example) and [§6.6](#66-the-template) instead, and mutation-checking whatever the scaffolder gives you.                                                                                          |
-| 5   | **Unknown CLI flags are silently ignored.** `--totally-bogus` produces no error, and neither does `--ticks` on `inspect` (which wants `--tick` and otherwise silently inspects tick 0). Relatedly, `docs/architecture.md` §6 shows `aegis replay … --verify`, which is not in the command's help — verification is on by default and `--no-verify` turns it off, so that flag is a no-op.                                                                                                                                                | Reading `aegis <cmd> --help` and checking the echoed `tick:`/`ticks:` line in the output.                                                                                                                                       |
-| 6   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                                                                                                                                                                                                                                                                                    | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                                                                                                    |
-| 7   | **`aegis inspect --view world` prints every resource in full**, including the entire baked collision grid — hundreds of booleans for a small level.                                                                                                                                                                                                                                                                                                                                                                                      | Using `--query` to narrow entities and reading the `Transform` lines; redirect to a file for large levels.                                                                                                                      |
-| 8   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated.                                                                                                                                                                                                                                                                                                                                                                                                                          | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                                                                                                    |
-| 9   | **Self-referential golden assertions are still in the tree and in the docs.** `games/platformer/src/coyote-gap.gametest.ts:78`, `docs/architecture.md` §7 and `docs/games/platformer.md` still pass the run's own hash to `hashEquals`. The platformer file now carries a comment saying so and a correct `GOLDEN_HASH` literal beside it — the acknowledgement landed, the call site did not. No lint rule prevents it: `npx eslint games/platformer/src/coyote-gap.gametest.ts` reports zero problems.                                 | Following [§6.2](#62-rule-2--an-equality-assertion-is-an-oracle-only-if-the-two-sides-have-independent-provenance) and pinning literals. Do not copy those three. Re-check the rule before relying on lint to catch it for you. |
+Six entries that stood here a few hours ago are gone, because they were fixed: the CLI could not
+load a game's plugin, there was no `aegis.json`, `aegis test` reached one game of three,
+`aegis scaffold game` produced something that did not run, unknown flags were ignored silently,
+`inspect --view world` dumped every resource in full, and nothing prevented a self-referential
+golden. **Re-measure before you trust any list like this one, including this one.**
 
-Rough edge 9 is the reason [§6](#6-writing-a-game-test-that-can-actually-fail) is written the way
-it is, and its history is the reason this file is written the way it is. That idiom entered the
-codebase from `docs/architecture.md` §7 — a design document, with a comment on the line claiming
-it "pins the golden state hash" — and was then copied verbatim into a shipped game test, three
-harness tests and a game design doc. Four independent instances, none of which could ever fail,
-every one of them looking like a determinism regression test.
+| #   | Rough edge                                                                                                                                                                                                                                                                         | Work around it by…                                                                                                                           |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **A scene's tilemap must be inlined into `resources`; the `*.tilemap.json` file next to it is not loaded.** `aegis scaffold game` writes both, and editing only the standalone file changes nothing about the run.                                                                 | Editing the inline copy under `resources["platformer.tilemap"]` ([§2.3](#23-trap-the-tilemap-must-be-inline)).                               |
+| 2   | **A typo in `tags` is silent.** Ids in `components` must be registered; ids in `tags` are synthesised if unknown. `"Playre"` validates clean and `has:Player` returns `entities: 0 of 2` with no diagnostic. The `markers` line on a run output is the closest thing to a warning. | Reading the `markers` line, and dumping the world when a query returns nothing ([§2.5](#25-trap-tags-are-permissive-components-are-strict)). |
+| 3   | **A spec the build excludes is invisible to `aegis test`.** The CLI globs compiled `dist/*.gametest.{js,mjs,cjs}`; every `games/*/tsconfig.json` excludes `test/`. The scan count in the summary is now your check that nothing went dark.                                         | Putting the spec in `games/<name>/src/<name>.gametest.ts` ([§6.6](#66-the-template)) and reading the scan count.                             |
+| 4   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                              | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                 |
+| 5   | **`holds(label, predicate)` reports only its label.** Every other assertion names values; this one says "the predicate returned false" and nothing else — and it is where most game-specific assertions live.                                                                      | Writing labels that carry the threshold ([§6.7](#67-assertion-reference)).                                                                   |
+| 6   | **A scaffolded `*.gametest.mjs` names its plugin as a string**, so `runGameTest` cannot run it directly (`plugin.components is not a function`) — only the CLI resolves strings.                                                                                                   | Substituting the plugin object before calling `runGameTest` ([§6.5](#65-mutation-check-your-own-test)).                                      |
+| 7   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated — npm only links a `bin` whose target already exists.                                                                                                               | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                 |
 
-Two lessons, and the second one is the load-bearing one:
+The reason this section exists at all — and the reason [§6](#6-writing-a-game-test-that-can-actually-fail)
+is written the way it is — is a defect that entered this codebase from `docs/architecture.md` §7,
+a design document, with a comment on the line claiming it "pins the golden state hash". It was
+then copied verbatim into a shipped game test, three harness tests, a second design doc, a commit
+message and the `scaffold` generator. Six channels, one source, none of which could ever fail.
 
-- **Comments do not stop copying.** The comment on the original line was not just insufficient, it
-  was actively wrong, and it propagated along with the code four times.
+Two lessons, and the second is the load-bearing one:
+
+- **Comments do not stop copying.** The comment on the original line was not merely insufficient,
+  it was actively wrong, and it propagated along with the code every time.
 - **A bad pattern's channels have different half-lives.** A lint rule closes the _code_ channel
-  permanently and mechanically. Prose has no runner, so the _prose_ channel is closed only by a
-  human reading a document and asking what a line is _for_ — a one-time act nobody schedules.
-  `AGENTS.md` is prose plus templates with no guard but prettier, which makes it the
+  permanently and mechanically — and one now exists for this idiom, backed by a repository-wide
+  invariant test for the spellings a syntactic rule cannot see. Prose has no runner, so the
+  _prose_ channel is closed only by a human reading a document and asking what a line is _for_ —
+  a one-time act nobody schedules. `AGENTS.md` is prose plus templates, which makes it the
   highest-half-life propagation channel in this repository.
 
 So: **anything in here that looks like a template will be copied verbatim by someone who read the
-snippet and not the paragraph around it.** Check the provenance of what you copy, and when you
-extend this file, assume the same of whatever you add.
+snippet and not the paragraph around it.** Two consequences for how this file is maintained.
+
+**Every template block names the file it came from.** The composed plugin in
+[§3.1](#31-a-game-is-a-modeplugin) is `games/platformer/src/plugin.ts`; `trajectoryDigest` in
+[§6.4](#64-golden_trajectory--because-the-final-hash-is-blind-to-timing) is the function of that
+name shared by all three PoC gametests; the scaffold output in [§8](#8-the-loop-end-to-end) is
+whatever `aegis scaffold game` currently emits. Those have executable twins: the gate runs them,
+so they cannot rot here without rotting there, and you can diff them yourself.
+
+**Two blocks do not, and you should know which.** The Ledge Hop scene in
+[§2.1](#21-the-running-example) and its game test in [§6.6](#66-the-template) are authored for
+this guide, because a tutorial needs a level small enough to read and a gap to fall into. They
+have no file in the repository to be checked against. What they do have is a weaker guarantee that
+is still worth something: on every revision of this document they are extracted from the markdown
+above, written to disk, and run — validate, run, `aegis test`, and both mutations from
+[§6.5](#65-mutation-check-your-own-test) — and the transcripts shown are that run's output. If the
+engine changes so that they stop working, the next person to revise this file finds out
+immediately. **That is a person, not a runner, and a person is exactly the weak link this section
+is about.** Landing them under `games/` as a fourth gated example would close it properly.
+
+Check the provenance of what you copy.
