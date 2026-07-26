@@ -9,3 +9,4 @@ export * from './registry.js';
 export * from './load.js';
 export * from './builder.js';
 export * from './components/visual.js';
+export * from './components/gameplay.js';
