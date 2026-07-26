@@ -248,7 +248,10 @@ export function createWorld(config: WorldConfig): World {
   }
 
   function setResource<T>(type: ResourceType<T>, value: T): void {
-    resources.set(type.id, value);
+    // Deep-copy on the way in, symmetric with how `spawn` clones component values, so a
+    // caller-owned object (e.g. a nested field of a SceneFile) is never aliased into world
+    // state where the simulation would mutate it in place.
+    resources.set(type.id, deepClone(value));
   }
 
   function getResource<T>(type: ResourceType<T>): T | undefined {
