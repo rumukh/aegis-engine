@@ -18,6 +18,7 @@ import coyoteGap, {
   corpseCannotFinishTest,
   critterGoreTest,
   fellOutOfWorldTest,
+  GOLDEN_HASH,
   GOLDEN_TRAJECTORY,
   spikePitDeathTest,
   trajectoryDigest,
@@ -89,7 +90,11 @@ describe('Coyote Gap — acceptance', () => {
     expect(replayed.hash).toBe(first.hash);
     expect(replayed.tickHashes).toEqual(first.tickHashes);
 
-    // ...and the trajectory is pinned against a stored golden, not just compared run-to-run.
+    // ...and both goldens are pinned against stored literals, not just compared run-to-run. The
+    // final hash is asserted here as well as in the game test's own chain: the two fail
+    // differently, and this one fails next to the per-tick comparison above, which says *when* the
+    // run diverged rather than only that it did.
+    expect(first.hash).toBe(GOLDEN_HASH);
     expect(trajectoryDigest(first.tickHashes)).toBe(GOLDEN_TRAJECTORY);
   });
 

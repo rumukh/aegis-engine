@@ -146,7 +146,24 @@ export default defineGameTest({
   },
 });
 
-// --- trajectory pins -----------------------------------------------------------------------
+// --- golden pins ---------------------------------------------------------------------------
+
+/**
+ * The golden final state hash of the completing run (seed `poc-platformer`, 400 ticks, the tuned
+ * script) — the cross-commit master, measured twice from built output.
+ *
+ * Declared here rather than inlined at the call site because it is asserted from **two**
+ * directions, as iso and fps already are: once through the `defineGameTest` chain above, and once
+ * in `test/coyote-gap.test.ts`'s determinism test. The two fail differently and that is the point —
+ * the chain reports through the assertion API, while the determinism test fails alongside the
+ * per-tick timeline comparison, which says *when* the run diverged rather than only that it did.
+ *
+ * Note for whoever integrates: the `.hashEquals(result.hash)` call in the chain above is
+ * self-referential and is being replaced with this constant by the harness session, on their own
+ * branch. If both changes land, `tsc` will flag a duplicate `GOLDEN_HASH` declaration — delete
+ * whichever copy is redundant. The value is the same either way.
+ */
+export const GOLDEN_HASH = 'd813e4e19db7444d';
 
 /**
  * Golden digest of the **whole per-tick hash timeline**.
