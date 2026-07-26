@@ -1,0 +1,26 @@
+{
+  "name": "@aegis/harness",
+  "version": "0.0.0",
+  "description": "Simulation harness: run a scene N ticks with an input script, gameplay assertions, replay record/playback, the semantic frame and the deterministic ASCII view.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*"
+  }
+}
