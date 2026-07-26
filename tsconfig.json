@@ -8,6 +8,9 @@
     { "path": "./packages/mode-iso" },
     { "path": "./packages/mode-fps" },
     { "path": "./packages/render-three" },
-    { "path": "./packages/cli" }
+    { "path": "./packages/cli" },
+    { "path": "./games/platformer" },
+    { "path": "./games/iso" },
+    { "path": "./games/fps" }
   ]
 }
