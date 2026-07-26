@@ -66,14 +66,19 @@ function level(): SceneFile {
 const WINNING_INPUT = 'hold Right 0..60\npress Fire @1';
 
 /**
- * Golden state hashes of the two fake-mode playthroughs below, pinned as **literals**.
+ * Golden state hashes of the fake-mode playthroughs below, pinned as **literals**.
  *
- * Both live inside complete `defineGameTest({ … })` blocks, which makes them copy-pasteable
- * exemplars of how a game test is written — and `.hashEquals(result.hash)` is how the hollow idiom
- * reached `games/platformer` verbatim. Neither site was *broken* (the subject is `runGameTest`, not
- * the hash), but a template has to be exemplary, so they pin a literal the way a real game does.
- * Derived from built output, twice each; re-derive if the fake mode's physics or scene change on
- * purpose.
+ * Two of the three sites live inside complete `defineGameTest({ … })` blocks, which makes them
+ * copy-pasteable exemplars of how a game test is written — and `.hashEquals(result.hash)` is how
+ * the hollow idiom reached `games/platformer` verbatim. Neither site was *broken* (the subject is
+ * `runGameTest`, not the hash), but a template has to be exemplary, so they pin a literal the way a
+ * real game does. The third site (the chaining test) does not have that shape, but pins the same
+ * literal anyway so the repository demonstrates the bypass nowhere at all.
+ *
+ * `GOLDEN_HASH_POC_FAKE` covers two runs that are byte-identical: the chaining test takes its seed
+ * from the scene, the game-test block states `seed: 'poc-fake'` explicitly, and `captureHistory`
+ * does not touch world state. Derived from built output, twice each; re-derive if the fake mode's
+ * physics or scene change on purpose.
  */
 const GOLDEN_HASH_POC_FAKE = '2ea61fd1c4a8e734'; // level(), 60 ticks, seed 'poc-fake'
 const GOLDEN_HASH_POC_PLATFORMER = '023df306ac80a566'; // level(), 60 ticks, seed 'poc-platformer'
@@ -92,20 +97,21 @@ function messageFrom(fn: () => void): string {
 describe('expectSim — a passing run chains fluently', () => {
   it('returns the same assertions object so calls can be chained', async () => {
     const result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
-    // The hash genuinely is not the subject here — the subject is that every assertion returns the
-    // same object, so the chain composes. Any correct value would do, so the run's own hash is
-    // captured into a local rather than written inline: this is not a golden-master pin, and
-    // spelling it `hashEquals(result.hash)` would make it read like the (hollow) idiom that
-    // reached a shipped game. Naming it keeps the ban in eslint.config.js absolute, with no
-    // location scoping and no exemption for anyone to copy.
-    const hash = result.hash;
     expect(() =>
       expectSim(result)
         .eventEmitted('level.completed', 1)
         .eventNotEmitted('player.died')
         .eventEmitted('enemy.killed', 1)
         .entityExists({ has: ['Player'] })
-        .hashEquals(hash),
+        // The hash is not the subject here — the subject is that every assertion returns the same
+        // object, so the chain composes — and any correct value would serve. It is nevertheless the
+        // pinned literal, not `result.hash` and not an alias for it, so that the repository
+        // contains **zero** demonstrations of a self-referential golden hash. The lint rule is
+        // syntactic and `const h = r.hash` would slip past it; an author blocked by the rule greps
+        // for how others satisfied it, and the premise of this whole fix is that comments do not
+        // stop copying. This run is byte-identical to the `poc-fake` block below, so the same
+        // constant covers both and pinning it here adds no coupling that file does not already have.
+        .hashEquals(GOLDEN_HASH_POC_FAKE),
     ).not.toThrow();
   });
 });

@@ -51,12 +51,15 @@ const bannedMathProps = [
  * no special case for anyone to imitate. A rule that is legal in the package that authors the
  * exemplars would not have stopped this, and an inline `eslint-disable` is exactly what the next
  * author copies (and is forbidden by docs/working-agreement.md §4 anyway). The one place the
- * pattern was legitimate — a harness test where the hash is incidental, not the subject — reads
- * better with the value captured into a named local, so nothing needed an exception.
+ * pattern was arguably legitimate — a harness test where the hash is incidental rather than the
+ * subject — pins the literal too, so nothing needed an exception.
  *
  * Known limit, stated rather than implied: this is syntactic. `const h = r.hash` followed by
  * `hashEquals(h)` evades it, so it catches the idiom as written and copied, not every possible
- * spelling of a self-comparison.
+ * spelling of a self-comparison. That bypass is deliberately **not demonstrated anywhere in the
+ * repository** — there are zero occurrences of a run's own hash reaching `hashEquals`, by any
+ * spelling. An author blocked by this rule will grep for how others satisfied it, and a working
+ * example of the bypass is the next thing that would be copied.
  */
 const noSelfReferentialGoldenHash = {
   selector:
