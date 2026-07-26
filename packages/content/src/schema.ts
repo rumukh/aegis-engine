@@ -290,6 +290,9 @@ function typeMismatch(
           field: fieldPath,
           expected,
           received,
+          // The default is the value the fix text suggests; carrying it as data too means a
+          // caller can repair the document mechanically instead of parsing English.
+          ...(fallback === undefined ? {} : { default: fallback }),
         },
       },
     ),

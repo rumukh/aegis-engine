@@ -19,18 +19,62 @@ function registry() {
   return createRegistry(Transform, Name, Sprite, Model, Light, Health, Trigger);
 }
 
-/** Validate one entity's components in a minimal scene; returns the diagnostics. */
-function validateEntity(
-  components: Record<string, Record<string, unknown>>,
-): readonly Diagnostic[] {
-  const scene: SceneFile = {
-    aegis: 'scene/1',
-    name: 'S',
-    mode: 'platformer',
-    entities: [{ id: 'e', components }],
-  };
-  return validateScene(scene, { registry: registry(), file: 'level.scene.json' }).diagnostics;
+/** A component-id -> authored-data map, as it appears in a document. */
+type Components = Record<string, Record<string, unknown>>;
+
+function sceneOf(components: Components): SceneFile {
+  return { aegis: 'scene/1', name: 'S', mode: 'platformer', entities: [{ id: 'e', components }] };
 }
+
+/** Validate one entity's components in a minimal scene; returns the diagnostics. */
+function validateEntity(components: Components): readonly Diagnostic[] {
+  return validateScene(sceneOf(components), {
+    registry: registry(),
+    file: 'level.scene.json',
+  }).diagnostics;
+}
+
+/**
+ * Apply each diagnostic's own machine-readable repair to the authored data — rename to
+ * `data.suggestion`, drop an unknown field with no near-miss, substitute `data.complete` for an
+ * incomplete nested object, or `data.default` for a mistyped value. Nothing here reads English:
+ * if the repaired document does not validate, the diagnostics were not actionable.
+ */
+function repair(components: Components, diagnostics: readonly Diagnostic[]): Components {
+  const out = JSON.parse(JSON.stringify(components)) as Components;
+  for (const d of diagnostics) {
+    const component = d.data?.['component'] as string | undefined;
+    const field = d.data?.['field'] as string | undefined;
+    if (component === undefined || field === undefined) continue;
+    const target = out[component];
+    if (target === undefined || field.includes('.')) continue; // nested paths repair their own field
+    switch (d.code) {
+      case ContentCode.UnknownField: {
+        const suggestion = d.data?.['suggestion'] as string | undefined;
+        if (suggestion !== undefined) target[suggestion] = target[field];
+        delete target[field];
+        break;
+      }
+      case ContentCode.IncompleteNestedObject:
+        target[field] = d.data?.['complete'];
+        break;
+      case ContentCode.TypeMismatch:
+        target[field] = d.data?.['default'];
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+/** The four cases from the audit, each of which used to load with `ok: true` and no diagnostics. */
+const DEMOS: readonly Components[] = [
+  { Transform: { position: { x: 3 } } },
+  { Health: { curent: 50, maxx: 50, hp: 'fifty' } },
+  { Health: { current: 'lots', max: null } },
+  { Trigger: { kind: 'goal', half: { x: 2 } } },
+];
 
 function of(diags: readonly Diagnostic[], code: string): readonly Diagnostic[] {
   return diags.filter((d) => d.code === code);
@@ -129,25 +173,40 @@ describe('the four silent-failure demonstrations', () => {
   });
 
   it('every demonstration fails validation and spawns nothing', () => {
-    const cases: Record<string, Record<string, unknown>>[] = [
-      { Transform: { position: { x: 3 } } },
-      { Health: { curent: 50, maxx: 50, hp: 'fifty' } },
-      { Health: { current: 'lots', max: null } },
-      { Trigger: { kind: 'goal', half: { x: 2 } } },
-    ];
-    for (const components of cases) {
-      const scene: SceneFile = {
-        aegis: 'scene/1',
-        name: 'S',
-        mode: 'platformer',
-        entities: [{ id: 'e', components }],
-      };
+    for (const components of DEMOS) {
       const world = createWorld({ seed: 1 });
-      const result = instantiateScene(world, scene, { registry: registry() });
+      const result = instantiateScene(world, sceneOf(components), { registry: registry() });
       expect(result.ok).toBe(false);
       expect(result.diagnostics.some((d) => d.severity === 'error')).toBe(true);
       expect(world.entityCount).toBe(0);
     }
+  });
+
+  it("...and applying each diagnostic's own fix makes it validate and spawn", () => {
+    // The paired positive control. It proves two things at once: that the validator accepts the
+    // corrected content (so it is not simply rejecting everything), and that the `fix`/`data` an
+    // agent is handed are actually correct — repaired here mechanically, with no human reading.
+    for (const components of DEMOS) {
+      const repaired = repair(components, validateEntity(components));
+      const r = validateScene(sceneOf(repaired), { registry: registry() });
+      expect(r.diagnostics).toEqual([]);
+      expect(r.ok).toBe(true);
+
+      const world = createWorld({ seed: 1 });
+      const result = instantiateScene(world, sceneOf(repaired), { registry: registry() });
+      expect(result.ok).toBe(true);
+      expect(world.entityCount).toBe(1);
+    }
+    // And the repairs are the ones a human would have made.
+    expect(repair(DEMOS[0] as Components, validateEntity(DEMOS[0] as Components))).toEqual({
+      Transform: { position: { x: 3, y: 0, z: 0 } },
+    });
+    expect(repair(DEMOS[1] as Components, validateEntity(DEMOS[1] as Components))).toEqual({
+      Health: { current: 50, max: 50 }, // curent -> current, maxx -> max, hp dropped
+    });
+    expect(repair(DEMOS[3] as Components, validateEntity(DEMOS[3] as Components))).toEqual({
+      Trigger: { kind: 'goal', half: { x: 2, y: 0.5, z: 0.5 } },
+    });
   });
 });
 
@@ -296,6 +355,105 @@ describe('validateComponentData', () => {
       zeta: 6,
       eta: 7,
     });
+  });
+});
+
+describe('positive control: valid content must still validate clean', () => {
+  // A validator that rejected everything would pass every rejection test above. These are the
+  // tests that fail if it becomes too strict — the failure mode that blocks legitimate
+  // authoring and tempts everyone to weaken the rule until the noise stops.
+
+  it('whatever a component itself produces must validate — for every component we own', () => {
+    // The strongest general form: `type.create()` is by definition canonical, so if validation
+    // ever rejects it, validation is wrong. Catches over-strictness in one assertion.
+    for (const type of [Transform, Name, Sprite, Model, Light, Health, Trigger]) {
+      expect(validateComponentData(type, type.create(), { path: 'c' })).toEqual([]);
+      // ...and every single field of it, authored on its own as a partial.
+      for (const [key, value] of Object.entries(type.create() as Record<string, unknown>)) {
+        expect(validateComponentData(type, { [key]: value }, { path: 'c' })).toEqual([]);
+      }
+    }
+  });
+
+  // Transcribed verbatim from the shipped level files. `packages/**` may not read `games/**`
+  // (scripts/check-deps.mjs rule 3), so these are copies; the end-to-end control is each game's
+  // own acceptance test, which loads the real file through runScene -> instantiateScene and
+  // throws DiagnosticError if validation rejects it.
+  const shipped: [string, Record<string, Record<string, unknown>>][] = [
+    [
+      'games/fps/levels/sector-breach.scene.json — entity "pit"',
+      {
+        Transform: { position: { x: 0, y: -2, z: 12.5 } },
+        Trigger: {
+          kind: 'hazard',
+          shape: 'box',
+          half: { x: 1.5, y: 1.5, z: 1.5 },
+          radius: 1,
+          data: { cause: 'coolant' },
+        },
+      },
+    ],
+    [
+      'games/fps/levels/sector-breach.scene.json — entity "player"',
+      {
+        Transform: { position: { x: 0, y: 0, z: 2 } },
+        Health: { current: 100, max: 100 },
+      },
+    ],
+    [
+      'games/platformer/levels/coyote-gap.scene.json — entity "goal"',
+      {
+        Transform: { position: { x: 43.5, y: 7, z: 0 } },
+        Trigger: { kind: 'goal', shape: 'box', half: { x: 1.5, y: 1, z: 1 }, once: true },
+      },
+    ],
+    [
+      'games/platformer/levels/coyote-gap.scene.json — entity "player"',
+      { Health: { current: 1, max: 1 } },
+    ],
+    [
+      'games/iso/levels/server-vault.scene.json — entity "security-switch"',
+      {
+        Trigger: { kind: 'switch', shape: 'box', once: true, half: { x: 0.5, y: 0.5, z: 0.5 } },
+        Transform: { position: { x: 9, y: 1, z: 0 } },
+      },
+    ],
+    [
+      'games/iso/levels/server-vault.scene.json — entity "operative"',
+      { Health: { current: 30, max: 30 } },
+    ],
+  ];
+
+  it.each(shipped)('accepts %s exactly as authored', (_source, components) => {
+    const scene: SceneFile = {
+      aegis: 'scene/1',
+      name: 'S',
+      mode: 'platformer',
+      entities: [{ id: 'e', components }],
+    };
+    const r = validateScene(scene, { registry: registry() });
+    expect(r.diagnostics).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts the fps "pit" Trigger, the one case a key-set validator would reject', () => {
+    // `data` is optional, so it is absent from Trigger.create() and invisible to a naive
+    // key-set check. It is legal because Trigger declares it (describeComponent), not because
+    // the rule was relaxed — strip the declaration and this becomes an error again.
+    const pit = {
+      kind: 'hazard',
+      shape: 'box',
+      half: { x: 1.5, y: 1.5, z: 1.5 },
+      radius: 1,
+      data: { cause: 'coolant' },
+    };
+    expect(validateComponentData(Trigger, pit, { path: 'c' })).toEqual([]);
+    expect(componentSchema(Trigger)?.optional?.['data']).toBe('object');
+  });
+
+  it('accepts a valid prefab, and a marker component with no data', () => {
+    expect(validateComponentData(defineTag('Player'), {}, { path: 'c' })).toEqual([]);
+    expect(validateComponentData(Health, { current: 30, max: 30 }, { path: 'c' })).toEqual([]);
   });
 });
 
