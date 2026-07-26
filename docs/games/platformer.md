@@ -27,7 +27,7 @@ World unit = 1 tile. `tileSize: 1`. Tick rate 60Hz, `dt = 1/60`.
 | Tunable           | Value        | Consequence                                               |
 | ----------------- | ------------ | --------------------------------------------------------- |
 | `moveSpeed`       | 8 u/s        | 0.133 u/tick; ~40-tile level ≈ 300 ticks end-to-end       |
-| `jumpSpeed`       | 16 u/s       | apex ≈ 2.1 tiles, reached in ~16 ticks                    |
+| `jumpSpeed`       | 16 u/s       | apex ≈ 2.3 tiles, reached in ~16 ticks                    |
 | `gravity`         | 60 u/s²      | 1 u/s added downward per tick                             |
 | `maxFallSpeed`    | 30 u/s       | terminal velocity, caps pit-fall                          |
 | `coyoteTicks`     | 6            | jump still fires up to 6 ticks after leaving a ledge      |
@@ -36,7 +36,8 @@ World unit = 1 tile. `tileSize: 1`. Tick rate 60Hz, `dt = 1/60`.
 | `Health`          | 1 / 1        | one-hit death (`Health` is shared, from `@aegis/content`) |
 
 Derived: a running jump stays airborne ~32 ticks and travels ~4.3 tiles horizontally, so a **3-tile
-pit is comfortably clearable and a 4-tile pit is at the ragged edge**. The level uses 3-tile gaps.
+pit is comfortably clearable and a 4-tile pit is at the ragged edge**. The level uses a 3-tile spike
+pit and two 2-tile gaps (lava, coyote).
 
 **Enemy "critter"** — a game-owned `PatrolSystem` (deterministic, no RNG):
 
@@ -50,8 +51,9 @@ pit is comfortably clearable and a 4-tile pit is at the ragged edge**. The level
 **Moving platform** — a kinematic solid entity provided and carried by the **mode** (see _Engine
 scope_ below):
 
-- A 3-tile-wide solid entity that oscillates horizontally over the lava gap between x=27 and x=32
-  at 2 u/s, period reproducible from tick count.
+- A 3-tile-wide solid entity that shuttles horizontally over a 2-tile lava gap between x=21.5 and
+  x=22.5 at 2 u/s, period reproducible from tick count. It always bridges the gap (see _Deviations
+  & tuning_ for why the ferry became a bridge).
 - The player standing on it is **carried** — its horizontal delta is added to the rider by the
   mode's collision resolution.
 
@@ -87,40 +89,47 @@ M  moving-platform track (scene)      G  goal flag (scene entity)
 Collision layer (the only layer the sim reads; `^`/`~` carry `data.hazard: true`):
 
 ```
-row  0 | ............................................
-row  1 | ............................................
-row  2 | ............................................
-row  3 | ...................######...................
-row  4 | ..............C....................G........
-row  5 | ..........#########.........#####..####.....
-row  6 | ..P.......#########...MMM...#####..####.....
-row  7 | #####.....#########.........#####..####.....
-row  8 | #####...........................############
-row  9 | #####.###.......................############
-row 10 | #####.###..^^^^^..~~~~~~~~~~~....############
-row 11 | ############^^^^^############################
+row  0 | ...........................................#
+row  1 | ...........................................#
+row  2 | ...........................................#
+row  3 | ...........................................#
+row  4 | ...........................................#
+row  5 | ...........................................#
+row  6 | ........................................####
+row  7 | #######...###########..###########..########
+row  8 | #######...###########..###########..########
+row  9 | #######...###########..###########..########
+row 10 | #######^^^###########~~###########..########
+row 11 | #######^^^###########..###########..########
          0         1         2         3         4
-         0123456789012345678901234567890123456789012 3
+         01234567890123456789012345678901234567890123
 ```
+
+> This is the collision layer verbatim from `levels/coyote-gap.tilemap.json` (regenerated; the tuned
+> geometry replaced the design-intent sketch — see _Deviations & tuning_). Entities are not in the
+> tilemap; they sit in the scene at world coordinates: **player** x≈2.5, **critter** patrols x15–17
+> on the plateau, **platform** shuttles x21.5–22.5 over the lava, **goal** trigger centred at x41 on
+> the pillar.
 
 Read left-to-right, the level is six beats, each proving one thing:
 
-1. **cols 0–4 — flat start.** Player rests on ground. Proves gravity settles a body to grounded and
-   horizontal run works.
-2. **cols 5–9 — the spike step.** A `.###` step up with `^^^^^` spikes in the trench below (rows
-   10–11). Player must jump the 1-tile step; falling into the trench = death. Proves jump + landing
-   on a raised solid + hazard death.
-3. **cols 10–17 — the critter plateau.** The critter `C` patrols the long `#########` plateau.
-   Player must stomp it (land from above) to pass safely. Proves deterministic AI + stomp-vs-gore
-   discrimination (`Velocity.dy` sign + relative position).
-4. **cols 18–25 — the lava gap + moving platform.** A pit floored with `~` lava (row 10). The
-   `MMM` platform ferries the player across. Proves collision against **non-static geometry** and
-   rider carry.
-5. **cols 26–33 — the coyote ledge.** Player runs off the right edge of the `#####` block and must
-   press Jump _just after_ leaving the ledge; the 6-tick coyote window makes the late press valid.
-   Proves coyote time is actually implemented (without it, the jump is eaten and the player dies).
-6. **cols 34–43 — the goal.** A final `####` pillar with the flag `G` on top (row 4). Player buffers
-   a jump into the landing to mount it. Proves jump-buffering and goal detection.
+1. **cols 0–6 — flat start.** Player rests on ground (top row 7, surface y=5). Proves gravity settles
+   a body to grounded and horizontal run works.
+2. **cols 7–9 — the spike pit.** A 3-tile gap floored with `^^^` spikes (rows 10–11). Player must
+   jump it; falling in = hazard death. Proves jump + landing on a raised solid + hazard death.
+3. **cols 10–20 — the critter plateau.** The critter patrols x15–17 on the long plateau. Player must
+   stomp it (land from above) to pass; the stomp bounce drops back onto the same plateau. Proves
+   deterministic AI + stomp-vs-gore discrimination (`Velocity.dy` sign + relative position).
+4. **cols 21–22 — the lava gap + shuttle platform.** A 2-tile pit floored with `~~` lava (row 10).
+   The 3-tile kinematic platform bridges it and **carries** the rider across. Proves collision
+   against **non-static geometry** and rider carry (`platform.boarded`).
+5. **cols 23–33 — the coyote ledge.** Player runs off the right edge of the long ledge and must press
+   Jump _just after_ leaving it; the 6-tick coyote window makes the late press valid. Proves coyote
+   time is actually implemented (without it the jump is eaten and the player dies in the gap).
+6. **cols 34–43 — the coyote gap + goal.** A 2-tile gap (cols 34–35), a landing platform (cols
+   36–39, surface y=5), then a +1 goal pillar (cols 40–42, surface y=6) capped by a wall (col 43).
+   Player coyote-jumps the gap, then buffers a jump before touchdown to mount the pillar and enter
+   the goal trigger. Proves jump-buffering and goal detection.
 
 ## Win and lose conditions
 
@@ -144,52 +153,58 @@ Both are machine-checkable purely from the event log; no pixel inspection.
 
 ## The scripted playthrough
 
-`play/coyote-gap.input` (ADR-0004 DSL). Ticks are design intent; the implementer tunes exact frames
-against the real physics. Total ≈ **360 ticks (~6 s sim time)**.
+`play/coyote-gap.input` (ADR-0004 DSL). These are the **tuned** frames, verified against the real
+physics by the acceptance test. Total ≈ **300 ticks to completion (~5 s sim time)**.
 
 ```text
 # Coyote Gap — a completing run. Hold Right the whole way; jump on cue.
 hold Right 0..360
 
-press Jump @28      # beat 2: clear the spike step onto the raised block
-press Jump @96      # beat 3: hop onto the critter from above (stomp) -> enemy.killed
-                    #          the stomp bounce carries us onto the plateau
-# beat 4: wait on the plateau edge for the platform, then board and ride
-press Jump @150     # small hop onto the moving platform when it swings left
-# (ride ~40 ticks to the far side; no input needed — the platform carries us)
-press Jump @250     # beat 5: coyote jump — pressed 3 ticks AFTER running off the ledge
-press Jump @318     # beat 6: buffered jump into the goal pillar landing
+press Jump @28      # beat 2: clear the spike pit onto the plateau
+press Jump @74      # beat 3: stomp the critter from above -> enemy.killed + bounce
+                    # beat 4: no input -- the shuttle platform bridges the lava and
+                    #         carries us across (platform.boarded)
+press Jump @238     # beat 5: coyote jump, pressed ~1 tick after running off the ledge
+press Jump @266     # beat 6: buffered jump, pressed before touchdown to mount the pillar
 ```
 
 Notes for the implementer:
 
-- The two "timing proof" presses are deliberate: `@250` fires _after_ the player has left the ledge
-  (proves coyote), `@318` is buffered _before_ the landing contact (proves jump buffer). If either
-  window regresses, the corresponding jump is eaten and the run ends in `player.died`, so the test
-  fails loudly.
-- If tuned tick numbers drift, keep the _semantics_ (stomp from above, board on the left swing,
-  late-jump the ledge) — those are what the assertions below actually check.
+- The two "timing proof" presses are deliberate: `@238` fires _after_ the player has left the ledge
+  (proves coyote — telemetry shows `fromGround:false`), `@266` is buffered _before_ the landing
+  contact at ~t270 and fires on touchdown at t271 (proves jump buffer — telemetry shows the buffer
+  latch then a `fromGround:true` jump one tick later). If either window regresses, the corresponding
+  jump is eaten and the run ends in `player.died`, so the test fails loudly.
+- If tuned tick numbers drift, keep the _semantics_ (stomp from above, ride the shuttle across,
+  late-jump the ledge, buffer onto the pillar) — those are what the assertions below actually check.
 
 ## The gameplay assertions
 
+> **Deviation (verified):** the block below is the spec as authored, using the bare `platformerPlugin`
+> and the design-intent tick numbers. The **actual** authoritative test lives at
+> `packages/mode-platformer/src/coyote-gap.acceptance.test.ts` and the game's own copy at
+> `games/platformer/src/coyote-gap.gametest.ts`; both use the composed **`coyoteGapPlugin`** and the
+> tuned input above. `platformerPlugin` alone cannot emit the game-semantic events (`enemy.killed`,
+> `player.died`, `level.completed`) because `executeRun` builds the schedule solely from
+> `plugin.systems()` — see _Deviations & tuning_. The assertions themselves are unchanged.
+
 ```ts
 import { defineGameTest, expectSim } from '@aegis/harness';
-import { platformerPlugin } from '@aegis/mode-platformer';
+import { coyoteGapPlugin } from 'games/platformer'; // composed: mode + content + game systems
 import { Transform } from '@aegis/core';
 
 export default defineGameTest({
   name: 'coyote gap: stomp, ride, coyote-jump, reach the flag',
   scene: 'games/platformer/levels/coyote-gap.scene.json',
-  options: { plugin: platformerPlugin, captureHistory: true },
+  options: { plugin: coyoteGapPlugin, captureHistory: true },
   ticks: 400,
   seed: 'poc-platformer',
   input: `
     hold Right 0..360
     press Jump @28
-    press Jump @96
-    press Jump @150
-    press Jump @250
-    press Jump @318
+    press Jump @74
+    press Jump @238
+    press Jump @266
   `,
   expect(result) {
     expectSim(result)
@@ -248,3 +263,48 @@ fails _at that tick_, pointing the implementer at exactly when the physics broke
 | Reaching the flag                 | Event emission + one-shot latching (`level.completed` exactly once)                |
 | `hashEquals` + repeated run       | Byte-identical determinism (ADR-0001)                                              |
 | `assertInvariant` on `position.y` | Whole-timeline safety property, not just final state                               |
+
+## Deviations & tuning (platformer slice, as built)
+
+The mode and game are implemented and green; these are the reality-vs-design-intent notes the PM
+asked for. Numbers here reflect the merged code, not the original sketch above.
+
+1. **Composed `coyoteGapPlugin`, not bare `platformerPlugin`.** `executeRun` builds the tick schedule
+   solely from `plugin.systems()` (`RunOptions` has no separate systems hook), so a plugin that omits
+   the game systems cannot emit `enemy.killed` / `player.died` / `level.completed`. The game therefore
+   exports a composed plugin — mode systems + `@aegis/content`'s `healthSystem` + the game systems —
+   and the acceptance test/gametest use it. The spec's assertion block is otherwise unchanged. **No
+   frozen contract was edited.**
+
+2. **`platform.boarded` is emitted by the _mode_, not the game.** Rider carry is mode-owned (per your
+   ruling), so the boarding fact originates where the carry happens. The events table still lists it
+   under "game" for reader convenience; treat the mode as the true source. If you'd rather the game
+   re-emit it at the semantic altitude, say so and I'll add a game-layer re-emit.
+
+3. **The lava ferry became an always-bridging shuttle.** With "hold Right the whole way," the player
+   walks at 0.133 u/tick _relative to_ any platform, so on a platform that doesn't fully span the gap
+   the player gains on its front edge and walks off into the lava regardless of phase. To keep the
+   run robust and phase-independent while still exercising kinematic carry + boarding, the gap is
+   2 tiles (cols 21–22) and the 3-tile platform shuttles x21.5–22.5, always covering it. `platform.
+boarded` still fires and the `y > -4` invariant proves the platform held the rider over the lava.
+   If you want a "true ferry" (ride a platform that starts docked, detaches, crosses a wide gap, and
+   re-docks) the script must _stop_ holding Right while aboard — flag me and I'll add a `release`
+   window to the input DSL script.
+
+4. **`hashEquals(result.hash)` is self-referential** in the spec block (it compares the result to its
+   own hash, so it always passes). Determinism is proven _separately and for real_ in the acceptance
+   test: two independent `runScene` calls produce identical `hash` **and** identical `tickHashes`,
+   and `result.replay()` reproduces both. Consider pinning a literal golden hash centrally if you
+   want the assertion to catch drift.
+
+5. **`games/*` is not wired into root config** (workspaces, vitest `include`, tsconfig references).
+   The authoritative run therefore lives in the owned package
+   `packages/mode-platformer/src/coyote-gap.acceptance.test.ts` and imports the game by relative path;
+   the game's own `games/platformer/src/coyote-gap.gametest.ts` is not auto-discovered until you wire
+   `games/*` in centrally. Nothing outside `packages/mode-platformer/**` and `games/platformer/**`
+   was touched.
+
+Tuned geometry/timing vs the design sketch: level rebuilt to the column layout in _Level layout_
+above (flat 0–6, spike pit 7–9, plateau 10–20, lava 21–22, ledge 23–33, coyote gap 34–35, landing
+36–39, +1 pillar 40–42, wall 43); critter patrols x15–17 (so the stomp lands mid-plateau and the
+bounce stays on it); jump apex measured ≈ 2.3 tiles; playthrough presses retuned to @28/@74/@238/@266.
