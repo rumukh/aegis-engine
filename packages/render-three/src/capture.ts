@@ -1,11 +1,14 @@
 /**
- * Screenshot capture: proof that a human can actually play these three games.
+ * Screenshot capture: proof that a human can actually play the games in the catalogue.
  *
  * A test suite cannot tell you whether a scene is legible, so this drives the real dev server in
  * a real browser with real key and mouse events and saves a PNG per game. It speaks the Chrome
  * DevTools Protocol over Node's built-in `WebSocket` against whichever Chromium-family browser is
  * installed, so it adds no dependency (ADR-0005: three.js stays the only third-party runtime
  * dependency).
+ *
+ * The per-game input routines are keyed by catalogue `id` and fall back to "just let it run", so
+ * this stays engine-side: it knows how to *drive a browser*, not what any particular game is.
  *
  * Usage: `node packages/render-three/capture.mjs [--out <dir>] [--headed]`.
  * @packageDocumentation
@@ -16,7 +19,8 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { findRepoRoot, loadPocGames } from './games.js';
+import { findRepoRoot } from './catalog.js';
+import type { GameDefinition } from './catalog.js';
 import { startDevServer } from './dev-server.js';
 
 /** Where a Chromium-family browser might live on this machine. */
@@ -242,47 +246,47 @@ async function openPage(port: number, url: string): Promise<CdpSession> {
   return cdp;
 }
 
-/** Play each game briefly with real input, then capture it. */
+/**
+ * Play a game briefly with real input, then capture it. The routines are keyed by catalogue id;
+ * an unrecognised id is simply left running for a moment and photographed, so adding a game to
+ * the catalogue never breaks the capture.
+ */
 async function captureGame(cdp: CdpSession, id: string): Promise<void> {
   await waitForTick(cdp, 0);
   if (id === 'platformer') await playPlatformer(cdp);
   else if (id === 'fps') await playFps(cdp);
-  else await playIso(cdp);
+  else if (id === 'iso') await playIso(cdp);
+  else await sleep(1000);
 }
 
 /**
- * Coyote Gap: run right and hop continuously. Jump buffering (`jumpBufferTicks`) means a press
- * landing just before touchdown re-launches immediately, so a human tapping Space while holding
- * right chains maximum-distance hops over every spike pit — which is exactly the feel the mode
- * is supposed to have, and a good thing for a screenshot to prove.
+ * Coyote Gap: run right and hop the spike pit. Jump buffering (`jumpBufferTicks`) means a press
+ * landing just before touchdown re-launches immediately, so tapping Space while holding right
+ * chains maximum-distance hops.
+ *
+ * It stops on the plateau, short of the critter and the lava. Two reasons, both deliberate:
+ * touching the critter side-on is a lethal gore (the stomp needs a descending contact, which is a
+ * timing beat, not something to race a wall clock for), and the lava ferry is non-bridging — you
+ * board it and stand still while it carries you (see `games/platformer/play/coyote-gap.input`).
+ * The game's own `defineGameTest` proves the level is completable; this proves a human's keyboard
+ * reaches the simulation, and frames the level while it does.
  */
 async function playPlatformer(cdp: CdpSession): Promise<void> {
   const playerX = entityExpression('player', 'Transform.position.x');
-  const playerY = entityExpression('player', 'Transform.position.y');
   await key(cdp, 'KeyD', true);
-  const deadline = Date.now() + 7000;
-  let reachedGoal = false;
+  // Hop across the spike pit (cols 7-9) onto the plateau.
+  const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
     await key(cdp, 'Space', true);
     await sleep(20);
     await key(cdp, 'Space', false);
     await sleep(30);
-    const y = await evaluate<number | null>(cdp, playerY);
-    if (y !== null && y < -2) break; // fell in a pit: stop and let the shot show where
     const x = await evaluate<number | null>(cdp, playerX);
-    if (x !== null && x > 41) {
-      reachedGoal = true;
-      break;
-    }
+    if (x !== null && x > 11.5) break;
   }
+  await until<number>(cdp, playerX, (x) => x !== null && x > 13.4, 5000).catch(() => undefined);
   await key(cdp, 'KeyD', false);
-  if (reachedGoal) {
-    // Back off the goal so the shot frames the last stretch of level, not just the wall.
-    await key(cdp, 'KeyA', true);
-    await sleep(550);
-    await key(cdp, 'KeyA', false);
-  }
-  await sleep(300);
+  await sleep(400);
 }
 
 /**
@@ -356,8 +360,11 @@ async function playIso(cdp: CdpSession): Promise<void> {
   await sleep(600);
 }
 
-/** Capture all three games and return the files written. */
-export async function capture(argv: readonly string[] = process.argv.slice(2)): Promise<string[]> {
+/** Capture every game in `games` and return the files written. */
+export async function capture(
+  games: readonly GameDefinition[],
+  argv: readonly string[] = process.argv.slice(2),
+): Promise<string[]> {
   const outIndex = argv.indexOf('--out');
   const repoRoot = findRepoRoot();
   const outDir =
@@ -366,7 +373,6 @@ export async function capture(argv: readonly string[] = process.argv.slice(2)): 
       : join(repoRoot, 'packages', 'render-three', 'screenshots');
   const headed = argv.includes('--headed');
 
-  const games = await loadPocGames(repoRoot);
   const server = await startDevServer({ games, port: 0 });
   const browser = await launchBrowser(headed);
   const written: string[] = [];
@@ -379,7 +385,13 @@ export async function capture(argv: readonly string[] = process.argv.slice(2)): 
         const file = join(outDir, `${game.id}.png`);
         await screenshot(cdp, file);
         const tick = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-        console.log(`  ${game.id.padEnd(11)} tick ${String(tick).padEnd(5)} ${file}`);
+        // Surface a lost run rather than quietly photographing a corpse.
+        const deaths = await evaluate<number>(
+          cdp,
+          'globalThis.aegis.world.snapshot().entities.filter((e) => e.components.Dead).length',
+        );
+        const note = deaths > 0 ? `  (${deaths} dead entit${deaths === 1 ? 'y' : 'ies'})` : '';
+        console.log(`  ${game.id.padEnd(11)} tick ${String(tick).padEnd(5)} ${file}${note}`);
         written.push(file);
       } finally {
         cdp.close();
@@ -391,5 +403,3 @@ export async function capture(argv: readonly string[] = process.argv.slice(2)): 
   }
   return written;
 }
-
-await capture();

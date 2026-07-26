@@ -81,21 +81,36 @@ they are not. Crude on purpose — legibility over beauty (CHARTER §5).
 | `loop.ts`                                  | the fixed-timestep accumulator — the only wall-clock read in the package            |
 | `live-input.ts`, `bindings.ts`             | browser reports ➜ `InputFrame`s, and the key/mouse binding table                    |
 | `session.ts`                               | world + schedule + live input, steppable in real time                               |
-| `games.ts`                                 | `GameDefinition`, and loading the three composed PoC plugins                        |
+| `catalog.ts`                               | `GameDefinition` and scene loading — game-agnostic; the caller supplies the entries |
 | `dev-server.ts`, `pages.ts`, `protocol.ts` | the `node:http` server, its HTML, and the wire types                                |
 | `client/`                                  | the browser entry: render loop, input capture, HUD                                  |
-| `play.ts`, `capture.ts`                    | the dev-server entry point and the screenshot driver                                |
+| `play.ts`, `capture.ts`                    | serve a catalogue, and screenshot a catalogue                                       |
+| `../poc-games.mjs`                         | **the composition root**: wires the three PoC games into a catalogue                |
 
 An adapter owns **no GPU state** — it builds a `THREE.Scene` and a `THREE.Camera` and nothing
 else — so it constructs and runs headlessly in Node, which is how the non-interference proof runs
 it against a live world.
 
-## Known gap (reported to the PM)
+## Why the game wiring lives outside `src/`
 
-`games/*` is not consumable by any package: two of the three have no `package.json`, none are npm
-workspaces, none appear in the root `tsconfig.json` references, and `scripts/check-deps.mjs` has
-no allow-list entry for `@aegis/game-*`. There is therefore no built artefact to import. Until
-that is wired centrally, `games.ts` loads the composed plugins from TypeScript **source** using
-Node's built-in type stripping plus a small `module.registerHooks` resolver that maps a missing
-relative `./x.js` to the `./x.ts` beside it. It affects the dev-server process only; nothing is
-compiled, cached or written to disk, and the package's own tests do not depend on it.
+`@aegis/render-three` is _engine_. `scripts/check-deps.mjs` forbids anything under `packages/`
+from importing anything under `games/` — by package name and by relative path, with a dedicated
+message: _"the engine must NEVER depend on a game"_. That is the right rule, and it bites:
+
+```
+packages/render-three/src/probe.ts imports "@aegis/game-iso" which is not allowed for @aegis/render-three
+packages/render-three/src/probe.ts reaches into games/ ("../../../games/iso/src/index.js")
+  — the engine must NEVER depend on a game
+```
+
+So nothing under `src/` knows a game exists. `startDevServer({ games })` takes a catalogue,
+`play(games)` serves one, `capture(games)` photographs one. `poc-games.mjs` is the composition
+root: it imports the three built game packages by ordinary bare specifier and hands the catalogue
+over.
+
+That file sits under `packages/render-three/` but outside the compiled output and outside the
+package's `exports`/`files`, so it is not part of the shipped artefact. It does resolve
+`@aegis/game-*` through workspace hoisting rather than a declared dependency — which check-deps
+rightly refuses to let the engine declare. The durable home for this wiring is a project that is
+_allowed_ to depend on both sides; an `aegis play` subcommand in `@aegis/cli` would satisfy
+CHARTER principle 9. That is a PM call on the DAG.
