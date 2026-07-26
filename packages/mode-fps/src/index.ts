@@ -4,4 +4,7 @@
  * @packageDocumentation
  */
 export * from './components.js';
+export * from './geometry.js';
+export * from './systems.js';
+export * from './view.js';
 export * from './plugin.js';
