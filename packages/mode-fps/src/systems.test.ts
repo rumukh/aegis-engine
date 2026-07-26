@@ -37,8 +37,10 @@ function frame(over: Partial<InputFrame> & { tick: number }): InputFrame {
     tick: over.tick,
     actions: over.actions ?? {},
     pressed: over.pressed ?? [],
+    released: over.released ?? [],
     axes: over.axes ?? {},
     look: over.look ?? { dx: 0, dy: 0 },
+    pointer: over.pointer ?? null,
   };
 }
 
