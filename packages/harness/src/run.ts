@@ -15,11 +15,13 @@ import {
   createWorld,
   DiagnosticError,
   EMPTY_INPUT_FRAME,
+  max,
   Name,
   Transform,
 } from '@aegis/core';
 import type {
   ComponentType,
+  Diagnostic,
   EventReader,
   InputFrame,
   InputSource,
@@ -47,14 +49,24 @@ import type { InputScript } from './input-script.js';
 import type { ModePlugin } from './plugin.js';
 import type { Recording } from './replay.js';
 import { formatInputScript, scriptFromCommands } from './input-script.js';
-import type { AsciiView, SemanticFrame, Viewport } from './view.js';
+import { describeRun, renderValue, summariseWorld, toOutcome } from './report.js';
+import type { CheckResult } from './report.js';
+import { recordAssertion, registerKnownComponents, unknownComponentRefs } from './verification.js';
+import { explainUnknownRefs } from './verification.js';
+import type { AsciiView, SemanticFrame, ViewOptions, Viewport } from './view.js';
 
 /** A named invariant checked every tick during a run. */
 export interface Invariant {
   /** Human-readable name, surfaced in the failure message. */
   name: string;
-  /** Return `false` to fail the run at the current tick. */
-  check(world: World): boolean;
+  /**
+   * Return `false` to fail the run at the current tick.
+   *
+   * Returning a {@link CheckResult} object instead of a bare boolean (`{ ok, actual, expected,
+   * detail }`) puts the offending value straight into the {@link InvariantError} message, which
+   * is the only thing an agent sees when a headless run fails.
+   */
+  check(world: World): CheckResult;
 }
 
 /** Options for {@link runScene}. */
@@ -82,8 +94,30 @@ export interface RunOptions {
   captureTickHashes?: boolean;
   /** Viewport for {@link SimResult.frame}. Defaults to the mode's convention. */
   viewport?: Viewport;
+  /**
+   * Full view options for {@link SimResult.frame} and {@link SimResult.ascii} — including
+   * `includeOffscreen` and the ASCII grid size, which were previously unreachable because the
+   * runner only ever forwarded `viewport`. {@link RunOptions.viewport} still works and wins if
+   * both are given.
+   */
+  view?: ViewOptions;
   /** Invariants checked live, every tick. A failure throws {@link InvariantError}. */
   invariants?: readonly Invariant[];
+  /**
+   * Called with any diagnostics raised while compiling the input script against `ticks` —
+   * statements the tick window swallowed, spans it clipped, `look` deltas it applied only a
+   * fraction of, and order-sensitive overlaps. See {@link InputScript.check}.
+   */
+  onInputDiagnostics?: (diagnostics: readonly Diagnostic[]) => void;
+  /**
+   * Permit an input script that had **no effect whatsoever** — every statement fell outside
+   * `[0, ticks)`, making the run identical to one with no input at all. Reported through
+   * {@link RunOptions.onInputDiagnostics} either way; by default it also aborts the run, because
+   * silently simulating nothing is how "I shortened the run and the whole script evaporated"
+   * hides. A script that *partly* applied (a deliberate prefix run) only ever warns.
+   * Defaults to `false`.
+   */
+  allowIneffectiveInput?: boolean;
 }
 
 /** The inspectable outcome of a run — the object every gameplay test reads. */
@@ -105,33 +139,92 @@ export interface SimResult {
   query(descriptor: QueryDescriptor): QueryResult;
   /** The world at an earlier tick. Requires `captureHistory`; throws otherwise. */
   at(tick: number): World;
-  /** The semantic frame at `tick` (default: final). */
-  frame(tick?: number): SemanticFrame;
-  /** The ASCII view at `tick` (default: final), or `undefined` if the mode has none. */
-  ascii(tick?: number): AsciiView | undefined;
+  /**
+   * The semantic frame at `tick` (default: final). `options` overrides the run's
+   * {@link RunOptions.view} for this call — this is how `includeOffscreen` is reached.
+   */
+  frame(tick?: number, options?: ViewOptions): SemanticFrame;
+  /**
+   * The ASCII view at `tick` (default: final), or `undefined` if the mode has none. `options`
+   * overrides the run's {@link RunOptions.view} for this call (e.g. the character-grid size).
+   */
+  ascii(tick?: number, options?: ViewOptions): AsciiView | undefined;
   /**
    * Assert an invariant held on **every** captured tick. Requires `captureHistory`; throws a
-   * helpful error if history was not captured.
+   * helpful error if history was not captured, and throws rather than passing vacuously if the
+   * run simulated no ticks at all.
+   *
+   * `check` may return `{ ok, actual, expected, detail }` instead of a bare boolean so the
+   * failure message can name the value that broke it.
    */
-  assertInvariant(name: string, check: (world: World) => boolean): void;
+  assertInvariant(name: string, check: (world: World) => CheckResult): void;
   /** Produce a portable {@link Recording} of this run. */
   recording(): Recording;
   /** Deterministically re-run with identical inputs; the result's `hash` must equal this one. */
   replay(): SimResult;
 }
 
-/** Thrown when a live {@link Invariant} fails during a run. */
+/** Reproduction context carried on an {@link InvariantError}, so the message alone is actionable. */
+export interface InvariantContext {
+  /** The scene the run loaded. */
+  scene?: string;
+  /** The seed the run used. */
+  seed?: number | string;
+  /** How many ticks the run simulated in total. */
+  ticks?: number;
+  /** The value the check observed, when it reported one. */
+  actual?: unknown;
+  /** The value the check required, when it reported one. */
+  expected?: unknown;
+  /** A description of the offending world at the failing tick. */
+  detail?: string;
+  /** Whether `result.at(tick)` can reconstruct the failing world (`captureHistory`). */
+  historyAvailable?: boolean;
+}
+
+/**
+ * Thrown when an {@link Invariant} fails, live during a run or post-hoc via
+ * {@link SimResult.assertInvariant}.
+ *
+ * The message used to be eight words — `invariant "never fell out of the world" failed at tick 0`
+ * — with no entity, no value, no threshold, no seed and no hint that the failing world could be
+ * re-read. It now carries everything needed to reproduce and diagnose the failure from the string
+ * alone.
+ */
 export class InvariantError extends Error {
   /** The invariant name. */
   readonly invariant: string;
   /** The tick on which it failed. */
   readonly tick: number;
-  constructor(invariant: string, tick: number) {
-    super(`invariant "${invariant}" failed at tick ${tick}`);
+  /** Reproduction context: scene, seed, observed value, world summary. */
+  readonly context: InvariantContext;
+  constructor(invariant: string, tick: number, context: InvariantContext = {}) {
+    super(invariantMessage(invariant, tick, context));
     this.name = 'InvariantError';
     this.invariant = invariant;
     this.tick = tick;
+    this.context = context;
   }
+}
+
+/** Build the {@link InvariantError} message: what failed, where, what it saw, how to re-read it. */
+function invariantMessage(invariant: string, tick: number, context: InvariantContext): string {
+  const where = describeRun({
+    ...(context.scene !== undefined ? { scene: context.scene } : {}),
+    ...(context.seed !== undefined ? { seed: context.seed } : {}),
+    tick,
+    ...(context.ticks !== undefined ? { ticks: context.ticks } : {}),
+  });
+  const lines = [`invariant "${invariant}" failed at ${where}.`];
+  if (context.expected !== undefined) lines.push(`  expected: ${renderValue(context.expected)}`);
+  if (context.actual !== undefined) lines.push(`  actual  : ${renderValue(context.actual)}`);
+  if (context.detail !== undefined) lines.push(`  world   : ${context.detail}`);
+  lines.push(
+    context.historyAvailable === true
+      ? `  re-read the failing world with result.at(${tick}), or diff it against result.at(${max(0, tick - 1)}).`
+      : `  re-run with captureHistory: true to re-read the failing world via result.at(${tick}).`,
+  );
+  return lines.join('\n');
 }
 
 /** Core + content component types the harness always registers before a scene loads. */
@@ -161,7 +254,7 @@ interface ResolvedRun {
   recordEvents: boolean;
   captureHistory: boolean;
   captureTickHashes: boolean;
-  viewport?: Viewport;
+  view?: ViewOptions;
   invariants: readonly Invariant[];
 }
 
@@ -178,26 +271,32 @@ function buildRegistry(plugin: ModePlugin, extra?: ComponentRegistry): Component
   return registry;
 }
 
-/** Turn the `input` option into a concrete frame list of length `ticks`. */
+/** Turn the `input` option into a concrete frame list of length `ticks`, plus its diagnostics. */
 function resolveInput(
   input: string | InputScript | readonly InputFrame[] | undefined,
   ticks: number,
-): { frames: readonly InputFrame[]; script?: InputScript } {
+): { frames: readonly InputFrame[]; script?: InputScript; diagnostics: readonly Diagnostic[] } {
   if (input === undefined) {
     const script = scriptFromCommands([]);
-    return { frames: script.frames(ticks), script };
+    return { frames: script.frames(ticks), script, diagnostics: [] };
   }
   if (typeof input === 'string') {
     const parsed = parseInputScript(input);
     if (!parsed.ok || !parsed.value) throw new DiagnosticError(parsed.diagnostics);
-    return { frames: parsed.value.frames(ticks), script: parsed.value };
+    const script = parsed.value;
+    return {
+      frames: script.frames(ticks),
+      script,
+      // Parse warnings (order-sensitive overlaps) and window warnings/errors are one channel.
+      diagnostics: [...parsed.diagnostics, ...script.check(ticks)],
+    };
   }
   if (Array.isArray(input)) {
     const frames = input as readonly InputFrame[];
-    return { frames };
+    return { frames, diagnostics: [] };
   }
   const script = input as InputScript;
-  return { frames: script.frames(ticks), script };
+  return { frames: script.frames(ticks), script, diagnostics: script.check(ticks) };
 }
 
 /** An input source that serves compiled frames, padding out-of-range ticks with an idle frame. */
@@ -253,7 +352,17 @@ function executeRun(run: ResolvedRun): RunTrace {
     if (run.captureTickHashes) tickHashes.push(world.hash());
     if (run.captureHistory) history.push(world.snapshot());
     for (const inv of run.invariants) {
-      if (!inv.check(world)) throw new InvariantError(inv.name, t);
+      const outcome = toOutcome(inv.check(world));
+      if (outcome.ok) continue;
+      throw new InvariantError(inv.name, t, {
+        scene: run.sceneRef,
+        seed: run.seed,
+        ticks: run.ticks,
+        ...(outcome.actual !== undefined ? { actual: outcome.actual } : {}),
+        ...(outcome.expected !== undefined ? { expected: outcome.expected } : {}),
+        detail: outcome.detail ?? summariseWorld(world),
+        historyAvailable: run.captureHistory,
+      });
     }
   }
   return { world, tickHashes, history };
@@ -287,7 +396,13 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
     return worldFromSnapshot(run.seed, history[tick]!);
   };
 
-  return {
+  /** Merge the run's view options with a per-call override. `viewport` stays the legacy alias. */
+  const viewOptions = (override?: ViewOptions): ViewOptions | undefined => {
+    const merged: ViewOptions = { ...run.view, ...override };
+    return Object.keys(merged).length > 0 ? merged : undefined;
+  };
+
+  const self: SimResult = {
     world,
     tick: run.ticks,
     seed: run.seed,
@@ -296,20 +411,33 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
     events: world.events,
 
     query(descriptor: QueryDescriptor): QueryResult {
+      const misses = unknownComponentRefs(self, descriptor);
+      if (misses.length > 0) {
+        throw new Error(
+          `[aegis] SimResult.query: this query can never match what it means.` +
+            explainUnknownRefs(self, misses),
+        );
+      }
       return world.query(descriptor);
     },
     at(tick: number): World {
       return worldAt(tick);
     },
-    frame(tick?: number): SemanticFrame {
+    frame(tick?: number, options?: ViewOptions): SemanticFrame {
       const w = tick === undefined ? world : worldAt(tick);
-      return view.semanticFrame(w, run.viewport ? { viewport: run.viewport } : undefined);
+      return withEntityCensus(view.semanticFrame(w, viewOptions(options)), w);
     },
-    ascii(tick?: number): AsciiView | undefined {
+    ascii(tick?: number, options?: ViewOptions): AsciiView | undefined {
       const w = tick === undefined ? world : worldAt(tick);
-      return view.asciiView(w);
+      return view.asciiView(w, viewOptions(options));
     },
-    assertInvariant(name: string, check: (w: World) => boolean): void {
+    assertInvariant(name: string, check: (w: World) => CheckResult): void {
+      if (run.ticks === 0) {
+        throw new Error(
+          `[aegis] assertInvariant("${name}") on a 0-tick run: there is no tick to check, so this ` +
+            `would pass for any predicate — including () => false. Give the run at least 1 tick.`,
+        );
+      }
       if (!run.captureHistory) {
         throw new Error(
           `[aegis] assertInvariant("${name}") needs captureHistory: true so every tick's state can be re-checked.`,
@@ -317,16 +445,35 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
       }
       for (let t = 0; t < run.ticks; t++) {
         const w = t === finalIndex ? world : worldFromSnapshot(run.seed, history[t]!);
-        if (!check(w)) throw new InvariantError(name, t);
+        const outcome = toOutcome(check(w));
+        if (outcome.ok) continue;
+        throw new InvariantError(name, t, {
+          scene: run.sceneRef,
+          seed: run.seed,
+          ticks: run.ticks,
+          ...(outcome.actual !== undefined ? { actual: outcome.actual } : {}),
+          ...(outcome.expected !== undefined ? { expected: outcome.expected } : {}),
+          detail: outcome.detail ?? summariseWorld(w),
+          historyAvailable: true,
+        });
       }
+      recordAssertion(self, 'assertInvariant', `"${name}" held on all ${run.ticks} ticks`);
     },
     recording(): Recording {
+      if (!run.script) {
+        throw new Error(
+          `[aegis] SimResult.recording(): this run was driven by explicit InputFrames, which the ` +
+            `input-script DSL cannot express. Emitting an empty script would produce a recording ` +
+            `that replays as "no input" and then fails its own determinism check. Re-run with a ` +
+            `DSL string or an InputScript to record it.`,
+        );
+      }
       const rec: Recording = {
         aegis: 'recording/1',
         scene: run.sceneRef,
         seed: run.seed,
         ticks: run.ticks,
-        input: run.script ? formatInputScript(run.script) : '',
+        input: formatInputScript(run.script),
         finalHash: world.hash(),
         ...(tickHashes.length > 0 ? { tickHashes } : {}),
       };
@@ -336,6 +483,26 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
       return makeResult(run, executeRun(run));
     },
   };
+  registerKnownComponents(self, run.registry, world);
+  for (const inv of run.invariants) {
+    recordAssertion(self, 'invariant', `"${inv.name}" held live on all ${run.ticks} ticks`);
+  }
+  return self;
+}
+
+/**
+ * Fill in {@link SemanticFrame} entity counts the view provider left blank.
+ *
+ * A semantic frame lists only what the camera sees, so entities are routinely dropped — on
+ * `server-vault` the world holds 6 and the frame reports 3, both mission objectives missing, with
+ * nothing in the data to say so. `aegis inspect --view world` is honest about this (`entities: 3
+ * of 6`); the frame must be too, or an agent reads "the objective does not exist". A provider that
+ * computes its own (more precise) counts keeps them.
+ */
+function withEntityCensus(frame: SemanticFrame, world: World): SemanticFrame {
+  if (frame.totalEntities !== undefined) return frame;
+  const total = world.entityCount;
+  return { ...frame, totalEntities: total, excludedEntities: total - frame.entities.length };
 }
 
 /** Resolve raw {@link RunOptions} + a scene into a fully-resolved, executable run. */
@@ -347,7 +514,27 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
   }
   const seed = options.seed ?? scene.seed ?? 0;
   const ticks = options.ticks;
-  const { frames, script } = resolveInput(options.input, ticks);
+  const invariants = options.invariants ?? [];
+  if (ticks === 0 && invariants.length > 0) {
+    throw new RangeError(
+      `[aegis] runScene: ticks: 0 with ${invariants.length} invariant${invariants.length === 1 ? '' : 's'} ` +
+        `(${invariants.map((i) => `"${i.name}"`).join(', ')}). A zero-tick run never steps, so every ` +
+        `invariant would "hold" without ever being evaluated — including () => false. Simulate at ` +
+        `least 1 tick, or drop the invariants.`,
+    );
+  }
+  const { frames, script, diagnostics } = resolveInput(options.input, ticks);
+  if (diagnostics.length > 0) {
+    options.onInputDiagnostics?.(diagnostics);
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    if (errors.length > 0 && options.allowIneffectiveInput !== true) {
+      throw new DiagnosticError(errors);
+    }
+  }
+  const view: ViewOptions = {
+    ...options.view,
+    ...(options.viewport ? { viewport: options.viewport } : {}),
+  };
   return {
     scene,
     sceneRef,
@@ -361,8 +548,8 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
     recordEvents: options.recordEvents ?? true,
     captureHistory: options.captureHistory ?? false,
     captureTickHashes: options.captureTickHashes ?? true,
-    viewport: options.viewport,
-    invariants: options.invariants ?? [],
+    ...(Object.keys(view).length > 0 ? { view } : {}),
+    invariants,
   };
 }
 

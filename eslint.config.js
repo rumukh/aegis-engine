@@ -48,7 +48,8 @@ const bannedMathProps = [
  * deliberately. See docs/architecture.md §7.
  */
 const noSelfReferentialGoldenHash = {
-  selector: "CallExpression[callee.property.name='hashEquals'] > MemberExpression[property.name='hash']",
+  selector:
+    "CallExpression[callee.property.name='hashEquals'] > MemberExpression[property.name='hash']",
   message:
     'hashEquals(<run>.hash) compares the run to itself and can never fail. Pin a literal golden hash instead (docs/architecture.md §7, ADR-0008).',
 };

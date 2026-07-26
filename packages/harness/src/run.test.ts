@@ -13,8 +13,9 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Transform } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
-import type { World } from '@aegis/core';
+import type { Diagnostic, World } from '@aegis/core';
 import { InvariantError, runScene, replayRecording } from './run.js';
+import { parseInputScript } from './input-script.js';
 import { parseRecording, serializeRecording } from './replay.js';
 import { fakeMode, FakeReady } from './testing/fake-mode.js';
 
@@ -134,6 +135,149 @@ describe('runScene — live invariants', () => {
     expect(err.tick).toBeGreaterThan(0);
     expect(err.message).toContain('player stays left of x=3');
   });
+
+  /**
+   * F5(a): the message used to be eight words — `invariant "..." failed at tick 0` — with no
+   * entity, no value, no threshold, no seed, no scene and no hint that the failing world can be
+   * re-read. That is the entire debugging surface of a headless run.
+   */
+  it('the failure message carries scene, seed, the offending value and how to re-read it', async () => {
+    let err: InvariantError | undefined;
+    try {
+      await runScene(level(), {
+        plugin: fakeMode,
+        ticks: 60,
+        input: WINNING_INPUT,
+        captureHistory: true,
+        invariants: [
+          {
+            name: 'player stays left of x=3',
+            check: (w) => {
+              const x = playerTransform(w).position.x;
+              return { ok: x < 3, actual: x, expected: '< 3', detail: `player at x=${x}` };
+            },
+          },
+        ],
+      });
+    } catch (e) {
+      err = e as InvariantError;
+    }
+    expect(err).toBeInstanceOf(InvariantError);
+    expect(err!.message).toContain('scene "fake-level"');
+    expect(err!.message).toContain('seed "poc-fake"');
+    expect(err!.message).toContain(`tick ${err!.tick} of 60`);
+    expect(err!.message).toContain('expected: "< 3"');
+    expect(err!.message).toContain('actual  : 3.0666666666666664');
+    expect(err!.message).toContain(`result.at(${err!.tick})`);
+    expect(err!.context.historyAvailable).toBe(true);
+  });
+
+  it('summarises the world when the predicate returns a bare boolean', async () => {
+    let err: InvariantError | undefined;
+    try {
+      await runScene(level(), {
+        plugin: fakeMode,
+        ticks: 60,
+        input: WINNING_INPUT,
+        invariants: [{ name: 'player stays left of x=3', check: leftOfThree }],
+      });
+    } catch (e) {
+      err = e as InvariantError;
+    }
+    expect(err!.message).toContain('#0 "hero"');
+    expect(err!.message).toContain('#1 "critter"');
+    // History was off, so the message says how to get it rather than offering a broken hint.
+    expect(err!.message).toContain('captureHistory: true');
+  });
+
+  /**
+   * F2(c): a zero-tick run never steps, so the invariant loop never ran and *every* invariant
+   * "held" — including `() => false`. A `ticks: 0` typo turned a whole safety suite green.
+   * Both of these pass silently on the pre-fix code.
+   */
+  it('refuses a 0-tick run that declares live invariants, instead of passing them vacuously', async () => {
+    await expect(
+      runScene(level(), {
+        plugin: fakeMode,
+        ticks: 0,
+        invariants: [{ name: 'always false', check: () => false }],
+      }),
+    ).rejects.toThrow(/never steps/);
+  });
+
+  it('refuses assertInvariant on a 0-tick run', async () => {
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 0, captureHistory: true });
+    expect(() => result.assertInvariant('always false', () => false)).toThrow(/no tick to check/);
+  });
+});
+
+/**
+ * F4: `forEachTick` clamps and the pointer/`aim` compilers `continue`, so a statement outside
+ * `[0, ticks)` silently never happens. A 60-tick run with `press Jump @500` hashed identically to
+ * a run with no input at all — the most likely authoring mistake in the DSL, and invisible.
+ * Every test here passes silently (no diagnostics, no throw) on the pre-fix code.
+ */
+describe('runScene — input the tick window would have swallowed', () => {
+  it('aborts a run whose statements all fall outside the window', async () => {
+    await expect(
+      runScene(level(), {
+        plugin: fakeMode,
+        ticks: 60,
+        input: 'press Jump @500\nhold Right 200..300',
+      }),
+    ).rejects.toThrow(/AEG-HARNESS-0009/);
+  });
+
+  it('proves the swallowed script really was a no-op (identical hash to no input at all)', async () => {
+    const ignored = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 60,
+      input: 'press Jump @500\nhold Right 200..300',
+      allowIneffectiveInput: true,
+    });
+    const idle = await runScene(level(), { plugin: fakeMode, ticks: 60 });
+    expect(ignored.hash).toBe(idle.hash);
+  });
+
+  it('does not abort a deliberate prefix run, but still reports what it dropped', async () => {
+    // `aegis inspect --tick 90` on a 400-tick script is a core workflow: the later statements are
+    // meant to be inactive, so this warns rather than failing.
+    const seen: Diagnostic[] = [];
+    const result = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 20,
+      input: 'hold Right 0..60\npress Fire @1\npress Jump @300',
+      onInputDiagnostics: (d) => seen.push(...d),
+    });
+    expect(result.tick).toBe(20);
+    expect(seen.map((d) => d.code).sort()).toEqual(['AEG-HARNESS-0009', 'AEG-HARNESS-0010']);
+    expect(seen.every((d) => d.severity === 'warning')).toBe(true);
+  });
+
+  it('reports clipped spans and fractional look deltas as warnings without aborting', async () => {
+    const seen: Diagnostic[] = [];
+    const result = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 60,
+      input: 'hold Right 0..1000\nlook 90 0 50..70',
+      onInputDiagnostics: (d) => seen.push(...d),
+    });
+    expect(result.tick).toBe(60);
+    expect(seen.map((d) => d.code).sort()).toEqual(['AEG-HARNESS-0010', 'AEG-HARNESS-0011']);
+    expect(seen.every((d) => d.severity === 'warning')).toBe(true);
+    expect(seen.find((d) => d.code === 'AEG-HARNESS-0011')!.message).toContain('45° of 90° yaw');
+  });
+
+  it('says nothing for a script that fits its window', async () => {
+    let called = 0;
+    await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 60,
+      input: WINNING_INPUT,
+      onInputDiagnostics: () => called++,
+    });
+    expect(called).toBe(0);
+  });
 });
 
 describe('SimResult — history and the view pipeline', () => {
@@ -193,6 +337,74 @@ describe('SimResult — history and the view pipeline', () => {
     expect(view!.rows.every((r) => r.length === view!.width)).toBe(true);
     expect(view!.rows.join('\n')).toContain('@');
   });
+
+  /**
+   * F5(b): `ViewOptions.includeOffscreen` and `ViewOptions.ascii` were unreachable — `frame()`
+   * forwarded only `viewport` and `ascii()` forwarded nothing at all, so two documented options
+   * on the surface principle 7 depends on were dead API. Both of these fail on the pre-fix code.
+   */
+  it('forwards includeOffscreen and the ASCII grid size from the run options', async () => {
+    const onScreenOnly = await runScene(level(), { plugin: fakeMode, ticks: 20 });
+    const withOffscreen = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 20,
+      view: {
+        viewport: { width: 16, height: 9 },
+        includeOffscreen: true,
+        ascii: { width: 30, height: 6 },
+      },
+    });
+    // The mode-owned platform sits at x = 20, far outside a 16px-wide viewport.
+    expect(onScreenOnly.frame().entities.some((e) => e.tags.includes('Platform'))).toBe(false);
+    expect(withOffscreen.frame().entities.some((e) => e.tags.includes('Platform'))).toBe(true);
+    expect(withOffscreen.ascii()!.width).toBe(30);
+    expect(withOffscreen.ascii()!.height).toBe(6);
+  });
+
+  it('accepts per-call view options that override the run options', async () => {
+    const result = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 20,
+      view: { viewport: { width: 16, height: 9 } },
+    });
+    expect(result.frame().entities.some((e) => e.tags.includes('Platform'))).toBe(false);
+    expect(
+      result
+        .frame(undefined, { includeOffscreen: true })
+        .entities.some((e) => e.tags.includes('Platform')),
+    ).toBe(true);
+    expect(result.ascii(undefined, { ascii: { width: 12, height: 4 } })!.width).toBe(12);
+  });
+
+  /**
+   * F5(c): a semantic frame lists only what the camera sees, so entities are routinely dropped
+   * with nothing in the data to say so — on `server-vault` the world holds 6 and the frame
+   * reports 3, both mission objectives missing, reading as "the objective does not exist".
+   */
+  it('reports how many entities the frame left out', async () => {
+    const result = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 20,
+      view: { viewport: { width: 16, height: 9 } },
+    });
+    const frame = result.frame();
+    expect(frame.totalEntities).toBe(result.world.entityCount);
+    expect(frame.excludedEntities).toBe(frame.totalEntities! - frame.entities.length);
+    expect(frame.excludedEntities).toBeGreaterThan(0); // the platform at x = 20 is off-screen
+    // …and with nothing excluded the counts agree.
+    const all = result.frame(undefined, { includeOffscreen: true });
+    expect(all.excludedEntities).toBe(0);
+  });
+
+  it('reports ASCII cells where one entity covered another', async () => {
+    // Drive the player onto the enemy's cell so the `@` glyph overwrites the `E`.
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 15, input: WINNING_INPUT });
+    const view = result.ascii()!;
+    const stacked = view.overlaps!.find((o) => o.glyphs.length > 1);
+    expect(stacked).toBeDefined();
+    expect(stacked!.glyphs).toContain('@'); // the player is the covering glyph
+    expect(view.rows[stacked!.y]![stacked!.x]).toBe(stacked!.glyphs[stacked!.glyphs.length - 1]);
+  });
 });
 
 describe('replay & recording — determinism proof', () => {
@@ -232,6 +444,41 @@ describe('replay & recording — determinism proof', () => {
     });
     const rec = original.recording();
     expect(rec.scene).toBe(scenePath); // path recordings reference the file
+
+    const replayed = await replayRecording(rec, { plugin: fakeMode, ticks: 0 });
+    expect(replayed.hash).toBe(original.hash);
+  });
+
+  /**
+   * The recorder must never emit a script that is not the script that ran. The same defect class
+   * as the re-sorting formatter: input supplied as explicit `InputFrame`s has no DSL spelling, so
+   * `recording()` used to emit `input: ""` — a recording that replays as "no input" and then
+   * blames the engine for non-determinism.
+   */
+  it('refuses to record a run driven by raw InputFrames rather than lying about its input', async () => {
+    const frames = parseInputScript(WINNING_INPUT).value!.frames(60);
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: frames });
+    expect(() => result.recording()).toThrow(/cannot express/);
+  });
+
+  /**
+   * F1 end to end: `recording()` serialises input through `formatInputScript`, which used to
+   * re-sort commands even though the compiler resolves overlapping pointer writes as
+   * last-source-order-wins. The recorded text was therefore a *different* script, and replaying
+   * it failed the determinism check — against a perfectly deterministic engine. This fails on the
+   * pre-fix code with "replay determinism check FAILED".
+   */
+  it('a recording of an order-sensitive script replays to the same hash', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aegis-harness-'));
+    const scenePath = join(dir, 'fake-level.scene.json');
+    tmpDirs.push(dir);
+    writeFileSync(scenePath, JSON.stringify(level()), 'utf8');
+
+    // The audit's reproduction: two clicks on the same tick, the later one winning.
+    const clash = 'click 9,1 @2\nclick 1,5 @2';
+    const original = await runScene(scenePath, { plugin: fakeMode, ticks: 30, input: clash });
+    const rec = original.recording();
+    expect(rec.input).toBe(clash); // the recording IS the script that ran
 
     const replayed = await replayRecording(rec, { plugin: fakeMode, ticks: 0 });
     expect(replayed.hash).toBe(original.hash);

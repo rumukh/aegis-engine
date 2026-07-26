@@ -15,7 +15,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSchedule, defineTag, makeEntity, Name, Transform } from '@aegis/core';
 import type { ComponentType, System, TickContext, World } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
-import { defineGameTest, expectSim, GameAssertionError, runGameTest } from './assert.js';
+import {
+  defineGameTest,
+  expectSim,
+  GameAssertionError,
+  runGameTest,
+  UnknownComponentError,
+} from './assert.js';
 import { runScene } from './run.js';
 import type { SimResult } from './run.js';
 import type { ModePlugin } from './plugin.js';
@@ -147,8 +153,10 @@ describe('expectSim — failure messages are actionable', () => {
   });
 
   it('entityExists lists what IS present when nothing matches', () => {
-    const msg = messageFrom(() => expectSim(result).entityExists({ has: ['DoesNotExist'] }));
-    expect(msg).toContain('has:[DoesNotExist]');
+    // `Light` is registered (content ships it) but nothing in this level carries one — a real
+    // "no matches" case, as opposed to a mistyped name, which is a different failure entirely.
+    const msg = messageFrom(() => expectSim(result).entityExists({ has: ['Light'] }));
+    expect(msg).toContain('has:[Light]');
     expect(msg).toContain('Entities present:');
     expect(msg).toContain('hero');
   });
@@ -172,6 +180,115 @@ describe('expectSim — failure messages are actionable', () => {
     );
     expect(msg).toContain('player is still at the origin');
   });
+
+  it('holds reports the seed, the tick and a census of the world it rejected', () => {
+    const msg = messageFrom(() => expectSim(result).holds('never true', () => false));
+    expect(msg).toContain('seed "poc-fake"'); // reproducible from the string alone
+    expect(msg).toContain('tick 60');
+    expect(msg).toContain('#0 "hero"'); // what was actually in the world
+    expect(msg).toContain('#1 "critter"');
+    expect(msg).toContain('{ ok, actual, expected }'); // how to make the next failure better
+  });
+
+  it('holds prints actual/expected when the predicate reports them', () => {
+    const msg = messageFrom(() =>
+      expectSim(result).holds('player reached x >= 500', (r) => {
+        const x = r
+          .query({ has: ['Player', 'Transform'] })
+          .one()
+          .get(Transform).position.x;
+        return { ok: x >= 500, actual: x, expected: '>= 500', detail: 'player ran out of runway' };
+      }),
+    );
+    expect(msg).toContain('expected: ">= 500"');
+    expect(msg).toContain('actual  : 8');
+    expect(msg).toContain('detail  : player ran out of runway');
+  });
+});
+
+/**
+ * F2(a): a component reference that resolves to nothing used to make its clause a silent no-op.
+ * Demonstrated by the audit against a live world:
+ *
+ * ```
+ * has:[Player]                 -> 1
+ * has:[Player] none:[Player]   -> 0   (real ref: the exclusion works)
+ * has:[Player] none:[Playr]    -> 1   (typo: the exclusion is silently DISABLED)
+ * has:[Enmy]                   -> 0   (typo: matches nothing, no error)
+ * ```
+ *
+ * So `entityCount({ has: ['Enmy'] }, 0)` — "assert every enemy is dead" — passed on any world,
+ * including this one, where the enemy is alive at full health. Every one of these fails on the
+ * pre-fix code (they all previously passed, which was the bug).
+ */
+describe('unresolvable component references are a loud error, not a silent no-op', () => {
+  let result: SimResult;
+  beforeAll(async () => {
+    result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
+  });
+
+  it('"assert every enemy is dead" cannot pass on a world where the enemy is alive', () => {
+    // The enemy IS dead here (Fire @1 kills it), but the query is misspelled, so the assertion
+    // was passing for the wrong reason. Prove the typo is now rejected outright.
+    expect(() => expectSim(result).entityCount({ has: ['Enmy'] }, 0)).toThrow(
+      UnknownComponentError,
+    );
+    // …while the correctly-spelled version is a real check that still works.
+    expect(() => expectSim(result).entityCount({ has: ['Enemy'] }, 1)).not.toThrow();
+  });
+
+  it('a mistyped none: exclusion is rejected instead of being quietly dropped', () => {
+    expect(() => expectSim(result).entityCount({ has: ['Player'], none: ['Playr'] }, 1)).toThrow(
+      UnknownComponentError,
+    );
+    // The real exclusion still works and still excludes.
+    expect(() =>
+      expectSim(result).entityCount({ has: ['Player'], none: ['Player'] }, 0),
+    ).not.toThrow();
+  });
+
+  it('names the unknown component, the clause, a near-miss and the registered set', () => {
+    const msg = messageFrom(() => expectSim(result).entityExists({ has: ['Enmy'] }));
+    // The assertion still reads as itself failing, so existing tooling keeps working…
+    expect(msg).toContain('Expected at least one entity matching has:[Enmy]');
+    // …with the real reason attached.
+    expect(msg).toContain('"Enmy" (in has:) is not a registered component');
+    expect(msg).toContain('Did you mean "Enemy"?');
+    expect(msg).toContain('Registered components:');
+    expect(msg).toContain('Velocity'); // mode-contributed components are resolvable too
+  });
+
+  it('is an UnknownComponentError, which is still a GameAssertionError', () => {
+    try {
+      expectSim(result).entityExists({ has: ['Playr'] });
+      throw new Error('expected the assertion to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnknownComponentError);
+      expect(err).toBeInstanceOf(GameAssertionError);
+    }
+  });
+
+  it('SimResult.query rejects the same typo, so `holds` predicates cannot hide one', () => {
+    expect(() => result.query({ has: ['Playr'] })).toThrow(/Unresolvable component/);
+    expect(() =>
+      expectSim(result).holds(
+        'typo inside a predicate',
+        (r) => r.query({ has: ['Enmy'] }).count() === 0,
+      ),
+    ).toThrow(/Unresolvable component/);
+  });
+
+  it('resolves components a system attached without registering them', async () => {
+    // `Triggered` is added at runtime by the fake mode's trigger system. It happens to be
+    // registered too, but the world scan is the safety net for a mode that adds a component it
+    // never declared in `components()` — that must not be reported as a typo.
+    const withHistory = await runScene(level(), {
+      plugin: fakeMode,
+      ticks: 60,
+      input: WINNING_INPUT,
+    });
+    expect(() => expectSim(withHistory).entityExists({ has: ['Triggered'] })).not.toThrow();
+  });
 });
 
 /**
@@ -185,7 +302,7 @@ describe('expectSim — failure messages are actionable', () => {
 describe('entity handles render like the CLI (#index / #index@gen)', () => {
   it('renders a fresh entity index-dominant, not as its raw packed handle', async () => {
     const result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
-    const msg = messageFrom(() => expectSim(result).entityExists({ has: ['DoesNotExist'] }));
+    const msg = messageFrom(() => expectSim(result).entityExists({ has: ['Light'] }));
     // hero/critter/flag are slots 0/1/2 at generation 1 → `#0`/`#1`/`#2`, never `#4294967296`.
     expect(msg).toContain('#0 "hero"');
     expect(msg).not.toMatch(/#\d{5,}/);
@@ -325,7 +442,80 @@ describe('defineGameTest / runGameTest — runner-agnostic playthroughs', () => 
     expect(outcome.error).toBeInstanceOf(GameAssertionError);
     expect(outcome.result).toBeDefined(); // the run itself succeeded; only the assertion failed
   });
+
+  it('reports how many assertions ran and what they checked', async () => {
+    const test = defineGameTest({
+      name: 'fake level: two checks',
+      scene: scenePath,
+      options: { plugin: fakeMode },
+      ticks: 60,
+      input: WINNING_INPUT,
+      expect(result) {
+        expectSim(result)
+          .eventEmitted('level.completed', 1)
+          .entityExists({ has: ['Player'] });
+      },
+    });
+    const outcome = await runGameTest(test);
+    expect(outcome.passed).toBe(true);
+    expect(outcome.assertions).toBe(2);
+    expect(outcome.checked).toEqual([
+      'eventEmitted: "level.completed" emitted exactly 1×',
+      'entityExists: has:[Player] matches at least one entity',
+    ]);
+  });
+
+  /**
+   * F2(b): `runGameTest` used to report `passed: true` whenever `expect` did not throw, so a test
+   * that asserted nothing at all was indistinguishable from a proven playthrough. This fails on
+   * the pre-fix code, where `passed` was `true`.
+   */
+  it('fails a game test whose expect block asserts nothing', async () => {
+    const test = defineGameTest({
+      name: 'fake level: verifies nothing',
+      scene: scenePath,
+      options: { plugin: fakeMode },
+      ticks: 60,
+      input: WINNING_INPUT,
+      expect() {
+        /* deliberately empty — the shape a half-written or short-circuited test takes */
+      },
+    });
+    const outcome = await runGameTest(test);
+    expect(outcome.passed).toBe(false);
+    expect(outcome.assertions).toBe(0);
+    expect(outcome.error?.message).toContain('ZERO assertions');
+    expect(outcome.error?.message).toContain('cannot fail');
+  });
+
+  it('counts live invariants as real verification', async () => {
+    const test = defineGameTest({
+      name: 'fake level: invariant only',
+      scene: scenePath,
+      options: {
+        plugin: fakeMode,
+        invariants: [{ name: 'player stays above the death plane', check: (w) => playerY(w) > -4 }],
+      },
+      ticks: 60,
+      input: WINNING_INPUT,
+      expect() {
+        /* nothing here, but the run itself checked something every tick */
+      },
+    });
+    const outcome = await runGameTest(test);
+    expect(outcome.passed).toBe(true);
+    expect(outcome.assertions).toBe(1);
+    expect(outcome.checked[0]).toContain('player stays above the death plane');
+  });
 });
+
+/** The player's world-space y, for invariants. */
+function playerY(world: World): number {
+  return world
+    .query({ has: ['Player', 'Transform'] })
+    .one()
+    .get(Transform).position.y;
+}
 
 /**
  * Expressibility proof (acceptance criterion). This is the platformer PoC's `defineGameTest`

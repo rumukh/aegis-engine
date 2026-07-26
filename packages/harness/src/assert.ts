@@ -12,27 +12,47 @@
  * When a playthrough fails, the *only* thing an agent sees is the thrown message. So every
  * assertion reports **what was expected, what actually happened, and where** — never a bare
  * "expected 1, got 0". `eventEmitted` prints the histogram of events that *were* emitted;
- * `eventNotEmitted` prints the ticks it fired on; `entityCount` samples the matches; and
- * `hashEquals` shows both hashes. An agent should be able to act on the message alone.
+ * `eventNotEmitted` prints the ticks it fired on; `entityCount` samples the matches;
+ * `hashEquals` shows both hashes; and `holds` reports the value its predicate saw plus a census
+ * of the world it rejected. An agent should be able to act on the message alone.
+ *
+ * ## An assertion that cannot fail is worse than no assertion
+ * Two silent ways this API used to report success without checking anything, both now loud:
+ * a query naming a component that does not exist matched nothing rather than erroring (so
+ * `entityCount({ has: ['Enmy'] }, 0)` passed on every world), and an `expect` block that ran no
+ * assertions at all was reported as a clean pass. See `verification.ts`.
  * @packageDocumentation
  */
-import type {
-  Entity,
-  EventReader,
-  GameEvent,
-  QueryDescriptor,
-  StateHash,
-  World,
-} from '@aegis/core';
-import { entityGeneration, entityIndex, Name } from '@aegis/core';
+import type { EventReader, GameEvent, QueryDescriptor, StateHash } from '@aegis/core';
 import { runScene } from './run.js';
 import type { RunOptions, SimResult } from './run.js';
+import { describeEntity, describeRun, renderOutcome, summariseWorld, toOutcome } from './report.js';
+import type { CheckResult } from './report.js';
+import {
+  assertionsFor,
+  explainUnknownRefs,
+  recordAssertion,
+  unknownComponentRefs,
+} from './verification.js';
 
 /** Thrown when a gameplay assertion fails. */
 export class GameAssertionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'GameAssertionError';
+  }
+}
+
+/**
+ * Thrown when a query names a component that cannot be resolved.
+ *
+ * Extends {@link GameAssertionError} so it still travels the runner-agnostic failure path, but is
+ * distinguishable: this is a *broken test*, not a failing game.
+ */
+export class UnknownComponentError extends GameAssertionError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnknownComponentError';
   }
 }
 
@@ -48,8 +68,14 @@ export interface GameplayAssertions {
   eventNotEmitted(type: string): this;
   /** The final state hash equals `expected` (determinism / golden-master check). */
   hashEquals(expected: StateHash): this;
-  /** A predicate holds on the final world. `label` appears in the failure message. */
-  holds(label: string, predicate: (result: SimResult) => boolean): this;
+  /**
+   * A predicate holds on the final world. `label` appears in the failure message.
+   *
+   * Return `{ ok, actual, expected, detail }` instead of a bare boolean and those values are
+   * printed too — `holds` is the escape hatch every positional, health and score check funnels
+   * through, and "the predicate returned false" is not a debuggable message.
+   */
+  holds(label: string, predicate: (result: SimResult) => CheckResult): this;
 }
 
 // --- message helpers -----------------------------------------------------------------------
@@ -74,33 +100,11 @@ function ticksOf(events: EventReader, type: string): number[] {
     .map((e) => e.tick);
 }
 
-/**
- * Render a packed entity handle the way the CLI does (`packages/cli/src/format.ts`): `#<index>`
- * for the common case, `#<index>@<gen>` once a slot has been reused. Core packs `generation` into
- * the high 32 bits, so a raw handle like `4294967296` is really index 0, generation 1 — unreadable
- * and indistinguishable from its neighbour. An agent debugging a failed playthrough must see the
- * *same* name for an entity here as in `aegis inspect`, so the spelling is kept identical across
- * the whole tool. Presentation only — structured/hashed data keeps the raw packed handle.
- */
-function formatEntity(handle: number): string {
-  const e = handle as Entity;
-  const generation = entityGeneration(e);
-  return generation === 1 ? `#${entityIndex(e)}` : `#${entityIndex(e)}@${generation}`;
-}
-
-/** A short, readable label for one matched entity: `#0 "Name"` (or `#0@2` when reused). */
-function describeEntity(world: World, entity: number): string {
-  const view = world
-    .query({ has: [] })
-    .views()
-    .find((v) => v.entity === entity);
-  const name = view?.tryGet(Name)?.value;
-  return name ? `${formatEntity(entity)} "${name}"` : formatEntity(entity);
-}
-
 /** Sample up to `limit` entities matching `query`, as a readable, comma-separated line. */
 function sampleMatches(result: SimResult, query: QueryDescriptor, limit = 8): string {
-  const entities = result.query(query).entities();
+  // Deliberately the raw world query: the caller has already validated the refs and is building
+  // its own message, so re-validating here would replace it with a less specific one.
+  const entities = result.world.query(query).entities();
   if (entities.length === 0) return '  (none)';
   const shown = entities.slice(0, limit).map((e) => describeEntity(result.world, e));
   const extra = entities.length > limit ? `, … (+${entities.length - limit} more)` : '';
@@ -127,13 +131,34 @@ export function expectSim(result: SimResult): GameplayAssertions {
     throw new GameAssertionError(message);
   };
 
+  /**
+   * Reject a query the run cannot resolve, *before* it is evaluated.
+   *
+   * `opening` is the assertion's normal first clause, so the failure still reads as that
+   * assertion failing — with the reason attached — rather than as an unrelated error.
+   */
+  const requireResolvable = (opening: string, query: QueryDescriptor): void => {
+    const misses = unknownComponentRefs(result, query);
+    if (misses.length === 0) return;
+    throw new UnknownComponentError(
+      `${opening}, but the query cannot be evaluated.${explainUnknownRefs(result, misses)}`,
+    );
+  };
+
   const assertions: GameplayAssertions = {
     entityExists(query: QueryDescriptor): GameplayAssertions {
+      const opening = `Expected at least one entity matching ${describeQuery(query)}`;
+      requireResolvable(opening, query);
+      recordAssertion(
+        result,
+        'entityExists',
+        `${describeQuery(query)} matches at least one entity`,
+      );
       const count = result.query(query).count();
       if (count < 1) {
         fail(
-          `Expected at least one entity matching ${describeQuery(query)}, but found none ` +
-            `(the final world at tick ${result.tick} has ${result.query({ has: [] }).count()} entities).\n` +
+          `${opening}, but found none ` +
+            `(the final world at tick ${result.tick} has ${result.world.query({ has: [] }).count()} entities).\n` +
             `Entities present:\n${sampleMatches(result, { has: [] })}`,
         );
       }
@@ -141,11 +166,13 @@ export function expectSim(result: SimResult): GameplayAssertions {
     },
 
     entityCount(query: QueryDescriptor, n: number): GameplayAssertions {
+      const opening = `Expected exactly ${n} entit${n === 1 ? 'y' : 'ies'} matching ${describeQuery(query)}`;
+      requireResolvable(opening, query);
+      recordAssertion(result, 'entityCount', `${describeQuery(query)} matches exactly ${n}`);
       const actual = result.query(query).count();
       if (actual !== n) {
         fail(
-          `Expected exactly ${n} entit${n === 1 ? 'y' : 'ies'} matching ${describeQuery(query)}, ` +
-            `but found ${actual} at tick ${result.tick}.\n` +
+          `${opening}, but found ${actual} at tick ${result.tick}.\n` +
             `Matched entities:\n${sampleMatches(result, query)}`,
         );
       }
@@ -153,6 +180,11 @@ export function expectSim(result: SimResult): GameplayAssertions {
     },
 
     eventEmitted(type: string, times?: number): GameplayAssertions {
+      recordAssertion(
+        result,
+        'eventEmitted',
+        `"${type}" emitted ${times === undefined ? 'at least once' : `exactly ${times}×`}`,
+      );
       const actual = result.events.count(type);
       const ok = times === undefined ? actual >= 1 : actual === times;
       if (!ok) {
@@ -171,6 +203,7 @@ export function expectSim(result: SimResult): GameplayAssertions {
     },
 
     eventNotEmitted(type: string): GameplayAssertions {
+      recordAssertion(result, 'eventNotEmitted', `"${type}" never emitted`);
       const ticks = ticksOf(result.events, type);
       if (ticks.length > 0) {
         fail(
@@ -182,6 +215,7 @@ export function expectSim(result: SimResult): GameplayAssertions {
     },
 
     hashEquals(expected: StateHash): GameplayAssertions {
+      recordAssertion(result, 'hashEquals', `final state hash is ${expected}`);
       if (result.hash !== expected) {
         fail(
           `Expected final state hash ${expected}, but got ${result.hash} after ${result.tick} ticks.\n` +
@@ -191,11 +225,17 @@ export function expectSim(result: SimResult): GameplayAssertions {
       return assertions;
     },
 
-    holds(label: string, predicate: (r: SimResult) => boolean): GameplayAssertions {
-      if (!predicate(result)) {
+    holds(label: string, predicate: (r: SimResult) => CheckResult): GameplayAssertions {
+      recordAssertion(result, 'holds', label);
+      const outcome = toOutcome(predicate(result));
+      if (!outcome.ok) {
+        const where = describeRun({ seed: result.seed, tick: result.tick });
         fail(
-          `Expected "${label}" to hold on the final world (tick ${result.tick}), but the ` +
-            `predicate returned false.`,
+          `Expected "${label}" to hold on the final world (${where}), but it did not.` +
+            renderOutcome(outcome) +
+            (outcome.detail === undefined ? `\n  world   : ${summariseWorld(result.world)}` : '') +
+            `\nReturn { ok, actual, expected } from the predicate (instead of a bare boolean) to ` +
+            `have the offending value printed here.`,
         );
       }
       return assertions;
@@ -233,7 +273,7 @@ export function defineGameTest(test: GameTest): GameTest {
 export interface GameTestResult {
   /** The test name. */
   name: string;
-  /** Whether all assertions passed. */
+  /** Whether all assertions passed **and** at least one assertion actually ran. */
   passed: boolean;
   /** The failure, if any. */
   error?: GameAssertionError | Error;
@@ -241,6 +281,13 @@ export interface GameTestResult {
   result?: SimResult;
   /** Wall-clock-free tick count actually simulated. */
   ticks: number;
+  /**
+   * How many gameplay assertions actually executed — `expectSim` calls, `assertInvariant`, and
+   * live `Invariant`s. `0` means the test verified nothing and is reported as a failure.
+   */
+  assertions: number;
+  /** One readable line per assertion that ran, in order — what the test actually checked. */
+  checked: readonly string[];
 }
 
 /** Run a single {@link GameTest} headlessly and capture its outcome (never throws). */
@@ -254,12 +301,53 @@ export async function runGameTest(test: GameTest): Promise<GameTestResult> {
       ...(test.input !== undefined ? { input: test.input } : {}),
     });
   } catch (err) {
-    return { name: test.name, passed: false, error: err as Error, ticks: test.ticks };
+    return {
+      name: test.name,
+      passed: false,
+      error: err as Error,
+      ticks: test.ticks,
+      assertions: 0,
+      checked: [],
+    };
   }
+  /** What the `expect` block (and the run's live invariants) actually verified. */
+  const audit = (): Pick<GameTestResult, 'assertions' | 'checked'> => {
+    const records = assertionsFor(result as SimResult);
+    return {
+      assertions: records.length,
+      checked: records.map((r) => `${r.kind}: ${r.detail}`),
+    };
+  };
   try {
     await test.expect(result);
-    return { name: test.name, passed: true, result, ticks: test.ticks };
   } catch (err) {
-    return { name: test.name, passed: false, error: err as Error, result, ticks: test.ticks };
+    return {
+      name: test.name,
+      passed: false,
+      error: err as Error,
+      result,
+      ticks: test.ticks,
+      ...audit(),
+    };
   }
+  const checked = audit();
+  if (checked.assertions === 0) {
+    // A green tick here would be the worst lie the harness can tell: the run completed, nothing
+    // was verified, and the report says the playthrough is proven.
+    return {
+      name: test.name,
+      passed: false,
+      error: new GameAssertionError(
+        `Game test "${test.name}" ran ${test.ticks} ticks and executed ZERO assertions, so it ` +
+          `proves nothing and cannot fail.\n` +
+          `Its expect(result) callback returned without calling a single expectSim(...) assertion ` +
+          `or result.assertInvariant(...), and the run declared no live invariants.\n` +
+          `Add at least one real check — e.g. expectSim(result).eventEmitted('level.completed', 1).`,
+      ),
+      result,
+      ticks: test.ticks,
+      ...checked,
+    };
+  }
+  return { name: test.name, passed: true, result, ticks: test.ticks, ...checked };
 }

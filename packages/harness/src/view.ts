@@ -96,6 +96,40 @@ export interface SemanticFrame {
    * ascending `entity`. On-screen entities only (unless `includeOffscreen` was requested).
    */
   entities: readonly VisibleEntity[];
+  /**
+   * How many entities existed in the world this frame was derived from. **Optional** (additive):
+   * a provider that knows a more precise total (e.g. "camera-relevant entities") sets it, and
+   * the harness fills in the world's live entity count otherwise.
+   *
+   * Without it, a frame that lists 3 entities for a 6-entity world — both mission objectives
+   * culled — is indistinguishable from a world that only ever had 3, and an agent concludes the
+   * objective does not exist. `aegis inspect --view world` has always been honest about this
+   * (`entities: 3 of 6`); the frame now is too.
+   */
+  totalEntities?: number;
+  /**
+   * How many entities were left out of {@link SemanticFrame.entities} (off-screen, culled,
+   * filtered). **Optional** (additive); `totalEntities - entities.length` when the harness
+   * supplies it. Non-zero means "this frame is not the whole world".
+   */
+  excludedEntities?: number;
+}
+
+/**
+ * One character cell that more than one entity landed on, in draw order.
+ *
+ * A character grid can only show one glyph per cell, so a stacked cell silently erases whatever
+ * it covers: when the guard steps onto the operative, `@` disappears from the board while the
+ * legend still advertises it, and the view reads as "the player despawned". Reporting the
+ * collision keeps the ASCII view honest about what it could not draw.
+ */
+export interface AsciiOverlap {
+  /** Column of the cell, 0-based from the left. */
+  x: number;
+  /** Row of the cell, 0-based from the top. */
+  y: number;
+  /** Every glyph that landed here, in draw order; the last one is the one actually rendered. */
+  glyphs: readonly string[];
 }
 
 /** A deterministic character-grid view of the world (2D modes). */
@@ -110,6 +144,12 @@ export interface AsciiView {
   rows: readonly string[];
   /** Glyph → human description, e.g. `{ "@": "player", "#": "solid tile" }`. */
   legend: Readonly<Record<string, string>>;
+  /**
+   * Cells where two or more entities coincided, so the grid could only draw the last one.
+   * **Optional** (additive): providers that rasterise by drawing entities in priority order can
+   * report what they covered up. Absent means "not reported", never "nothing was hidden".
+   */
+  overlaps?: readonly AsciiOverlap[];
 }
 
 /** Options controlling how a view is produced. */
