@@ -217,6 +217,9 @@ import { coyoteGapPlugin } from 'games/platformer'; // composed: mode + content 
 import { Transform } from '@aegis/core';
 import { BodyState } from '@aegis/mode-platformer';
 
+/** Golden state hash of the completing run, derived from a green run and pinned as a literal. */
+export const GOLDEN_HASH = 'd813e4e19db7444d';
+
 export default defineGameTest({
   name: 'coyote gap: stomp, ferry across the lava, coyote-jump, buffer onto the flag',
   scene: 'games/platformer/levels/coyote-gap.scene.json',
@@ -263,7 +266,7 @@ export default defineGameTest({
           return before.carriedBy !== -1 && after.carriedBy !== -1 && after.x > before.x;
         },
       )
-      .hashEquals(result.hash); // pin the golden state hash (determinism)
+      .hashEquals(GOLDEN_HASH); // cross-commit golden-master pin — a literal, never result.hash
 
     // Whole-timeline invariants (require captureHistory):
     result.assertInvariant(
@@ -337,18 +340,22 @@ asked for; numbers reflect the merged code, not the original sketch above.
    `y > -4` invariant + `eventNotEmitted('player.died')` together fail loudly if carry ever regresses:
    a stationary rider would be left over the lava and fall.
 
-4. **`hashEquals(result.hash)` is self-referential** in the spec block (it compares the result to its
-   own hash, so it always passes). Determinism is proven _separately and for real_ in the acceptance
-   test: two independent `runScene` calls produce identical `hash` **and** identical `tickHashes`,
-   and `result.replay()` reproduces both. Consider pinning a literal golden hash centrally if you
-   want the assertion to catch drift.
+4. **The golden hash is a pinned literal, not `result.hash`.** The spec block above used to end
+   `.hashEquals(result.hash)` — copied from `docs/architecture.md` §7 — which compares the result to
+   its own hash and therefore always passes. It is now
+   `hashEquals(GOLDEN_HASH)` against the measured literal `d813e4e19db7444d`, exported from
+   `games/platformer/src/coyote-gap.gametest.ts`, and ESLint rejects the self-referential form
+   (`no-restricted-syntax`). Be precise about what each half buys: the acceptance test already
+   proved determinism _for real_ — two independent `runScene` calls produce identical `hash` **and**
+   identical `tickHashes`, and `result.replay()` reproduces both — so **intra-run** determinism was
+   never unprotected. What the literal adds is the **cross-commit** golden master: it catches a
+   change that is still perfectly deterministic but is now deterministically doing something
+   _different_.
 
-5. **`games/*` is not wired into root config** (workspaces, vitest `include`, tsconfig references).
-   The authoritative run therefore lives in the owned package
-   `packages/mode-platformer/src/coyote-gap.acceptance.test.ts` and imports the game by relative path;
-   the game's own `games/platformer/src/coyote-gap.gametest.ts` is not auto-discovered until `games/*`
-   is wired in centrally. Nothing outside `packages/mode-platformer/**` and `games/platformer/**` was
-   touched.
+5. **`games/*` is wired into the root gate.** The root `vitest.config.ts` globs every game's `test`
+   directory, so `games/platformer/test/coyote-gap.test.ts` runs under `npm run verify` and drives
+   the game's `defineGameTest` directly. `packages/mode-platformer/src/coyote-gap.acceptance.test.ts`
+   also drives it by relative path, so the spec block is exercised from two directions.
 
 Tuned geometry/timing vs the design sketch: level rebuilt to the column layout in _Level layout_
 above (flat 0–6, spike pit 7–9, plateau 10–19, **lava gap 20–26**, ledge 27–36, coyote gap 37–38,

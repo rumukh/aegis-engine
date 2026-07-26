@@ -36,15 +36,7 @@ import {
   sign,
   Transform,
 } from '@aegis/core';
-import type {
-  ComponentType,
-  Entity,
-  GameMode,
-  Schedule,
-  System,
-  TickContext,
-  World,
-} from '@aegis/core';
+import type { ComponentType, Entity, Schedule, System, TickContext, World } from '@aegis/core';
 import {
   ENTITY_DIED,
   Health,
@@ -56,6 +48,7 @@ import {
 import type { EntityDiedEvent, TriggerData } from '@aegis/content';
 import type { ModePlugin } from '../plugin.js';
 import type {
+  AsciiOverlap,
   AsciiView,
   SemanticFrame,
   ViewOptions,
@@ -196,9 +189,8 @@ const combatSystem: System = {
   run({ world }: TickContext): void {
     for (const ev of world.events.ofType<EntityDiedEvent>(ENTITY_DIED)) {
       const { entity, name } = ev.data;
-      const handle = entity as unknown as Entity;
-      if (world.has(handle, Enemy)) world.events.emit(ENEMY_KILLED, { entity, name });
-      if (world.has(handle, Player)) world.events.emit(PLAYER_DIED, { entity, name });
+      if (world.has(entity, Enemy)) world.events.emit(ENEMY_KILLED, { entity, name });
+      if (world.has(entity, Player)) world.events.emit(PLAYER_DIED, { entity, name });
     }
   },
 };
@@ -314,12 +306,19 @@ const fakeView: ViewProvider = {
     const height = options?.ascii?.height ?? DEFAULT_ASCII.height;
     const grid: string[][] = [];
     for (let r = 0; r < height; r++) grid.push(new Array<string>(width).fill('.'));
+    // Every glyph that landed on a cell, in draw order — a character grid can only show the
+    // last one, so the ones it covered are reported rather than silently erased.
+    const stacked = new Map<string, string[]>();
 
     // Draw triggers first, then platforms/enemies, then the player on top (fixed priority).
     const draw = (col: number, row: number, glyph: string): void => {
       const c = clamp(round(col), 0, width - 1);
       const rr = clamp(round(row), 0, height - 1);
       grid[rr]![c] = glyph;
+      const key = `${c},${rr}`;
+      const cell = stacked.get(key);
+      if (cell) cell.push(glyph);
+      else stacked.set(key, [glyph]);
     };
     for (const view of world.query({ has: [Trigger, Transform] }).views()) {
       const wp = view.get(Transform).position;
@@ -336,6 +335,14 @@ const fakeView: ViewProvider = {
       draw(wp.x, height - 1 - wp.y, '@');
     }
 
+    const overlaps: AsciiOverlap[] = [];
+    for (const [key, glyphs] of stacked) {
+      if (glyphs.length < 2) continue;
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      overlaps.push({ x, y, glyphs });
+    }
+    overlaps.sort((a, b) => (a.y !== b.y ? a.y - b.y : a.x - b.x));
+
     return {
       tick: world.tick,
       width,
@@ -349,6 +356,7 @@ const fakeView: ViewProvider = {
         '^': 'hazard volume',
         '.': 'empty',
       },
+      overlaps,
     };
   },
 };
@@ -357,7 +365,7 @@ const fakeView: ViewProvider = {
 
 /** The fake mode plugin the harness tests run against. */
 export const fakeMode: ModePlugin = {
-  mode: 'platformer' as GameMode,
+  mode: 'platformer',
 
   components(): readonly ComponentType<unknown>[] {
     return [Velocity, Player, Enemy, Platform];

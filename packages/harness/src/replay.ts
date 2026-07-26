@@ -9,6 +9,7 @@
  * @packageDocumentation
  */
 import type { StateHash } from '@aegis/core';
+import { asError } from './report.js';
 
 /** A portable, human-readable recording of a run. */
 export interface Recording {
@@ -55,7 +56,7 @@ export function parseRecording(text: string): Recording {
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new Error(`[aegis] parseRecording: not valid JSON — ${(err as Error).message}`);
+    throw new Error(`[aegis] parseRecording: not valid JSON — ${asError(err).message}`);
   }
   if (typeof parsed !== 'object' || parsed === null) {
     throw new Error('[aegis] parseRecording: document root must be a JSON object.');
