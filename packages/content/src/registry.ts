@@ -5,9 +5,14 @@
  * Components are defined across several packages (`@aegis/core`, each `@aegis/mode-*`, and
  * this package's visual components). A scene loader needs one lookup table spanning all of
  * them; a mode contributes its component types to the registry when it is activated.
+ *
+ * The same problem exists one level up for **resources** — a scene's `resources` block is
+ * addressed by string id too, and a typo there (`platformer.tilemp`) is exactly as silent as
+ * a typo'd component id was. {@link ResourceRegistry} is the matching lookup table; supply
+ * one through `ValidateOptions.resources` to have those ids checked.
  * @packageDocumentation
  */
-import type { ComponentType } from '@aegis/core';
+import type { ComponentType, ResourceType } from '@aegis/core';
 
 /** A lookup from component id to {@link ComponentType}. */
 export interface ComponentRegistry {
@@ -53,5 +58,66 @@ export function createRegistry(...types: ComponentType<unknown>[]): ComponentReg
     },
   };
   registry.registerAll(types);
+  return registry;
+}
+
+/**
+ * A lookup of the singleton resource ids a scene may set. Resources are applied wholesale
+ * (no merge over defaults), so the only thing worth validating is the **id** — an unknown one
+ * means the mode that was supposed to read it never will.
+ *
+ * ## Status: implemented, and deliberately **not wired into the shipped run path**
+ *
+ * `runScene` does not build one of these, so `aegis run` / `aegis test` do **not** report a
+ * typo'd resource id today. That is a PM ruling on proportionality, not an oversight: making
+ * it live needs a change to the frozen `ModePlugin` contract plus an update to all three mode
+ * packages, which are being changed by other sessions. Deferred to v2.
+ *
+ * Exactly two changes activate it, and nothing else:
+ *  1. `@aegis/harness` — add an optional `resources?(): readonly ResourceType<unknown>[]` to
+ *     `ModePlugin`, and in `run.ts` pass `resources: createResourceRegistry(...plugin.resources?.() ?? [])`
+ *     into the `instantiateScene` options.
+ *  2. each `@aegis/mode-*` — implement `resources()`, returning what it already declares
+ *     (`PlatformerTilemap`, `IsoGrid`/`NavGrid`, `FPS_FLOORPLAN`/`FPS_COLLISION`).
+ *
+ * Until then this is opt-in: supply one through `ValidateOptions.resources` (the CLI, a test
+ * or a tool may) and unknown ids are reported with a did-you-mean. Supply nothing and no
+ * resource diagnostic is ever emitted — validation cannot invent the set of legal ids, and
+ * guessing would reject every legitimate mode-owned resource.
+ */
+export interface ResourceRegistry {
+  /** Register a resource by type, or by bare id when the type is not to hand. */
+  register(resource: ResourceType<unknown> | string): this;
+  /** Register many resources. */
+  registerAll(resources: Iterable<ResourceType<unknown> | string>): this;
+  /** Whether an id is registered. */
+  has(id: string): boolean;
+  /** All registered ids, sorted, for diagnostics/tab-completion. */
+  ids(): readonly string[];
+}
+
+/** Create a resource registry, optionally seeded with resource types or bare ids. */
+export function createResourceRegistry(
+  ...resources: (ResourceType<unknown> | string)[]
+): ResourceRegistry {
+  const known = new Set<string>();
+
+  const registry: ResourceRegistry = {
+    register(resource: ResourceType<unknown> | string): ResourceRegistry {
+      known.add(typeof resource === 'string' ? resource : resource.id);
+      return registry;
+    },
+    registerAll(list: Iterable<ResourceType<unknown> | string>): ResourceRegistry {
+      for (const r of list) registry.register(r);
+      return registry;
+    },
+    has(id: string): boolean {
+      return known.has(id);
+    },
+    ids(): readonly string[] {
+      return [...known].sort();
+    },
+  };
+  registry.registerAll(resources);
   return registry;
 }
