@@ -58,12 +58,34 @@ export interface BodyStateData {
   airborneTicks: number;
   /** Facing direction: `-1` left, `1` right. */
   facing: -1 | 1;
+  /**
+   * Ticks of coyote-time grace remaining: refreshed to `coyoteTicks` while grounded, counted
+   * down once airborne. A jump pressed while this is `> 0` still launches.
+   */
+  coyoteRemaining: number;
+  /**
+   * Ticks a buffered jump press remains valid: set to `jumpBufferTicks` on the press edge,
+   * counted down each tick until it lands (or expires). Consumed when a jump launches.
+   */
+  jumpBufferRemaining: number;
+  /**
+   * Entity handle of the kinematic platform currently carrying this body, or `-1` if none.
+   * Used to detect the boarding edge (`platform.boarded`) exactly once per boarding.
+   */
+  carriedBy: number;
 }
 
 /** Runtime movement state maintained by the controller systems. */
 export const BodyState: ComponentType<BodyStateData> = defineComponent<BodyStateData>({
   id: 'BodyState',
-  defaults: () => ({ grounded: false, airborneTicks: 0, facing: 1 }),
+  defaults: () => ({
+    grounded: false,
+    airborneTicks: 0,
+    facing: 1,
+    coyoteRemaining: 0,
+    jumpBufferRemaining: 0,
+    carriedBy: -1,
+  }),
 });
 
 /** Data of {@link TileCollider}: an axis-aligned box used against the tilemap. */
@@ -103,6 +125,46 @@ export const PlatformerCamera: ComponentType<PlatformerCameraData> =
     defaults: () => ({ target: '', deadzoneX: 2, deadzoneY: 1.5, viewHeight: 12 }),
   });
 
+/** Data of {@link KinematicPlatform}: a solid box that moves on a pure function of tick. */
+export interface KinematicPlatformData {
+  /** Which world axis the platform oscillates along. */
+  axis: 'x' | 'y';
+  /** Minimum centre coordinate along {@link KinematicPlatformData.axis}, world units. */
+  min: number;
+  /** Maximum centre coordinate along {@link KinematicPlatformData.axis}, world units. */
+  max: number;
+  /** Traversal speed, world units per second. */
+  speed: number;
+  /**
+   * Starting phase in `[0, 1)` along the triangle-wave cycle: `0` starts at `min` moving
+   * toward `max`, `0.5` starts at `max` moving toward `min`.
+   */
+  phase: number;
+  /** Half-width of the solid box, world units. */
+  halfWidth: number;
+  /** Half-height of the solid box, world units. */
+  halfHeight: number;
+}
+
+/**
+ * A kinematic moving solid. The mode moves it deterministically (a pure function of the tick)
+ * and carries any body resting on it — being carried is core platformer vocabulary, so it lives
+ * in the mode, not the game (per PM ruling; see docs/games/platformer.md "Engine scope").
+ */
+export const KinematicPlatform: ComponentType<KinematicPlatformData> =
+  defineComponent<KinematicPlatformData>({
+    id: 'KinematicPlatform',
+    defaults: () => ({
+      axis: 'x',
+      min: 0,
+      max: 0,
+      speed: 2,
+      phase: 0,
+      halfWidth: 1.5,
+      halfHeight: 0.5,
+    }),
+  });
+
 /** All component types this mode contributes to the registry. */
 export const PLATFORMER_COMPONENTS: readonly ComponentType<unknown>[] = [
   Velocity,
@@ -110,4 +172,5 @@ export const PLATFORMER_COMPONENTS: readonly ComponentType<unknown>[] = [
   BodyState,
   TileCollider,
   PlatformerCamera,
+  KinematicPlatform,
 ] as readonly ComponentType<unknown>[];
