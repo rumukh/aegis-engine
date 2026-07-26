@@ -1,0 +1,34 @@
+{
+  "name": "@aegis/cli",
+  "version": "0.0.0",
+  "description": "The single CLI surface: run, test, inspect, validate, record, replay, scaffold. No GUI is ever required.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "aegis": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*",
+    "@aegis/harness": "*",
+    "@aegis/mode-platformer": "*",
+    "@aegis/mode-iso": "*",
+    "@aegis/mode-fps": "*",
+    "@aegis/render-three": "*"
+  }
+}

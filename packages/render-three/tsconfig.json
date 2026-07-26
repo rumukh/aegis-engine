@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["three"],
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.spec.ts", "dist"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../content" },
+    { "path": "../harness" },
+    { "path": "../mode-platformer" },
+    { "path": "../mode-iso" },
+    { "path": "../mode-fps" }
+  ]
+}
