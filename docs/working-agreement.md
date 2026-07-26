@@ -30,6 +30,12 @@ report it to the PM with the reason, and keep going on something else. The PM ap
 change centrally so every parallel session gets it at once. A five-minute wait beats a
 three-way merge conflict in a load-bearing interface.
 
+**Component ids are scoped to a run, not to the workspace:** a `ComponentRegistry` is built fresh
+per `runScene` / `runGameTest`, so a game's component ids need only be unique _within that game_ —
+`Player` and `Patrol` are each defined by two different games today, deliberately. Never merge two
+games' component sets into one registry; the registry throws on a genuine id conflict, and that
+throw is a feature, not an obstacle to route around.
+
 ## 2. Never ship untestable code
 
 You must be able to _run_ what you build. If the thing you depend on is only a stub, say so
