@@ -5,6 +5,7 @@ import { Name, Transform } from './components.js';
 import { MAX_ENTITY_GENERATION, NULL_ENTITY, makeEntity } from './entity.js';
 import { CoreDiagnosticCode } from './codes.js';
 import { DiagnosticError } from './diagnostics.js';
+import { canonicalStringify } from './serialize.js';
 import type { Diagnostic } from './diagnostics.js';
 import type { WorldSnapshot } from './serialize.js';
 
@@ -310,6 +311,178 @@ describe('World — non-finite state is visible to the hash (C1)', () => {
     const w2 = createWorld({ seed: 'other' });
     w2.restore(JSON.parse(JSON.stringify(w.snapshot())) as WorldSnapshot);
     expect(w2.hash()).toBe(h);
+  });
+});
+
+/**
+ * C1 — regression guard against the *paper-over* fix.
+ *
+ * Hardening `canonicalStringify` is the tempting fix and it is a no-op: the guard at
+ * `serialize.ts:72` already worked, it just never got the chance, because the value was
+ * laundered to `null` before it arrived. There were **two** launderers — `world.ts`'s
+ * `deepClone` and `defineComponent`'s default `clone` — and fixing only the first still
+ * destroys a NaN on the way in.
+ *
+ * These tests assert the *snapshot document*, not just that hashes differ, because it is
+ * entirely possible to make hashes differ while the corruption is still there.
+ */
+describe('World — C1 acceptance criteria (no laundering on any entry path)', () => {
+  const Vel = defineComponent<{ x: number }>({ id: 'Vel', defaults: () => ({ x: 0 }) });
+
+  /** Snapshot if it succeeds, or the diagnostic path if it is rejected. */
+  function snapshotOrRejection(w: ReturnType<typeof createWorld>): WorldSnapshot | string {
+    try {
+      return w.snapshot();
+    } catch (err) {
+      if (err instanceof DiagnosticError) {
+        return `rejected:${(err.diagnostics[0] as Diagnostic).location?.path ?? ''}`;
+      }
+      throw err;
+    }
+  }
+
+  for (const [label, value] of [
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['-Infinity', -Infinity],
+  ] as const) {
+    it(`does not launder ${label} to null on the add() path`, () => {
+      const w = createWorld({ seed: 1 });
+      const e = w.spawn();
+      w.add(e, Vel, { x: value });
+
+      // 1. It survives the way in. Pre-fix `defineComponent`'s clone flattened it here.
+      const stored = w.get(e, Vel)?.x as number;
+      expect(Number.isFinite(stored)).toBe(false);
+      expect(Object.is(stored, value)).toBe(true);
+
+      // 2. The snapshot document must never read `{"Vel":{"x":null}}`. Either the value is
+      //    there intact, or the snapshot is refused — silently becoming null is the failure.
+      const result = snapshotOrRejection(w);
+      if (typeof result === 'string') {
+        expect(result).toBe(`rejected:entities[${String(e)}].components.Vel.x`);
+      } else {
+        expect(JSON.stringify(result.entities[0]?.components)).not.toContain('"x":null');
+      }
+    });
+
+    it(`does not launder ${label} to null on the spawn() path`, () => {
+      const w = createWorld({ seed: 1 });
+      const e = w.spawn(Vel({ x: value }));
+      expect(Object.is(w.get(e, Vel)?.x, value)).toBe(true);
+      const result = snapshotOrRejection(w);
+      if (typeof result !== 'string') {
+        expect(JSON.stringify(result.entities[0]?.components)).not.toContain('"x":null');
+      }
+    });
+  }
+
+  it('does not launder a value a system wrote in place', () => {
+    // The real "physics exploded" path: no clone runs at all, the system mutates the stored
+    // object. This is what a pinned GOLDEN_HASH used to bake in as a clean, stable digest.
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(Vel({ x: 1 }));
+    w.getOrThrow(e, Vel).x = 0 / 0;
+    expect(Number.isNaN(w.getOrThrow(e, Vel).x)).toBe(true);
+    const result = snapshotOrRejection(w);
+    expect(typeof result === 'string' ? result : JSON.stringify(result)).not.toContain('"x":null');
+  });
+
+  it('a NaN world and a null world are no longer indistinguishable', () => {
+    // Pre-fix every one of these was f09a410d491866b0.
+    const outcome = (v: number | null): string => {
+      const w = createWorld({ seed: 1 });
+      const e = w.spawn();
+      w.add(e, Vel, { x: v as number });
+      try {
+        return `hash:${w.hash()}`;
+      } catch {
+        return 'rejected';
+      }
+    };
+    expect(outcome(NaN)).toBe('rejected');
+    expect(outcome(Infinity)).toBe('rejected');
+    expect(outcome(-Infinity)).toBe('rejected');
+    expect(outcome(null)).toMatch(/^hash:[0-9a-f]{16}$/);
+    expect(outcome(0)).not.toBe(outcome(null));
+  });
+
+  it('leaves the pre-existing canonicalStringify guard doing its job', () => {
+    // The guard was never broken — it was unreachable. It must stay exactly as strict.
+    expect(() => canonicalStringify({ v: NaN })).toThrow();
+    expect(() => canonicalStringify({ v: Infinity })).toThrow();
+    expect(canonicalStringify({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
+  });
+});
+
+/**
+ * C2 — regression guard against the *half* fix.
+ *
+ * Adding a liveness check to `get()` alone leaves `has()` and `tryGet()` lying, and `has()` is
+ * what guards most system code — so a half fix makes the inconsistency harder to spot, not
+ * easier. Each accessor is asserted separately, so a partial fix fails visibly rather than
+ * passing a single combined assertion.
+ */
+describe('World — C2 acceptance criteria (all three accessors agree on liveness)', () => {
+  const Tag = defineComponent<{ who: string }>({ id: 'Tag', defaults: () => ({ who: '' }) });
+
+  /** A view onto ORIGINAL, after its slot has been recycled by IMPOSTOR. */
+  function staleView(): {
+    view: ReturnType<ReturnType<typeof createWorld>['query']>['one'] extends () => infer V
+      ? V
+      : never;
+    original: number;
+    impostor: number;
+  } {
+    const w = createWorld({ seed: 1 });
+    const original = w.spawn(Tag({ who: 'ORIGINAL' }));
+    const view = w.query({ has: [Tag] }).views()[0]!;
+    expect(view.get(Tag).who).toBe('ORIGINAL');
+    w.despawn(original);
+    const impostor = w.spawn(Tag({ who: 'IMPOSTOR' }));
+    expect(impostor).not.toBe(original); // same slot, bumped generation
+    return { view, original, impostor };
+  }
+
+  it('has() reports absent — pre-fix it returned true', () => {
+    expect(staleView().view.has(Tag)).toBe(false);
+    expect(staleView().view.has('Tag')).toBe(false);
+  });
+
+  it('tryGet() reports absent — pre-fix it returned the impostor’s data', () => {
+    expect(staleView().view.tryGet(Tag)).toBeUndefined();
+  });
+
+  it('get() never returns the impostor — pre-fix it returned { who: "IMPOSTOR" }', () => {
+    expect(() => staleView().view.get(Tag)).toThrow(/stale/);
+  });
+
+  it('the handle keeps identifying the original, dead entity', () => {
+    const { view, original, impostor } = staleView();
+    expect(view.entity).toBe(original);
+    expect(view.entity).not.toBe(impostor);
+  });
+
+  it('the three accessors are mutually consistent, so no half fix passes', () => {
+    const { view } = staleView();
+    const has = view.has(Tag);
+    const tried = view.tryGet(Tag);
+    let got: string;
+    try {
+      got = view.get(Tag).who;
+    } catch {
+      got = 'threw';
+    }
+    expect({ has, tried, got }).toEqual({ has: false, tried: undefined, got: 'threw' });
+  });
+
+  it('the same holds for a live entity, so the check is not just "always absent"', () => {
+    const w = createWorld({ seed: 1 });
+    w.spawn(Tag({ who: 'alive' }));
+    const view = w.query({ has: [Tag] }).one();
+    expect(view.has(Tag)).toBe(true);
+    expect(view.tryGet(Tag)).toEqual({ who: 'alive' });
+    expect(view.get(Tag).who).toBe('alive');
   });
 });
 
