@@ -91,7 +91,13 @@ function seedInitial(world: World): void {
 function run(
   seed: string,
   ticks: number,
-): { trace: StateHash[]; final: StateHash; countSamples: number[] } {
+): {
+  trace: StateHash[];
+  final: StateHash;
+  countSamples: number[];
+  events: StateHash;
+  eventCount: number;
+} {
   const world = createWorld({ seed, recordEvents: true });
   seedInitial(world);
   const sim = createSimulation({ world, schedule: makeSchedule(), tickRate: 60 });
@@ -102,7 +108,13 @@ function run(
     trace.push(sim.hash());
     countSamples.push(world.entityCount);
   }
-  return { trace, final: sim.hash(), countSamples };
+  return {
+    trace,
+    final: sim.hash(),
+    countSamples,
+    events: world.events.digest(),
+    eventCount: world.events.history().length,
+  };
 }
 
 describe('DETERMINISM PROOF — the project canary', () => {
@@ -124,12 +136,30 @@ describe('DETERMINISM PROOF — the project canary', () => {
   const CANARY_FINAL_HASH = 'd8dbdd4f3900e148';
   /** Hash after the first tick — catches a divergence that later churn might mask. */
   const CANARY_TICK_1_HASH = '030de9d252cba762';
+  /**
+   * Digest of the canary's whole event stream.
+   *
+   * `world.hash()` deliberately covers component state only (see `events.ts`), so a build
+   * whose spawn/despawn events diverged while component state converged would pass every
+   * assertion above. This pins the other half.
+   */
+  const CANARY_EVENTS_DIGEST = '5a80e04e747797d9';
 
   it('matches its pinned golden hash (the cross-machine half of the proof)', () => {
-    const { trace, final } = run('canary-seed', TICKS);
+    const { trace, final, events, eventCount } = run('canary-seed', TICKS);
     expect(trace[0]).toBe(CANARY_TICK_1_HASH);
     expect(final).toBe(CANARY_FINAL_HASH);
     expect(trace).toHaveLength(TICKS);
+    expect(eventCount).toBeGreaterThan(100); // the run really does emit
+    expect(events).toBe(CANARY_EVENTS_DIGEST);
+  });
+
+  it('the event stream is deterministic too, and the state hash alone would not prove it', () => {
+    const a = run('canary-seed', TICKS);
+    const b = run('canary-seed', TICKS);
+    expect(a.events).toBe(b.events);
+    const other = run('seed-A', TICKS);
+    expect(other.events).not.toBe(a.events);
   });
 
   it('two independent runs with the same seed are byte-identical tick-for-tick', () => {

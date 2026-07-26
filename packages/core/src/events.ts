@@ -3,14 +3,31 @@
  *
  * Systems communicate gameplay facts ("PlayerJumped", "EnemyKilled", "DamageDealt") by
  * emitting events. Events are the primary surface gameplay assertions read (CHARTER
- * principle 6). Delivery is FIFO within a tick and the log preserves global emission order,
- * so the event stream is itself part of the deterministic state.
+ * principle 6). Delivery is FIFO within a tick and the log preserves global emission order.
  *
- * Event `data` must be plain, serialisable data (same rule as components).
+ * Event `data` must be plain, serialisable data (same rule as components). The bus **owns the
+ * copy**: `emit` deep-clones and deep-freezes the payload, and the reader methods hand out
+ * frozen arrays. Storing the caller's object by reference made a recorded event alias live
+ * world state, so the log was retroactively rewritten whenever the component it pointed at
+ * moved later in the tick; returning the internal array meant `history().push(...)` forged
+ * entries that `count()` believed. A rewritable audit log is not an audit log.
+ *
+ * ## Relationship to the state hash
+ *
+ * The event stream is **not** covered by {@link "./hash".StateHash}: `World.snapshot()` holds
+ * components, resources, the PRNG and the allocator, and nothing else. Two runs that emit
+ * completely different damage/kill/trigger events therefore still compare equal under
+ * `hashEquals` if their component state converged. Use {@link EventReader.digest} to pin the
+ * event stream as well — the harness and the determinism proof do, and a game that cares about
+ * its event trace should too. See ADR-0001 for why the two digests are kept separate.
  * @packageDocumentation
  */
-import { CLEAR_TICK } from './internal.js';
+import { deepClone, deepFreeze } from './clone.js';
+import { hashString } from './hash.js';
+import { canonicalStringify } from './serialize.js';
+import { CLEAR_TICK, RESET_LOG } from './internal.js';
 import type { ManagedEventBus } from './internal.js';
+import type { StateHash } from './hash.js';
 
 /** A single emitted event, stamped with the tick on which it was emitted. */
 export interface GameEvent<T = unknown> {
@@ -24,25 +41,41 @@ export interface GameEvent<T = unknown> {
 
 /** Write side of the bus, handed to systems during a tick. */
 export interface EventWriter {
-  /** Emit an event of `type` carrying `data`. */
+  /**
+   * Emit an event of `type` carrying `data`.
+   *
+   * `data` is deep-copied and deep-frozen, so passing a live component is safe: the recorded
+   * event keeps the values as they were at emission time and cannot be edited afterwards.
+   */
   emit<T>(type: string, data: T): void;
 }
 
 /** Read side of the bus and the historical log. */
 export interface EventReader {
-  /** Events emitted on the current tick, in emission order. */
+  /** Events emitted on the current tick, in emission order. Frozen. */
   thisTick(): readonly GameEvent[];
-  /** Events emitted on the current tick whose type is `type`. */
+  /** Events emitted on the current tick whose type is `type`. Frozen. */
   ofType<T = unknown>(type: string): readonly GameEvent<T>[];
   /**
-   * The full recorded log across all ticks so far. Present only when the simulation was
-   * created with event recording enabled (the harness enables it for assertions).
+   * The full recorded log across all ticks so far, frozen. Present only when the simulation
+   * was created with event recording enabled (the harness enables it for assertions).
    */
   history(): readonly GameEvent[];
   /** Total number of events of `type` in {@link EventReader.history}. */
   count(type: string): number;
   /** Whether any event of `type` was ever emitted (across history). */
   contains(type: string): boolean;
+  /**
+   * Deterministic digest of the recorded event stream — same algorithm and shape as
+   * {@link "./hash".StateHash}, computed over the canonical encoding of every recorded event
+   * (type, tick and payload, in emission order).
+   *
+   * `World.hash()` covers component state only, so a build whose damage or kill events
+   * diverged while component state happened to converge passes every state-hash assertion.
+   * This is the digest that catches it. Returns the digest of an empty stream when recording
+   * is disabled.
+   */
+  digest(): StateHash;
 }
 
 /** Both ends of the bus. */
@@ -58,23 +91,25 @@ export interface EventBusOptions {
 export function createEventBus(options?: EventBusOptions): EventBus {
   const record = options?.record ?? false;
   let current: GameEvent[] = [];
-  const log: GameEvent[] = [];
+  let log: GameEvent[] = [];
   let tick = 0;
 
   const bus: ManagedEventBus = {
     emit<T>(type: string, data: T): void {
-      const event: GameEvent<T> = { type, data, tick };
+      // The bus owns the copy. Systems routinely emit a live component (`data: trig.data`);
+      // without this the recorded event would keep mutating with the world after the fact.
+      const event: GameEvent<T> = deepFreeze({ type, data: deepFreeze(deepClone(data)), tick });
       current.push(event as GameEvent);
       if (record) log.push(event as GameEvent);
     },
     thisTick(): readonly GameEvent[] {
-      return current;
+      return Object.freeze(current.slice());
     },
     ofType<T = unknown>(type: string): readonly GameEvent<T>[] {
-      return current.filter((e) => e.type === type) as GameEvent<T>[];
+      return Object.freeze(current.filter((e) => e.type === type)) as readonly GameEvent<T>[];
     },
     history(): readonly GameEvent[] {
-      return log;
+      return Object.freeze(log.slice());
     },
     count(type: string): number {
       let n = 0;
@@ -85,9 +120,21 @@ export function createEventBus(options?: EventBusOptions): EventBus {
       for (const e of log) if (e.type === type) return true;
       return false;
     },
+    digest(): StateHash {
+      // Same canonical encoding and 64-bit FNV-1a as the state hash, so the two digests are
+      // directly comparable and equally reproducible across machines.
+      return hashString(
+        canonicalStringify(log.map((e) => ({ type: e.type, tick: e.tick, data: e.data }))),
+      );
+    },
     [CLEAR_TICK](nextTick: number): void {
       current = [];
       tick = nextTick;
+    },
+    [RESET_LOG](): void {
+      current = [];
+      log = [];
+      tick = 0;
     },
   };
   return bus;

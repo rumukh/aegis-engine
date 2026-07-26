@@ -16,6 +16,7 @@
  * ```
  * @packageDocumentation
  */
+import { deepClone } from './clone.js';
 
 /** A component value paired with its type, ready to attach to an entity. */
 export interface ComponentInstance<T = unknown> {
@@ -59,15 +60,21 @@ export interface ComponentDefinition<T extends object> {
  * no gameplay behaviour. `create` applies a shallow *merge* of `init` over the defaults —
  * a nested object is replaced wholesale rather than deep-merged — and then deep-copies the
  * result so no caller-owned object is ever aliased into world state. `clone` defaults to a
- * JSON round-trip, which is exact for plain-data components (the only kind allowed), and is
- * the single cloning path used by both `create` and snapshotting.
+ * **structural** deep copy that preserves `NaN`, `±Infinity` and `-0` exactly, and is the
+ * single cloning path used by both `create` and snapshotting.
+ *
+ * It used to default to a JSON round-trip. That is lossy: `JSON.stringify` maps every
+ * non-finite number to `null`, so a component built with a `NaN` in it was silently corrected
+ * to `null` on the way into the world — the state hash could never see the NaN that broke the
+ * sim, which is the exact failure the hash exists to catch. Non-plain data (a `Date`, a `Map`,
+ * a class instance) is now rejected outright rather than canonicalised to `{}`.
  *
  * @typeParam T - The component's data shape.
  * @param def - Id, defaults factory and optional clone.
  * @returns A callable {@link ComponentType}.
  */
 export function defineComponent<T extends object>(def: ComponentDefinition<T>): ComponentType<T> {
-  const clone = def.clone ?? ((value: T): T => JSON.parse(JSON.stringify(value)) as T);
+  const clone = def.clone ?? ((value: T): T => deepClone(value));
   const create = (init?: Partial<T>): T => {
     // Merge `init` over defaults, then deep-copy the result through `clone` so no
     // caller-owned nested object is ever retained by reference in world state. The spread

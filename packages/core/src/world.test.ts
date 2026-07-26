@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { createWorld } from './world.js';
 import { defineComponent, defineTag, defineResource } from './component.js';
 import { Name, Transform } from './components.js';
-import { NULL_ENTITY } from './entity.js';
+import { MAX_ENTITY_GENERATION, NULL_ENTITY, makeEntity } from './entity.js';
+import { CoreDiagnosticCode } from './codes.js';
+import { DiagnosticError } from './diagnostics.js';
+import type { Diagnostic } from './diagnostics.js';
+import type { WorldSnapshot } from './serialize.js';
 
 interface Vel {
   dx: number;
@@ -194,5 +198,293 @@ describe('World — serialisation, hashing, cloning', () => {
     w.spawn(Name({ value: 'hero' }));
     const snap = w.snapshot();
     expect(snap.entities[0]?.name).toBe('hero');
+  });
+});
+
+/**
+ * C1 — the state hash used to be blind to `NaN`/`±Infinity`.
+ *
+ * `deepClone` was `JSON.parse(JSON.stringify(v))`, and `snapshot()` laundered every value
+ * through it *before* `canonicalStringify` saw them. JSON maps non-finite numbers to `null`, so
+ * the guard in the canonical encoder could never fire on the world path. Measured pre-fix:
+ * hash-with-Infinity === hash-with-NaN === hash-with-null === `1828ce18db63727f`.
+ */
+describe('World — non-finite state is visible to the hash (C1)', () => {
+  const V = defineComponent<{ v: number }>({ id: 'V', defaults: () => ({ v: 0 }) });
+
+  /** Extract the single diagnostic from a thrown DiagnosticError. */
+  function diagnosticFrom(fn: () => unknown): Diagnostic {
+    try {
+      fn();
+    } catch (err) {
+      expect(err).toBeInstanceOf(DiagnosticError);
+      const d = (err as DiagnosticError).diagnostics[0] as Diagnostic;
+      expect(d.code).toBe(CoreDiagnosticCode.NonFiniteState);
+      return d;
+    }
+    throw new Error('expected the call to throw a DiagnosticError');
+  }
+
+  it('stores non-finite component values instead of laundering them to null', () => {
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(V({ v: Infinity }));
+    // Pre-fix this read back `{ v: null }`.
+    expect(w.get(e, V)?.v).toBe(Infinity);
+    const n = w.spawn(V({ v: NaN }));
+    expect(Number.isNaN(w.get(n, V)?.v as number)).toBe(true);
+    const z = w.spawn(V({ v: -0 }));
+    expect(Object.is(w.get(z, V)?.v, -0)).toBe(true);
+  });
+
+  it('refuses to snapshot a world holding NaN, naming entity, component and path', () => {
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(Name({ value: 'hero' }), Transform());
+    // Exactly how a sim breaks in practice: a divide-by-zero in a system.
+    w.getOrThrow(e, Transform).position.x = 0 / 0;
+
+    const d = diagnosticFrom(() => w.snapshot());
+    expect(d.severity).toBe('error');
+    expect(d.message).toContain('NaN');
+    expect(d.location?.path).toBe(`entities[${String(e)}].components.Transform.position.x`);
+    expect(d.data?.entity).toBe(String(e));
+    expect(d.data?.entityName).toBe('hero');
+    expect(d.data?.component).toBe('Transform');
+    expect(d.fix).toBeTruthy();
+  });
+
+  it('refuses to hash a world holding ±Infinity (the guard now fires on the world path)', () => {
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(V());
+    w.getOrThrow(e, V).v = 1 / 0;
+    // Pre-fix: this returned a hash indistinguishable from `{ v: null }`.
+    expect(() => w.hash()).toThrow(DiagnosticError);
+    w.getOrThrow(e, V).v = -1 / 0;
+    expect(() => w.hash()).toThrow(DiagnosticError);
+  });
+
+  it('distinguishes NaN, Infinity and null rather than collapsing all three', () => {
+    const hashOf = (v: unknown): string | 'threw' => {
+      const w = createWorld({ seed: 1 });
+      w.spawn(V({ v: v as number }));
+      try {
+        return w.hash();
+      } catch {
+        return 'threw';
+      }
+    };
+    // Pre-fix all four of these were the same 16-hex string.
+    expect(hashOf(Infinity)).toBe('threw');
+    expect(hashOf(NaN)).toBe('threw');
+    expect(hashOf(null)).not.toBe('threw');
+    expect(hashOf(1)).not.toBe(hashOf(null));
+  });
+
+  it('reports a non-finite resource with its resource path', () => {
+    const Cfg = defineResource<{ gravity: { y: number } }>('Cfg', () => ({ gravity: { y: 0 } }));
+    const w = createWorld({ seed: 1 });
+    w.setResource(Cfg, { gravity: { y: -Infinity } });
+    const d = diagnosticFrom(() => w.snapshot());
+    expect(d.location?.path).toBe('resources.Cfg.gravity.y');
+    expect(d.data?.entity).toBeNull();
+  });
+
+  it('reports the index of a non-finite array element', () => {
+    const Path = defineComponent<{ pts: number[] }>({ id: 'Path', defaults: () => ({ pts: [] }) });
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(Path({ pts: [1, 2, NaN] }));
+    const d = diagnosticFrom(() => w.snapshot());
+    expect(d.location?.path).toBe(`entities[${String(e)}].components.Path.pts[2]`);
+  });
+
+  it('rejects non-plain data rather than silently canonicalising it to {}', () => {
+    const w = createWorld({ seed: 1 });
+    // A Date has no enumerable own keys, so it used to survive into state and hash as `{}`.
+    expect(() => w.spawn(V({ v: new Date(0) as unknown as number }))).toThrow(/plain JSON/);
+  });
+
+  it('a clean world still snapshots, hashes and round-trips exactly', () => {
+    const w = createWorld({ seed: 'ok' });
+    w.spawn(Name({ value: 'a' }), Transform({ position: { x: 1.5, y: -0, z: 3 } }));
+    const h = w.hash();
+    const w2 = createWorld({ seed: 'other' });
+    w2.restore(JSON.parse(JSON.stringify(w.snapshot())) as WorldSnapshot);
+    expect(w2.hash()).toBe(h);
+  });
+});
+
+/**
+ * C2 — query iteration used to hand out handles to the wrong, live entity.
+ *
+ * `query()` stored raw slot indices and `makeView` packed a handle at *consumption* time from
+ * whatever generation the slot held *then*. The free list is LIFO, so a despawn+spawn inside a
+ * system loop reused the slot immediately and the pending row resolved to the impostor — real
+ * data, wrong entity, no error.
+ */
+describe('World — query rows are handles, not slots (C2)', () => {
+  const Tag = defineComponent<{ n: string; x: number }>({
+    id: 'Tag',
+    defaults: () => ({ n: '', x: 0 }),
+  });
+
+  it('never yields a recycled slot as if it were the matched entity', () => {
+    const w = createWorld({ seed: 1 });
+    w.spawn(Tag({ n: 'first', x: 10 }));
+    w.spawn(Tag({ n: 'second', x: 20 }));
+    const third = w.spawn(Tag({ n: 'third', x: 30 }));
+
+    const seen: string[] = [];
+    let i = 0;
+    for (const view of w.query({ has: [Tag] })) {
+      if (i === 1) {
+        w.despawn(third);
+        w.spawn(Tag({ n: 'IMPOSTOR', x: 999 })); // reuses third's slot (LIFO free list)
+      }
+      seen.push(view.get(Tag).n);
+      i++;
+    }
+    // Pre-fix: ['first', 'second', 'IMPOSTOR'].
+    expect(seen).toEqual(['first', 'second']);
+  });
+
+  it('entities() never manufactures a fresh handle from a recycled slot', () => {
+    const w = createWorld({ seed: 1 });
+    const a = w.spawn(Tag({ n: 'a' }));
+    const b = w.spawn(Tag({ n: 'b' }));
+    const result = w.query({ has: [Tag] });
+    w.despawn(b);
+    const impostor = w.spawn(Tag({ n: 'impostor' }));
+    // Pre-fix: [a, impostor] — the impostor's handle, freshly packed from b's slot.
+    expect(result.entities()).toEqual([a]);
+    expect(result.entities()).not.toContain(impostor);
+    expect(result.count()).toBe(1);
+  });
+
+  it('views(), first(), one() and forEach() all skip despawned rows', () => {
+    const w = createWorld({ seed: 1 });
+    const a = w.spawn(Tag({ n: 'a' }));
+    const b = w.spawn(Tag({ n: 'b' }));
+    const result = w.query({ has: [Tag] });
+    w.despawn(a);
+    w.spawn(Tag({ n: 'impostor' })); // reuses a's slot
+
+    expect(result.views().map((v) => v.get(Tag).n)).toEqual(['b']);
+    expect(result.first()?.entity).toBe(b);
+    expect(result.one().get(Tag).n).toBe('b');
+    const visited: string[] = [];
+    result.forEach((v) => visited.push(v.get(Tag).n));
+    expect(visited).toEqual(['b']);
+  });
+
+  it('a view held past its entity\u2019s despawn reports absent, never another entity', () => {
+    const w = createWorld({ seed: 1 });
+    const a = w.spawn(Tag({ n: 'a', x: 1 }));
+    const view = w.query({ has: [Tag] }).one();
+    expect(view.get(Tag).n).toBe('a');
+
+    w.despawn(a);
+    w.spawn(Tag({ n: 'impostor', x: 999 })); // same slot, new generation
+
+    expect(view.tryGet(Tag)).toBeUndefined();
+    expect(view.has(Tag)).toBe(false);
+    expect(() => view.get(Tag)).toThrow(/stale/);
+    expect(view.entity).toBe(a); // the handle it was created with, not the impostor's
+  });
+
+  it('despawning the row you are standing on is still safe', () => {
+    const w = createWorld({ seed: 1 });
+    for (const n of ['a', 'b', 'c']) w.spawn(Tag({ n }));
+    const seen: string[] = [];
+    for (const view of w.query({ has: [Tag] })) {
+      seen.push(view.get(Tag).n);
+      w.despawn(view.entity);
+    }
+    expect(seen).toEqual(['a', 'b', 'c']);
+    expect(w.entityCount).toBe(0);
+  });
+});
+
+describe('World — restore validates its input (minor)', () => {
+  function baseSnapshot(): WorldSnapshot {
+    const w = createWorld({ seed: 1 });
+    w.spawn(Name({ value: 'a' }));
+    return JSON.parse(JSON.stringify(w.snapshot())) as WorldSnapshot;
+  }
+
+  function expectInvalid(mutate: (s: WorldSnapshot) => void, pathFragment: string): void {
+    const snap = baseSnapshot();
+    mutate(snap);
+    const w = createWorld({ seed: 1 });
+    try {
+      w.restore(snap);
+    } catch (err) {
+      expect(err).toBeInstanceOf(DiagnosticError);
+      const d = (err as DiagnosticError).diagnostics[0] as Diagnostic;
+      expect(d.code).toBe(CoreDiagnosticCode.InvalidSnapshot);
+      expect(d.location?.path).toContain(pathFragment);
+      return;
+    }
+    throw new Error(`expected restore to reject the snapshot (${pathFragment})`);
+  }
+
+  it('rejects an out-of-range entity id instead of producing a world that hashes "NaN"', () => {
+    // Pre-fix: restore accepted this and the resulting snapshot contained `"id": "NaN"`.
+    expectInvalid((s) => ((s.entities[0] as { id: string }).id = '999999999999999'), 'id');
+    expectInvalid((s) => ((s.entities[0] as { id: string }).id = 'not-a-number'), 'id');
+    expectInvalid((s) => ((s.entities[0] as { id: string }).id = '0'), 'id');
+  });
+
+  it('rejects a stale generation, a duplicated slot and a live-but-free slot', () => {
+    expectInvalid(
+      (s) => ((s.entities[0] as { id: string }).id = String(makeEntity(0, 7))),
+      'entities[0].id',
+    );
+    expectInvalid((s) => {
+      (s.entities as unknown[]).push({ ...(s.entities[0] as object) });
+    }, 'entities[1].id');
+    expectInvalid((s) => ((s.allocator as { free: number[] }).free = [0]), 'entities[0].id');
+  });
+
+  it('rejects a malformed version, tick, allocator or PRNG state', () => {
+    expectInvalid((s) => ((s as { version: number }).version = 2), 'version');
+    expectInvalid((s) => ((s as { tick: number }).tick = -1), 'tick');
+    expectInvalid((s) => ((s as { tick: number }).tick = 1.5), 'tick');
+    expectInvalid((s) => ((s as { prng: unknown }).prng = { s: [1, 2, 3, -4] }), 'prng.s');
+    expectInvalid((s) => ((s.allocator as { slots: number[] }).slots = [0]), 'allocator.slots[0]');
+    expectInvalid((s) => ((s.allocator as { free: number[] }).free = [42]), 'allocator.free[0]');
+  });
+
+  it('still accepts every snapshot the world itself produces', () => {
+    const w = createWorld({ seed: 1 });
+    w.spawn(Name({ value: 'a' }), Transform());
+    const b = w.spawn(Transform());
+    w.despawn(b); // leave a free slot and a bumped generation behind
+    w.spawn(Transform());
+    const restored = createWorld({ seed: 2 });
+    expect(() => restored.restore(w.snapshot())).not.toThrow();
+    expect(restored.hash()).toBe(w.hash());
+  });
+});
+
+describe('World — entity generation cannot silently overflow (minor)', () => {
+  it('refuses to recycle a slot past the exactly-representable generation', () => {
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn();
+    // Fast-forward the allocator to the last generation a float64 handle encodes exactly.
+    const snap = w.snapshot() as unknown as { allocator: { slots: number[] }; entities: unknown[] };
+    snap.allocator.slots[0] = MAX_ENTITY_GENERATION;
+    (snap.entities[0] as { id: string }).id = String(makeEntity(0, MAX_ENTITY_GENERATION));
+    w.restore(snap as unknown as WorldSnapshot);
+
+    const last = w.query({}).entities()[0] as number;
+    // Pre-fix: the generation rolled past 2^21 and two distinct entities on an odd slot packed
+    // to the same handle — an alive-but-unaddressable entity.
+    expect(() => w.despawn(last as never)).toThrow(/recycled/);
+    expect(String(e)).toBeTruthy();
+  });
+
+  it('makeEntity rejects a generation it cannot represent exactly', () => {
+    expect(() => makeEntity(1, MAX_ENTITY_GENERATION + 1)).toThrow(RangeError);
+    // The very last exactly-representable handle.
+    expect(makeEntity(2 ** 32 - 1, MAX_ENTITY_GENERATION)).toBe(Number.MAX_SAFE_INTEGER);
   });
 });
