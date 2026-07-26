@@ -321,6 +321,57 @@ export const fellOutOfWorldTest = defineGameTest({
 });
 
 /**
+ * The whole winning route, driven **after the player is already dead**.
+ *
+ * This is `critterGoreTest`'s script with the ferry and jump beats left in: the player is gored on
+ * the plateau at t91, and the corpse is then steered along the exact route that completes the
+ * level. Before `game.goal` gained its `none: [Dead]` guard this run emitted `player.died` at t91
+ * **and** `level.completed` at t328 — making the doc's win and lose conditions true at the same
+ * time.
+ *
+ * It is also the honest record of what a *partially* dead entity still does here. The mode has no
+ * `Dead` guard anywhere, so the corpse is still steered, still falls, still boards the ferry and
+ * still jumps — `player.jumped` fires **three times after death**, twice from a body with no
+ * pilot. Those are `packages/mode-platformer`'s to fix (reported); the assertions below pin the
+ * one facet the game owns, and the counts pin the rest so the picture cannot quietly get worse.
+ */
+export const corpseCannotFinishTest = defineGameTest({
+  name: 'coyote gap (lose): a corpse driven to the flag does not finish the level',
+  scene: 'games/platformer/levels/coyote-gap.scene.json',
+  options: { plugin: coyoteGapPlugin, captureHistory: true },
+  ticks: 400,
+  seed: 'poc-platformer',
+  input: `
+    hold Right 0..126
+    press Jump @28
+    hold Right 138..152
+    hold Right 190..400
+    press Jump @288
+    press Jump @317
+  `,
+  expect(result) {
+    expectSim(result)
+      .eventEmitted('player.died', 1)
+      // The point of the run: the corpse reaches the flag and the level is still not completed.
+      .eventNotEmitted('level.completed')
+      // Reported, not merely asserted: name the dead player so a failure says *what* is dead.
+      // `entityCount` prints the matched entities, so this reads as `#0 "player"` in the message.
+      .entityCount({ has: ['Player', 'Dead'] }, 1)
+      .holds('the player died at the critter, mid-level, long before the flag', (r) => {
+        const death = deathOf(r);
+        return death?.cause === 'critter' && death.tick === 91;
+      })
+      .holds(
+        'the corpse really was driven to the goal pillar (x >= 36), it just did not count',
+        (r) => {
+          const end = playerAt(r, 399);
+          return end.x >= 36 && end.grounded;
+        },
+      );
+  },
+});
+
+/**
  * Beat 3, failed: the winning script with the stomp press (`@74`) removed. The player runs into
  * the critter on the flat instead of dropping onto it, so `game.stompgore` takes the *gore*
  * branch. The discrimination is the point: this run must emit `player.died{cause:'critter'}` and

@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { runScene, runGameTest } from '@aegis/harness';
 import type { GameTest } from '@aegis/harness';
 import coyoteGap, {
+  corpseCannotFinishTest,
   critterGoreTest,
   fellOutOfWorldTest,
   GOLDEN_TRAJECTORY,
@@ -57,6 +58,13 @@ describe('Coyote Gap — acceptance', () => {
 
   it('is gored (not a stomp) when the critter is walked into', async () => {
     await expectGameTest(critterGoreTest);
+  });
+
+  // "The dead thing stops participating" — the facet the game owns. The mode still steers, falls,
+  // carries and even jumps the corpse (reported to the PM), but the level must not be completable
+  // by one.
+  it('does not let a corpse driven to the flag finish the level', async () => {
+    await expectGameTest(corpseCannotFinishTest);
   });
 
   it('is deterministic: identical hash across independent runs and on replay', async () => {

@@ -230,45 +230,57 @@ const sectorBreach = defineGameTest({
 
 /**
  * The lose path: open the blast door, jog north, and never jump. The player walks off the south
- * lip of the coolant pit, drops to its floor at `y = -3` and the `hazard` `Trigger` kills it.
- * Input stops at the pit, as a fallen player's would.
+ * lip of the coolant pit, drops to its floor at `y = -3`, and the `hazard` `Trigger` kills it —
+ * and then the run **keeps driving Forward all the way to the exit**.
  *
- * This exists because `eventNotEmitted('player.died')` in the winning run proves nothing on its
- * own — it passes even with the hazard system deleted, because no run in the suite ever emitted
- * a death. Pinning the death here, once and with the right `cause`, is what gives that assertion
- * its meaning, and it is the only test of "Lose: fell in the coolant pit" the doc promises.
+ * That tail is the point. `fps.intake` has no `Dead` guard (reported to the PM), so the mode goes
+ * on steering the corpse; it climbs out of the pit (the capsule snaps up to the next cell's floor)
+ * and walks into the exit trigger. Before `hazardSystem` latched a real death and `goalSystem`
+ * learned to ignore a dead player, this exact run emitted `player.died` **and** `level.completed`
+ * — the documented win and lose conditions true at once. Now it emits only the death.
+ *
+ * It also exists because `eventNotEmitted('player.died')` in the winning run proves nothing on its
+ * own: it passes even with the hazard system deleted, since no run in the suite would emit a death.
  */
 const sectorBreachPitDeath = defineGameTest({
   name: 'sector breach (lose): walk into the coolant pit without jumping',
   scene: SCENE,
-  options: { plugin: sectorBreachPlugin, captureHistory: false },
-  ticks: 240,
+  options: { plugin: sectorBreachPlugin, captureHistory: true },
+  ticks: 300,
   seed: SEED,
   input: `
     aim 90 0 @8
     press Fire @20
     aim 0 0 @32
-    axis Forward 1 40..150
+    axis Forward 1 40..280
   `,
   expect(result) {
     expectSim(result)
       // The run legitimately got as far as the corridor: the door really did open.
       .eventEmitted('door.opened', 1)
       .eventEmitted('player.died', 1)
+      // Driven into the exit trigger and still not a win.
       .eventNotEmitted('level.completed')
       .eventNotEmitted('enemy.killed')
+      // Reported, not merely asserted: `entityCount` prints the matched entities, so a failure
+      // names the entity that is (or is not) dead rather than just a number.
+      .entityCount({ has: ['Player', 'Dead'] }, 1)
       .holds('player.died reports cause "coolant" on the tick the feet enter the pit', (r) => {
         const ev = r.events.history().find((e) => e.type === 'player.died');
         const data = ev?.data as { cause: string; tick: number } | undefined;
         return data?.cause === 'coolant' && data.tick === 146;
       })
       .holds(
-        'the player came to rest on the pit floor, three units below the datum',
-        (r) =>
-          r
-            .query({ has: ['Player', 'Transform'] })
-            .one()
-            .get(Transform).position.y === -3,
+        'it really did drop into the pit — feet below the floor datum, inside the T cells',
+        (r) => {
+          // The pit's `T` cells span world z 11.5–13.5 with floor −3; the hazard volume sits in it.
+          const at = playerAt(r, 146);
+          return at.y < 0 && at.z > 11.5 && at.z < 13.5;
+        },
+      )
+      .holds(
+        'the corpse was then driven into the exit trigger, and it still did not count as a win',
+        (r) => playerAt(r, 299).z >= 17,
       );
   },
 });

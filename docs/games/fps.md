@@ -427,13 +427,21 @@ through hash drift. The ones that were not load-bearing before the mode-capabili
 > strafe around), which changes the tilemap, the scene, the floorplan diagram and the golden hashes.
 > The `raycastGrid` _function_ is load-bearing via the shot at t4; only that one call site is not.
 >
-> **Second known gap:** `player.died` is not terminal in this game, and for two independent reasons.
-> `fps.intake` has no `none: [Dead]` guard (the same defect as `platformer.intake`), and
-> `hazardSystem` emits `player.died` _without_ zeroing `Health`, so `Dead` never latches at all for
-> a pit death — meaning even the mode-level guard would not catch this one. On top of that
-> `goalSystem` has no dead check. A run that keeps driving `Forward` after the pit death therefore
-> climbs back out (the capsule snaps up to the next cell's floor) and reaches the exit at t200. The
-> lose playthrough stops input at the pit, as a fallen player's would, which is honest but sidesteps
-> the issue. Fixing it properly is a game-semantics change (zero `Health` on the hazard, then avoid
-> the double `player.died` that `deathMappingSystem` would emit) and moves the golden hash, so it is
-> reported rather than done here.
+> **Second known gap — a dead player kept participating; the two game-owned causes are now fixed.**
+> `fps.intake` has no `none: [Dead]` guard (the same mode-owned defect as `platformer.intake`, and
+> reported alongside it), so the mode still steers the corpse: it climbs out of the pit — the
+> capsule snaps up to the next cell's floor — and walks to the exit. The game-owned causes are
+> fixed here:
+>
+> - `hazardSystem` used to emit `player.died` **without zeroing `Health`**, so `Dead` never latched
+>   for a pit death at all, and even a mode-level intake guard would not have caught this one. It
+>   now zeroes `Health` and latches a `LethalHit{cause}`, letting `@aegis/content`'s `healthSystem`
+>   produce `entity.died` + `Dead` and `deathMappingSystem` re-spell it with the cause — mirroring
+>   `games/platformer`'s proven design.
+> - `goalSystem` now queries `none: [Dead]`.
+>
+> Before both, the lose run emitted `player.died` at t146 **and** `level.completed` at t200 — the
+> documented win and lose conditions true in one run. The playthrough now drives Forward all the way
+> into the exit trigger on purpose, and asserts the death, the pit entry, `Dead` latched on exactly
+> one player, and that the win never fires. Neither change touches the winning run (the player never
+> dies there), so the fps golden hash and trajectory digest are **unchanged**.

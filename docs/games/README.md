@@ -87,7 +87,7 @@ remembering a flag. The three declarations are:
 | `games/iso`        | `./dist/server-vault.js#serverVaultPlugin` |
 | `games/fps`        | `./dist/index.js#sectorBreachPlugin`       |
 
-## Three rules learned from the mode-capability audit
+## Five rules learned from the mode-capability audit
 
 An independent audit ran ~60 source mutations and found that 7 of 12 named mode capabilities could
 be broken with all three game tests green. The structural causes are worth stating once, here,
@@ -110,6 +110,18 @@ because they apply to any future game in this repo:
    them, not the diagnosis. Where the winning run does not naturally exercise a mechanism (fps
    never touches a wall, so capsule collision and sliding were invisible), add a small **probe
    playthrough** that does, rather than settling for the hash.
+4. **"The dead thing stops participating" has as many facets as there are systems touching it.**
+   A check aimed at one facet goes green on every other. A corpse that stops responding to input
+   but keeps accumulating gravity is still broken; so is one that stops moving but still completes
+   the level. Assert **each** facet, and assert it **over a window of ticks** — a single-tick check
+   passes on a body that merely happens to be momentarily stationary. `docs/games/platformer.md`
+   carries the worked enumeration, system by system, with the owner of each.
+5. **Be as deliberate about what a losing run _reports_ as about what it asserts.** The renderer
+   session found the dead-player defect only because its capture reported dead-entity counts
+   instead of silently photographing a lost run — the first screenshot showed a corpse standing on
+   a plateau looking perfectly healthy. Prefer assertions whose failure message names the thing
+   (`entityCount({ has: ['Player', 'Dead'] }, 1)` prints the matched entities; a bare `holds` prints
+   only its label), and put the measured numbers in the label.
 
 ## Deliberately _not_ covered
 

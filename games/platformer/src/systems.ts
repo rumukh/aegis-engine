@@ -152,7 +152,15 @@ const deathMapSystem: System = {
 };
 
 /**
- * Whether the player's collider centre is inside a goal trigger.
+ * Whether the **living** player's collider centre is inside a goal trigger.
+ *
+ * The `none: [Dead]` is load-bearing, not defensive: without it a corpse still finishes the level.
+ * Nothing in the mode stops driving a dead body — `platformer.intake` keeps steering it and
+ * `platformer.gravity` keeps integrating it (both reported to the PM) — so a run that goes on
+ * holding Right after a gore death rides the ferry, coyote-jumps, buffers onto the pillar and
+ * emits `level.completed` at t328, in the same run that emitted `player.died` at t91. That makes
+ * the documented win **and** lose conditions true simultaneously. The game cannot stop the mode
+ * moving the corpse, but it can refuse to call it a win. Proven by `corpseCannotFinishTest`.
  *
  * A discriminated union rather than a `{ hit, entity }` pair: the miss branch has no `entity`
  * field at all, so there is nowhere to park a fake handle and nothing invalid can reach
@@ -160,7 +168,7 @@ const deathMapSystem: System = {
  * would have rejected the moment this game was actually compiled.)
  */
 function playerInGoal(world: World): { hit: true; entity: Entity } | { hit: false } {
-  const pv = world.query({ has: [Player, Transform] }).first();
+  const pv = world.query({ has: [Player, Transform], none: [Dead] }).first();
   if (!pv) return { hit: false };
   const p = pv.get(Transform).position;
   for (const gv of world.query({ has: [Trigger, Transform], none: [Triggered] }).views()) {
