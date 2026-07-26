@@ -4,7 +4,7 @@
  * Advance a scene to a tick, then *see* it without a GPU: dump world state (every entity and its
  * components as canonical JSON), filter entities with a query, print the structured semantic
  * frame, or print the ASCII view. This is how an agent answers "what is actually in the world,
- * and where is everything?" purely from text.
+ * and where is everything?" purely from text — including *which plugin* produced that world.
  * @packageDocumentation
  */
 import { canonicalStringify } from '@aegis/core';
@@ -21,17 +21,18 @@ import {
 } from '../format.js';
 import { describeQuery, parseQuery } from '../query.js';
 import type { Command, CommandContext } from '../command.js';
+import { describePluginSource } from '../plugin.js';
 import {
   flagBool,
   flagChoice,
-  flagInt,
   flagSeed,
   flagString,
+  flagTicks,
   readText,
   requirePositional,
   resolvePath,
 } from './shared.js';
-import { asciiOf, frameOf, loadScene, resolvePlugin } from './sim.js';
+import { assertSceneRunnable, asciiOf, frameOf, loadScene, resolveRunPlugin } from './sim.js';
 
 const VIEWS = ['world', 'frame', 'ascii'] as const;
 
@@ -42,8 +43,10 @@ const USAGE = [
   '',
   '  --tick <n>        Advance to tick <n> before inspecting (default: 0 = initial state).',
   "  --mode <mode>     platformer | iso | fps (default: the scene's mode).",
+  '  --plugin <spec>   Plugin to run: <module>#<export>, a package, or a mode name.',
   '  --input <file>    Input-script (.input DSL) to drive the run.',
   '  --seed <value>    PRNG seed override.',
+  '  --max-ticks <n>   Raise the tick ceiling (default: 1000000).',
   '  --view <kind>     world | frame | ascii (default: world).',
   '  --query <expr>    Filter the world dump, e.g. "has:Player none:Dead" (world view).',
   '  --json            Emit as JSON.',
@@ -60,16 +63,28 @@ export const inspectCommand: Command = {
   name: 'inspect',
   summary: 'Inspect world, semantic frame or ASCII view at a tick.',
   usage: USAGE,
+  flags: {
+    tick: 'value',
+    mode: 'value',
+    plugin: 'value',
+    input: 'value',
+    seed: 'value',
+    'max-ticks': 'value',
+    view: 'value',
+    query: 'value',
+  },
   async run(ctx: CommandContext): Promise<number> {
     const { args, io } = ctx;
     const sceneArg = requirePositional(args, 0, 'scene', 'aegis inspect <scene>');
-    const tick = flagInt(args, 'tick', { min: 0 }) ?? 0;
+    const tick = flagTicks(args, 'tick', false);
     const view = flagChoice(args, 'view', VIEWS, 'world');
     const loaded = loadScene(ctx, sceneArg);
-    const modeName = flagString(args, 'mode') ?? loaded.scene.mode;
-    const plugin = resolvePlugin(ctx, loaded.scene, flagString(args, 'mode'));
+    const resolved = await resolveRunPlugin(ctx, loaded.scene, loaded.abs);
+    assertSceneRunnable(loaded.scene, loaded.ref, resolved);
+    const modeName = resolved.plugin.mode;
 
-    const options: RunOptions = { plugin, ticks: tick };
+    // Only the final tick is inspected, so per-tick hashes would be retained and never read.
+    const options: RunOptions = { plugin: resolved.plugin, ticks: tick, captureTickHashes: false };
     const seed = flagSeed(args);
     if (seed !== undefined) options.seed = seed;
     const inputFile = flagString(args, 'input');
@@ -84,7 +99,7 @@ export const inspectCommand: Command = {
       return Exit.Ok;
     }
     if (view === 'ascii') {
-      const ascii = asciiOf(result, modeName);
+      const ascii = asciiOf(result, modeName, undefined, result.world);
       io.out(wantJson ? json(ascii) : formatAscii(ascii) + '\n');
       return Exit.Ok;
     }
@@ -106,6 +121,7 @@ export const inspectCommand: Command = {
         json({
           scene: loaded.ref,
           mode: modeName,
+          plugin: { spec: resolved.spec, source: resolved.source },
           tick: result.tick,
           seed: result.seed,
           hash: result.hash,
@@ -123,6 +139,7 @@ export const inspectCommand: Command = {
       formatFields([
         ['scene', loaded.ref],
         ['mode', modeName],
+        ['plugin', describePluginSource(resolved)],
         ['tick', String(result.tick)],
         ['seed', String(result.seed)],
         ['hash', result.hash],

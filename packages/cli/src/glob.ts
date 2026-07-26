@@ -142,3 +142,8 @@ export function globAll(patterns: readonly string[], cwd: string): string[] {
   for (const pattern of patterns) for (const f of globFiles(pattern, cwd)) all.add(f);
   return [...all].sort();
 }
+
+/** Whether a path argument contains a wildcard and therefore needs expanding. */
+export function isGlob(pattern: string): boolean {
+  return WILDCARD.test(pattern);
+}

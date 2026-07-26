@@ -100,6 +100,33 @@ export function flagChoice<T extends string>(
 }
 
 /**
+ * Default ceiling on a single command's tick count.
+ *
+ * A run is O(ticks) work and the harness allocates per tick, so an implausible `--ticks` used to
+ * die 35 seconds later in a V8 out-of-memory abort with a native stack trace and no diagnostic
+ * code at all. One million ticks is ~4.6 hours of simulated time at 60Hz — far beyond any real
+ * scripted playthrough, and still a bounded, explainable refusal rather than a crash.
+ */
+export const DEFAULT_TICK_LIMIT = 1_000_000;
+
+/** Read a tick count, refusing implausible values before they become an out-of-memory abort. */
+export function flagTicks(args: ParsedArgs, key = 'ticks', required = true): number {
+  const ticks = flagInt(args, key, { required, min: 0 }) ?? 0;
+  const limit = flagInt(args, 'max-ticks', { min: 1 }) ?? DEFAULT_TICK_LIMIT;
+  if (ticks > limit) {
+    throw new AegisCliError(
+      CliCode.TickLimitExceeded,
+      `--${key} ${ticks} exceeds the tick limit of ${limit}.`,
+      {
+        fix: `A run costs time and memory proportional to its tick count. Simulate fewer ticks (a scripted playthrough is typically a few hundred to a few thousand), or raise the ceiling deliberately with --max-ticks ${ticks}.`,
+        data: { ticks, limit, flag: key },
+      },
+    );
+  }
+  return ticks;
+}
+
+/**
  * Interpret a `--seed` flag: an all-digits value becomes a number (so hashes match numeric
  * scene seeds), anything else stays a string. Absent → `undefined` (the scene/default wins).
  */
