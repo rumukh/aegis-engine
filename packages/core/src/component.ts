@@ -35,14 +35,17 @@ export function nonFiniteAtWrite(
     entity === undefined
       ? `${componentId}${err.path === '' ? '' : `.${err.path}`}`
       : `entities[${entity}].components.${componentId}${err.path === '' ? '' : `.${err.path}`}`;
+  const field = err.path === '' ? '(the whole value)' : err.path;
+  const who = entity === undefined ? 'no entity yet' : `entity ${entity}`;
   return new DiagnosticError([
     {
       code: CoreDiagnosticCode.NonFiniteState,
       severity: 'error',
       message:
-        `Cannot write a non-finite number (${String(err.value)}) to ${where}. World state must ` +
-        `serialise to JSON (CHARTER principle 4), and JSON has no representation for ` +
-        `NaN or ±Infinity — it would be silently written out as null.`,
+        `Cannot write a non-finite number (${String(err.value)}) to ${where} — ` +
+        `component "${componentId}", field "${field}", ${who}. World state must serialise to ` +
+        `JSON (CHARTER principle 4), and JSON has no representation for NaN or ±Infinity — it ` +
+        `would be silently written out as null.`,
       location: { path: where },
       fix:
         `Guard the computation that produced ${String(err.value)} — a divide-by-zero, a sqrt of ` +
@@ -51,6 +54,7 @@ export function nonFiniteAtWrite(
       data: {
         entity: entity ?? null,
         component: componentId,
+        field,
         path: where,
         value: String(err.value),
       },

@@ -93,7 +93,16 @@ export interface WorldConfig {
   recordEvents?: boolean;
 }
 
-/** Build the structured diagnostic for a non-finite value found while snapshotting. */
+/**
+ * Build the structured diagnostic for a non-finite value found while snapshotting.
+ *
+ * Detection on the live-mutation path is necessarily later than production — catching
+ * `world.get(e, C).v = 0 / 0` at a write boundary would mean proxying every component read —
+ * so **this diagnostic is the entire compensation for that gap**. "Loud corruption with no
+ * address" is barely better than silent corruption, so the *message text* names the component,
+ * the field and the entity, not just the structured `location`/`data`: a caller that only logs
+ * `err.message` must still get a usable address.
+ */
 function nonFiniteDiagnostic(
   err: NonFiniteValueError,
   where: string,
@@ -101,18 +110,19 @@ function nonFiniteDiagnostic(
   data: Readonly<Record<string, unknown>>,
 ): DiagnosticError {
   const path = err.path === '' ? where : `${where}.${err.path}`;
+  const field = err.path === '' ? '(the whole value)' : err.path;
   const diagnostic: Diagnostic = {
     code: CoreDiagnosticCode.NonFiniteState,
     severity: 'error',
     message:
-      `World state holds a non-finite number (${String(err.value)}) on ${subject}. ` +
-      `The world cannot be serialised or hashed while it does.`,
+      `World state holds a non-finite number (${String(err.value)}) at ${path} — ` +
+      `${subject}, field "${field}". The world cannot be serialised or hashed while it does.`,
     location: { path },
     fix:
       `Find the system that wrote ${path}. ${String(err.value)} almost always comes from a ` +
       `divide-by-zero, a sqrt of a negative, an uninitialised accumulator, or an out-of-domain ` +
       `angle. Guard the input rather than the output.`,
-    data: { ...data, path, value: String(err.value) },
+    data: { ...data, field, path, value: String(err.value) },
   };
   return new DiagnosticError([diagnostic]);
 }
@@ -172,26 +182,31 @@ function refId(ref: ComponentRef): string {
 /** Rejection raised when a non-finite value is written into a resource. */
 function nonFiniteAtWriteResource(resourceId: string, err: NonFiniteValueError): DiagnosticError {
   const where = `resources.${resourceId}${err.path === '' ? '' : `.${err.path}`}`;
+  const field = err.path === '' ? '(the whole value)' : err.path;
   return new DiagnosticError([
     {
       code: CoreDiagnosticCode.NonFiniteState,
       severity: 'error',
       message:
-        `Cannot write a non-finite number (${String(err.value)}) to ${where}. World state must ` +
-        `serialise to JSON (CHARTER principle 4), and JSON has no representation for ` +
-        `NaN or ±Infinity — it would be silently written out as null.`,
+        `Cannot write a non-finite number (${String(err.value)}) to ${where} — ` +
+        `resource "${resourceId}", field "${field}". World state must serialise to JSON ` +
+        `(CHARTER principle 4), and JSON has no representation for NaN or ±Infinity — it would ` +
+        `be silently written out as null.`,
       location: { path: where },
       fix: `Guard the computation that produced ${String(err.value)} before setting the resource.`,
-      data: { entity: null, component: resourceId, path: where, value: String(err.value) },
+      data: {
+        entity: null,
+        component: resourceId,
+        field,
+        path: where,
+        value: String(err.value),
+      },
     },
   ]);
 }
 
-/** Raise a structured {@link CoreDiagnosticCode.InvalidSnapshot} for `path`. */ function invalidSnapshot(
-  path: string,
-  message: string,
-  fix: string,
-): DiagnosticError {
+/** Raise a structured {@link CoreDiagnosticCode.InvalidSnapshot} for `path`. */
+function invalidSnapshot(path: string, message: string, fix: string): DiagnosticError {
   return new DiagnosticError([
     {
       code: CoreDiagnosticCode.InvalidSnapshot,

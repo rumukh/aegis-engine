@@ -357,7 +357,63 @@ describe('World — non-finite state (C1)', () => {
     expect(d.data?.entity).toBe(String(e));
     expect(d.data?.entityName).toBe('hero');
     expect(d.data?.component).toBe('Transform');
+    expect(d.data?.field).toBe('position.x');
     expect(d.fix).toBeTruthy();
+  });
+
+  it('puts the component, the field AND an entity id in the message TEXT, not only in data', () => {
+    // Detection on the live-mutation path is necessarily later than production, so this
+    // diagnostic is the entire compensation for that gap. A caller that only logs
+    // `err.message` — which is most callers — must still get a usable address, otherwise we
+    // have traded silent corruption for loud corruption with no address. Pre-fix the bare
+    // encoder error read: "canonicalStringify: non-finite number (Infinity) is not
+    // serialisable" — no entity, no component, no field.
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(Name({ value: 'hero' }), Transform());
+    w.getOrThrow(e, Transform).position.x = 0 / 0;
+
+    for (const call of [() => w.snapshot(), () => w.hash(), () => w.clone()]) {
+      let text = '';
+      try {
+        call();
+      } catch (err) {
+        text = String(err);
+      }
+      expect(text).toContain('Transform'); // component id
+      expect(text).toContain('position.x'); // field name
+      expect(text).toContain(String(e)); // entity identifier
+      expect(text).toContain('hero'); // ...and its authoring name
+      expect(text).toContain('NaN'); // the offending value
+      expect(text).toContain(CoreDiagnosticCode.NonFiniteState); // the stable code
+    }
+  });
+
+  it('the write-boundary rejections name all three in their message text too', () => {
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn();
+    const Cfg = defineResource<{ gravity: { y: number } }>('Cfg', () => ({ gravity: { y: 0 } }));
+
+    const textOf = (fn: () => unknown): string => {
+      try {
+        fn();
+      } catch (err) {
+        return String(err);
+      }
+      throw new Error('expected a rejection');
+    };
+
+    const addText = textOf(() => w.add(e, Transform, { position: { x: NaN, y: 0, z: 0 } }));
+    expect(addText).toContain('Transform');
+    expect(addText).toContain('position.x');
+    expect(addText).toContain(String(e));
+
+    const spawnText = textOf(() => Transform({ position: { x: 0, y: Infinity, z: 0 } }));
+    expect(spawnText).toContain('Transform');
+    expect(spawnText).toContain('position.y');
+
+    const resText = textOf(() => w.setResource(Cfg, { gravity: { y: -Infinity } }));
+    expect(resText).toContain('Cfg');
+    expect(resText).toContain('gravity.y');
   });
 
   it('refuses to hash or clone a live-mutated ±Infinity', () => {
