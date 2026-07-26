@@ -13,7 +13,7 @@
  * @packageDocumentation
  */
 import { defineComponent, defineTag, Name } from '@aegis/core';
-import type { ComponentType, System, Vec3 } from '@aegis/core';
+import type { ComponentType, Entity, System, Vec3 } from '@aegis/core';
 
 /** Data of {@link Health}. */
 export interface HealthData {
@@ -87,8 +87,12 @@ export const Triggered: ComponentType<Record<string, never>> = defineTag('Trigge
 
 /** Payload of the generic `entity.died` event. */
 export interface EntityDiedEvent {
-  /** The entity that reached zero health. */
-  entity: number;
+  /**
+   * The entity that reached zero health — a real {@link Entity} handle, not a bare number.
+   * Consumers pass it straight to `world.has` / `world.get` / `world.add`; the brand is what
+   * stops a slot index or an array position being mistaken for a live handle at that boundary.
+   */
+  entity: Entity;
   /** Its `Name` value, if it had one — handy in assertion messages and semantic mapping. */
   name: string | null;
 }
