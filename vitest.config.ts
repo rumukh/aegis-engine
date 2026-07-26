@@ -47,6 +47,14 @@ export default defineConfig({
       'games/*/src/**/*.{test,spec}.ts',
       'games/*/test/**/*.{test,spec}.ts',
     ],
+    // Vitest's 5s default is wrong for this project. A determinism proof legitimately runs the
+    // same scripted playthrough two or three times end to end — the fps PoC is three 600-tick
+    // first-person simulations plus a full per-tick hash comparison in a single test, and it has
+    // been measured between 4.6s and 6.8s depending on how warm the machine is. That is not a
+    // slow test to be fixed; it is the work the charter asks for. Left at the default it fails
+    // intermittently *by timeout*, which in a deterministic engine reads exactly like a
+    // determinism regression and sends whoever sees it hunting a bug that isn't there.
+    testTimeout: 30_000,
     environment: 'node',
     reporters: ['default'],
   },
