@@ -60,11 +60,18 @@ removes the wall, emitting `door.opened`. The button is on the **east wall**, so
 **The grunt** — a game `GruntAiSystem` (deterministic, RNG-free):
 
 - Stands at the far end of the security room, facing −Z (toward the incoming player), `Health 50`.
-- When the player is within 15 u and roughly in front, it fires every 30 ticks, dealing 10 damage →
-  `damage.taken` on the player. Cadence is a pure function of tick, so damage totals are
+- When the player is within **6 u** and roughly in front (dot-product gate) and has clear
+  line-of-sight (a `raycastGrid` probe — walls block it), it fires every **90 ticks**, dealing 10
+  damage → `damage.taken` on the player. Cadence is a pure function of tick, so damage totals are
   reproducible.
-- Dies at `Health ≤ 0` → `enemy.killed`. Two player hits (25+25) kill it; the player expects to
-  take **at most one** grunt shot (−10 → Health 90) if it shoots on cue.
+- Dies at `Health ≤ 0` → `enemy.killed`. Two player hits (25+25) kill it; the player takes **one**
+  grunt shot (−10 → Health 90) crossing into its close-quarters engagement range.
+
+> **Tuning note (reality, not intent):** the design's "within 15 u, every 30 ticks" made the grunt
+> open fire the instant the blast door exposed line-of-sight down the whole corridor, landing ~5
+> shots and dropping Health to ~50 — below the `≥ 70` invariant. Shrinking the engagement to a
+> 6 u close-quarters range on a 90-tick cadence makes it a doorway guard: exactly one shot lands
+> before the two-shot kill (Health 90, a 20-point margin under the invariant).
 
 **The coolant pit** — a `hazard` `Trigger` volume (from `@aegis/content`) in the floor gap; entering
 it emits `player.died` (the player fell in). Clearing it requires a jump.
@@ -74,13 +81,19 @@ it emits `player.died` (the player fell in). Clearing it requires a jump.
 > **Engine scope (per PM ruling — confirmed):** 3D level geometry is authored as a **top-down
 > tilemap floorplan** (ADR-0003) that `mode-fps` extrudes — `#` cells become full-height solid
 > walls, `.` is floor. Hand-placed 3D "brush" entities were rejected (they violate charter
-> principle 1 — an agent must author an FPS level by typing ASCII). The floorplan additionally
-> supports an **optional per-tile floor and ceiling height** (a numeric `heights` layer keyed by
-> the same grid), so the coolant pit — and any verticality — is expressible in the same text
-> format: a pit is a tile whose floor height is below 0 (or, for a bottomless gap, a `T` tile with
-> no floor). `mode-fps` therefore (a) builds capsule collision from the extruded, per-tile-height
-> floorplan and (b) resolves `Hitscan` rays against both that geometry and entities (`Button`,
-> grunt). Shared `Health` and the `Trigger`/volume component live in `@aegis/content`.
+> principle 1 — an agent must author an FPS level by typing ASCII). Per-tile **floor and ceiling
+> heights** ride on each legend entry's `data` (`{ floor, ceil, door, hazard }`) rather than a
+> separate parallel grid — one glyph carries both its footprint and its verticality, so the coolant
+> pit is simply a `T` glyph with `floor: -3`. `mode-fps` therefore (a) builds capsule collision
+> from the extruded, per-tile-height floorplan and (b) resolves `Hitscan` rays against both that
+> geometry and entities (`Button`, grunt). Shared `Health` and the `Trigger`/volume component live
+> in `@aegis/content`.
+>
+> **Implementation deviation (reality):** the heights are encoded on the legend's `data` object
+> (above), not as a second numeric layer keyed to the grid — a `T` tile is `{ floor: -3, ceil: 4,
+hazard: true }`, a `#` is `{ solid: true, floor: 0, ceil: 4 }`. Ceilings are **4 u**, not 3: the
+> jump apex lifts the capsule's feet to ~1.33 u and the capsule is 1.8 u tall (head at ~3.13 u), so
+> a 3 u ceiling would clip the player's head mid-jump.
 
 ## Level layout
 
@@ -107,23 +120,28 @@ Top-down floorplan (row 0 = z 20 = far/north; bottom row = z 0 = spawn/south):
       |  # . . . . G . . . . #      Room C — security room + exit
    16 |  # . . . . . . . . . #
       |  # # # # . . . # # # #
-   14 |          # . . . #
-      |          # . T . #             corridor B (coolant pit T at z≈9)
-      |          # . T . #
-      |          # . . . #
-   10 |          # . . . #
-      |          # . . . #
-    8 |  # # # # . = . # # # #      blast door '=' at the Room A ↔ corridor mouth
-      |  # . . . . . . . . B #      button 'B' on the EAST wall of Room A
+   14 |  # # # # . . . # # # #
+      |  # # # # T T T # # # #          corridor B (coolant pit T spans z 12–13)
+      |  # # # # T T T # # # #
+      |  # # # # . . . # # # #
+   10 |  # # # # . . . # # # #
+      |  # # # # . . . # # # #
+    8 |  # # # # # = # # # # #      blast door '=' fully gates the corridor mouth
+      |  # # # # # . # # # # #          1-wide neck (z 6–7) below the door
+      |  # # # # # . # # # # #
       |  # . . . . . . . . . #
-      |  # . . . . P . . . . #      Room A — antechamber, player faces +Z
+      |  # . . . . . . . . . #
+      |  # . . . . . . . . . #
+    2 |  # . . . . P . . . B #      Room A — antechamber; player faces +Z, button 'B' east wall
+      |  # . . . . . . . . . #
     0 |  # # # # # # # # # # #
 ```
 
-The floorplan above is the tilemap's `collision` layer; a parallel **`heights` layer** (same grid)
-makes the verticality explicit: every `.`/wall tile has floor 0 / ceiling 3, while the two `T` tiles
-carry a floor height of `-3` (a pit the player falls into if unjumped). A `hazard` `Trigger` volume
-sits in the pit and a goal `Trigger` sits on `E`.
+The floorplan above is the tilemap's `collision` layer; per-tile heights live on each legend
+entry's `data` (`{ floor, ceil, door, hazard }`): every `.`/wall tile has floor 0 / ceiling 4, the
+`=` door is a solid `{ door: true }` wall until the button is hit, and the six `T` tiles carry
+`{ floor: -3, hazard: true }` — a pit the player falls into if unjumped. A `hazard` `Trigger`
+volume sits in the pit and a goal `Trigger` sits on `E`.
 
 The breach reads as four beats, each proving one hard thing:
 
@@ -162,25 +180,31 @@ The breach reads as four beats, each proving one hard thing:
 ## The scripted playthrough
 
 `play/sector-breach.input` (ADR-0004 DSL). Uses `aim` (absolute look), `Fire`, the `Forward` axis
-and `Jump`. Ticks are design intent; tune exact frames against the real physics/AI. Total ≈ **560
-ticks (~9 s sim time)**.
+and `Jump`. The frames below are the **tuned, real** script (the test reads this exact file, so the
+script and the assertions can never drift apart). The run resolves `level.completed` at ~tick 240;
+the test runs **600 ticks** to leave a wide post-completion tail for the whole-timeline invariants.
 
 ```text
-# Sector Breach — a completing run.
+# Sector Breach — scripted playthrough (deterministic, tick-addressed).
 
-aim   90 0   @8           # turn right to face the east-wall button
-press Fire   @20          # blast the panel -> hitscan.hit(Button) -> door.opened
-aim   0 0    @32          # face forward (+Z) again
+# 1. Face the east wall panel and shoot it to open the blast door.
+aim 90 0 @8
+press Fire @20
 
-axis  Forward 1 40..300   # jog north through the opened door and up the corridor
-press Jump   @150         # clear the toxic coolant pit (jump arc carries us over)
+# 2. Face north (into the facility) and advance out of the start room.
+aim 0 0 @32
+axis Forward 1 40..124
 
-# arrive in the security room; the grunt is dead ahead
-press Fire   @330         # first shot  -> enemy.damaged (50 -> 25)
-press Fire   @346         # second shot -> enemy.damaged (25 -> 0) -> enemy.killed
-                          #   (16-tick spacing respects the 12-tick weapon cooldown)
+# 3. Leap the coolant pit — take off just before its south lip.
+press Jump @124
+axis Forward 1 124..170
 
-axis  Forward 1 360..520  # advance past the grunt to the exit trigger -> level.completed
+# 4. Hold at the mouth of the north room and put two rounds into the grunt.
+press Fire @176
+press Fire @192
+
+# 5. Advance to the extraction door.
+axis Forward 1 210..320
 ```
 
 Notes for the implementer:
@@ -195,25 +219,26 @@ Notes for the implementer:
 
 ```ts
 import { defineGameTest, expectSim } from '@aegis/harness';
-import { fpsPlugin } from '@aegis/mode-fps';
+import { sectorBreachPlugin } from '@aegis/game-fps';
 import { Health } from '@aegis/content';
 import { Transform } from '@aegis/core';
 
 export default defineGameTest({
   name: 'sector breach: shoot the door, jump the pit, kill the grunt, reach the exit',
   scene: 'games/fps/levels/sector-breach.scene.json',
-  options: { plugin: fpsPlugin, captureHistory: true },
+  options: { plugin: sectorBreachPlugin, captureHistory: true },
   ticks: 600,
   seed: 'poc-fps',
   input: `
     aim 90 0 @8
     press Fire @20
     aim 0 0 @32
-    axis Forward 1 40..300
-    press Jump @150
-    press Fire @330
-    press Fire @346
-    axis Forward 1 360..520
+    axis Forward 1 40..124
+    press Jump @124
+    axis Forward 1 124..170
+    press Fire @176
+    press Fire @192
+    axis Forward 1 210..320
   `,
   expect(result) {
     expectSim(result)
@@ -254,6 +279,21 @@ export default defineGameTest({
   },
 });
 ```
+
+> **Two deviations from the block as originally drafted (both real, both required):**
+>
+> 1. **The plugin is `sectorBreachPlugin` from `@aegis/game-fps`, not `fpsPlugin` from
+>    `@aegis/mode-fps`.** The harness builds a run's schedule solely from `plugin.systems()`, so the
+>    game's own systems (grunt AI, door, damage→event mapping, hazard/goal triggers) must ride in
+>    the plugin. `sectorBreachPlugin` composes `fpsPlugin`'s systems + `@aegis/content`'s
+>    `healthSystem` + the game systems, and merges the FPS and game component sets. A bare
+>    `fpsPlugin` would run the physics but none of the game rules.
+> 2. **The frames match the tuned `play/sector-breach.input`.** The shipped test reads that file
+>    verbatim (`readFileSync`) rather than inlining the script, so the playthrough has a single
+>    source of truth. The block above mirrors it for readability.
+
+The assertions themselves are unchanged from the design intent — the deviations are in _how the run
+is wired_, not in _what is asserted_.
 
 Invariant #1 fails at the exact tick a botched pit-jump or capsule-collision bug drops the player
 below the floor. Invariant #2 pins the grunt's AI cadence: if the enemy fires more often than

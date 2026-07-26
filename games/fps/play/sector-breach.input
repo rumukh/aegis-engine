@@ -1,0 +1,21 @@
+# Sector Breach — scripted playthrough (deterministic, tick-addressed).
+# See docs/games/fps.md for the beat-by-beat narrative.
+
+# 1. Face the east wall panel and shoot it to open the blast door.
+aim 90 0 @8
+press Fire @20
+
+# 2. Face north (into the facility) and advance out of the start room.
+aim 0 0 @32
+axis Forward 1 40..124
+
+# 3. Leap the coolant pit — take off just before its south lip.
+press Jump @124
+axis Forward 1 124..170
+
+# 4. Hold at the mouth of the north room and put two rounds into the grunt.
+press Fire @176
+press Fire @192
+
+# 5. Advance to the extraction door.
+axis Forward 1 210..320
