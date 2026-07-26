@@ -12,9 +12,11 @@
  * silently lossy (a live `Infinity` came back as `null`, so `v * 2 + 1` was `Infinity` before
  * a round trip and `1` after, breaking the round-trip contract the determinism proof rests on).
  *
- * These clones preserve every value bit-for-bit — `NaN`, `±Infinity` and `-0` included — so
- * the guard fires as designed and a NaN introduced by a divide-by-zero or a `sqrt` of a
- * negative surfaces at the next `snapshot()` instead of vanishing.
+ * These clones preserve every value bit-for-bit — `NaN` and `±Infinity` included — so the
+ * guard fires as designed and a NaN introduced by a divide-by-zero or a `sqrt` of a negative
+ * surfaces at the next `snapshot()` instead of vanishing. `-0` is the one deliberate
+ * exception: it is normalised to `0`, matching the canonical encoder, so that stored state
+ * never holds a value the state hash cannot distinguish.
  * @packageDocumentation
  */
 
@@ -43,9 +45,10 @@ export class NonFiniteValueError extends Error {
  * Deep-copy plain, JSON-shaped data (ADR-0002: components are plain data — no class
  * instances, functions or cyclic refs).
  *
- * Preserves `NaN`, `±Infinity` and `-0` exactly. Throws on anything that is not plain data,
- * because such a value cannot be serialised or hashed and would otherwise be silently
- * mangled — a `Date`, for instance, canonicalises to `{}`.
+ * Preserves `NaN` and `±Infinity` exactly, so the serialisation guard can see them. Normalises
+ * `-0` to `0` to match the canonical encoding — see {@link cloneValue}. Throws on anything that
+ * is not plain data, because such a value cannot be serialised or hashed and would otherwise be
+ * silently mangled — a `Date`, for instance, canonicalises to `{}`.
  */
 export function deepClone<T>(value: T): T {
   return cloneValue(value, 0, false, '') as T;
@@ -72,7 +75,14 @@ function cloneValue(value: unknown, depth: number, checked: boolean, path: strin
   if (t === 'number') {
     const n = value as number;
     if (checked && !Number.isFinite(n)) throw new NonFiniteValueError(path, n);
-    return n;
+    // Normalise -0 to 0, exactly as `canonicalStringify` does (serialize.ts). This is
+    // deliberate, not incidental: the state hash cannot distinguish -0 from 0 by design, so
+    // letting -0 into stored state would put a value in the world that the determinism proof
+    // is blind to — the same class of defect as laundering NaN, in the other direction. It
+    // also keeps `world.clone()` and a JSON round-trip restore in agreement, which they are
+    // not if -0 survives one path and not the other. `NaN` and `±Infinity` are a different
+    // case entirely: those are *reported*, because they are never a legitimate state value.
+    return Object.is(n, -0) ? 0 : n;
   }
   if (t === 'string' || t === 'boolean' || t === 'undefined') return value;
 

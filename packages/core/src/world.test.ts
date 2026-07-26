@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { createWorld } from './world.js';
 import { defineComponent, defineTag, defineResource } from './component.js';
 import { Name, Transform } from './components.js';
-import { MAX_ENTITY_GENERATION, NULL_ENTITY, makeEntity } from './entity.js';
+import { MAX_ENTITY_GENERATION, NULL_ENTITY, entityIndex, makeEntity } from './entity.js';
 import { CoreDiagnosticCode } from './codes.js';
 import { DiagnosticError } from './diagnostics.js';
 import { canonicalStringify } from './serialize.js';
 import type { Diagnostic } from './diagnostics.js';
+import type { EntityView, QueryResult } from './query.js';
 import type { WorldSnapshot } from './serialize.js';
 
 interface Vel {
@@ -233,8 +234,10 @@ describe('World — non-finite state is visible to the hash (C1)', () => {
     expect(w.get(e, V)?.v).toBe(Infinity);
     const n = w.spawn(V({ v: NaN }));
     expect(Number.isNaN(w.get(n, V)?.v as number)).toBe(true);
+    // `-0` is the deliberate exception — see the -0 test below.
     const z = w.spawn(V({ v: -0 }));
-    expect(Object.is(w.get(z, V)?.v, -0)).toBe(true);
+    expect(w.get(z, V)?.v).toBe(0);
+    expect(Object.is(w.get(z, V)?.v, -0)).toBe(false);
   });
 
   it('refuses to snapshot a world holding NaN, naming entity, component and path', () => {
@@ -413,76 +416,233 @@ describe('World — C1 acceptance criteria (no laundering on any entry path)', (
     expect(() => canonicalStringify({ v: Infinity })).toThrow();
     expect(canonicalStringify({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
   });
+
+  it('normalises -0 to 0 on every path, so state never holds what the hash cannot see', () => {
+    // Deliberate. The JSON round-trip collapsed -0 to 0 on every write path, which is why the
+    // audit found no -0 hash divergence. A *faithful* structural clone would let -0 into live
+    // state while `canonicalStringify` keeps normalising it (serialize.ts) — putting a value
+    // in the world that the determinism proof is blind to, which is the same class of defect
+    // as laundering NaN, only pointing the other way. So the clone normalises too.
+    const viaSpawn = createWorld({ seed: 1 });
+    const a = viaSpawn.spawn(Vel({ x: -0 }));
+    expect(Object.is(viaSpawn.get(a, Vel)?.x, -0)).toBe(false);
+    expect(viaSpawn.get(a, Vel)?.x).toBe(0);
+
+    const viaAdd = createWorld({ seed: 1 });
+    const b = viaAdd.spawn();
+    viaAdd.add(b, Vel, { x: -0 });
+    expect(Object.is(viaAdd.get(b, Vel)?.x, -0)).toBe(false);
+
+    // world.clone() and a JSON round-trip restore must agree — with a faithful -0 they did not.
+    const live = createWorld({ seed: 1 });
+    const c = live.spawn(Vel({ x: 1 }));
+    live.getOrThrow(c, Vel).x = -0; // live mutation runs no clone at all
+    const cloned = live.clone();
+    const restored = createWorld({ seed: 2 });
+    restored.restore(JSON.parse(JSON.stringify(live.snapshot())) as WorldSnapshot);
+    expect(Object.is(cloned.get(c, Vel)?.x, -0)).toBe(false);
+    expect(Object.is(restored.get(c, Vel)?.x, -0)).toBe(false);
+    expect(cloned.hash()).toBe(restored.hash());
+  });
+
+  it('a component cannot opt out of the guard with a custom clone', () => {
+    // `ComponentType.clone` is public API, so a component may supply the lossy JSON round trip
+    // deliberately. The serialisation guarantee must not depend on it — `World.snapshot`
+    // clones the stored value with core's own checked clone and never calls `type.clone`.
+    const Evil = defineComponent<{ x: number }>({
+      id: 'Evil',
+      defaults: () => ({ x: 0 }),
+      clone: (value) => JSON.parse(JSON.stringify(value)) as { x: number },
+    });
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(Evil({ x: 1 }));
+    w.getOrThrow(e, Evil).x = 0 / 0; // a system writes NaN; no clone runs on this path
+
+    try {
+      w.snapshot();
+      throw new Error('expected snapshot() to reject the non-finite value');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DiagnosticError);
+      const d = (err as DiagnosticError).diagnostics[0] as Diagnostic;
+      expect(d.code).toBe(CoreDiagnosticCode.NonFiniteState);
+      expect(d.location?.path).toBe(`entities[${String(e)}].components.Evil.x`);
+    }
+  });
 });
 
 /**
- * C2 — regression guard against the *half* fix.
+ * C2 — regression guard against the *half* fix and against the wrong acceptance criterion.
  *
- * Adding a liveness check to `get()` alone leaves `has()` and `tryGet()` lying, and `has()` is
- * what guards most system code — so a half fix makes the inconsistency harder to spot, not
- * easier. Each accessor is asserted separately, so a partial fix fails visibly rather than
- * passing a single combined assertion.
+ * The mechanism is **slot-reuse aliasing**, not use-after-despawn. By the time the row is read
+ * nothing is dead: `makeView` packed a *fresh, valid* handle to whoever occupies the slot now,
+ * so `get`/`tryGet`/`has`/`isAlive` all agreed — about the wrong entity. A liveness check
+ * cannot detect that, and "all three accessors agree" passes on the broken code.
+ *
+ * The criterion is therefore **identity**: the row must carry the handle captured at `query()`
+ * time, and reading through it must yield *that entity's* data or refuse — never the current
+ * occupant's. Every assertion below is against the impostor's sentinel value (`999`), not
+ * against `isAlive`.
  */
-describe('World — C2 acceptance criteria (all three accessors agree on liveness)', () => {
-  const Tag = defineComponent<{ who: string }>({ id: 'Tag', defaults: () => ({ who: '' }) });
+describe('World — C2 acceptance criteria (slot-reuse aliasing: identity, not liveness)', () => {
+  const Tag = defineComponent<{ v: number }>({ id: 'Tag', defaults: () => ({ v: 0 }) });
+  const ORIGINAL = 1;
+  const IMPOSTOR = 999;
 
-  /** A view onto ORIGINAL, after its slot has been recycled by IMPOSTOR. */
-  function staleView(): {
-    view: ReturnType<ReturnType<typeof createWorld>['query']>['one'] extends () => infer V
-      ? V
-      : never;
+  /** Query, then despawn the sole match and let a new entity take its slot. */
+  function afterSlotReuse(): {
+    world: ReturnType<typeof createWorld>;
+    result: ReturnType<ReturnType<typeof createWorld>['query']>;
+    original: number;
+    impostor: number;
+  } {
+    const world = createWorld({ seed: 1 });
+    const original = world.spawn(Tag({ v: ORIGINAL }));
+    const result = world.query({ has: [Tag] });
+    world.despawn(original);
+    const impostor = world.spawn(Tag({ v: IMPOSTOR }));
+    expect(entityIndex(impostor as never)).toBe(entityIndex(original as never)); // same slot
+    expect(impostor).not.toBe(original); // bumped generation
+    expect(world.isAlive(impostor as never)).toBe(true); // nothing is dead when we read
+    return { world, result, original, impostor };
+  }
+
+  /** A view materialised *before* the reuse, still held afterwards. */
+  function eagerViewAfterReuse(): {
+    view: EntityView;
     original: number;
     impostor: number;
   } {
     const w = createWorld({ seed: 1 });
-    const original = w.spawn(Tag({ who: 'ORIGINAL' }));
+    const original = w.spawn(Tag({ v: ORIGINAL }));
     const view = w.query({ has: [Tag] }).views()[0]!;
-    expect(view.get(Tag).who).toBe('ORIGINAL');
+    expect(view.get(Tag).v).toBe(ORIGINAL);
     w.despawn(original);
-    const impostor = w.spawn(Tag({ who: 'IMPOSTOR' }));
-    expect(impostor).not.toBe(original); // same slot, bumped generation
+    const impostor = w.spawn(Tag({ v: IMPOSTOR }));
+    expect(w.isAlive(impostor as never)).toBe(true);
     return { view, original, impostor };
   }
 
-  it('has() reports absent — pre-fix it returned true', () => {
-    expect(staleView().view.has(Tag)).toBe(false);
-    expect(staleView().view.has('Tag')).toBe(false);
+  it('the lazily-built row never materialises a handle to the current occupant', () => {
+    // Pre-fix this row read {"entity":"8589934593","get":999,"tryGet":999,"has":true,
+    // "isAlive":true} — a fresh, valid handle to the impostor, with every accessor agreeing.
+    const { result, original, impostor } = afterSlotReuse();
+    const view = result.first();
+    if (view !== undefined) {
+      expect(view.entity).toBe(original);
+      expect(view.entity).not.toBe(impostor);
+      expect(view.tryGet(Tag)?.v).not.toBe(IMPOSTOR);
+      expect(view.has(Tag)).toBe(false);
+      expect(() => view.get(Tag)).toThrow();
+    }
+    // Either the row is gone, or it still refers to the original. Never the impostor.
+    expect(result.entities()).not.toContain(impostor);
   });
 
-  it('tryGet() reports absent — pre-fix it returned the impostor’s data', () => {
-    expect(staleView().view.tryGet(Tag)).toBeUndefined();
+  for (const [name, extract] of [
+    ['iteration', (r: QueryResult): number[] => [...r].map((v) => v.get(Tag).v)],
+    ['views()', (r: QueryResult): number[] => r.views().map((v) => v.get(Tag).v)],
+    [
+      'forEach()',
+      (r: QueryResult): number[] => {
+        const out: number[] = [];
+        r.forEach((v) => out.push(v.get(Tag).v));
+        return out;
+      },
+    ],
+    [
+      'first()',
+      (r: QueryResult): number[] => (r.first() === undefined ? [] : [r.first()!.get(Tag).v]),
+    ],
+  ] as const) {
+    it(`${name} never yields the impostor's data`, () => {
+      const { result } = afterSlotReuse();
+      expect(extract(result)).not.toContain(IMPOSTOR);
+    });
+  }
+
+  it('entities() returns query-time handles, never a freshly packed one', () => {
+    const { result, original, impostor } = afterSlotReuse();
+    for (const e of result.entities()) {
+      expect(e).not.toBe(impostor);
+      expect(e).toBe(original);
+    }
   });
 
-  it('get() never returns the impostor — pre-fix it returned { who: "IMPOSTOR" }', () => {
-    expect(() => staleView().view.get(Tag)).toThrow(/stale/);
+  it('count() does not count the entity that took the slot', () => {
+    const { result } = afterSlotReuse();
+    expect(result.count()).toBe(0);
   });
 
-  it('the handle keeps identifying the original, dead entity', () => {
-    const { view, original, impostor } = staleView();
+  it('one() refuses rather than returning the impostor', () => {
+    const { result } = afterSlotReuse();
+    let value: number | 'threw';
+    try {
+      value = result.one().get(Tag).v;
+    } catch {
+      value = 'threw';
+    }
+    expect(value).not.toBe(IMPOSTOR);
+  });
+
+  it('an eagerly-built view keeps its own identity across the reuse', () => {
+    const { view, original, impostor } = eagerViewAfterReuse();
     expect(view.entity).toBe(original);
     expect(view.entity).not.toBe(impostor);
   });
 
-  it('the three accessors are mutually consistent, so no half fix passes', () => {
-    const { view } = staleView();
-    const has = view.has(Tag);
-    const tried = view.tryGet(Tag);
-    let got: string;
-    try {
-      got = view.get(Tag).who;
-    } catch {
-      got = 'threw';
-    }
-    expect({ has, tried, got }).toEqual({ has: false, tried: undefined, got: 'threw' });
+  // Asserted one accessor per test so a fix that guards only one fails by name. `has()` is
+  // what guards most system code, so `get()` being correct on its own is not enough.
+  it('has() on a reused-slot row does not claim the impostor’s component', () => {
+    expect(eagerViewAfterReuse().view.has(Tag)).toBe(false);
+    expect(eagerViewAfterReuse().view.has('Tag')).toBe(false);
   });
 
-  it('the same holds for a live entity, so the check is not just "always absent"', () => {
+  it('tryGet() on a reused-slot row does not return the impostor’s data', () => {
+    const { view } = eagerViewAfterReuse();
+    expect(view.tryGet(Tag)?.v).not.toBe(IMPOSTOR);
+    expect(view.tryGet(Tag)).toBeUndefined();
+  });
+
+  it('get() on a reused-slot row does not return the impostor’s data', () => {
+    const { view } = eagerViewAfterReuse();
+    let value: number | 'threw';
+    try {
+      value = view.get(Tag).v;
+    } catch {
+      value = 'threw';
+    }
+    expect(value).not.toBe(IMPOSTOR);
+    expect(value).toBe('threw');
+  });
+
+  it('mid-iteration slot reuse does not swap a pending row (LIFO free list)', () => {
     const w = createWorld({ seed: 1 });
-    w.spawn(Tag({ who: 'alive' }));
+    w.spawn(Tag({ v: 10 }));
+    w.spawn(Tag({ v: 20 }));
+    const third = w.spawn(Tag({ v: 30 }));
+    const seen: number[] = [];
+    let i = 0;
+    for (const view of w.query({ has: [Tag] })) {
+      if (i === 1) {
+        w.despawn(third);
+        w.spawn(Tag({ v: IMPOSTOR })); // takes third's slot immediately
+      }
+      seen.push(view.get(Tag).v);
+      i++;
+    }
+    expect(seen).not.toContain(IMPOSTOR);
+    expect(seen).toEqual([10, 20]);
+  });
+
+  it('a live row is completely unaffected — the rule is identity, not "always refuse"', () => {
+    const w = createWorld({ seed: 1 });
+    const e = w.spawn(Tag({ v: 42 }));
     const view = w.query({ has: [Tag] }).one();
+    expect(view.entity).toBe(e);
     expect(view.has(Tag)).toBe(true);
-    expect(view.tryGet(Tag)).toEqual({ who: 'alive' });
-    expect(view.get(Tag).who).toBe('alive');
+    expect(view.tryGet(Tag)).toEqual({ v: 42 });
+    expect(view.get(Tag).v).toBe(42);
+    expect(w.query({ has: [Tag] }).count()).toBe(1);
   });
 });
 

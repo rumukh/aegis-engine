@@ -35,7 +35,13 @@ export interface ComponentType<T> {
   readonly id: string;
   /** Produce a fresh default value. */
   create(init?: Partial<T>): T;
-  /** Deep-clone a value (used when snapshotting / restoring). */
+  /**
+   * Deep-clone a value, used by {@link ComponentType.create}.
+   *
+   * This is **not** what guarantees the world is serialisable. `World.snapshot` clones the
+   * stored value with core's own checked clone and never calls this, precisely so a component
+   * supplying a lossy `clone` cannot opt out of the non-finite guard.
+   */
   clone(value: T): T;
 }
 
@@ -48,6 +54,12 @@ export interface ComponentDefinition<T extends object> {
   /**
    * Optional custom deep-clone. Defaults to a structural clone, which is correct for any
    * plain-data component; override only for performance.
+   *
+   * A custom clone **must** be structural: it must not alias the source, and it must not
+   * silently alter values — in particular it must not be a `JSON.parse(JSON.stringify(…))`
+   * round trip, which maps `NaN` and `±Infinity` to `null`. Supplying a lossy clone corrupts
+   * your own component's data on the way into the world; it cannot, however, defeat the
+   * engine's serialisation guarantee, because `World.snapshot` does not use it.
    */
   clone?: (value: T) => T;
 }
