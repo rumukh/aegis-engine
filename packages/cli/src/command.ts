@@ -5,6 +5,7 @@
  */
 import type { CliIO } from './io.js';
 import type { ParsedArgs } from './args.js';
+import type { ModeResolver } from './modes.js';
 
 /** Everything a command receives when it runs. */
 export interface CommandContext {
@@ -12,6 +13,8 @@ export interface CommandContext {
   readonly args: ParsedArgs;
   /** The IO seam to read/write through. */
   readonly io: CliIO;
+  /** Resolves a mode name to its plugin (injectable, so tests supply a fake mode). */
+  readonly modes: ModeResolver;
 }
 
 /** A single CLI subcommand. */
