@@ -20,7 +20,7 @@ import {
   Triggered,
   validateScene,
 } from '@aegis/content';
-import type { ComponentRegistry, SceneFile } from '@aegis/content';
+import type { ComponentRegistry, EntityDecl, SceneFile } from '@aegis/content';
 import { DiagnosticError, Name, Transform } from '@aegis/core';
 import type { Diagnostic, EventReader, GameEvent, World } from '@aegis/core';
 import type { AsciiView, ModePlugin, SemanticFrame, SimResult } from '@aegis/harness';
@@ -186,6 +186,68 @@ export function assertSceneRunnable(
 }
 
 /** Count events by type into a Map (used for greppable histograms and JSON). */
+
+/**
+ * What a run is *actually made of*: the systems that will execute, and any marker the scene uses
+ * that the resolved plugin does not register.
+ *
+ * The iso failure could not be caught by the component check, because a game's vocabulary there is
+ * **tags** (`Operative`, `Guard`, `Patrol`) — and a scene tag is free-form by design, so an
+ * unregistered one cannot be an error. But it is never *nothing*: a marker no plugin provides is a
+ * marker no system reads. Reporting it, next to the system count, is what turns "clean run, no
+ * events" from an unfalsifiable claim into a statement an agent can check.
+ */
+export interface RunComposition {
+  /** Number of systems in the resolved schedule. */
+  systemCount: number;
+  /** Their names, in execution order. */
+  systemNames: readonly string[];
+  /** Scene markers (tags) no registered component type backs, sorted. */
+  unregisteredMarkers: readonly string[];
+}
+
+/** Every tag used anywhere in a scene, including nested children. */
+function sceneTags(scene: SceneFile): Set<string> {
+  const tags = new Set<string>();
+  const visit = (entities: readonly EntityDecl[] | undefined): void => {
+    for (const entity of entities ?? []) {
+      for (const tag of entity.tags ?? []) tags.add(tag);
+      visit(entity.children);
+    }
+  };
+  visit(scene.entities);
+  return tags;
+}
+
+/** Describe what will really run, so "which systems executed" is data rather than an assumption. */
+export function composeRun(scene: SceneFile, plugin: ModePlugin): RunComposition {
+  const registry = registryFor(plugin);
+  const systems = plugin.systems().resolved();
+  const unregisteredMarkers = [...sceneTags(scene)].filter((tag) => !registry.has(tag)).sort();
+  return {
+    systemCount: systems.length,
+    systemNames: systems.map((s) => s.name),
+    unregisteredMarkers,
+  };
+}
+
+/**
+ * The report line naming markers the running plugin does not provide. `undefined` when there are
+ * none. Printed by every simulating command, because this is the only signal that distinguishes
+ * "the game ran" from "the stock mode ran over the game's scene".
+ */
+export function markerReport(composition: RunComposition): string | undefined {
+  const markers = composition.unregisteredMarkers;
+  if (markers.length === 0) return undefined;
+  return [
+    `markers  : ${markers.join(', ')}`,
+    `           ^ no registered plugin provides these, so no system reads them. That is expected`,
+    `             for markers your own systems will consume; if they belong to a game whose systems`,
+    `             should be running, pass --plugin <module>#<export> or add an aegis.json beside`,
+    `             the scene.`,
+  ].join('\n');
+}
+
 export function eventCounts(events: EventReader): Map<string, number> {
   const counts = new Map<string, number>();
   for (const e of events.history() as readonly GameEvent[]) {

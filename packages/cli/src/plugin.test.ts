@@ -179,8 +179,11 @@ describe('aegis run --plugin (the game plugin extension point)', () => {
     );
 
     const asJson = await cli(['run', 'level.scene.json', '--ticks', '5', '--json'], dir);
-    const data = JSON.parse(asJson.out) as { plugin: { spec: string; source: string } };
-    expect(data.plugin).toEqual({ spec: 'platformer', source: 'mode' });
+    const data = JSON.parse(asJson.out) as {
+      plugin: { spec: string; source: string; systems: string[] };
+    };
+    expect(data.plugin.spec).toBe('platformer');
+    expect(data.plugin.source).toBe('mode');
   });
 
   it('reports a missing plugin module with a stable code and a real fix', async () => {
@@ -222,6 +225,69 @@ describe('aegis run --plugin (the game plugin extension point)', () => {
     );
     expect(r.code).toBe(1);
     expect(r.err).toContain('AEG-CLI-0017');
+  });
+});
+
+describe('run composition is reported, not assumed', () => {
+  /**
+   * The iso defect could not be caught by the unknown-component gate: a game's iso vocabulary is
+   * *tags* (`Operative`, `Guard`, `Patrol`), and a scene tag is free-form by design, so an
+   * unregistered one cannot be an error. It is never nothing, though — a marker no plugin
+   * provides is a marker no system reads, and that is exactly the difference between "the game
+   * ran" and "the stock mode ran over the game's scene".
+   */
+  it('names scene markers the running plugin does not provide', async () => {
+    const dir = makeDir({
+      ...GAME_SCENE,
+      entities: [
+        { ...GAME_SCENE.entities[0]!, tags: ['Player', 'Operative', 'Guard'] },
+        {
+          ...GAME_SCENE.entities[1]!,
+          components: { Transform: { position: { x: 2, y: 0, z: 0 } } },
+        },
+      ],
+    });
+    const r = await cli(['run', 'level.scene.json', '--ticks', '5'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/^markers\s+: Guard, Operative$/m);
+    expect(r.out).toContain('no system reads them');
+    // `Player` IS provided by the fake mode, so it must not be listed.
+    expect(r.out).not.toContain('Player,');
+  });
+
+  it('says nothing about markers when the plugin provides them all', async () => {
+    const dir = makeDir({
+      ...GAME_SCENE,
+      entities: [{ ...GAME_SCENE.entities[0]!, tags: ['Player'] }],
+    });
+    const r = await cli(['run', 'level.scene.json', '--ticks', '5'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain('markers');
+  });
+
+  it('reports the schedule size, so a missing game layer is visible as data', async () => {
+    const dir = makeDir({ ...GAME_SCENE, entities: [GAME_SCENE.entities[0]] });
+    const r = await cli(['run', 'level.scene.json', '--ticks', '5'], dir);
+    expect(r.out).toMatch(/^systems\s+: \d+$/m);
+
+    const asJson = await cli(['run', 'level.scene.json', '--ticks', '5', '--json'], dir);
+    const data = JSON.parse(asJson.out) as {
+      plugin: { systems: string[] };
+      unregisteredMarkers: string[];
+    };
+    expect(data.plugin.systems.length).toBeGreaterThan(0);
+    expect(data.unregisteredMarkers).toEqual([]);
+  });
+
+  it('still surfaces markers on --hash, via stderr so the captured hash stays clean', async () => {
+    const dir = makeDir({
+      ...GAME_SCENE,
+      entities: [{ ...GAME_SCENE.entities[0]!, tags: ['Operative'] }],
+    });
+    const r = await cli(['run', 'level.scene.json', '--ticks', '5', '--hash'], dir);
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toMatch(/^[0-9a-f]+$/);
+    expect(r.err).toContain('Operative');
   });
 });
 

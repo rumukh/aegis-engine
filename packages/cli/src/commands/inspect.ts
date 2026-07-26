@@ -32,7 +32,15 @@ import {
   requirePositional,
   resolvePath,
 } from './shared.js';
-import { assertSceneRunnable, asciiOf, frameOf, loadScene, resolveRunPlugin } from './sim.js';
+import {
+  assertSceneRunnable,
+  asciiOf,
+  composeRun,
+  frameOf,
+  loadScene,
+  markerReport,
+  resolveRunPlugin,
+} from './sim.js';
 
 const VIEWS = ['world', 'frame', 'ascii'] as const;
 
@@ -81,6 +89,8 @@ export const inspectCommand: Command = {
     const loaded = loadScene(ctx, sceneArg);
     const resolved = await resolveRunPlugin(ctx, loaded.scene, loaded.abs);
     assertSceneRunnable(loaded.scene, loaded.ref, resolved);
+    const composition = composeRun(loaded.scene, resolved.plugin);
+    const warning = markerReport(composition);
     const modeName = resolved.plugin.mode;
 
     // Only the final tick is inspected, so per-tick hashes would be retained and never read.
@@ -92,6 +102,9 @@ export const inspectCommand: Command = {
 
     const result = await runScene(loaded.scene, options);
     const wantJson = flagBool(args, 'json');
+    // The frame/ascii views print nothing but the view itself, so the warning goes to stderr —
+    // it must never be silently dropped just because the caller asked for a picture.
+    if (warning !== undefined && (view !== 'world' || wantJson)) io.err(warning + '\n');
 
     if (view === 'frame') {
       const frame = frameOf(result, modeName);
@@ -121,7 +134,12 @@ export const inspectCommand: Command = {
         json({
           scene: loaded.ref,
           mode: modeName,
-          plugin: { spec: resolved.spec, source: resolved.source },
+          plugin: {
+            spec: resolved.spec,
+            source: resolved.source,
+            systems: composition.systemNames,
+          },
+          unregisteredMarkers: composition.unregisteredMarkers,
           tick: result.tick,
           seed: result.seed,
           hash: result.hash,
@@ -140,10 +158,12 @@ export const inspectCommand: Command = {
         ['scene', loaded.ref],
         ['mode', modeName],
         ['plugin', describePluginSource(resolved)],
+        ['systems', String(composition.systemCount)],
         ['tick', String(result.tick)],
         ['seed', String(result.seed)],
         ['hash', result.hash],
       ]),
+      ...(warning !== undefined ? [warning] : []),
       `query: ${describeQuery(descriptor)}`,
       `entities: ${entities.length} of ${snapshot.entities.length}`,
     ];

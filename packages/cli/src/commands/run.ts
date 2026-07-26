@@ -26,10 +26,12 @@ import {
 import {
   assertSceneRunnable,
   asciiOf,
+  composeRun,
   eventCounts,
   eventCountsObject,
   frameOf,
   loadScene,
+  markerReport,
   resolveRunPlugin,
 } from './sim.js';
 
@@ -81,6 +83,7 @@ export const runCommand: Command = {
     const loaded = loadScene(ctx, sceneArg);
     const resolved = await resolveRunPlugin(ctx, loaded.scene, loaded.abs);
     assertSceneRunnable(loaded.scene, loaded.ref, resolved);
+    const composition = composeRun(loaded.scene, resolved.plugin);
     const modeName = resolved.plugin.mode;
 
     // `run` only ever reports the FINAL hash, so asking the harness to retain one string per
@@ -93,8 +96,11 @@ export const runCommand: Command = {
 
     const result = await runScene(loaded.scene, options);
 
-    // --hash: emit just the bare hash, nothing else (scriptable capture).
+    // --hash: emit just the bare hash, nothing else (scriptable capture). A marker warning still
+    // goes to stderr, so capturing the hash never silently discards the reason it may be wrong.
     if (flagBool(args, 'hash') && !flagBool(args, 'json')) {
+      const warning = markerReport(composition);
+      if (warning !== undefined) io.err(warning + '\n');
       io.out(result.hash + '\n');
       return Exit.Ok;
     }
@@ -110,7 +116,12 @@ export const runCommand: Command = {
         json({
           scene: loaded.ref,
           mode: modeName,
-          plugin: { spec: resolved.spec, source: resolved.source },
+          plugin: {
+            spec: resolved.spec,
+            source: resolved.source,
+            systems: composition.systemNames,
+          },
+          unregisteredMarkers: composition.unregisteredMarkers,
           ticks: result.tick,
           seed: result.seed,
           hash: result.hash,
@@ -128,6 +139,7 @@ export const runCommand: Command = {
         ['scene', loaded.ref],
         ['mode', modeName],
         ['plugin', describePluginSource(resolved)],
+        ['systems', String(composition.systemCount)],
         ['ticks', String(result.tick)],
         ['seed', String(result.seed)],
         ['hash', result.hash],
@@ -136,6 +148,8 @@ export const runCommand: Command = {
       'events:',
       formatEventHistogram(eventCounts(result.events)),
     ];
+    const warning = markerReport(composition);
+    if (warning !== undefined) blocks.push(warning);
     if (flagBool(args, 'frame')) blocks.push(formatFrame(frameOf(result, modeName)));
     if (flagBool(args, 'ascii')) {
       blocks.push(formatAscii(asciiOf(result, modeName, undefined, result.world)));

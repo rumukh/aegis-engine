@@ -28,7 +28,13 @@ import {
   requirePositional,
   resolvePath,
 } from './shared.js';
-import { assertSceneRunnable, loadScene, resolveRunPlugin } from './sim.js';
+import {
+  assertSceneRunnable,
+  composeRun,
+  loadScene,
+  markerReport,
+  resolveRunPlugin,
+} from './sim.js';
 
 const USAGE = [
   'aegis record <scene> --out <file> --ticks <n> [options]',
@@ -92,6 +98,7 @@ export const recordCommand: Command = {
     const loaded = loadScene(ctx, sceneArg);
     const resolved = await resolveRunPlugin(ctx, loaded.scene, loaded.abs);
     assertSceneRunnable(loaded.scene, loaded.ref, resolved);
+    const composition = composeRun(loaded.scene, resolved.plugin);
     const modeName = resolved.plugin.mode;
 
     const options: RunOptions = { plugin: resolved.plugin, ticks };
@@ -114,7 +121,12 @@ export const recordCommand: Command = {
           recording: outArg,
           scene: loaded.ref,
           mode: modeName,
-          plugin: { spec: resolved.spec, source: resolved.source },
+          plugin: {
+            spec: resolved.spec,
+            source: resolved.source,
+            systems: composition.systemNames,
+          },
+          unregisteredMarkers: composition.unregisteredMarkers,
           ticks: result.tick,
           seed: result.seed,
           hash: result.hash,
@@ -122,16 +134,20 @@ export const recordCommand: Command = {
       );
       return Exit.Ok;
     }
+    const warning = markerReport(composition);
     io.out(
       formatFields([
         ['recording', outArg],
         ['scene', loaded.ref],
         ['mode', modeName],
         ['plugin', describePluginSource(resolved)],
+        ['systems', String(composition.systemCount)],
         ['ticks', String(result.tick)],
         ['seed', String(result.seed)],
         ['hash', result.hash],
-      ]) + '\n',
+      ]) +
+        '\n' +
+        (warning !== undefined ? warning + '\n' : ''),
     );
     return Exit.Ok;
   },

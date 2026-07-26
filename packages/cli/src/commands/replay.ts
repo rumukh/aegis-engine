@@ -17,7 +17,14 @@ import { formatAscii, formatFields, formatFrame, json } from '../format.js';
 import type { Command, CommandContext } from '../command.js';
 import { describePluginSource } from '../plugin.js';
 import { flagBool, readText, requirePositional, resolvePath } from './shared.js';
-import { assertSceneRunnable, asciiOf, frameOf, resolveRunPlugin } from './sim.js';
+import {
+  assertSceneRunnable,
+  asciiOf,
+  composeRun,
+  frameOf,
+  markerReport,
+  resolveRunPlugin,
+} from './sim.js';
 import { parseScene } from '@aegis/content';
 import { DiagnosticError } from '@aegis/core';
 
@@ -124,6 +131,7 @@ export const replayCommand: Command = {
       overrideBaseDirs: [io.cwd, dirname(recordingAbs), dirname(sceneAbs)],
     });
     assertSceneRunnable(scene, recording.scene, resolved);
+    const composition = composeRun(scene, resolved.plugin);
     const modeName = resolved.plugin.mode;
 
     const options: RunOptions = {
@@ -148,7 +156,12 @@ export const replayCommand: Command = {
           recording: recordingArg,
           scene: recording.scene,
           mode: modeName,
-          plugin: { spec: resolved.spec, source: resolved.source },
+          plugin: {
+            spec: resolved.spec,
+            source: resolved.source,
+            systems: composition.systemNames,
+          },
+          unregisteredMarkers: composition.unregisteredMarkers,
           ticks: recording.ticks,
           seed: recording.seed,
           expectedHash: recording.finalHash,
@@ -166,6 +179,7 @@ export const replayCommand: Command = {
           ['scene', recording.scene],
           ['mode', modeName],
           ['plugin', describePluginSource(resolved)],
+          ['systems', String(composition.systemCount)],
           ['ticks', String(recording.ticks)],
           ['seed', String(recording.seed)],
           ['expected', recording.finalHash],
@@ -173,6 +187,8 @@ export const replayCommand: Command = {
           ['match', matched ? 'yes' : 'no'],
         ]),
       ];
+      const warning = markerReport(composition);
+      if (warning !== undefined) blocks.push(warning);
       if (!matched && divergentTick !== undefined) {
         blocks.push(`first divergence at tick ${divergentTick}`);
       }
