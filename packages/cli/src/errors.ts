@@ -32,6 +32,34 @@ export const CliCode = {
   TestFailed: 'AEG-CLI-0010',
   /** An unknown `--view`/`--reporter`/`kind` enum value was given. */
   InvalidChoice: 'AEG-CLI-0011',
+  /** A flag the command does not declare was passed (typo, or wrong command). */
+  UnknownFlag: 'AEG-CLI-0012',
+  /** The first argument is not a subcommand. */
+  UnknownCommand: 'AEG-CLI-0013',
+  /**
+   * A discovered module exports something that is *almost* a `GameTest` — it would have been
+   * silently skipped, hiding a red test. A broken test is a failure, never an absence.
+   */
+  InvalidGameTest: 'AEG-CLI-0014',
+  /** A `--plugin <module>#<export>` module could not be imported. */
+  PluginLoadFailed: 'AEG-CLI-0015',
+  /** A resolved plugin export is missing or is not a `ModePlugin`. */
+  PluginInvalid: 'AEG-CLI-0016',
+  /** A plugin's `mode` disagrees with the scene's mode or an explicit `--mode`. */
+  PluginModeMismatch: 'AEG-CLI-0017',
+  /**
+   * The scene cannot run under the resolved plugin — it uses components no registered plugin
+   * provides. Refusing beats simulating a world whose systems were never installed.
+   */
+  SceneNotRunnable: 'AEG-CLI-0018',
+  /** A tick count so large the run cannot complete in bounded memory/time. */
+  TickLimitExceeded: 'AEG-CLI-0019',
+  /**
+   * No plugin was named for a scene that needs one. The scene declares markers the *defaulted*
+   * mode plugin does not provide, so the CLI cannot vouch that the systems which own them ran.
+   * Refusing beats a clean exit 0 over a world whose game layer never executed.
+   */
+  PluginNotResolved: 'AEG-CLI-0020',
 } as const;
 
 /** A CLI diagnostic code value. */
@@ -85,4 +113,23 @@ export function formatCliError(error: AegisCliError): string {
   const lines = [`error [${error.code}]: ${error.message}`];
   if (error.fix) lines.push(`  fix: ${error.fix}`);
   return lines.join('\n');
+}
+
+/**
+ * The message of a caught value, whatever it is.
+ *
+ * `catch` binds `unknown`, and `(err as Error).message` is a lie the compiler cannot check: a
+ * thrown string or object yields `undefined` inside a diagnostic that is supposed to explain the
+ * failure. Narrowing instead of asserting keeps every message truthful.
+ */
+export function messageOf(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+/** The `errno` code of a caught filesystem error, when it has one. */
+export function errnoOf(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
 }

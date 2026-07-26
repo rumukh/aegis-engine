@@ -46,7 +46,7 @@ export function createModeResolver(plugins: readonly ModePlugin[]): ModeResolver
       const plugin = byMode.get(mode);
       if (!plugin) {
         const known = available.join(', ') || '(none)';
-        const isKnownName = (GAME_MODES as readonly string[]).includes(mode);
+        const isKnownName = GAME_MODES.some((known) => known === mode);
         throw new AegisCliError(
           CliCode.UnknownMode,
           isKnownName

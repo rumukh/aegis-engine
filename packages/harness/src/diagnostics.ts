@@ -31,6 +31,23 @@ export const HarnessCode = {
   InvalidPointer: 'AEG-HARNESS-0007',
   /** A command has more arguments than its grammar allows. */
   UnexpectedArgument: 'AEG-HARNESS-0008',
+  /**
+   * A statement lies entirely outside the compiled tick window `[0, ticks)` and therefore had
+   * **no effect at all** — the run behaves exactly as if the line were deleted.
+   */
+  StatementOutOfRange: 'AEG-HARNESS-0009',
+  /** A statement's span only partly overlaps `[0, ticks)`; the rest of it was dropped. */
+  StatementClipped: 'AEG-HARNESS-0010',
+  /**
+   * A `look` span was clipped, so only the in-range *fraction* of its delta was applied — the
+   * camera turns less far than the script says, silently.
+   */
+  LookDeltaClipped: 'AEG-HARNESS-0011',
+  /**
+   * Two statements write the same channel on the same tick, so which one wins depends on their
+   * **order in the file**. Re-ordering the script would change the compiled input.
+   */
+  OrderSensitiveOverlap: 'AEG-HARNESS-0012',
 } as const;
 
 /** A harness diagnostic code value. */

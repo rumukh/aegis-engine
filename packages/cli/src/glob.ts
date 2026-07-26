@@ -9,7 +9,7 @@
  * @packageDocumentation
  */
 import { readdirSync, statSync } from 'node:fs';
-import { sep } from 'node:path';
+import { resolve, sep } from 'node:path';
 
 const WILDCARD = /[*?{]/;
 /** Directories never descended into during a walk. */
@@ -106,6 +106,11 @@ function walk(dir: string, out: string[]): void {
 /**
  * Return every file matching `pattern`, as absolute native paths, sorted. `pattern` may be
  * absolute or relative; relative patterns resolve against `cwd`.
+ *
+ * Results are **normalised** (`resolve`), not merely absolute: a `./dist/*.js` pattern otherwise
+ * yields `C:\game\.\dist\x.js`, which is the same file as `C:\game\dist\x.js` but not the same
+ * string — so callers de-duplicating by path silently keep both, and `import()` treats them as two
+ * separate modules. That turned one game test into two identical entries in a discovery run.
  */
 export function globFiles(pattern: string, cwd: string): string[] {
   const posixPattern = toPosix(pattern);
@@ -131,7 +136,7 @@ export function globFiles(pattern: string, cwd: string): string[] {
   const regex = globToRegExp(rest);
   const matched = files
     .filter((f) => f.startsWith(rootPrefix) && regex.test(f.slice(rootPrefix.length)))
-    .map(toNative)
+    .map((f) => resolve(toNative(f)))
     .sort();
   return [...new Set(matched)];
 }
@@ -141,4 +146,9 @@ export function globAll(patterns: readonly string[], cwd: string): string[] {
   const all = new Set<string>();
   for (const pattern of patterns) for (const f of globFiles(pattern, cwd)) all.add(f);
   return [...all].sort();
+}
+
+/** Whether a path argument contains a wildcard and therefore needs expanding. */
+export function isGlob(pattern: string): boolean {
+  return WILDCARD.test(pattern);
 }

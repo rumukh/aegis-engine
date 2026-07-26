@@ -43,6 +43,42 @@ const restrictedMathProperties = bannedMathProps.map((property) => ({
   message: bannedMathMessage,
 }));
 
+/**
+ * Golden-hash guard rail (CHARTER principle 6, ADR-0008).
+ *
+ * A golden master must be pinned to a **literal**. `hashEquals(result.hash)` compares a run to
+ * itself: it is vacuously true, can never fail, and pins nothing — while reading exactly like a
+ * determinism regression test. See docs/architecture.md §7.
+ *
+ * **Absolute: no location scoping, no exemptions.** The idiom was found independently four times,
+ * which is the evidence that human attention is the wrong control for it — so the rule must have
+ * no special case for anyone to imitate. A rule that is legal in the package that authors the
+ * exemplars would not have stopped this, and an inline `eslint-disable` is exactly what the next
+ * author copies (and is forbidden by docs/working-agreement.md §4 anyway). The one place the
+ * pattern was arguably legitimate — a harness test where the hash is incidental rather than the
+ * subject — pins the literal too, so nothing needed an exception.
+ *
+ * Known limit, stated rather than implied: this is syntactic. `const h = r.hash` followed by
+ * `hashEquals(h)` evades it, so it catches the idiom as written and copied, not every possible
+ * spelling of a self-comparison. That bypass is deliberately **not demonstrated anywhere in the
+ * repository** — there are zero occurrences of a run's own hash reaching `hashEquals`, by any
+ * spelling, and `packages/harness/src/golden-hash.invariant.test.ts` is the runner for that claim,
+ * since this selector cannot check it. An author blocked by this rule will grep for how others
+ * satisfied it, and a working example of the bypass is the next thing that would be copied.
+ */
+const noSelfReferentialGoldenHash = {
+  selector:
+    "CallExpression[callee.property.name='hashEquals'] > MemberExpression[property.name='hash']",
+  message:
+    'hashEquals(<run>.hash) compares the run to itself and can never fail. Pin a literal golden hash instead (docs/architecture.md §7, ADR-0008).',
+};
+
+/** Wall-clock time is not reproducible; the simulation substrate may never read it (ADR-0001). */
+const noWallClockDate = {
+  selector: "NewExpression[callee.name='Date']",
+  message: 'Wall-clock time breaks determinism (ADR-0001).',
+};
+
 // `no-restricted-properties` sees `Math.sin` and, in this ESLint version, also
 // `const { sin } = Math` and `Math['sin']`. It does **not** see two forms that were verified to
 // slip through: aliasing the object (`const M = Math; M.sin(x)`) and a non-literal computed key
@@ -71,6 +107,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_' }],
       // Contract stubs legitimately throw for not-yet-implemented behaviour.
       '@typescript-eslint/no-empty-function': 'off',
+      'no-restricted-syntax': ['error', noSelfReferentialGoldenHash],
     },
   },
   {
@@ -123,16 +160,22 @@ export default tseslint.config(
           message: 'Wall-clock time breaks determinism (ADR-0001).',
         },
       ],
+      // Flat config *replaces* a rule's options rather than merging them, so every selector that
+      // must apply to these files has to live in this one array. Declaring any of them in another
+      // block that also matches would silently drop the rest — and a lint rule that has stopped
+      // firing does not fail, it just checks less, so `npm run verify` is green either way.
+      //
+      // All three families are therefore restated here: the wall-clock ban, the two Math evasions,
+      // and the golden-hash ban. That last one is also set by the earlier `**/*.ts` block, which
+      // matches these files too; this block wins because it comes later, so omitting it here would
+      // silently disarm the golden-hash rule for the entire simulation substrate and all three
+      // games. The hazard is therefore order-dependent as well as co-location-dependent: moving
+      // these two blocks past each other, or adding a third matching block below, breaks it.
       'no-restricted-syntax': [
         'error',
-        // Flat config *replaces* a rule's options rather than merging them, so every selector
-        // for these files must live in this one array. Declaring any of them in another block
-        // that also matches would silently drop the rest — the `new Date()` ban included.
-        {
-          selector: "NewExpression[callee.name='Date']",
-          message: 'Wall-clock time breaks determinism (ADR-0001).',
-        },
+        noWallClockDate,
         ...restrictedMathSyntax,
+        noSelfReferentialGoldenHash,
       ],
     },
   },

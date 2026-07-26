@@ -198,9 +198,253 @@ describe('formatInputScript — canonical, round-trippable text', () => {
     expect(formatInputScript(script)).toBe('axis X 0 0..1');
   });
 
-  it('sorts commands by (firstTick, kind, secondaryKey) regardless of input order', () => {
+  it('preserves source order, because the compiler reads it', () => {
+    // Sorting these three is harmless, but sorting is not *generally* safe (see below), so the
+    // formatter does not sort at all: what it emits is exactly what was authored.
     const parsed = parseInputScript('press B @5\nhold A 0..3\npress A @5');
-    const formatted = formatInputScript(parsed.value!);
-    expect(formatted).toBe(['hold A 0..3', 'press A @5', 'press B @5'].join('\n'));
+    expect(formatInputScript(parsed.value!)).toBe(
+      ['press B @5', 'hold A 0..3', 'press A @5'].join('\n'),
+    );
+  });
+});
+
+/**
+ * The regression suite for the recorder-corrupts-the-script defect.
+ *
+ * `formatInputScript` used to re-sort commands by `(firstTick, kind, secondaryKey)` while the
+ * compiler resolves overlapping `axis`/`pointer` writes as *last source-order wins* and sums
+ * `look` deltas in source order. So the canonical text of a script was not the script:
+ * `SimResult.recording()` serialised through the formatter, and replaying that recording failed
+ * the determinism check — blaming a perfectly deterministic engine and pointing an agent at
+ * `Math.random` in innocent mode code.
+ *
+ * The old round-trip test could not catch any of this: every command in it had a distinct first
+ * tick, so the sort was a no-op. These cases all have overlapping or tie-breaking commands, and
+ * each of them fails on the pre-fix formatter.
+ */
+describe('formatInputScript — round-trip preserves compiled frames (regression)', () => {
+  /** `parse → format → parse` must compile to byte-identical frames. */
+  function expectStableRoundTrip(source: string, ticks: number): void {
+    const first = parseInputScript(source);
+    expect(first.ok, `parse failed: ${JSON.stringify(first.diagnostics)}`).toBe(true);
+    const formatted = formatInputScript(first.value!);
+    const second = parseInputScript(formatted);
+    expect(second.ok).toBe(true);
+    expect(second.value!.frames(ticks)).toEqual(first.value!.frames(ticks));
+    // And it is a fixed point: formatting the re-parsed script yields the same text.
+    expect(formatInputScript(second.value!)).toBe(formatted);
+  }
+
+  it('overlapping axis spans: the later write must still win after formatting', () => {
+    // The harness-level proof from the audit: ticks 5..7 compile to Move = 1, and used to
+    // compile to Move = -1 after a format round-trip because `-1` starts later and sorted first.
+    const source = 'axis Move -1 5..8\naxis Move 1 0..10';
+    const frames = compile(source, 10);
+    expect(frames[5]!.axes['Move']).toBe(1);
+    expectStableRoundTrip(source, 10);
+  });
+
+  it('same-tick pointer clicks: the later click must still win after formatting', () => {
+    // The end-to-end case: `aegis record` reordered these two and `aegis replay` then reported
+    // AEG-CLI-0007 "determinism check FAILED" against a deterministic engine.
+    const source = 'click 9,1 @2\nclick 1,5 @2';
+    expect(compile(source, 4)[2]!.pointer!.world).toEqual({ x: 1, y: 5, z: 0 });
+    expectStableRoundTrip(source, 4);
+  });
+
+  it('same-tick aims: the later absolute target must still win after formatting', () => {
+    const source = 'aim 90 0 @1\naim 10 0 @1';
+    expect(compile(source, 3)[1]!.look.dx).toBe(10);
+    expectStableRoundTrip(source, 3);
+  });
+
+  it('three overlapping look deltas keep their summation order', () => {
+    // Floating-point addition is commutative but not associative: 2^53 + 1 + 1 === 2^53, while
+    // 1 + 1 + 2^53 === 2^53 + 2. The pre-fix formatter tie-broke same-tick commands on their
+    // `(dyaw,dpitch)` string key, reordering these three and changing the compiled frame. This
+    // is why the formatter preserves source order outright instead of "sorting when it looks
+    // safe" — the safe cases are not obvious enough to hand-check.
+    const source = 'look 9007199254740992 0 @0\nlook 1 0 @0\nlook 1 0 @0';
+    expect(compile(source, 1)[0]!.look.dx).toBe(9007199254740992);
+    expectStableRoundTrip(source, 1);
+  });
+
+  it('reversed source order round-trips to itself, not to a re-sorted script', () => {
+    const source = [
+      'press Fire @40',
+      'axis MoveX 1 20..60',
+      'hold Right 0..60',
+      'click 2,2 @1',
+    ].join('\n');
+    expect(formatInputScript(parseInputScript(source).value!)).toBe(source);
+    expectStableRoundTrip(source, 60);
+  });
+
+  it('warns that an order-sensitive script is not safe to re-order', () => {
+    const parsed = parseInputScript(
+      'axis Move -1 5..8\naxis Move 1 0..10\nclick 9,1 @2\nclick 1,5 @2',
+    );
+    expect(parsed.ok).toBe(true); // legal, just fragile
+    const codes = parsed.diagnostics.map((d) => d.code);
+    expect(codes).toContain('AEG-HARNESS-0012');
+    expect(parsed.diagnostics.every((d) => d.severity === 'warning')).toBe(true);
+    const axisWarning = parsed.diagnostics.find((d) => d.message.includes('axis Move'))!;
+    expect(axisWarning.message).toContain('Swapping the two lines');
+    expect(axisWarning.location?.line).toBe(2);
+  });
+
+  it('does not warn when overlapping axis writes agree, or when spans are disjoint', () => {
+    expect(parseInputScript('axis Move 1 0..10\naxis Move 1 5..8').diagnostics).toEqual([]);
+    expect(parseInputScript('axis F 1 40..124\naxis F 1 124..170').diagnostics).toEqual([]);
+    expect(parseInputScript('hold A 5..7\nhold A 0..2\npress A @9').diagnostics).toEqual([]);
+  });
+});
+
+/**
+ * The round-trip guarantee, stated once and checked over a corpus.
+ *
+ * This is deliberately a **pure input-script property** — no runner, no recording, no replay.
+ * Record→replay agreeing is a *consequence* of this holding; it is not the proof, and a runner
+ * that re-used already-compiled frames could make replay pass while the formatter stayed
+ * unfaithful. `parse → format → parse` producing identical compiled frames is the thing that has
+ * to be true.
+ */
+describe('formatInputScript — the round-trip property, over a corpus', () => {
+  const corpus: readonly [name: string, source: string][] = [
+    [
+      'the shipped platformer script (statements out of tick order)',
+      'press Jump @28\npress Jump @74\nhold Right 0..126\nhold Right 138..152\nhold Right 190..400\npress Jump @288\npress Jump @317',
+    ],
+    [
+      'the shipped iso script (four pointer clicks)',
+      'click 1,2 @2\nclick 1,5 @40\nclick 9,1 @72\nclick 4,7 @300',
+    ],
+    [
+      'the shipped fps script (aim, axis spans, presses)',
+      'aim 90 0 @8\npress Fire @20\naim 0 0 @32\naxis Forward 1 40..124\npress Jump @124\naxis Forward 1 124..170\npress Fire @176\npress Fire @192\naxis Forward 1 210..320',
+    ],
+    ['overlapping axis writes, specific-before-general', 'axis Move -1 5..8\naxis Move 1 0..10'],
+    ['overlapping axis writes, general-before-specific', 'axis Move 1 0..10\naxis Move -1 5..8'],
+    ['two clicks on one tick', 'click 9,1 @2\nclick 1,5 @2'],
+    ['a click and a point on one tick', 'click 9,1 @2\npoint 1,5 @2'],
+    ['two aims on one tick', 'aim 90 0 @1\naim 10 0 @1'],
+    ['aims interleaved with looks', 'look 5 0 @0\naim 20 0 @2\nlook -3 1 @1\naim -10 5 @4'],
+    ['non-associative look accumulation', 'look 9007199254740992 0 @0\nlook 1 0 @0\nlook 1 0 @0'],
+    ['releases bounded by later holds', 'hold A 0..10\nrelease A @4\nhold A 6..8\nrelease A @9'],
+    [
+      'fractional and negative values',
+      'axis X -0.5 0..4\nlook -0.125 0.375 1..3\nclick -2.5,3.25 @2',
+    ],
+    ['exponent-formatted values', 'axis X 1e-7 0..2\naxis Y 1e21 0..2\nlook 1e-7 1e21 @1'],
+    ['single-tick spans written as ranges', 'hold A 3..4\naxis X 1 3..4\nlook 1 2 3..4'],
+    ['single-tick spans written with @', 'hold A @3\naxis X 1 @3\nlook 1 2 @3'],
+    ['comments and blank lines', '# lead\n\nhold A 0..3   # trailing\n\n# tail\npress B @1'],
+    ['an action named like a verb', 'hold hold 0..3\npress press @1\nrelease release @2'],
+    [
+      'everything at once, reversed',
+      'release Right @59\npoint 5,6 @3\nclick 3,4 @2\naim 45 10 @30\nlook 90 0 5..7\naxis MoveX -0.5 10..20\npress Jump @28\nhold Right 0..60',
+    ],
+  ];
+
+  it.each(corpus)('%s', (_name, source) => {
+    const first = parseInputScript(source);
+    expect(first.ok, `parse failed: ${JSON.stringify(first.diagnostics)}`).toBe(true);
+    const formatted = formatInputScript(first.value!);
+
+    const second = parseInputScript(formatted);
+    expect(second.ok, `re-parse failed: ${JSON.stringify(second.diagnostics)}`).toBe(true);
+
+    // The property, at several window sizes: shorter than the script, exactly it, and longer.
+    for (const ticks of [1, 5, 60, 401]) {
+      expect(second.value!.frames(ticks)).toEqual(first.value!.frames(ticks));
+    }
+    // …and formatting is idempotent, so a re-recorded session is byte-stable.
+    expect(formatInputScript(second.value!)).toBe(formatted);
+  });
+});
+
+/**
+ * F4: statements outside `[0, ticks)` are silently swallowed by the compiler's clamping, so a
+ * 60-tick run with `press Jump @500` hashes byte-identically to a run with no input at all.
+ * `check(totalTicks)` is the channel that makes that visible.
+ */
+describe('InputScript.check — statements the tick window swallowed', () => {
+  it('reports a statement that lies entirely outside the window as an error', () => {
+    const script = parseInputScript('press Jump @500\nhold Right 200..300').value!;
+    const diags = script.check(60);
+    expect(diags).toHaveLength(2);
+    // Nothing in this script applied, so the run is identical to one with no input: an error.
+    expect(diags.every((d) => d.severity === 'error')).toBe(true);
+    expect(diags[0]!.code).toBe('AEG-HARNESS-0009');
+    expect(diags[0]!.message).toContain('"press Jump @500"');
+    expect(diags[0]!.message).toContain('[0, 60)');
+    expect(diags[0]!.fix).toContain('501');
+    expect(diags[0]!.location?.line).toBe(1);
+    expect(diags[1]!.message).toContain('"hold Right 200..300"');
+  });
+
+  it('downgrades to a warning when the rest of the script did apply', () => {
+    // Running a prefix of a playthrough is a first-class workflow (`aegis inspect --tick 90` on a
+    // 400-tick script), so a later statement falling outside the window must not abort it.
+    const diags = parseInputScript('hold Right 0..30\npress Jump @500').value!.check(60);
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.code).toBe('AEG-HARNESS-0009');
+    expect(diags[0]!.severity).toBe('warning');
+  });
+
+  it('never errors on a 0-tick window, where no statement can apply by definition', () => {
+    const diags = parseInputScript('press Jump @5').value!.check(0);
+    expect(diags.every((d) => d.severity === 'warning')).toBe(true);
+  });
+
+  /**
+   * The severity is decided on the **compiled frames**, not on which spans happen to intersect
+   * the window. A statement can sit inside the window and still contribute nothing — a `release`
+   * for an action that was never held, a zero `look`, an `aim` at the value already there — and
+   * counting those as "the script did something" would silently downgrade every genuinely
+   * swallowed statement to a warning, disarming the check for the whole file.
+   */
+  it.each([
+    ['a release for an action that was never held', 'release Jump @0'],
+    ['a zero look delta', 'look 0 0 @0'],
+    ['an aim at the value already there', 'aim 0 0 @0'],
+  ])('is not disarmed by an in-window no-op: %s', (_name, noop) => {
+    const source = `${noop}\npress Jump @500\nhold Right 200..300`;
+    const script = parseInputScript(source).value!;
+    // The no-op really is inside the window, and the script really does compile to nothing.
+    expect(script.frames(60)).toEqual(parseInputScript('').value!.frames(60));
+    const swallowed = script.check(60).filter((d) => d.code === 'AEG-HARNESS-0009');
+    expect(swallowed).toHaveLength(2);
+    expect(swallowed.every((d) => d.severity === 'error')).toBe(true);
+  });
+
+  it('stays a warning when an in-window statement really did something', () => {
+    const script = parseInputScript('press Jump @1\npress Jump @500').value!;
+    const swallowed = script.check(60).filter((d) => d.code === 'AEG-HARNESS-0009');
+    expect(swallowed).toHaveLength(1);
+    expect(swallowed[0]!.severity).toBe('warning');
+  });
+
+  it('reports a clipped span as a warning naming the ticks that never ran', () => {
+    const diags = parseInputScript('hold A 0..1000').value!.check(3);
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.code).toBe('AEG-HARNESS-0010');
+    expect(diags[0]!.severity).toBe('warning');
+    expect(diags[0]!.message).toContain('clipped to ticks 0..3');
+    expect(diags[0]!.message).toContain('3..1000');
+  });
+
+  it('reports the fraction of a clipped look delta that was actually applied', () => {
+    // `look 90 0 50..70` on a 60-tick run turns 45° and used to say nothing at all.
+    const diags = parseInputScript('look 90 0 50..70').value!.check(60);
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.code).toBe('AEG-HARNESS-0011');
+    expect(diags[0]!.severity).toBe('warning');
+    expect(diags[0]!.message).toContain('45° of 90° yaw');
+  });
+
+  it('is silent for a script that fits its window', () => {
+    const script = parseInputScript('hold Right 0..60\npress Fire @1\nclick 2,3 @59').value!;
+    expect(script.check(60)).toEqual([]);
   });
 });

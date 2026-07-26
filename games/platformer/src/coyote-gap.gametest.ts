@@ -75,7 +75,7 @@ export default defineGameTest({
           return before.carriedBy !== -1 && after.carriedBy !== -1 && after.x > before.x;
         },
       )
-      .hashEquals(result.hash); // pin the golden state hash (determinism)
+      .hashEquals(GOLDEN_HASH); // cross-commit golden-master pin (see GOLDEN_HASH)
 
     // Whole-timeline invariants (require captureHistory):
     result.assertInvariant(
@@ -158,10 +158,13 @@ export default defineGameTest({
  * the chain reports through the assertion API, while the determinism test fails alongside the
  * per-tick timeline comparison, which says *when* the run diverged rather than only that it did.
  *
- * Note for whoever integrates: the `.hashEquals(result.hash)` call in the chain above is
- * self-referential and is being replaced with this constant by the harness session, on their own
- * branch. If both changes land, `tsc` will flag a duplicate `GOLDEN_HASH` declaration — delete
- * whichever copy is redundant. The value is the same either way.
+ * The chain above used to read `hashEquals(result.hash)`, copied from the ideal test in
+ * `docs/architecture.md` §7: a comparison of the run to itself, vacuously true and unable to fail,
+ * while reading exactly like a determinism regression test. ESLint now rejects that form
+ * (`no-restricted-syntax`). What a literal buys is precisely the **cross-commit** master — the
+ * per-tick proof in `test/` already covered *intra-run* determinism, which was never unprotected.
+ * Re-derive this from a green run and update it deliberately if the physics, the scene or the
+ * script change on purpose.
  */
 export const GOLDEN_HASH = 'd813e4e19db7444d';
 
