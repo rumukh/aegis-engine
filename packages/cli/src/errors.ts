@@ -54,14 +54,12 @@ export const CliCode = {
   SceneNotRunnable: 'AEG-CLI-0018',
   /** A tick count so large the run cannot complete in bounded memory/time. */
   TickLimitExceeded: 'AEG-CLI-0019',
-  // 0020 is deliberately unassigned. It briefly held "no plugin was named for a scene that
-  // declares markers the defaulted plugin does not provide" — a hard refusal of the naive
-  // invocation. The PM ruled against it: `@aegis/content` validates component ids and
-  // deliberately does not validate tags, so failing on an unregistered tag would enforce, in one
-  // tool and invisibly to everything else that loads a scene, a content rule that content itself
-  // declines to enforce. The correct fix is to make the plugin resolve by default (an `aegis.json`
-  // beside the scene, which `aegis scaffold game` now writes), leaving the markers report as the
-  // response for a hand-authored scene that has neither. Kept free in case that ruling changes.
+  /**
+   * No plugin was named for a scene that needs one. The scene declares markers the *defaulted*
+   * mode plugin does not provide, so the CLI cannot vouch that the systems which own them ran.
+   * Refusing beats a clean exit 0 over a world whose game layer never executed.
+   */
+  PluginNotResolved: 'AEG-CLI-0020',
 } as const;
 
 /** A CLI diagnostic code value. */
