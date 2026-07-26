@@ -59,12 +59,27 @@ export interface System {
   readonly name: string;
   /** Phase this system runs in. Defaults to `"update"` when omitted. */
   readonly phase?: SystemPhase;
-  /** Names of systems that must run before this one (within the same phase). */
+  /**
+   * Names of systems that must run before this one. Cross-phase names are accepted but have
+   * no effect (the fixed phase order already sequences those). A name that matches no
+   * registered system is ignored and reported by {@link Schedule.unresolved}; a name that is
+   * a near-miss of a registered one is rejected outright as a typo.
+   */
   readonly after?: readonly string[];
-  /** Names of systems that must run after this one (within the same phase). */
+  /** Names of systems that must run after this one. @see {@link System.after} */
   readonly before?: readonly string[];
   /** Execute one tick's worth of work. */
   run(ctx: TickContext): void;
+}
+
+/** A `before`/`after` entry naming a system that is not registered in the schedule. */
+export interface UnresolvedConstraint {
+  /** The system that declared the constraint. */
+  readonly system: string;
+  /** Which clause it appeared in. */
+  readonly kind: 'before' | 'after';
+  /** The name that matched no registered system. */
+  readonly name: string;
 }
 
 /** An ordered, resolved collection of systems. */
@@ -75,27 +90,44 @@ export interface Schedule {
   addAll(systems: readonly System[]): this;
   /** The systems in fully-resolved execution order. Throws on a cyclic constraint. */
   resolved(): readonly System[];
+  /**
+   * `before`/`after` entries that named no registered system, and were therefore ignored.
+   *
+   * Empty for a complete schedule. Non-empty is legitimate for a partial one (a unit test
+   * registering three of a mode's twelve systems), which is why it is reported as data rather
+   * than thrown — but in a full game schedule every entry here is an ordering constraint that
+   * silently did not happen.
+   */
+  unresolved(): readonly UnresolvedConstraint[];
 }
 
 /** Create an empty schedule. */
 export function createSchedule(): Schedule {
   const systems: System[] = [];
-  let resolvedCache: readonly System[] | null = null;
+  let cache: { order: readonly System[]; unresolved: readonly UnresolvedConstraint[] } | null =
+    null;
+
+  function resolve(): { order: readonly System[]; unresolved: readonly UnresolvedConstraint[] } {
+    if (cache === null) cache = resolveSystems(systems);
+    return cache;
+  }
 
   const schedule: Schedule = {
     add(system: System): typeof schedule {
       systems.push(system);
-      resolvedCache = null;
+      cache = null;
       return schedule;
     },
     addAll(list: readonly System[]): typeof schedule {
       for (const s of list) systems.push(s);
-      resolvedCache = null;
+      cache = null;
       return schedule;
     },
     resolved(): readonly System[] {
-      if (resolvedCache === null) resolvedCache = resolveSystems(systems);
-      return resolvedCache;
+      return resolve().order;
+    },
+    unresolved(): readonly UnresolvedConstraint[] {
+      return resolve().unresolved;
     },
   };
   return schedule;
@@ -104,10 +136,15 @@ export function createSchedule(): Schedule {
 /**
  * Deterministically order systems: group by the fixed phase order, then within each phase
  * topologically sort by `before`/`after`, breaking ties by insertion index (stable Kahn's).
- * Throws on a cyclic constraint.
+ * Throws on a cyclic constraint and on a `before`/`after` entry that is a near-miss of a
+ * registered name; other unresolvable entries are returned as data.
  */
-function resolveSystems(systems: readonly System[]): readonly System[] {
+function resolveSystems(systems: readonly System[]): {
+  order: readonly System[];
+  unresolved: readonly UnresolvedConstraint[];
+} {
   const result: System[] = [];
+  const unresolved: UnresolvedConstraint[] = [];
   const byName = new Map<string, number>();
   systems.forEach((s, i) => {
     if (byName.has(s.name)) {
@@ -115,6 +152,31 @@ function resolveSystems(systems: readonly System[]): readonly System[] {
     }
     byName.set(s.name, i);
   });
+
+  // A typo in a `before`/`after` entry used to be silently ignored, so the constraint read as
+  // satisfied while the system quietly degraded to insertion order. Core cannot tell a typo
+  // from a legitimately-absent optional dependency in general — a unit test that registers
+  // three of a mode's twelve systems has unresolvable constraints by construction — so only a
+  // *near-miss* of a registered name (within two edits) is treated as a mistake and reported.
+  // Everything unresolved is available as data via `Schedule.unresolved()`.
+  for (const system of systems) {
+    for (const [kind, names] of [
+      ['after', system.after ?? []],
+      ['before', system.before ?? []],
+    ] as const) {
+      for (const name of names) {
+        if (byName.has(name)) continue;
+        unresolved.push({ system: system.name, kind, name });
+        const suggestion = nearestName(name, byName.keys());
+        if (suggestion === undefined) continue;
+        throw new Error(
+          `[aegis] Schedule: system "${system.name}" declares ${kind}: ["${name}"], but no ` +
+            `system by that name is registered. Did you mean "${suggestion}"? An unresolvable ` +
+            `constraint is silently ignored, so the ordering you asked for would not happen.`,
+        );
+      }
+    }
+  }
 
   for (const phase of SYSTEM_PHASES) {
     const group: { system: System; index: number }[] = [];
@@ -176,7 +238,44 @@ function resolveSystems(systems: readonly System[]): readonly System[] {
       throw new Error(`[aegis] Schedule: cyclic before/after constraint in phase "${phase}"`);
     }
   }
-  return result;
+  return { order: result, unresolved };
+}
+
+/**
+ * Closest registered name to `target`, when it is close enough to be a typo rather than a
+ * different system. Two edits is deliberately tight: a genuinely absent optional dependency
+ * (`fps.gravity` in a schedule that has `fps.integrate`) must never be flagged.
+ */
+function nearestName(target: string, candidates: Iterable<string>): string | undefined {
+  let best: string | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const d = editDistance(target, candidate);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = candidate;
+    }
+  }
+  const limit = 2;
+  return best !== undefined && bestDistance <= limit ? best : undefined;
+}
+
+/** Plain Levenshtein distance. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(
+        (row[j - 1] as number) + 1,
+        (prev[j] as number) + 1,
+        (prev[j - 1] as number) + cost,
+      );
+    }
+    prev = row;
+  }
+  return prev[b.length] as number;
 }
 
 /** A source of one {@link InputFrame} per tick (the harness's script, or a live adapter). */

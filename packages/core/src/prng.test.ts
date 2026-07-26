@@ -147,6 +147,19 @@ describe('seeded PRNG (sfc32)', () => {
     expect(differ).toBe(true);
   });
 
+  it('fork reads the live parent state, so *when* you fork matters (documented caveat)', () => {
+    // The docstring used to claim forking insulates a consumer from draw-order changes
+    // elsewhere. It does not: the derivation mixes the parent's current words, so a fork taken
+    // after one extra parent draw is a different stream. Fork once, at setup.
+    const early = createPrng('parent').fork('sub').nextUint32();
+    const later = (() => {
+      const p = createPrng('parent');
+      p.nextUint32(); // an unrelated consumer draws first
+      return p.fork('sub').nextUint32();
+    })();
+    expect(later).not.toBe(early);
+  });
+
   it('pick throws on an empty array', () => {
     const p = createPrng(0);
     expect(() => p.pick([])).toThrow();

@@ -4,7 +4,8 @@
  * `Math.random()` is banned in simulation code (CHARTER principle 3). All randomness flows
  * through a {@link Prng} seeded from the run's seed. Because system execution order is fixed,
  * a single shared stream is deterministic; however systems SHOULD {@link Prng.fork} a named
- * sub-stream so that adding or reordering a consumer does not shift every downstream draw.
+ * sub-stream **once, at setup**, so that adding or reordering a consumer does not shift every
+ * downstream draw.
  *
  * The concrete algorithm (a small, fast, well-distributed generator such as SplitMix64 /
  * PCG-XSH-RR) is fixed by the implementation and documented in ADR-0001; it must be pure
@@ -38,8 +39,17 @@ export interface Prng {
   /** Uniformly pick an element, or throw on an empty array. */
   pick<T>(items: readonly T[]): T;
   /**
-   * Derive an independent named sub-stream. The same `streamId` always yields the same
-   * sub-stream for a given parent state, decoupling consumers from global draw order.
+   * Derive an independent named sub-stream, without consuming this one.
+   *
+   * The child is a pure function of **(this generator's current state, `streamId`)**. The same
+   * `streamId` forked from the same parent state always yields the same child.
+   *
+   * That "current state" is load-bearing and easy to misread: because the derivation reads the
+   * *live* parent words, forking at a different point in the parent's stream gives a different
+   * child. Forking therefore does **not** by itself insulate a consumer from draw-order
+   * changes elsewhere — it only insulates it once forked. Fork each sub-stream **once, during
+   * setup, before any draws**, and keep the child; forking lazily inside a system re-couples it
+   * to whatever the parent has drawn so far.
    */
   fork(streamId: string): Prng;
   /** Snapshot the current state. */
@@ -143,7 +153,8 @@ class Sfc32 implements Prng {
 
   fork(streamId: string): Prng {
     // Pure function of (current state, streamId): mix the four words with a digest of the id
-    // through SplitMix32. Does not consume the parent's stream.
+    // through SplitMix32. Does not consume the parent's stream — but it does *read* it, so the
+    // child depends on when the fork happened. See the interface doc.
     const h = fnv1a32(streamId);
     const next = splitmix32((this.a ^ h) >>> 0);
     const words: [number, number, number, number] = [

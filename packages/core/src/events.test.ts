@@ -121,7 +121,7 @@ describe('event bus — the bus owns the payload (M2)', () => {
   it('rejects a non-serialisable payload at the emission site', () => {
     const bus = createEventBus({ record: true }) as ManagedEventBus;
     bus[CLEAR_TICK](0);
-    expect(() => bus.emit('bad', { at: new Date(0) })).toThrow(/plain JSON/);
+    expect(() => bus.emit('bad', { at: new Map() })).toThrow(/plain JSON/);
   });
 });
 

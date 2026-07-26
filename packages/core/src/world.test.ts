@@ -298,8 +298,9 @@ describe('World — non-finite state is visible to the hash (C1)', () => {
 
   it('rejects non-plain data rather than silently canonicalising it to {}', () => {
     const w = createWorld({ seed: 1 });
-    // A Date has no enumerable own keys, so it used to survive into state and hash as `{}`.
-    expect(() => w.spawn(V({ v: new Date(0) as unknown as number }))).toThrow(/plain JSON/);
+    // A Map has no enumerable own keys, so it used to survive into state and hash as `{}`.
+    expect(() => w.spawn(V({ v: new Map() as unknown as number }))).toThrow(/plain JSON/);
+    expect(() => w.spawn(V({ v: (() => 1) as unknown as number }))).toThrow(/not simulation data/);
   });
 
   it('a clean world still snapshots, hashes and round-trips exactly', () => {

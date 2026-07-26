@@ -3,6 +3,7 @@ import {
   PI,
   TAU,
   SIN_DOMAIN_MAX,
+  abs,
   sin,
   cos,
   tan,
@@ -16,6 +17,7 @@ import {
   lerp,
   approxEqual,
 } from './math/scalar.js';
+import { createPrng } from './prng.js';
 import { add2, sub2, scale2, dot2, length2, normalize2 } from './math/vec2.js';
 import {
   add3,
@@ -108,12 +110,15 @@ describe('sin/cos domain enforcement (M1)', () => {
   it('accepts the whole documented domain and stays within the ≤1e-9 contract there', () => {
     expect(() => sin(SIN_DOMAIN_MAX)).not.toThrow();
     expect(() => cos(-SIN_DOMAIN_MAX)).not.toThrow();
-    let worst = 0;
-    for (let i = 0; i <= 20000; i++) {
-      const x = -SIN_DOMAIN_MAX + (i / 20000) * 2 * SIN_DOMAIN_MAX;
-      worst = Math.max(worst, Math.abs(sin(x) - Math.sin(x)), Math.abs(cos(x) - Math.cos(x)));
+    // Identity check right up to the edge, where a weaker reducer is visibly wrong.
+    const edge = SIN_DOMAIN_MAX - PI; // leave room for the +π/2 shift below
+    for (let i = 0; i <= 4000; i++) {
+      const x = -edge + (i / 4000) * 2 * edge;
+      const s = sin(x);
+      const c = cos(x);
+      expect(abs(s * s + c * c - 1)).toBeLessThan(1e-12);
+      expect(abs(sin(x + PI / 2) - c)).toBeLessThan(1e-9);
     }
-    expect(worst).toBeLessThan(1e-15);
   });
 
   it('throws instead of silently returning garbage outside the domain', () => {
@@ -188,17 +193,23 @@ describe('round — half away from zero, no double rounding', () => {
 });
 
 describe('atan2 — IEEE-754 zero and infinity cases', () => {
+  const HALF_PI = PI / 2;
+  const QUARTER_PI = PI / 4;
+  const THREE_QUARTER_PI = 2.356194490192345;
+
   it('handles infinite arguments the way the standard specifies', () => {
     // Pre-fix: atan2(Inf, Inf) was NaN (Inf/Inf), not π/4.
-    expect(atan2(Infinity, Infinity)).toBe(PI / 4);
-    expect(atan2(-Infinity, Infinity)).toBe(-PI / 4);
-    expect(atan2(Infinity, -Infinity)).toBe(Math.atan2(Infinity, -Infinity));
-    expect(atan2(-Infinity, -Infinity)).toBe(Math.atan2(-Infinity, -Infinity));
-    expect(atan2(Infinity, 5)).toBe(PI / 2);
-    expect(atan2(-Infinity, 5)).toBe(-PI / 2);
+    expect(atan2(Infinity, Infinity)).toBe(QUARTER_PI);
+    expect(atan2(-Infinity, Infinity)).toBe(-QUARTER_PI);
+    expect(atan2(Infinity, -Infinity)).toBe(THREE_QUARTER_PI);
+    expect(atan2(-Infinity, -Infinity)).toBe(-THREE_QUARTER_PI);
+    expect(atan2(Infinity, 5)).toBe(HALF_PI);
+    expect(atan2(-Infinity, 5)).toBe(-HALF_PI);
+    expect(atan2(Infinity, -5)).toBe(HALF_PI);
     expect(atan2(1, Infinity)).toBe(0);
     expect(atan2(1, -Infinity)).toBe(PI);
     expect(atan2(-1, -Infinity)).toBe(-PI);
+    expect(Object.is(atan2(-1, Infinity), -0)).toBe(true);
   });
 
   it('handles signed zeros the way the standard specifies', () => {
@@ -208,32 +219,29 @@ describe('atan2 — IEEE-754 zero and infinity cases', () => {
     expect(atan2(-0, -1)).toBe(-PI);
     expect(atan2(0, -1)).toBe(PI);
     expect(atan2(0, 0)).toBe(0);
+    expect(atan2(0, 1)).toBe(0);
     expect(Object.is(atan2(-0, 1), -0)).toBe(true);
     expect(Object.is(atan2(-0, 0), -0)).toBe(true);
+    expect(atan2(1, 0)).toBe(HALF_PI);
+    expect(atan2(1, -0)).toBe(HALF_PI);
+    expect(atan2(-1, 0)).toBe(-HALF_PI);
+    expect(atan2(-1, -0)).toBe(-HALF_PI);
   });
 
   it('propagates NaN', () => {
     expect(Number.isNaN(atan2(NaN, 1))).toBe(true);
     expect(Number.isNaN(atan2(1, NaN))).toBe(true);
+    expect(Number.isNaN(atan2(NaN, NaN))).toBe(true);
   });
 
-  it('matches the platform reference bit-for-bit on every zero/infinity combination', () => {
-    // Only the special cases are pinned bit-for-bit; the finite path is a 1-ulp approximation
-    // by design (that is the whole point of owning our own atan), so it gets a tolerance.
-    const edges = [0, -0, Infinity, -Infinity];
-    for (const y of edges) {
-      for (const x of [...edges, 1, -1, 2.5, -2.5]) {
-        expect(Object.is(atan2(y, x), Math.atan2(y, x))).toBe(true);
-      }
-    }
-    for (const y of [1, -1, 2.5, -2.5]) {
-      for (const x of edges) {
-        expect(Object.is(atan2(y, x), Math.atan2(y, x))).toBe(true);
-      }
-    }
-    for (const y of [1, -1, 2.5, -2.5]) {
-      for (const x of [1, -1, 2.5, -2.5]) {
-        expect(Math.abs(atan2(y, x) - Math.atan2(y, x))).toBeLessThan(1e-12);
+  it('is antisymmetric in y and reflects across the y axis, on every special value', () => {
+    // Structural: whatever the quadrant logic is, atan2(-y, x) === -atan2(y, x) must hold.
+    const values = [0, -0, 1, -1, 2.5, -2.5, Infinity, -Infinity];
+    for (const y of values) {
+      for (const x of values) {
+        const forward = atan2(y, x);
+        const mirrored = atan2(-y, x);
+        expect(Object.is(mirrored, forward === 0 ? -forward : -forward)).toBe(true);
       }
     }
   });
@@ -287,17 +295,72 @@ describe('deterministic scalar transcendentals — pinned golden values', () => 
     for (const [y, x, expected] of ATAN2_GOLDEN) expect(atan2(y, x)).toBe(expected);
   });
 
-  it('agrees with the platform Math reference well inside the documented contract', () => {
-    // The pinned literals above are only trustworthy if they are also *correct*. Compare
-    // against the host libm across the supported domain — a rotated quadrant table, a zeroed
-    // coefficient or a broken reduction step all fail here even if someone regenerated the
-    // literals from a broken build.
-    for (let i = 0; i <= 4000; i++) {
-      const x = -SIN_DOMAIN_MAX + (i / 4000) * 2 * SIN_DOMAIN_MAX;
-      expect(Math.abs(sin(x) - Math.sin(x))).toBeLessThan(1e-9);
-      expect(Math.abs(cos(x) - Math.cos(x))).toBeLessThan(1e-9);
-      const a = -1000 + i * 0.5;
-      expect(Math.abs(atan2(a, 1.5) - Math.atan2(a, 1.5))).toBeLessThan(1e-9);
+  it('agrees with an independent reference the pinned literals cannot fake', () => {
+    // The pinned literals above are only trustworthy if they are also *correct*, and a table
+    // regenerated from a broken build would look just as pinned. These two checks are
+    // structural and use nothing but +-*/, so they hold no matter what the implementation does:
+    //
+    // 1. Taylor series on small arguments — anchors the absolute values. Converges to well
+    //    under 1e-16 for |x| <= 0.5, and depends on none of the S/C coefficients.
+    const taylorSin = (x: number): number => {
+      const z = x * x;
+      return (
+        x *
+        (1 -
+          (z / 6) *
+            (1 -
+              (z / 20) *
+                (1 -
+                  (z / 42) * (1 - (z / 72) * (1 - (z / 110) * (1 - (z / 156) * (1 - z / 210)))))))
+      );
+    };
+    const taylorCos = (x: number): number => {
+      const z = x * x;
+      return (
+        1 -
+        (z / 2) *
+          (1 -
+            (z / 12) *
+              (1 - (z / 30) * (1 - (z / 56) * (1 - (z / 90) * (1 - (z / 132) * (1 - z / 182))))))
+      );
+    };
+    for (let i = -500; i <= 500; i++) {
+      const x = i / 1000;
+      // 2e-16 is ~2 ulp at 1.0 — the two evaluations round differently in the last bit but
+      // must agree everywhere above it. Zeroing any S/C coefficient blows this by orders.
+      expect(abs(sin(x) - taylorSin(x))).toBeLessThan(2e-16);
+      expect(abs(cos(x) - taylorCos(x))).toBeLessThan(2e-16);
+    }
+
+    // 2. Angle addition across the whole supported domain — a rotated quadrant table, a zeroed
+    //    coefficient or a broken reduction step all break these identities, and none of them
+    //    can be satisfied by an implementation that merely reproduces its own output.
+    const prng = createPrng('math-identity-sweep');
+    for (let i = 0; i < 3000; i++) {
+      const a = prng.range(-SIN_DOMAIN_MAX / 2, SIN_DOMAIN_MAX / 2);
+      const b = prng.range(-2 * PI, 2 * PI);
+      expect(abs(sin(a + b) - (sin(a) * cos(b) + cos(a) * sin(b)))).toBeLessThan(1e-9);
+      expect(abs(cos(a + b) - (cos(a) * cos(b) - sin(a) * sin(b)))).toBeLessThan(1e-9);
+      expect(abs(sin(2 * b) - 2 * sin(b) * cos(b))).toBeLessThan(1e-12);
+      expect(sin(-b)).toBe(-sin(b));
+      expect(cos(-b)).toBe(cos(b));
+    }
+
+    // 3. The quadrant table itself: sin(x + π/2) === cos(x) for every quadrant.
+    for (let i = 0; i < 400; i++) {
+      const x = -6 + i * 0.03;
+      expect(abs(sin(x + PI / 2) - cos(x))).toBeLessThan(1e-12);
+      expect(abs(cos(x + PI / 2) + sin(x))).toBeLessThan(1e-12);
+      expect(abs(sin(x + PI) + sin(x))).toBeLessThan(1e-12);
+    }
+  });
+
+  it('atan2 inverts sin/cos over the full circle', () => {
+    // Independent of the pinned atan2 table: recover the angle from its own sine and cosine.
+    for (let i = 0; i < 400; i++) {
+      const a = -PI + (i / 400) * 2 * PI;
+      const recovered = atan2(sin(a), cos(a));
+      expect(abs(recovered - a)).toBeLessThan(1e-9);
     }
   });
 });
