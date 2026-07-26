@@ -245,6 +245,7 @@ export default defineGameTest({
       .eventEmitted('door.opened', 1) // the button shot actually opened the door
       .eventEmitted('enemy.killed', 1) // the grunt actually died
       .eventEmitted('level.completed', 1) // reached the exit, once
+      .eventEmitted('damage.taken', 1) // the grunt landed exactly one shot (not zero, not many)
       .eventNotEmitted('player.died') // survived (pit + firefight)
       .entityExists({ has: ['Player'] })
       .holds(
@@ -255,7 +256,15 @@ export default defineGameTest({
             .one()
             .get(Transform).position.z >= 17,
       )
-      .hashEquals(result.hash); // pin the golden state hash (determinism)
+      .holds(
+        'player took exactly one grunt hit — final Health is 90',
+        (r) =>
+          r
+            .query({ has: ['Player', 'Health'] })
+            .one()
+            .get(Health).current === 90, // exact: 0 hits leaves 100, 2 leaves 80 — both fail
+      )
+      .hashEquals('f86540b793f071a3'); // literal golden master, not result.hash (self-referential)
 
     // Whole-timeline invariant #1 — 3D collision/jump: never fell through the world.
     result.assertInvariant(
@@ -267,7 +276,9 @@ export default defineGameTest({
           .get(Transform).position.y > -1,
     );
 
-    // Whole-timeline invariant #2 — bounded, deterministic incoming damage.
+    // Whole-timeline invariant #2 — a safety property: health never dips below the floor on *any*
+    // tick. Kept as a bound because it guards the whole timeline; the exact damage exchange is
+    // pinned by the `damage.taken ×1` + `Health === 90` assertions above.
     result.assertInvariant(
       'player health stayed above the safe floor',
       (w) =>
@@ -292,13 +303,17 @@ export default defineGameTest({
 >    verbatim (`readFileSync`) rather than inlining the script, so the playthrough has a single
 >    source of truth. The block above mirrors it for readability.
 
-The assertions themselves are unchanged from the design intent — the deviations are in _how the run
-is wired_, not in _what is asserted_.
+The assertions pin the design intent; the two deviations are in _how the run is wired_, not
+_what is asserted_ — plus the damage exchange is now pinned **exactly** (see below).
 
 Invariant #1 fails at the exact tick a botched pit-jump or capsule-collision bug drops the player
-below the floor. Invariant #2 pins the grunt's AI cadence: if the enemy fires more often than
-designed (a determinism or timing regression), incoming damage exceeds 30 and health dips below 70
-on some tick — failing precisely when the AI drifted.
+below the floor. The **`damage.taken ×1` + `Health === 90`** pair pins the firefight exchange
+per CHARTER §4.3 ("defeated the enemy, took the correct damage"): if the grunt's targeting, LOS
+probe, cooldown, or damage application regresses such that it fires **zero** times the player ends
+at Health 100 (both assertions fail); if it fires for the wrong amount or more than once the health
+equality fails; if it sprays, the count fails too. Invariant #2 (`Health >= 70` on every tick) is
+kept as a whole-timeline **safety** property — necessary but, on its own, _not sufficient_ (zero
+damage also satisfies it), which is exactly why the exact pins above were added.
 
 ## What this game proves about the engine
 

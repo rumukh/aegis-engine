@@ -31,6 +31,14 @@ const SEED = 'poc-fps';
 const TICKS = 600;
 
 /**
+ * The golden state hash of the completing run (seed `poc-fps`, 600 ticks, the tuned script). Pinned
+ * as a literal — not `result.hash`, which is self-referential and can never fail — so an accidental
+ * change to the mode's physics, the grunt AI, the scene, or the script is caught as a hash drift.
+ * If you change the design on purpose, re-derive this from a run and update it deliberately.
+ */
+const GOLDEN_HASH = 'f86540b793f071a3';
+
+/**
  * The spec's declarative game test (docs/games/fps.md), with two documented deviations:
  *  - the plugin is the composed {@link sectorBreachPlugin} (the harness builds its schedule from
  *    `plugin.systems()` alone, so the game's systems must ride in the plugin), and
@@ -49,6 +57,10 @@ const sectorBreach = defineGameTest({
       .eventEmitted('door.opened', 1)
       .eventEmitted('enemy.killed', 1)
       .eventEmitted('level.completed', 1)
+      // The damage exchange is a first-class beat, so pin it exactly: the grunt lands exactly one
+      // shot. This fails if the grunt's targeting, LOS probe, cooldown, or damage application
+      // breaks such that it fires zero times — or if it fires more than once.
+      .eventEmitted('damage.taken', 1)
       .eventNotEmitted('player.died')
       .entityExists({ has: ['Player'] })
       .holds(
@@ -59,7 +71,19 @@ const sectorBreach = defineGameTest({
             .one()
             .get(Transform).position.z >= 17,
       )
-      .hashEquals(result.hash);
+      // Exact final health (not a bound): 100 − one 10-damage grunt hit. Zero hits would leave 100,
+      // two would leave 80 — both fail here. Together with the `damage.taken ×1` count above this
+      // pins *the correct damage was taken*, per CHARTER §4.3, closing the "enemy fire silently
+      // broke and the test still passed" gap.
+      .holds(
+        'player took exactly one grunt hit — final Health is 90',
+        (r) =>
+          r
+            .query({ has: ['Player', 'Health'] })
+            .one()
+            .get(Health).current === 90,
+      )
+      .hashEquals(GOLDEN_HASH); // golden-master regression pin (see GOLDEN_HASH)
 
     result.assertInvariant(
       'player feet never dropped into the void',
@@ -101,6 +125,8 @@ describe('Sector Breach', () => {
     expect(first.replay().hash).toBe(first.hash);
     // Every per-tick hash matches too — determinism holds tick-by-tick, not just at the end.
     expect(second.tickHashes).toEqual(first.tickHashes);
+    // ...and the run is byte-stable against the recorded golden master.
+    expect(first.hash).toBe(GOLDEN_HASH);
   });
 
   it('tilemap and scene floorplans extrude to identical collision (no drift)', () => {
