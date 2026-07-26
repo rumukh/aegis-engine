@@ -39,10 +39,11 @@ describe('@aegis/cli dispatcher', () => {
     expect(out()).toContain('aegis run <scene>');
   });
 
-  it('maps a stubbed command failure to exit code 1', async () => {
-    const { io, err } = fakeIO(['run', 'scene.json', '--ticks', '10']);
+  it('maps a missing scene to an actionable exit code 1', async () => {
+    const { io, err } = fakeIO(['run', 'does-not-exist.scene.json', '--ticks', '10']);
     expect(await main(io)).toBe(1);
-    expect(err()).toContain('not implemented');
+    expect(err()).toContain('AEG-CLI-0004');
+    expect(err()).toContain('File not found');
   });
 });
 

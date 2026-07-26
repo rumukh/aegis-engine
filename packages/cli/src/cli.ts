@@ -1,13 +1,29 @@
 /**
- * The dispatcher: parse argv, select a {@link Command}, and run it. This is plumbing — it is
- * implemented so `aegis --help` and unknown-command handling work in the skeleton — but it
- * contains no game logic; every real command body is a stub.
+ * The dispatcher: parse argv, select a {@link Command}, run it, and render any failure through
+ * one uniform, actionable path (CHARTER principle 8).
+ *
+ * All game logic lives in the individual commands; this file only routes and reports. Failures
+ * are mapped to stable exit codes: an {@link AegisCliError} carries its own `exitCode`, a
+ * {@link DiagnosticError} (a scene/script that failed schema validation) exits `2`, and anything
+ * else is a generic exit `1`. With `--json`, the error is emitted as a machine-readable object.
  * @packageDocumentation
  */
+import { DiagnosticError } from '@aegis/core';
 import { parseArgs } from './args.js';
+import type { ParsedArgs } from './args.js';
 import { COMMANDS } from './commands.js';
 import type { Command } from './command.js';
 import type { CliIO } from './io.js';
+import { AegisCliError, Exit, formatCliError } from './errors.js';
+import { formatDiagnostics, json } from './format.js';
+import { defaultModeResolver } from './modes.js';
+import type { ModeResolver } from './modes.js';
+
+/** Injectable dependencies, so tests can substitute a fake mode resolver. */
+export interface CliDeps {
+  /** Resolves mode names to plugins. Defaults to the three shipped `@aegis/mode-*` plugins. */
+  modes: ModeResolver;
+}
 
 /** Find a registered command by name. */
 export function findCommand(name: string): Command | undefined {
@@ -26,8 +42,47 @@ export function topLevelHelp(): string {
     ...COMMANDS.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
     '',
     "Run 'aegis <command> --help' for command-specific usage.",
+    'Add --json to most commands for machine-readable output.',
   ];
   return lines.join('\n');
+}
+
+/** Whether `--json` was requested. */
+function wantsJson(args: ParsedArgs): boolean {
+  return args.flags['json'] === true;
+}
+
+/** Report a failure to stderr, as JSON when requested, and return its exit code. */
+function reportError(io: CliIO, args: ParsedArgs, error: unknown): number {
+  if (error instanceof AegisCliError) {
+    if (wantsJson(args)) {
+      io.err(
+        json({
+          error: {
+            code: error.code,
+            message: error.message,
+            ...(error.fix !== undefined ? { fix: error.fix } : {}),
+            ...(error.data !== undefined ? { data: error.data } : {}),
+          },
+        }),
+      );
+    } else {
+      io.err(formatCliError(error) + '\n');
+    }
+    return error.exitCode;
+  }
+  if (error instanceof DiagnosticError) {
+    if (wantsJson(args)) {
+      io.err(json({ diagnostics: error.diagnostics }));
+    } else {
+      io.err(formatDiagnostics(error.diagnostics) + '\n');
+    }
+    return Exit.Validation;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (wantsJson(args)) io.err(json({ error: { message } }));
+  else io.err(`error: ${message}\n`);
+  return Exit.Error;
 }
 
 /**
@@ -36,10 +91,11 @@ export function topLevelHelp(): string {
  * - No command, `--help`, or `-h` → print top-level help, return `0`.
  * - `<command> --help` → print that command's usage, return `0`.
  * - Unknown command → error to stderr, return `1`.
- * - Otherwise → run the command and return its exit code; a thrown error (including the
- *   `notImplemented` stubs) is caught, reported to stderr, and mapped to exit code `1`.
+ * - Otherwise → run the command and return its exit code; a thrown {@link AegisCliError} or
+ *   {@link DiagnosticError} is rendered actionably and mapped to its exit code.
  */
-export async function main(io: CliIO): Promise<number> {
+export async function main(io: CliIO, deps?: CliDeps): Promise<number> {
+  const resolved: CliDeps = deps ?? { modes: defaultModeResolver() };
   const [name, ...rest] = io.argv;
 
   if (name === undefined || name === '--help' || name === '-h') {
@@ -61,10 +117,8 @@ export async function main(io: CliIO): Promise<number> {
   }
 
   try {
-    return await command.run({ args, io });
+    return await command.run({ args, io, modes: resolved.modes });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.err(`error: ${message}\n`);
-    return 1;
+    return reportError(io, args, error);
   }
 }
