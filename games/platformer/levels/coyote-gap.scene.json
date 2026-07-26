@@ -1,0 +1,215 @@
+{
+  "aegis": "scene/1",
+  "name": "Coyote Gap",
+  "mode": "platformer",
+  "seed": "poc-platformer",
+  "resources": {
+    "platformer.tilemap": {
+      "aegis": "tilemap/1",
+      "name": "coyote-gap",
+      "width": 44,
+      "height": 12,
+      "tileSize": 1,
+      "legend": {
+        "#": {
+          "solid": true,
+          "sprite": "ground"
+        },
+        "^": {
+          "solid": false,
+          "sprite": "spikes",
+          "data": {
+            "hazard": true
+          }
+        },
+        "~": {
+          "solid": false,
+          "sprite": "lava",
+          "data": {
+            "hazard": true
+          }
+        }
+      },
+      "layers": [
+        {
+          "name": "collision",
+          "data": [
+            "...........................................#",
+            "...........................................#",
+            "...........................................#",
+            "...........................................#",
+            "...........................................#",
+            "...........................................#",
+            "........................................####",
+            "#######...###########..###########..########",
+            "#######...###########..###########..########",
+            "#######...###########..###########..########",
+            "#######^^^###########~~###########..########",
+            "#######^^^###########..###########..########"
+          ]
+        }
+      ]
+    }
+  },
+  "entities": [
+    {
+      "id": "player",
+      "tags": ["Player"],
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 2.5,
+            "y": 5.5,
+            "z": 0
+          }
+        },
+        "Velocity": {
+          "dx": 0,
+          "dy": 0
+        },
+        "PlatformerController": {},
+        "BodyState": {},
+        "TileCollider": {
+          "halfWidth": 0.4,
+          "halfHeight": 0.5
+        },
+        "Health": {
+          "current": 1,
+          "max": 1
+        }
+      }
+    },
+    {
+      "id": "critter",
+      "tags": ["Critter"],
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 16,
+            "y": 5.4,
+            "z": 0
+          }
+        },
+        "Patrol": {
+          "minX": 15,
+          "maxX": 17,
+          "speed": 3,
+          "phase": 0
+        },
+        "TileCollider": {
+          "halfWidth": 0.4,
+          "halfHeight": 0.4
+        },
+        "Health": {
+          "current": 1,
+          "max": 1
+        }
+      }
+    },
+    {
+      "id": "platform",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 22,
+            "y": 4.5,
+            "z": 0
+          }
+        },
+        "KinematicPlatform": {
+          "axis": "x",
+          "min": 21.5,
+          "max": 22.5,
+          "speed": 2,
+          "phase": 0,
+          "halfWidth": 1.5,
+          "halfHeight": 0.5
+        }
+      }
+    },
+    {
+      "id": "camera",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 2.5,
+            "y": 6,
+            "z": 10
+          }
+        },
+        "PlatformerCamera": {
+          "target": "player",
+          "deadzoneX": 3,
+          "deadzoneY": 2,
+          "viewHeight": 12
+        }
+      }
+    },
+    {
+      "id": "goal",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 41,
+            "y": 7,
+            "z": 0
+          }
+        },
+        "Trigger": {
+          "kind": "goal",
+          "shape": "box",
+          "half": {
+            "x": 1.5,
+            "y": 1,
+            "z": 1
+          },
+          "once": true
+        }
+      }
+    },
+    {
+      "id": "hazard-pit",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 8.5,
+            "y": 2.5,
+            "z": 0
+          }
+        },
+        "Trigger": {
+          "kind": "hazard",
+          "shape": "box",
+          "half": {
+            "x": 1.5,
+            "y": 2.5,
+            "z": 1
+          },
+          "once": false
+        }
+      }
+    },
+    {
+      "id": "hazard-lava",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 21.9,
+            "y": 2.5,
+            "z": 0
+          }
+        },
+        "Trigger": {
+          "kind": "hazard",
+          "shape": "box",
+          "half": {
+            "x": 1.1,
+            "y": 2.5,
+            "z": 1
+          },
+          "once": false
+        }
+      }
+    }
+  ]
+}

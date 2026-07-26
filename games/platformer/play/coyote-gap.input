@@ -1,0 +1,10 @@
+# Coyote Gap — a completing run. Hold Right the whole way; jump on cue.
+# Tick numbers are tuned against the real physics (see docs/games/platformer.md).
+hold Right 0..360
+
+press Jump @28      # beat 2: clear the spike pit onto the plateau
+press Jump @74      # beat 3: stomp the critter from above -> enemy.killed + bounce
+                    # beat 4: no input -- the shuttle platform bridges the lava and
+                    #         carries us across (platform.boarded)
+press Jump @238     # beat 5: coyote jump, pressed ~1 tick after running off the ledge
+press Jump @266     # beat 6: buffered jump, pressed before touchdown to mount the pillar
