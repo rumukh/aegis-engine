@@ -73,7 +73,7 @@ export default defineGameTest({
           return before.carriedBy !== -1 && after.carriedBy !== -1 && after.x > before.x;
         },
       )
-      .hashEquals(result.hash); // pin the golden state hash (determinism)
+      .hashEquals('d813e4e19db7444d'); // golden master, pinned as a literal (never result.hash — self-referential); re-derive deliberately if the design changes
 
     // Whole-timeline invariants (require captureHistory):
     result.assertInvariant(

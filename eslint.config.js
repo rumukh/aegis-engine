@@ -39,6 +39,20 @@ const bannedMathProps = [
     'Non-deterministic or platform-dependent. Use @aegis/core deterministic math (see ADR-0001).',
 }));
 
+/**
+ * Golden-hash guard rail (CHARTER principle 6, ADR-0008).
+ *
+ * `hashEquals(result.hash)` compares a run to itself: it is vacuously true, can never
+ * fail, and pins nothing — while reading exactly like a determinism regression test.
+ * The golden hash must be a literal, derived once from a green run and updated
+ * deliberately. See docs/architecture.md §7.
+ */
+const noSelfReferentialGoldenHash = {
+  selector: "CallExpression[callee.property.name='hashEquals'] > MemberExpression[property.name='hash']",
+  message:
+    'hashEquals(<run>.hash) compares the run to itself and can never fail. Pin a literal golden hash instead (docs/architecture.md §7, ADR-0008).',
+};
+
 export default tseslint.config(
   {
     ignores: ['**/dist/**', '**/node_modules/**', '**/*.tsbuildinfo', 'coverage/**'],
@@ -51,6 +65,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_' }],
       // Contract stubs legitimately throw for not-yet-implemented behaviour.
       '@typescript-eslint/no-empty-function': 'off',
+      'no-restricted-syntax': ['error', noSelfReferentialGoldenHash],
     },
   },
   {
@@ -78,12 +93,15 @@ export default tseslint.config(
           message: 'Wall-clock time breaks determinism (ADR-0001).',
         },
       ],
+      // Flat config replaces a rule's options wholesale rather than merging them, so this
+      // block must restate the golden-hash selector alongside its own.
       'no-restricted-syntax': [
         'error',
         {
           selector: "NewExpression[callee.name='Date']",
           message: 'Wall-clock time breaks determinism (ADR-0001).',
         },
+        noSelfReferentialGoldenHash,
       ],
     },
   },

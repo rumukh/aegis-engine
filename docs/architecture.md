@@ -222,6 +222,14 @@ import { defineGameTest, expectSim } from '@aegis/harness';
 import { platformerPlugin } from '@aegis/mode-platformer';
 import { Transform } from '@aegis/core';
 
+/**
+ * The golden state hash of this playthrough, pinned as a **literal**. Derive it once from a
+ * green run (`aegis run … --hash`), paste it here, and change it only deliberately.
+ * Never write `hashEquals(result.hash)` — that compares a value to itself, can never fail,
+ * and pins nothing. ESLint rejects it (`no-restricted-syntax`).
+ */
+const GOLDEN_HASH = 'a1b2c3d4e5f60718';
+
 export default defineGameTest({
   name: 'player clears the gap and reaches the goal',
   scene: 'games/platformer/levels/1-1.scene.json',
@@ -246,7 +254,7 @@ export default defineGameTest({
             .one()
             .get(Transform).position.x >= 128,
       )
-      .hashEquals(result.hash); // pin the golden state hash
+      .hashEquals(GOLDEN_HASH); // pin the golden state hash — a literal, never result.hash
 
     // A property that must hold on *every* tick, not just the last:
     result.assertInvariant(
@@ -274,7 +282,18 @@ Why it reads well, and what each piece buys the agent:
   `captureHistory`), while `Invariant`s passed to `runScene` fail _live_ at the first offending
   tick with an `InvariantError` naming the tick — so a broken jump points at _when_ it broke.
 - **`hashEquals`** turns determinism into a one-line regression test: the golden hash is a byte
-  for the entire final world state (ADR-0001).
+  for the entire final world state (ADR-0001). It only works against a **pinned literal**.
+  `hashEquals(result.hash)` compares the run to itself: it is vacuously true, cannot fail, and
+  pins nothing — the exact shape of "looks like proof, isn't". Derive the literal once from a
+  green run and update it deliberately when you change the design on purpose. ESLint enforces
+  this (`no-restricted-syntax`, `eslint.config.js`); `docs/games/fps.md` shows the pattern.
+
+Every assertion in this block reports **what was actually checked**, not just pass/fail:
+`runGameTest` returns the number of assertions that really executed (a test whose `expect`
+asserts nothing fails rather than reporting a clean pass), an unresolvable component reference
+in a query is a loud failure rather than a filter that silently matches nothing, and a
+`ticks: 0` run makes invariants fail rather than pass vacuously. The harness must always be
+able to tell "verified" from "didn't check".
 
 The object all of this reads from is `SimResult` (`harness/run.ts`): `world`, `hash`,
 per-tick `tickHashes`, the `events` reader, `query(...)`, `frame(tick)`, `ascii(tick)`,
