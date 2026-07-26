@@ -228,7 +228,8 @@ that test:
 ```ts
 import { defineGameTest, expectSim } from '@aegis/harness';
 import { platformerPlugin } from '@aegis/mode-platformer';
-import { Transform } from '@aegis/core';
+import { hashString, Transform } from '@aegis/core';
+import type { StateHash } from '@aegis/core';
 
 /**
  * The golden state hash of this playthrough, pinned as a **literal**. Derive it once from a
@@ -237,6 +238,16 @@ import { Transform } from '@aegis/core';
  * and pins nothing. ESLint rejects it (`no-restricted-syntax`).
  */
 const GOLDEN_HASH = 'a1b2c3d4e5f60718';
+
+/**
+ * The whole per-tick timeline, digested. `GOLDEN_HASH` says where the run *ended*; it is blind
+ * to a change that diverges and then reconverges. Measured: moving one iso click from t340 to
+ * t420 shifted `mission.completed` by 80 ticks and left the final hash **byte-identical**. Pin
+ * both, or you are pinning the destination and not the route.
+ */
+const GOLDEN_TRAJECTORY = '0f1e2d3c4b5a6978';
+const trajectoryDigest = (tickHashes: readonly StateHash[]): StateHash =>
+  hashString(tickHashes.join('|'));
 
 export default defineGameTest({
   name: 'player clears the gap and reaches the goal',
@@ -262,7 +273,11 @@ export default defineGameTest({
             .one()
             .get(Transform).position.x >= 128,
       )
-      .hashEquals(GOLDEN_HASH); // pin the golden state hash — a literal, never result.hash
+      .hashEquals(GOLDEN_HASH) // where the run ended — a literal, never result.hash
+      .holds(
+        'the per-tick hash timeline matches the golden trajectory',
+        (r) => trajectoryDigest(r.tickHashes) === GOLDEN_TRAJECTORY, // …and how it got there
+      );
 
     // A property that must hold on *every* tick, not just the last:
     result.assertInvariant(
@@ -290,11 +305,34 @@ Why it reads well, and what each piece buys the agent:
   `captureHistory`), while `Invariant`s passed to `runScene` fail _live_ at the first offending
   tick with an `InvariantError` naming the tick — so a broken jump points at _when_ it broke.
 - **`hashEquals`** turns determinism into a one-line regression test: the golden hash is a byte
-  for the entire final world state (ADR-0001). It only works against a **pinned literal**.
-  `hashEquals(result.hash)` compares the run to itself: it is vacuously true, cannot fail, and
-  pins nothing — the exact shape of "looks like proof, isn't". Derive the literal once from a
-  green run and update it deliberately when you change the design on purpose. ESLint enforces
-  this (`no-restricted-syntax`, `eslint.config.js`); `docs/games/fps.md` shows the pattern.
+  for the entire final world state (ADR-0001). It only works against a **pinned literal**, and the
+  reason is worth deriving rather than memorising: **a literal is the only value that was not
+  produced by the run being checked.** `hashEquals(result.hash)` compares the run to itself, so it
+  is vacuously true, cannot fail, and pins nothing — the exact shape of "looks like proof, isn't".
+  The sharpest consequence is cross-platform: a self-comparison passes on Windows _and_ passes on
+  Linux even when the two produce completely different worlds, because each compares itself to
+  itself. A pinned literal is the only assertion shape that can pass on one OS and fail on the
+  other, which makes it the instrument that CI's Ubuntu leg — and therefore ADR-0001's
+  own-transcendentals bet — actually rests on. Derive it once from a green run and update it
+  deliberately when you change the design on purpose. ESLint enforces this
+  (`no-restricted-syntax`, `eslint.config.js`), and
+  `harness/src/golden-hash.invariant.test.ts` enforces the part a syntactic rule cannot see.
+- **`GOLDEN_TRAJECTORY`** pins the _route_, not just the destination. A final-state hash is blind
+  to any change that diverges and reconverges, which is not hypothetical: moving one iso click
+  from t340 to t420 shifted `mission.completed` by 80 ticks while leaving the final hash
+  byte-identical. Each instrument is blind to what the next one catches — a self-comparison
+  catches nothing, a pinned final hash catches end-state divergence including cross-OS, and a
+  trajectory digest catches divergence anywhere in the timeline. Pin the last two.
+
+> **On this section specifically.** The block above is a template by construction — it exists to
+> be copied — so a defect in it propagates by copying rather than by reasoning. That is not
+> theoretical: this section once taught `hashEquals(result.hash)`, and that line reached the
+> harness's own tests and a shipped game verbatim, where it read as a determinism regression test
+> and could never fail. The lint rule now closes the **code** channel permanently, but prose has
+> no runner: a document is corrected only by a human reading it and asking what a line is _for_,
+> which is a one-time act that nobody schedules. So the standard for anything written here is
+> higher than "correct" — it must be **exemplary**, because it will be copied by readers who
+> reasonably assume it already is.
 
 Every assertion in this block reports **what was actually checked**, not just pass/fail:
 `runGameTest` returns the number of assertions that really executed (a test whose `expect`
