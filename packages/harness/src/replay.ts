@@ -5,10 +5,9 @@
  * the seed, the tick count, and the input — stored as DSL text so the recording is itself a
  * readable, diffable script. Replaying a recording re-runs the simulation and MUST produce
  * the same final {@link StateHash}; a mismatch is a determinism bug, and the recording pins
- * the expected hash so the harness can assert it.
+ * the expected hash so the harness can assert it (see {@link "./run".replayRecording}).
  * @packageDocumentation
  */
-import { notImplemented } from '@aegis/core';
 import type { StateHash } from '@aegis/core';
 
 /** A portable, human-readable recording of a run. */
@@ -29,12 +28,63 @@ export interface Recording {
   tickHashes?: readonly StateHash[];
 }
 
-/** Serialise a recording to canonical JSON text for `*.replay.json`. */
+/**
+ * Serialise a recording to canonical JSON text for `*.replay.json`.
+ *
+ * Keys are emitted in a fixed order (not object-insertion order) so two recordings of the
+ * same run are byte-identical and diff cleanly in review.
+ */
 export function serializeRecording(recording: Recording): string {
-  return notImplemented('serializeRecording');
+  const ordered: Record<string, unknown> = {
+    aegis: recording.aegis,
+    scene: recording.scene,
+    seed: recording.seed,
+    ticks: recording.ticks,
+    input: recording.input,
+    finalHash: recording.finalHash,
+  };
+  if (recording.tickHashes && recording.tickHashes.length > 0) {
+    ordered.tickHashes = recording.tickHashes;
+  }
+  return JSON.stringify(ordered, null, 2) + '\n';
 }
 
-/** Parse a `*.replay.json` document. */
+/** Parse a `*.replay.json` document, validating the format discriminator and required fields. */
 export function parseRecording(text: string): Recording {
-  return notImplemented('parseRecording');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`[aegis] parseRecording: not valid JSON — ${(err as Error).message}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error('[aegis] parseRecording: document root must be a JSON object.');
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (obj.aegis !== 'recording/1') {
+    throw new Error(
+      `[aegis] parseRecording: unknown format "${String(obj.aegis)}", expected "recording/1".`,
+    );
+  }
+  const require = <T>(key: string, kinds: readonly string[]): T => {
+    const value = obj[key];
+    if (!kinds.includes(typeof value)) {
+      throw new Error(
+        `[aegis] parseRecording: field "${key}" must be ${kinds.join(' or ')}, got ${typeof value}.`,
+      );
+    }
+    return value as T;
+  };
+  const recording: Recording = {
+    aegis: 'recording/1',
+    scene: require<string>('scene', ['string']),
+    seed: require<number | string>('seed', ['number', 'string']),
+    ticks: require<number>('ticks', ['number']),
+    input: require<string>('input', ['string']),
+    finalHash: require<StateHash>('finalHash', ['string']),
+  };
+  if (Array.isArray(obj.tickHashes)) {
+    recording.tickHashes = obj.tickHashes.map((h) => String(h));
+  }
+  return recording;
 }
