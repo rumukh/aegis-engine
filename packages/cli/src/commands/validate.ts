@@ -5,38 +5,38 @@
  * Validation never throws for content problems: every issue is a {@link Diagnostic} with a code,
  * a location and a fix. The command exits `2` when any document has an error (or, under
  * `--strict`, a warning), so CI and agents can branch on the outcome.
+ *
+ * A scene is validated against the registry it will actually *run* under, so `--plugin` (or an
+ * `aegis.json` beside the scene) is honoured here exactly as it is by `run` — otherwise a game's
+ * own components are reported as unknown by the very command that is supposed to green-light it.
  * @packageDocumentation
  */
 import {
-  createRegistry,
   diagnostic,
   ContentCode,
-  Dead,
-  Health,
-  Light,
-  Model,
   parsePrefab,
   parseScene,
   parseTilemap,
-  Sprite,
-  Trigger,
-  Triggered,
   validateScene,
 } from '@aegis/content';
-import { Name, Transform } from '@aegis/core';
 import type { Diagnostic } from '@aegis/core';
-import type { ComponentRegistry } from '@aegis/content';
-import { Exit } from '../errors.js';
+import { AegisCliError, CliCode, Exit } from '../errors.js';
 import { formatDiagnostics, hasErrors, json } from '../format.js';
+import { globAll, isGlob } from '../glob.js';
 import type { Command, CommandContext } from '../command.js';
-import { flagBool, readText, requirePositional, resolvePath } from './shared.js';
+import { describePluginSource } from '../plugin.js';
+import { flagBool, flagString, readText, requirePositional, resolvePath } from './shared.js';
+import { baseRegistry, registryFor, resolveRunPlugin } from './sim.js';
 
 const USAGE = [
   'aegis validate <file...> [options]',
   '',
   'Schema-check one or more scene/prefab/tilemap documents. Kind is detected from the',
-  'document\'s "aegis" discriminator ("scene/1" | "prefab/1" | "tilemap/1").',
+  'document\'s "aegis" discriminator ("scene/1" | "prefab/1" | "tilemap/1"). Arguments',
+  'containing wildcards are expanded by the CLI, so quoted globs work on every shell.',
   '',
+  "  --plugin <spec>   Validate scenes against this plugin's components (<module>#<export>).",
+  "  --mode <mode>     Validate scenes against this mode instead of the scene's own.",
   '  --json            Emit diagnostics as JSON (stable error codes).',
   '  --strict          Treat warnings as errors (affects exit code).',
   '',
@@ -44,60 +44,95 @@ const USAGE = [
   '',
   'Examples:',
   '  aegis validate level1.scene.json',
-  '  aegis validate *.scene.json --strict',
-  '  aegis validate hero.prefab.json --json',
+  '  aegis validate "levels/*.scene.json" --strict',
+  '  aegis validate games/iso/levels/server-vault.scene.json \\',
+  '    --plugin games/iso/dist/server-vault.js#serverVaultPlugin',
 ].join('\n');
-
-/** The base registry the harness always installs, so scene component ids resolve during validate. */
-function baseRegistry(): ComponentRegistry {
-  return createRegistry(Transform, Name, Sprite, Model, Light, Health, Trigger, Dead, Triggered);
-}
 
 /** Result of validating one document. */
 interface FileReport {
   file: string;
   ok: boolean;
+  plugin?: string;
   diagnostics: readonly Diagnostic[];
 }
 
-/** Validate a single already-read document; `mode` resolution adds mode components for scenes. */
-function validateDocument(ctx: CommandContext, file: string, text: string): readonly Diagnostic[] {
+/** Validate a single already-read document; scenes resolve their plugin's components first. */
+async function validateDocument(
+  ctx: CommandContext,
+  file: string,
+  abs: string,
+  text: string,
+): Promise<{ diagnostics: readonly Diagnostic[]; plugin?: string }> {
   let discriminator: unknown;
   try {
     discriminator = (JSON.parse(text) as { aegis?: unknown }).aegis;
   } catch {
     // Fall through: parseScene will surface the InvalidJson diagnostic uniformly.
-    return parseScene(text, file).diagnostics;
+    return { diagnostics: parseScene(text, file).diagnostics };
   }
 
   switch (discriminator) {
     case 'scene/1': {
       const parsed = parseScene(text, file);
-      if (!parsed.ok || !parsed.value) return parsed.diagnostics;
+      if (!parsed.ok || !parsed.value) return { diagnostics: parsed.diagnostics };
       const scene = parsed.value;
-      const registry = baseRegistry();
-      if (ctx.modes.has(scene.mode))
-        registry.registerAll(ctx.modes.resolve(scene.mode).components());
-      const validated = validateScene(scene, { registry });
-      return [...parsed.diagnostics, ...validated.diagnostics];
+      if (!ctx.modes.has(scene.mode) && flagString(ctx.args, 'plugin') === undefined) {
+        const validated = validateScene(scene, { registry: baseRegistry() });
+        return { diagnostics: [...parsed.diagnostics, ...validated.diagnostics] };
+      }
+      const resolved = await resolveRunPlugin(ctx, scene, abs);
+      const validated = validateScene(scene, { registry: registryFor(resolved.plugin) });
+      return {
+        diagnostics: [...parsed.diagnostics, ...validated.diagnostics],
+        plugin: describePluginSource(resolved),
+      };
     }
     case 'prefab/1':
-      return parsePrefab(text, file).diagnostics;
+      return { diagnostics: parsePrefab(text, file).diagnostics };
     case 'tilemap/1':
-      return parseTilemap(text, file).diagnostics;
+      return { diagnostics: parseTilemap(text, file).diagnostics };
     default:
-      return [
-        diagnostic(
-          ContentCode.UnknownFormat,
-          `Unknown document kind ${JSON.stringify(discriminator)}.`,
-          {
-            location: { file, path: 'aegis' },
-            fix: 'Set "aegis" to one of: "scene/1", "prefab/1", "tilemap/1".',
-            data: { received: discriminator },
-          },
-        ),
-      ];
+      return {
+        diagnostics: [
+          diagnostic(
+            ContentCode.UnknownFormat,
+            `Unknown document kind ${JSON.stringify(discriminator)}.`,
+            {
+              location: { file, path: 'aegis' },
+              fix: 'Set "aegis" to one of: "scene/1", "prefab/1", "tilemap/1".',
+              data: { received: discriminator },
+            },
+          ),
+        ],
+      };
   }
+}
+
+/**
+ * Expand the positional arguments, globbing any that contain wildcards.
+ *
+ * The help has always advertised `aegis validate *.scene.json`, but Windows shells do not expand
+ * globs, so that documented invocation failed with "File not found: …\*.scene.json". Expanding
+ * here makes the advertised command work on every platform.
+ */
+function expandTargets(ctx: CommandContext, patterns: readonly string[]): string[] {
+  const files: string[] = [];
+  for (const pattern of patterns) {
+    if (!isGlob(pattern)) {
+      files.push(pattern);
+      continue;
+    }
+    const matched = globAll([pattern], ctx.io.cwd);
+    if (matched.length === 0) {
+      throw new AegisCliError(CliCode.FileNotFound, `No files matched "${pattern}".`, {
+        fix: `Globs are expanded by the CLI and resolved against ${ctx.io.cwd}. Check the pattern, or pass explicit paths.`,
+        data: { pattern },
+      });
+    }
+    for (const abs of matched) files.push(abs);
+  }
+  return files;
 }
 
 /** `aegis validate` — validate a scene/prefab/tilemap document against the schema. */
@@ -105,27 +140,35 @@ export const validateCommand: Command = {
   name: 'validate',
   summary: 'Validate a scene/prefab/tilemap document.',
   usage: USAGE,
-  run(ctx: CommandContext): Promise<number> {
+  flags: { plugin: 'value', mode: 'value', strict: 'boolean' },
+  async run(ctx: CommandContext): Promise<number> {
     const { args, io } = ctx;
     requirePositional(args, 0, 'file', 'aegis validate <file...>');
     const strict = flagBool(args, 'strict');
 
     const reports: FileReport[] = [];
-    for (const rel of args.positionals) {
+    for (const rel of expandTargets(ctx, args.positionals)) {
       const abs = resolvePath(io, rel);
       const text = readText(abs, io);
-      const diagnostics = validateDocument(ctx, rel, text);
+      const { diagnostics, plugin } = await validateDocument(ctx, rel, abs, text);
       const failed =
         hasErrors(diagnostics) || (strict && diagnostics.some((d) => d.severity === 'warning'));
-      reports.push({ file: rel, ok: !failed, diagnostics });
+      reports.push({ file: rel, ok: !failed, ...(plugin ? { plugin } : {}), diagnostics });
     }
 
     const ok = reports.every((r) => r.ok);
     if (flagBool(args, 'json')) {
       io.out(json({ ok, strict, files: reports }));
     } else {
-      io.out(reports.map((r) => formatDiagnostics(r.diagnostics, r.file)).join('\n\n') + '\n');
+      io.out(
+        reports
+          .map((r) => {
+            const head = r.plugin !== undefined ? `# ${r.file} against plugin ${r.plugin}\n` : '';
+            return head + formatDiagnostics(r.diagnostics, r.file);
+          })
+          .join('\n\n') + '\n',
+      );
     }
-    return Promise.resolve(ok ? Exit.Ok : Exit.Validation);
+    return ok ? Exit.Ok : Exit.Validation;
   },
 };

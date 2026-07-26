@@ -30,9 +30,16 @@
  * after its last is a `released`, and overlapping holds simply union. Axes and pointers are
  * "last source-order write wins" on overlap; `look` deltas accumulate; `aim` is absolute and
  * is converted to the delta that makes the running look-sum equal the target at that tick.
+ *
+ * ## Source order is part of the meaning
+ * Because axis/pointer overlap resolution and `look` accumulation read the command list in
+ * order, {@link formatInputScript} renders commands **in source order** — it must not sort, or a
+ * recording would not be the script that ran. Statements whose combined effect depends on that
+ * order are reported as `AEG-HARNESS-0012` warnings, and statements the tick window swallowed
+ * are reported by {@link InputScript.check}.
  * @packageDocumentation
  */
-import type { Diagnostic, InputFrame, PointerInput, Validated } from '@aegis/core';
+import type { Diagnostic, InputFrame, PointerInput, SourceLocation, Validated } from '@aegis/core';
 import { diagnostic, HarnessCode } from './diagnostics.js';
 
 /** Inclusive-start, exclusive-end tick span. `@t` parses to `{ start: t, end: t + 1 }`. */
@@ -41,29 +48,40 @@ export interface TickSpan {
   end: number;
 }
 
+/**
+ * Where a command came from in the source text. Optional: commands built programmatically via
+ * {@link scriptFromCommands} have no source. Carried so compile-time diagnostics (a statement
+ * that fell outside the tick window, an order-sensitive overlap) can point at the offending line
+ * instead of describing it in prose.
+ */
+interface Located {
+  /** 1-based line/column of the statement in the original script text. */
+  at?: SourceLocation;
+}
+
 /** Hold a digital action across a span. */
-export interface HoldCommand {
+export interface HoldCommand extends Located {
   kind: 'hold';
   action: string;
   span: TickSpan;
 }
 
 /** Edge-press a digital action for one tick. */
-export interface PressCommand {
+export interface PressCommand extends Located {
   kind: 'press';
   action: string;
   tick: number;
 }
 
 /** Release a digital action at a tick. */
-export interface ReleaseCommand {
+export interface ReleaseCommand extends Located {
   kind: 'release';
   action: string;
   tick: number;
 }
 
 /** Set an analog axis to a value across a span. */
-export interface AxisCommand {
+export interface AxisCommand extends Located {
   kind: 'axis';
   axis: string;
   value: number;
@@ -71,7 +89,7 @@ export interface AxisCommand {
 }
 
 /** Apply a relative look delta (degrees), at a tick or spread across a span. */
-export interface LookCommand {
+export interface LookCommand extends Located {
   kind: 'look';
   dyaw: number;
   dpitch: number;
@@ -79,7 +97,7 @@ export interface LookCommand {
 }
 
 /** Aim at an absolute yaw/pitch; the compiler converts to look deltas. */
-export interface AimCommand {
+export interface AimCommand extends Located {
   kind: 'aim';
   yaw: number;
   pitch: number;
@@ -87,7 +105,7 @@ export interface AimCommand {
 }
 
 /** Move the pointer, optionally clicking, at a tick. */
-export interface PointerCommand {
+export interface PointerCommand extends Located {
   kind: 'pointer';
   x: number;
   y: number;
@@ -107,7 +125,11 @@ export type InputCommand =
 
 /** A parsed, validated input script: its command AST plus a compiler to per-tick frames. */
 export interface InputScript {
-  /** The parsed commands, in source order. */
+  /**
+   * The parsed commands, **in source order**. Order is semantically load-bearing: axis and
+   * pointer writes are last-source-order-wins and `look` deltas accumulate, so re-ordering this
+   * list can change {@link InputScript.frames}. {@link formatInputScript} therefore preserves it.
+   */
   readonly commands: readonly InputCommand[];
   /**
    * Compile to exactly `totalTicks` frames. Edge sets (`pressed`/`released`) are derived by
@@ -115,6 +137,20 @@ export interface InputScript {
    * on its first tick and a `released` on the tick after its last.
    */
   frames(totalTicks: number): readonly InputFrame[];
+  /**
+   * Report statements that would have no (or reduced) effect when compiled to `totalTicks`
+   * frames — the tick window silently swallows anything outside `[0, totalTicks)`.
+   *
+   * A swallowed or clipped statement is a `warning`; if **no** statement in the script applied at
+   * all, they are `error`s, because the run is then identical to one with no input. (Running a
+   * prefix of a playthrough — `aegis inspect --tick 90` on a 400-tick script — is legitimate, so
+   * the partial case must not be fatal.)
+   *
+   * A 60-tick run with `press Jump @500` used to hash byte-identically to a run with no input;
+   * this is how a caller finds out. {@link "./run".runScene} surfaces these via
+   * {@link "./run".RunOptions.onInputDiagnostics}.
+   */
+  check(totalTicks: number): readonly Diagnostic[];
 }
 
 // --- parsing -------------------------------------------------------------------------------
@@ -167,7 +203,9 @@ function parseNum(token: Token, line: number, diags: Diagnostic[]): number | und
     );
     return undefined;
   }
-  return n;
+  // Normalise -0 to 0. The canonical formatter renders both as "0" (see `num`), so keeping a
+  // parsed -0 would make `parse -> format -> parse` lose the sign and stop being exact.
+  return n === 0 ? 0 : n;
 }
 
 /** Parse `@t` into a single tick. */
@@ -300,24 +338,29 @@ export function parseInputScript(text: string): Validated<InputScript> {
     const tokens = tokenize(content);
     const verbTok = tokens[0]!;
     const verb = verbTok.text.toLowerCase();
+    const at = loc(lineNo, verbTok.column);
 
     switch (verb) {
       case 'hold': {
         if (!checkArity(tokens, 2, 'hold', lineNo, 'hold <Action> <a>..<b>', diags)) return;
         const span = parseSpan(tokens[2]!, lineNo, diags);
-        if (span) commands.push({ kind: 'hold', action: tokens[1]!.text, span });
+        if (span) commands.push({ kind: 'hold', action: tokens[1]!.text, span, at });
         return;
       }
       case 'press': {
         if (!checkArity(tokens, 2, 'press', lineNo, 'press <Action> @<t>', diags)) return;
         const t = parseAt(tokens[2]!, lineNo, diags);
-        if (t !== undefined) commands.push({ kind: 'press', action: tokens[1]!.text, tick: t });
+        if (t !== undefined) {
+          commands.push({ kind: 'press', action: tokens[1]!.text, tick: t, at });
+        }
         return;
       }
       case 'release': {
         if (!checkArity(tokens, 2, 'release', lineNo, 'release <Action> @<t>', diags)) return;
         const t = parseAt(tokens[2]!, lineNo, diags);
-        if (t !== undefined) commands.push({ kind: 'release', action: tokens[1]!.text, tick: t });
+        if (t !== undefined) {
+          commands.push({ kind: 'release', action: tokens[1]!.text, tick: t, at });
+        }
         return;
       }
       case 'axis': {
@@ -325,7 +368,7 @@ export function parseInputScript(text: string): Validated<InputScript> {
         const value = parseNum(tokens[2]!, lineNo, diags);
         const span = parseSpan(tokens[3]!, lineNo, diags);
         if (value !== undefined && span) {
-          commands.push({ kind: 'axis', axis: tokens[1]!.text, value, span });
+          commands.push({ kind: 'axis', axis: tokens[1]!.text, value, span, at });
         }
         return;
       }
@@ -337,7 +380,7 @@ export function parseInputScript(text: string): Validated<InputScript> {
         const dpitch = parseNum(tokens[2]!, lineNo, diags);
         const span = parseSpan(tokens[3]!, lineNo, diags);
         if (dyaw !== undefined && dpitch !== undefined && span) {
-          commands.push({ kind: 'look', dyaw, dpitch, span });
+          commands.push({ kind: 'look', dyaw, dpitch, span, at });
         }
         return;
       }
@@ -347,7 +390,7 @@ export function parseInputScript(text: string): Validated<InputScript> {
         const pitch = parseNum(tokens[2]!, lineNo, diags);
         const t = parseAt(tokens[3]!, lineNo, diags);
         if (yaw !== undefined && pitch !== undefined && t !== undefined) {
-          commands.push({ kind: 'aim', yaw, pitch, tick: t });
+          commands.push({ kind: 'aim', yaw, pitch, tick: t, at });
         }
         return;
       }
@@ -357,7 +400,14 @@ export function parseInputScript(text: string): Validated<InputScript> {
         const pt = parsePoint(tokens[1]!, lineNo, diags);
         const t = parseAt(tokens[2]!, lineNo, diags);
         if (pt && t !== undefined) {
-          commands.push({ kind: 'pointer', x: pt.x, y: pt.y, click: verb === 'click', tick: t });
+          commands.push({
+            kind: 'pointer',
+            x: pt.x,
+            y: pt.y,
+            click: verb === 'click',
+            tick: t,
+            at,
+          });
         }
         return;
       }
@@ -373,6 +423,7 @@ export function parseInputScript(text: string): Validated<InputScript> {
 
   const hasError = diags.some((d) => d.severity === 'error');
   if (hasError) return { ok: false, diagnostics: diags };
+  diags.push(...orderSensitivityDiagnostics(commands));
   return { ok: true, value: scriptFromCommands(commands), diagnostics: diags };
 }
 
@@ -528,7 +579,246 @@ export function scriptFromCommands(commands: readonly InputCommand[]): InputScri
     frames(totalTicks: number): readonly InputFrame[] {
       return compileFrames(frozen, totalTicks);
     },
+    check(totalTicks: number): readonly Diagnostic[] {
+      return checkAgainstWindow(frozen, totalTicks);
+    },
   };
+}
+
+// --- compile-time diagnostics ---------------------------------------------------------------
+
+/** The half-open tick span a command affects (`@t` commands occupy exactly `[t, t + 1)`). */
+function spanOf(cmd: InputCommand): TickSpan {
+  switch (cmd.kind) {
+    case 'hold':
+    case 'axis':
+    case 'look':
+      return cmd.span;
+    default:
+      return { start: cmd.tick, end: cmd.tick + 1 };
+  }
+}
+
+/** `"hold Right 200..300"` — the statement as written, for quoting in a diagnostic. */
+function quote(cmd: InputCommand): string {
+  return `"${formatCommand(cmd)}"`;
+}
+
+/**
+ * Whether compiled frames are indistinguishable from no input at all — every action set empty,
+ * no edges, no axes, no look delta, no pointer. This is the exact condition the "the script did
+ * nothing" error is about, so it is measured on the compiled output rather than guessed from
+ * which spans intersect the window: `release A @0` for an action that was never held,
+ * `aim 0 0 @0` and `look 0 0 @t` all sit *inside* the window and still contribute nothing, and
+ * counting them as effective would silently disarm the check for every other statement.
+ */
+function framesAreIdle(frames: readonly InputFrame[]): boolean {
+  return frames.every(
+    (f) =>
+      f.pressed.length === 0 &&
+      f.released.length === 0 &&
+      Object.keys(f.actions).length === 0 &&
+      Object.keys(f.axes).length === 0 &&
+      f.look.dx === 0 &&
+      f.look.dy === 0 &&
+      f.pointer === null,
+  );
+}
+
+/**
+ * Report statements that the tick window silently swallowed.
+ *
+ * {@link forEachTick} clamps, and the pointer/`aim` compilers `continue`, so a statement outside
+ * `[0, totalTicks)` simply never happens: a 60-tick run with `press Jump @500` produces a hash
+ * byte-identical to a run with no input at all. Shortening a run is the most likely authoring
+ * mistake in the DSL, and it used to be completely invisible.
+ *
+ * **Severity:** a swallowed statement is normally a `warning`, because running a *prefix* of a
+ * playthrough is a first-class workflow (`aegis inspect --tick 90` on a 400-tick script leaves
+ * every later statement inactive on purpose). When the script compiles to nothing at all — the
+ * run is then indistinguishable from one with no input — they are `error`s instead.
+ */
+function checkAgainstWindow(
+  commands: readonly InputCommand[],
+  totalTicks: number,
+): readonly Diagnostic[] {
+  const n = totalTicks < 0 ? 0 : totalTicks;
+  const window = `[0, ${n})`;
+  const swallowed = (cmd: InputCommand): boolean => {
+    const { start, end } = spanOf(cmd);
+    return (end > n ? n : end) <= (start < 0 ? 0 : start);
+  };
+  // Only worth compiling when something was actually dropped; an intact script emits nothing.
+  // `ticks: 0` steps nothing at all, so no statement *can* apply; that is a degenerate window,
+  // not a mis-authored script.
+  const scriptDidNothing =
+    n > 0 &&
+    commands.length > 0 &&
+    commands.some(swallowed) &&
+    framesAreIdle(compileFrames(commands, n));
+  const diags: Diagnostic[] = [];
+
+  for (const cmd of commands) {
+    const { start, end } = spanOf(cmd);
+    const lo = start < 0 ? 0 : start;
+    const hi = end > n ? n : end;
+    const options = (fix: string): Parameters<typeof diagnostic>[2] => ({
+      ...(cmd.at ? { location: cmd.at } : {}),
+      fix,
+      data: { statement: formatCommand(cmd), start, end, totalTicks: n },
+    });
+
+    if (hi <= lo) {
+      diags.push(
+        diagnostic(
+          HarnessCode.StatementOutOfRange,
+          `${quote(cmd)} had no effect: ticks ${start}..${end} lie outside the compiled window ${window}, ` +
+            `so this run is identical to one with the statement deleted.`,
+          {
+            ...options(
+              `Run at least ${end} tick${end === 1 ? '' : 's'}, or move the statement inside ${window}.`,
+            ),
+            severity: scriptDidNothing ? 'error' : 'warning',
+          },
+        ),
+      );
+      continue;
+    }
+    if (start >= 0 && end <= n) continue;
+
+    if (cmd.kind === 'look') {
+      const applied = (hi - lo) / (end - start);
+      diags.push(
+        diagnostic(
+          HarnessCode.LookDeltaClipped,
+          `${quote(cmd)} was clipped to ticks ${lo}..${hi} by the ${n}-tick window, so only ` +
+            `${num(cmd.dyaw * applied)}° of ${num(cmd.dyaw)}° yaw and ${num(cmd.dpitch * applied)}° of ` +
+            `${num(cmd.dpitch)}° pitch were actually applied.`,
+          {
+            ...options(
+              `Run at least ${end} ticks to apply the whole delta, or use "look ${num(cmd.dyaw * applied)} ${num(cmd.dpitch * applied)} ${lo}..${hi}".`,
+            ),
+            severity: 'warning',
+          },
+        ),
+      );
+      continue;
+    }
+    diags.push(
+      diagnostic(
+        HarnessCode.StatementClipped,
+        `${quote(cmd)} was clipped to ticks ${lo}..${hi} by the ${n}-tick window; ` +
+          `ticks ${hi}..${end} of it never ran.`,
+        {
+          ...options(`Run at least ${end} ticks, or write the span as ${lo}..${hi}.`),
+          severity: 'warning',
+        },
+      ),
+    );
+  }
+  return diags;
+}
+
+/** Whether two half-open spans share at least one tick. */
+function overlaps(a: TickSpan, b: TickSpan): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
+/**
+ * Report statements whose combined effect depends on the **order of the lines in the file**.
+ *
+ * ADR-0004 promises that "ticks are absolute, so lines reorder and diff independently". That is
+ * true of `hold`/`press`/`release` (a union of booleans) but not of axes and pointers, which are
+ * last-source-order-write-wins, nor of three-or-more overlapping `look` deltas, whose sum is
+ * order-dependent in floating point. Those cases are legal but fragile, so the author is told.
+ */
+function orderSensitivityDiagnostics(commands: readonly InputCommand[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
+  const conflict = (later: InputCommand, earlier: InputCommand, what: string): void => {
+    diags.push(
+      diagnostic(
+        HarnessCode.OrderSensitiveOverlap,
+        `${quote(later)} overlaps ${quote(earlier)}: ${what} Swapping the two lines would ` +
+          `change the compiled input, so this script is not safe to re-order.`,
+        {
+          severity: 'warning',
+          ...(later.at ? { location: later.at } : {}),
+          fix: 'Give the statements disjoint spans/ticks, or keep the intended winner last — the recorder preserves source order for exactly this reason.',
+          data: { later: formatCommand(later), earlier: formatCommand(earlier) },
+        },
+      ),
+    );
+  };
+
+  for (let j = 0; j < commands.length; j++) {
+    const b = commands[j]!;
+    for (let i = 0; i < j; i++) {
+      const a = commands[i]!;
+      if (a.kind !== b.kind) continue;
+      if (
+        a.kind === 'axis' &&
+        b.kind === 'axis' &&
+        a.axis === b.axis &&
+        a.value !== b.value &&
+        overlaps(a.span, b.span)
+      ) {
+        conflict(b, a, `the later "axis ${b.axis}" write wins on the shared ticks.`);
+      } else if (
+        a.kind === 'pointer' &&
+        b.kind === 'pointer' &&
+        a.tick === b.tick &&
+        (a.x !== b.x || a.y !== b.y || a.click !== b.click)
+      ) {
+        conflict(b, a, `both target tick ${b.tick}, and only the later pointer survives.`);
+      } else if (
+        a.kind === 'aim' &&
+        b.kind === 'aim' &&
+        a.tick === b.tick &&
+        (a.yaw !== b.yaw || a.pitch !== b.pitch)
+      ) {
+        conflict(b, a, `both aim on tick ${b.tick}, and only the later target survives.`);
+      }
+    }
+  }
+  diags.push(...lookAccumulationDiagnostics(commands));
+  return diags;
+}
+
+/**
+ * Three or more `look` statements covering one tick sum in source order. Floating-point addition
+ * is commutative but **not associative**, so `(a + b) + c` need not equal `(b + c) + a`: with
+ * three overlapping deltas the compiled frame depends on line order. Two are always safe.
+ */
+function lookAccumulationDiagnostics(commands: readonly InputCommand[]): Diagnostic[] {
+  const looks = commands.filter((c): c is LookCommand => c.kind === 'look');
+  if (looks.length < 3) return [];
+  const edges: { at: number; delta: number }[] = [];
+  for (const l of looks) {
+    edges.push({ at: l.span.start, delta: 1 }, { at: l.span.end, delta: -1 });
+  }
+  edges.sort((a, b) => (a.at !== b.at ? a.at - b.at : a.delta - b.delta));
+  let open = 0;
+  let peak = 0;
+  for (const e of edges) {
+    open += e.delta;
+    if (open > peak) peak = open;
+  }
+  if (peak < 3) return [];
+  const last = looks[looks.length - 1]!;
+  return [
+    diagnostic(
+      HarnessCode.OrderSensitiveOverlap,
+      `${peak} "look" statements cover a common tick. Their deltas are summed in source order, ` +
+        `and floating-point addition is not associative, so re-ordering these lines can change ` +
+        `the compiled look delta.`,
+      {
+        severity: 'warning',
+        ...(last.at ? { location: last.at } : {}),
+        fix: 'Merge the overlapping look statements into one, or give them disjoint spans.',
+        data: { overlappingLooks: peak },
+      },
+    ),
+  ];
 }
 
 // --- formatting ----------------------------------------------------------------------------
@@ -536,45 +826,6 @@ export function scriptFromCommands(commands: readonly InputCommand[]): InputScri
 /** Render a number in canonical, round-trippable form (`-0` normalised to `0`). */
 function num(value: number): string {
   return Object.is(value, -0) ? '0' : String(value);
-}
-
-const KIND_ORDER: Record<InputCommand['kind'], number> = {
-  hold: 0,
-  press: 1,
-  release: 2,
-  axis: 3,
-  look: 4,
-  aim: 5,
-  pointer: 6,
-};
-
-function firstTick(cmd: InputCommand): number {
-  switch (cmd.kind) {
-    case 'hold':
-    case 'axis':
-    case 'look':
-      return cmd.span.start;
-    default:
-      return cmd.tick;
-  }
-}
-
-/** A stable secondary key so commands on the same tick order deterministically. */
-function secondaryKey(cmd: InputCommand): string {
-  switch (cmd.kind) {
-    case 'hold':
-    case 'press':
-    case 'release':
-      return cmd.action;
-    case 'axis':
-      return cmd.axis;
-    case 'look':
-      return `${num(cmd.dyaw)},${num(cmd.dpitch)}`;
-    case 'aim':
-      return `${num(cmd.yaw)},${num(cmd.pitch)}`;
-    case 'pointer':
-      return `${num(cmd.x)},${num(cmd.y)}`;
-  }
 }
 
 function formatCommand(cmd: InputCommand): string {
@@ -598,16 +849,25 @@ function formatCommand(cmd: InputCommand): string {
   }
 }
 
-/** Render an {@link InputScript} back to canonical DSL text (for recordings). */
+/**
+ * Render an {@link InputScript} back to canonical DSL text (for recordings).
+ *
+ * **Source order is preserved, deliberately.** This function used to re-sort commands by
+ * `(firstTick, kind, secondaryKey)`, which silently changed what the script meant:
+ * {@link compileFrames} resolves overlapping `axis` and `pointer` writes as *last source-order
+ * wins* and sums `look` deltas in source order, so re-ordering the command list re-compiles to
+ * different frames. Because `SimResult.recording()` serialises input through here, a recorded
+ * session was not the session that ran — and replaying it failed the determinism check, blaming
+ * a perfectly deterministic engine for "non-determinism (wall-clock, Math.random, unstable
+ * iteration) in a system".
+ *
+ * Preserving order makes `parse → format → parse` produce an identical command list, and
+ * therefore identical compiled frames, **for every input** — a guarantee by construction rather
+ * than one resting on a hand-written "is this reorder safe?" predicate. Ticks are absolute
+ * (ADR-0004), so the text still diffs and reads fine when the author wrote it out of order; a
+ * script whose meaning actually depends on that order is reported by
+ * {@link parseInputScript} as an `AEG-HARNESS-0012` warning.
+ */
 export function formatInputScript(script: InputScript): string {
-  const sorted = script.commands.slice().sort((a, b) => {
-    const ta = firstTick(a);
-    const tb = firstTick(b);
-    if (ta !== tb) return ta - tb;
-    if (KIND_ORDER[a.kind] !== KIND_ORDER[b.kind]) return KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
-    const ka = secondaryKey(a);
-    const kb = secondaryKey(b);
-    return ka < kb ? -1 : ka > kb ? 1 : 0;
-  });
-  return sorted.map(formatCommand).join('\n');
+  return script.commands.map(formatCommand).join('\n');
 }

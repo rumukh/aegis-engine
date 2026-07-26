@@ -14,6 +14,20 @@ import type { Diagnostic, Entity } from '@aegis/core';
 import type { AsciiView, SemanticFrame } from '@aegis/harness';
 
 /**
+ * Re-brand a raw packed handle as an {@link Entity}.
+ *
+ * This is a real seam, not a convenience: `WorldSnapshot` serialises an entity handle as a
+ * decimal **string**, and `@aegis/core` exposes `entityIndex`/`entityGeneration` (which take a
+ * branded handle) but **no `Entity` constructor or parser** — core itself brands with
+ * `0 as Entity` for `NULL_ENTITY`. So reading a snapshot back into a handle must re-brand
+ * somewhere. This is the CLI's single such point, named and kept in one place rather than
+ * scattered. Reported to the PM: a checked `toEntity(value: number): Entity` in core removes it.
+ */
+function asEntity(handle: number): Entity {
+  return handle as Entity;
+}
+
+/**
  * Render a packed entity handle in an agent- and human-legible form: `#<index>` for the common
  * case, `#<index>@<gen>` when the generation is not 1 (i.e. the slot has been reused). Core packs
  * `generation` into the high 32 bits, so a raw handle like `4294967296` is really index 0,
@@ -21,14 +35,14 @@ import type { AsciiView, SemanticFrame } from '@aegis/harness';
  * index visually dominant and the generation distinguishable, and stays stable/diffable.
  */
 export function formatEntity(handle: number): string {
-  const e = handle as Entity;
+  const e = asEntity(handle);
   const generation = entityGeneration(e);
   return generation === 1 ? `#${entityIndex(e)}` : `#${entityIndex(e)}@${generation}`;
 }
 
 /** The decomposed parts of a packed handle for `--json`; `id` preserves the raw packed value. */
 export function entityParts(handle: number): { id: string; index: number; generation: number } {
-  const e = handle as Entity;
+  const e = asEntity(handle);
   return { id: String(handle), index: entityIndex(e), generation: entityGeneration(e) };
 }
 
@@ -105,7 +119,14 @@ export function formatAscii(view: AsciiView): string {
   ].join('\n');
 }
 
-/** Render a {@link SemanticFrame} as a compact, greppable per-entity table (human view). */
+/**
+ * Render a {@link SemanticFrame} as a compact, greppable per-entity table (human view).
+ *
+ * Every field of {@link VisibleEntity} appears, not just position: `layer` decides draw order,
+ * and `occluded`/`visibleFraction` are the whole point of the fps frame (principle 7) — a fully
+ * hidden entity must not read as a visible one. Optional fields are omitted rather than faked, so
+ * "not reported by this mode" stays distinguishable from "reported as visible".
+ */
 export function formatFrame(frame: SemanticFrame): string {
   const header =
     `# frame tick=${frame.tick} mode=${frame.mode} ` +
@@ -118,12 +139,18 @@ export function formatFrame(frame: SemanticFrame): string {
   const rows = frame.entities.map((e) => {
     const name = e.name ?? '';
     const tags = e.tags.length > 0 ? e.tags.join('|') : '-';
-    return (
-      `  ${formatEntity(e.entity)} ${name} [${tags}] ` +
-      `world=(${e.world.x},${e.world.y},${e.world.z}) ` +
-      `screen=(${round2(e.screen.x)},${round2(e.screen.y)}) ` +
-      `depth=${round2(e.depth)} glyph=${e.glyph ?? '?'}`
-    );
+    const parts = [
+      `  ${formatEntity(e.entity)} ${name} [${tags}]`,
+      `world=(${e.world.x},${e.world.y},${e.world.z})`,
+      `screen=(${round2(e.screen.x)},${round2(e.screen.y)})`,
+      `depth=${round2(e.depth)}`,
+      `layer=${e.layer}`,
+    ];
+    if (e.bounds) parts.push(`bounds=${round2(e.bounds.width)}x${round2(e.bounds.height)}`);
+    if (e.occluded !== undefined) parts.push(`occluded=${e.occluded ? 'yes' : 'no'}`);
+    if (e.visibleFraction !== undefined) parts.push(`visible=${round2(e.visibleFraction)}`);
+    parts.push(`glyph=${e.glyph ?? '?'}`);
+    return parts.join(' ');
   });
   return [header, camLine, ...rows].join('\n');
 }

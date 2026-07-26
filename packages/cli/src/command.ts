@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 import type { CliIO } from './io.js';
-import type { ParsedArgs } from './args.js';
+import type { FlagSpec, ParsedArgs } from './args.js';
 import type { ModeResolver } from './modes.js';
 
 /** Everything a command receives when it runs. */
@@ -25,6 +25,13 @@ export interface Command {
   readonly summary: string;
   /** Multi-line usage text shown for `aegis <name> --help`. */
   readonly usage: string;
+  /**
+   * Every flag this command accepts, and whether it takes a value. The dispatcher parses argv
+   * against this and rejects anything undeclared — a flag that is not listed here is a typo as
+   * far as the CLI is concerned, and is reported rather than ignored. Global flags (`--json`,
+   * `--help`) are added automatically.
+   */
+  readonly flags: FlagSpec;
   /**
    * Execute the command. Resolves to a process exit code: `0` for success, non-zero for
    * failure. Must not call `process.exit` itself.

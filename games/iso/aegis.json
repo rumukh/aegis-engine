@@ -1,0 +1,4 @@
+{
+  "plugin": "@aegis/game-iso#serverVaultPlugin",
+  "tests": ["./dist/*.js"]
+}

@@ -30,15 +30,7 @@ import {
   sign,
   Transform,
 } from '@aegis/core';
-import type {
-  ComponentType,
-  Entity,
-  GameMode,
-  Schedule,
-  System,
-  TickContext,
-  World,
-} from '@aegis/core';
+import type { ComponentType, Entity, Schedule, System, TickContext, World } from '@aegis/core';
 import {
   ENTITY_DIED,
   Health,
@@ -154,9 +146,8 @@ const combatSystem: System = {
   run({ world }: TickContext): void {
     for (const ev of world.events.ofType<EntityDiedEvent>(ENTITY_DIED)) {
       const { entity, name } = ev.data;
-      const handle = entity as unknown as Entity;
-      if (world.has(handle, Enemy)) world.events.emit(ENEMY_KILLED, { entity, name });
-      if (world.has(handle, Player)) world.events.emit(PLAYER_DIED, { entity, name });
+      if (world.has(entity, Enemy)) world.events.emit(ENEMY_KILLED, { entity, name });
+      if (world.has(entity, Player)) world.events.emit(PLAYER_DIED, { entity, name });
     }
   },
 };
@@ -304,7 +295,7 @@ const fakeView: ViewProvider = {
 
 /** The fake mode plugin the CLI tests run against. */
 export const fakeMode: ModePlugin = {
-  mode: 'platformer' as GameMode,
+  mode: 'platformer',
 
   components(): readonly ComponentType<unknown>[] {
     return [Velocity, Player, Enemy, Platform];
