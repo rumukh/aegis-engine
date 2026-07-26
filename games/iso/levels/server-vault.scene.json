@@ -1,0 +1,83 @@
+{
+  "aegis": "scene/1",
+  "name": "The Server Vault",
+  "mode": "iso",
+  "seed": "poc-iso",
+  "resources": {
+    "IsoGrid": {
+      "width": 12,
+      "height": 9,
+      "tileSize": 1,
+      "walls": [
+        "############",
+        "#...#...#..#",
+        "#.#.#.#.#..#",
+        "#.#...#...##",
+        "#.###.#.##.#",
+        "#..........#",
+        "####.#######",
+        "#..........#",
+        "############"
+      ]
+    }
+  },
+  "entities": [
+    {
+      "id": "operative",
+      "tags": ["Operative", "Controlled"],
+      "components": {
+        "GridPosition": { "cellX": 1, "cellY": 1, "progress": 0 },
+        "IsoActor": { "speed": 4, "moveMode": "realtime" },
+        "Health": { "current": 30, "max": 30 },
+        "Attacker": { "rangeCells": 3, "damage": 10, "cooldownTicks": 30, "cooldownRemaining": 0 }
+      }
+    },
+    {
+      "id": "guard",
+      "tags": ["Guard", "Patrol"],
+      "components": {
+        "GridPosition": { "cellX": 1, "cellY": 5, "progress": 0 },
+        "IsoActor": { "speed": 4, "moveMode": "realtime" },
+        "Health": { "current": 20, "max": 20 },
+        "Attacker": { "rangeCells": 3, "damage": 5, "cooldownTicks": 40, "cooldownRemaining": 0 }
+      }
+    },
+    {
+      "id": "vault-door",
+      "tags": ["Blocking"],
+      "components": {
+        "GridPosition": { "cellX": 4, "cellY": 6, "progress": 0 }
+      }
+    },
+    {
+      "id": "security-switch",
+      "components": {
+        "Trigger": {
+          "kind": "switch",
+          "shape": "box",
+          "once": true,
+          "half": { "x": 0.5, "y": 0.5, "z": 0.5 }
+        },
+        "Transform": { "position": { "x": 9, "y": 1, "z": 0 } }
+      }
+    },
+    {
+      "id": "vault-exit",
+      "components": {
+        "Trigger": {
+          "kind": "exit",
+          "shape": "box",
+          "once": true,
+          "half": { "x": 0.5, "y": 0.5, "z": 0.5 }
+        },
+        "Transform": { "position": { "x": 4, "y": 7, "z": 0 } }
+      }
+    },
+    {
+      "id": "iso-camera",
+      "components": {
+        "IsoCamera": { "target": "operative", "viewHeight": 16, "yawDegrees": 45 }
+      }
+    }
+  ]
+}

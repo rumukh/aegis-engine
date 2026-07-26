@@ -1,58 +1,55 @@
 /**
- * The isometric {@link ModePlugin}: click-to-move actors that path across a tile grid, with a
- * 2:1 isometric projection. Declares the system pipeline and projection contract; bodies are
- * stubs.
+ * The isometric {@link ModePlugin}: grid actors that click-to-move along deterministic A\* paths
+ * and trade fire on a cooldown, projected 2:1 isometric. This module wires the mode's components,
+ * systems, per-run nav-grid bake and view provider into the single object the harness runs.
+ *
+ * It also exports {@link isoSystems} and {@link isoInit} so a *game* built on this mode can
+ * compose the mode's pipeline with its own semantic systems into one plugin — the frozen
+ * `RunOptions` has no extra-systems hook, so a game ships a composed `ModePlugin` rather than
+ * layering systems onto `isoPlugin` at run time. See the game package for that composition.
  * @packageDocumentation
  */
-import { createSchedule, notImplemented } from '@aegis/core';
-import type { GameMode, Schedule, World } from '@aegis/core';
-import type {
-  AsciiView,
-  ModePlugin,
-  SemanticFrame,
-  ViewOptions,
-  ViewProvider,
-} from '@aegis/harness';
-import { ISO_COMPONENTS } from './components.js';
+import { createSchedule } from '@aegis/core';
+import type { ComponentType, Schedule, System, World } from '@aegis/core';
+import { healthSystem } from '@aegis/content';
+import type { ModePlugin, ViewProvider } from '@aegis/harness';
+import { ISO_COMPONENTS, IsoGrid, NavGrid } from './components.js';
+import { buildNavGrid } from './grid.js';
+import { ISO_SYSTEM_LIST } from './systems.js';
+import { IsoViewProvider } from './view.js';
+
+export { IsoViewProvider } from './view.js';
 
 /**
- * The isometric system pipeline, in intended execution order.
- *
- * 1. `iso.intake` (`input`) — unproject a `click` at a screen `point` back to a grid cell and
- *    attach a `MoveOrder` with that `target`.
- * 2. `iso.pathfind` (`preUpdate`) — for any unresolved `MoveOrder`, run deterministic A* over
- *    the grid (avoiding `Blocking` cells), fill `path`, set `resolved`.
- * 3. `iso.move` (`update`) — advance `GridPosition.progress` along `path` at `IsoActor.speed`;
- *    pop cells as they are reached; drop the `MoveOrder` at the destination.
- * 4. `iso.camera` (`postUpdate`) — follow the target with the `IsoCamera` rig.
+ * The mode's systems for one simulation: the iso pipeline plus `@aegis/content`'s generic
+ * {@link healthSystem} (so `entity.died` fires when combat drops an actor to zero HP — the
+ * signal a game maps to `player.died`). A game composes these with its own systems.
  */
-export const ISO_SYSTEMS = [
-  { name: 'iso.intake', phase: 'input' },
-  { name: 'iso.pathfind', phase: 'preUpdate', after: ['iso.intake'] },
-  { name: 'iso.move', phase: 'update', after: ['iso.pathfind'] },
-  { name: 'iso.camera', phase: 'postUpdate' },
-] as const;
-
-/** Build the isometric schedule. */
-export function isoSchedule(): Schedule {
-  return createSchedule();
+export function isoSystems(): readonly System[] {
+  return [...ISO_SYSTEM_LIST, healthSystem];
 }
 
-/** Isometric (2:1) projection producing the semantic frame and a top-down ASCII grid. */
-export class IsoViewProvider implements ViewProvider {
-  readonly mode: GameMode = 'iso';
-  semanticFrame(world: World, options?: ViewOptions): SemanticFrame {
-    return notImplemented('IsoViewProvider.semanticFrame');
-  }
-  asciiView(world: World, options?: ViewOptions): AsciiView | undefined {
-    return notImplemented('IsoViewProvider.asciiView');
-  }
+/**
+ * Per-run setup: bake the authored {@link IsoGrid} resource into a {@link NavGrid} bitmap once,
+ * before tick 0. Kept out of a system because the static grid never changes — dynamic obstacles
+ * are layered per pathfinding query. No-op if the scene declared no `IsoGrid`.
+ */
+export function isoInit(world: World): void {
+  const config = world.getResource(IsoGrid);
+  if (config === undefined || config.width === 0) return;
+  world.setResource(NavGrid, buildNavGrid(config));
+}
+
+/** Build the isometric schedule (mode systems only). */
+export function isoSchedule(): Schedule {
+  return createSchedule().addAll(isoSystems());
 }
 
 /** The isometric mode plugin. */
 export const isoPlugin: ModePlugin = {
   mode: 'iso',
-  components: () => ISO_COMPONENTS,
-  systems: () => isoSchedule(),
-  view: () => new IsoViewProvider(),
+  components: (): readonly ComponentType<unknown>[] => ISO_COMPONENTS,
+  systems: (): Schedule => isoSchedule(),
+  init: (world: World): void => isoInit(world),
+  view: (): ViewProvider => new IsoViewProvider(),
 };
