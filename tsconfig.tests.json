@@ -1,0 +1,44 @@
+{
+  // Type-checks every test file in the workspace. Nothing else does.
+  //
+  // Each `packages/*/tsconfig.json` and `games/*/tsconfig.json` excludes `*.test.ts` (correctly —
+  // tests must not be emitted into `dist`), vitest transpiles without type-checking, and eslint is
+  // not type-aware. The net effect was that `npm run verify` never type-checked a single test file,
+  // so a fixture could silently drift out of contract with the type it claims to exercise. That is
+  // exactly what had happened: `packages/mode-fps/src/systems.test.ts` had been building malformed
+  // `InputFrame`s since the file was written, and only passed because no system read the missing
+  // fields. See docs/working-agreement.md §3.
+  //
+  // This is a check-only program: `noEmit`, no `composite`, no declarations. It never contributes
+  // to `tsc -b` output and cannot pollute `dist`.
+  //
+  // Deliberate trade-off: this is ONE program covering every project, so `lib` and `types` are the
+  // union of what the individual projects need (DOM for render-three/cli, node for anything
+  // touching `node:*`). A `packages/core` test could therefore reference `document` without a type
+  // error. That is a far smaller hole than not type-checking tests at all, and it is not silent —
+  // such a test fails immediately at runtime under vitest's node environment.
+  //
+  // `@aegis/*` specifiers resolve through the workspace symlinks to each package's built
+  // `dist/*.d.ts`, i.e. against the real published contract. That needs a build first, which is why
+  // `verify` runs `build` before `typecheck:tests` and why this config has a `pretypecheck:tests`
+  // hook in the root package.json for standalone runs.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "packages/*/src/**/*.test.ts",
+    "packages/*/src/**/*.spec.ts",
+    "packages/*/test/**/*.ts",
+    "games/*/src/**/*.test.ts",
+    "games/*/src/**/*.spec.ts",
+    "games/*/test/**/*.ts"
+  ],
+  "exclude": ["**/dist/**", "**/node_modules/**"]
+}

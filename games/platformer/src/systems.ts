@@ -6,7 +6,7 @@
  * @packageDocumentation
  */
 import { abs, floor, Transform } from '@aegis/core';
-import type { System, TickContext, World } from '@aegis/core';
+import type { Entity, System, TickContext, World } from '@aegis/core';
 import { Dead, ENTITY_DIED, Health, pointInTrigger, Trigger, Triggered } from '@aegis/content';
 import type { EntityDiedEvent } from '@aegis/content';
 import { TileCollider, Velocity } from '@aegis/mode-platformer';
@@ -151,10 +151,17 @@ const deathMapSystem: System = {
   },
 };
 
-/** Whether the player's collider centre is inside a goal trigger. */
-function playerInGoal(world: World): { hit: boolean; entity: number } {
+/**
+ * Whether the player's collider centre is inside a goal trigger.
+ *
+ * A discriminated union rather than a `{ hit, entity }` pair: the miss branch has no `entity`
+ * field at all, so there is nowhere to park a fake handle and nothing invalid can reach
+ * `world.add`. (It previously returned a `-1` sentinel typed as `number`, which type-checking
+ * would have rejected the moment this game was actually compiled.)
+ */
+function playerInGoal(world: World): { hit: true; entity: Entity } | { hit: false } {
   const pv = world.query({ has: [Player, Transform] }).first();
-  if (!pv) return { hit: false, entity: -1 };
+  if (!pv) return { hit: false };
   const p = pv.get(Transform).position;
   for (const gv of world.query({ has: [Trigger, Transform], none: [Triggered] }).views()) {
     const trig = gv.get(Trigger);
@@ -162,7 +169,7 @@ function playerInGoal(world: World): { hit: boolean; entity: number } {
     if (pointInTrigger(trig, gv.get(Transform).position, p))
       return { hit: true, entity: gv.entity };
   }
-  return { hit: false, entity: -1 };
+  return { hit: false };
 }
 
 /** Emit `level.completed` exactly once, the tick the player enters the goal volume. */
@@ -170,10 +177,10 @@ const goalSystem: System = {
   name: 'game.goal',
   phase: 'postUpdate',
   run({ world, tick }: TickContext): void {
-    const { hit, entity } = playerInGoal(world);
-    if (!hit) return;
+    const goal = playerInGoal(world);
+    if (!goal.hit) return;
     world.events.emit(LEVEL_COMPLETED, { tick });
-    world.add(entity, Triggered);
+    world.add(goal.entity, Triggered);
   },
 };
 

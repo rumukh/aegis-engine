@@ -1,63 +1,186 @@
 /**
- * The render adapter contract: a one-way projection of world state onto a three.js scene.
+ * The render adapter contract: a one-way, read-only projection of world state onto a three.js
+ * scene graph.
  *
- * Rendering is a pure *consumer* of the simulation (CHARTER principle 2). An adapter reads
- * `Transform` and the appearance components (`Sprite`/`Model`/`Light`) plus the active mode's
- * camera rig, and mirrors them into three.js objects. It never writes back to the world, and
- * the simulation neither knows nor cares whether an adapter exists. `@aegis/core` must never
- * import this package; the dependency arrow points only inward.
+ * Rendering is a pure *consumer* of the simulation (CHARTER principle 2, ADR-0005). An adapter
+ * reads `Transform`, the mode's own components and the declarative appearance components, and
+ * mirrors them into three.js objects. It never writes to the world, never advances it, and the
+ * simulation neither knows nor cares whether an adapter exists — proven by
+ * `noninterference.test.ts`, which hashes the same run with and without one attached.
+ *
+ * An adapter deliberately owns **no GPU state**: it builds a `THREE.Scene` and a `THREE.Camera`
+ * and nothing else, so it constructs and runs headlessly in Node under vitest. Pixels are the
+ * job of {@link "./view".RenderView}, which hosts a `WebGLRenderer` in a browser.
  * @packageDocumentation
  */
-import { notImplemented } from '@aegis/core';
+import { Scene, Color } from 'three';
+import type { Camera, Object3D } from 'three';
 import type { GameMode, World } from '@aegis/core';
-import type { Camera, Scene, WebGLRenderer } from 'three';
+import { MODE_BACKGROUNDS } from './appearance.js';
 
 /** Options for constructing a {@link RenderAdapter}. */
-export interface RendererOptions {
-  /** The mode whose camera rig and appearance conventions to honour. */
-  mode: GameMode;
-  /** The canvas to render into. When omitted, the adapter creates one (browser only). */
-  canvas?: HTMLCanvasElement;
-  /** Drawing-buffer size in device pixels. Defaults to the canvas client size. */
-  size?: { width: number; height: number };
-  /** Device pixel ratio override. Defaults to `1` for deterministic captures. */
-  pixelRatio?: number;
-  /** Clear colour as `#rrggbb`. */
+export interface RenderAdapterOptions {
+  /** Viewport aspect ratio (width / height). Defaults to `16 / 9`. */
+  aspect?: number;
+  /** Clear colour as `#rrggbb`. Defaults to the mode's convention. */
   background?: string;
 }
 
+/** A logical point the adapter resolved a pointer to, in the coordinates the mode reads. */
+export interface PickedPoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
 /**
- * Mirrors world state onto a three.js scene. Lifecycle: {@link mount} once, then {@link sync}
- * after every simulation tick you want to display, then {@link dispose}.
+ * Mirrors world state onto a three.js scene. Lifecycle: {@link RenderAdapter.mount} once, then
+ * {@link RenderAdapter.sync} for every frame you want to display, then
+ * {@link RenderAdapter.dispose}.
  */
 export interface RenderAdapter {
   /** The mode this adapter renders. */
   readonly mode: GameMode;
-  /** The underlying three.js scene (created on {@link mount}). */
+  /** The three.js scene it maintains. */
   readonly scene: Scene;
-  /** The active camera, driven from the mode's camera-rig component. */
+  /** The active camera, driven from the mode's camera rig. */
   readonly camera: Camera;
-  /** The three.js renderer. */
-  readonly renderer: WebGLRenderer;
-  /** Build three.js objects for the world's current entities. Call once. */
+  /** Build the static scene graph (level geometry, lights) for `world`. Call once. */
   mount(world: World): void;
   /**
-   * Reconcile three.js objects with the world's current state (add new entities, update
-   * transforms/appearance, remove despawned entities) and render one frame. Pure read of the
+   * Reconcile the scene with the world's current state: add objects for new entities, update
+   * transforms and appearance, drop despawned ones, and place the camera. A pure read of the
    * world.
    */
   sync(world: World): void;
-  /** Resize the drawing buffer and camera projection. */
+  /** Update the camera projection for a new viewport size. */
   resize(width: number, height: number): void;
-  /** Release all GPU resources. */
+  /**
+   * Resolve a normalised-device-coordinate pointer position (`x`, `y` both in `[-1, 1]`, `y` up)
+   * to the logical world point the mode's input systems expect, or `null` when the mode has no
+   * pointer semantics or the ray hits nothing.
+   */
+  pick(ndcX: number, ndcY: number): PickedPoint | null;
+  /** Release geometry/material resources held by the scene graph. */
   dispose(): void;
 }
 
+/** Dispose every geometry and material under `root`, including `root` itself. */
+export function disposeTree(root: Object3D): void {
+  root.traverse((node) => {
+    const holder = node as {
+      geometry?: { dispose(): void };
+      material?: { dispose(): void } | { dispose(): void }[];
+    };
+    holder.geometry?.dispose();
+    const material = holder.material;
+    if (Array.isArray(material)) for (const m of material) m.dispose();
+    else material?.dispose();
+  });
+}
+
 /**
- * Create a render adapter for `options.mode`. The concrete adapter picks the camera rig
- * component (`PlatformerCamera` / `IsoCamera` / `FpsCamera`) and appearance mapping
- * (`Sprite` for 2D, `Model` for 3D) appropriate to the mode.
+ * Keyed reconciliation of `Object3D`s against a source of truth that changes every tick.
+ *
+ * Each `sync` opens a pass, claims the keys that should exist, then sweeps: anything not claimed
+ * this pass is removed and disposed. This is the "reconcile three.js object lifetimes against
+ * entity spawn/despawn" cost ADR-0005 predicted, isolated in one place.
  */
-export function createRenderer(options: RendererOptions): RenderAdapter {
-  return notImplemented(`createRenderer(${options.mode})`);
+export class ObjectPool {
+  readonly #parent: Object3D;
+  readonly #objects = new Map<string, Object3D>();
+  #claimed = new Set<string>();
+
+  constructor(parent: Object3D) {
+    this.#parent = parent;
+  }
+
+  /** Number of live objects in the pool. */
+  get size(): number {
+    return this.#objects.size;
+  }
+
+  /** The object registered under `key`, if any. */
+  get(key: string): Object3D | undefined {
+    return this.#objects.get(key);
+  }
+
+  /** Every live key, in insertion order. */
+  keys(): readonly string[] {
+    return [...this.#objects.keys()];
+  }
+
+  /** Begin a reconciliation pass. */
+  begin(): void {
+    this.#claimed = new Set<string>();
+  }
+
+  /**
+   * Claim `key` for this pass, creating the object with `create` the first time it is seen.
+   * Returns the object so the caller can update it.
+   */
+  claim<T extends Object3D>(key: string, create: () => T): T {
+    this.#claimed.add(key);
+    const existing = this.#objects.get(key);
+    if (existing !== undefined) return existing as T;
+    const created = create();
+    created.name = key;
+    this.#objects.set(key, created);
+    this.#parent.add(created);
+    return created;
+  }
+
+  /** Remove and dispose everything not claimed since the last {@link ObjectPool.begin}. */
+  sweep(): void {
+    for (const [key, object] of [...this.#objects]) {
+      if (this.#claimed.has(key)) continue;
+      this.#objects.delete(key);
+      this.#parent.remove(object);
+      disposeTree(object);
+    }
+  }
+
+  /** Remove and dispose everything. */
+  clear(): void {
+    for (const object of this.#objects.values()) {
+      this.#parent.remove(object);
+      disposeTree(object);
+    }
+    this.#objects.clear();
+    this.#claimed.clear();
+  }
+}
+
+/** Create the shared, pre-configured scene for a mode. */
+export function createModeScene(mode: GameMode, background?: string): Scene {
+  const scene = new Scene();
+  scene.name = `aegis:${mode}`;
+  scene.background = new Color(background ?? MODE_BACKGROUNDS[mode]);
+  return scene;
+}
+
+/** Aspect ratio from viewport pixels, guarding against a zero-height layout. */
+export function aspectOf(width: number, height: number): number {
+  return height > 0 ? width / height : 16 / 9;
+}
+
+/** Base implementation shared by the three mode adapters. */
+export abstract class BaseAdapter implements RenderAdapter {
+  abstract readonly mode: GameMode;
+  abstract readonly scene: Scene;
+  abstract readonly camera: Camera;
+
+  abstract mount(world: World): void;
+  abstract sync(world: World): void;
+  abstract resize(width: number, height: number): void;
+
+  /** Modes without pointer semantics resolve nothing. Overridden by the iso adapter. */
+  pick(_ndcX: number, _ndcY: number): PickedPoint | null {
+    return null;
+  }
+
+  dispose(): void {
+    disposeTree(this.scene);
+    this.scene.clear();
+  }
 }

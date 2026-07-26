@@ -30,6 +30,12 @@ report it to the PM with the reason, and keep going on something else. The PM ap
 change centrally so every parallel session gets it at once. A five-minute wait beats a
 three-way merge conflict in a load-bearing interface.
 
+**Component ids are scoped to a run, not to the workspace:** a `ComponentRegistry` is built fresh
+per `runScene` / `runGameTest`, so a game's component ids need only be unique _within that game_ —
+`Player` and `Patrol` are each defined by two different games today, deliberately. Never merge two
+games' component sets into one registry; the registry throws on a genuine id conflict, and that
+throw is a feature, not an obstacle to route around.
+
 ## 2. Never ship untestable code
 
 You must be able to _run_ what you build. If the thing you depend on is only a stub, say so
@@ -47,9 +53,16 @@ Before you hand back, this must pass from the repo root:
 npm run verify
 ```
 
-which runs build + test + lint + dependency-boundary check. "It works on my package" is not
-the gate; the whole workspace is the gate. If you broke something you don't own, that is
-still your problem to report.
+which runs build + **type-check of every test file** + test + lint + dependency-boundary check.
+"It works on my package" is not the gate; the whole workspace is the gate. If you broke something
+you don't own, that is still your problem to report.
+
+The test type-check step (`npm run typecheck:tests`, `tsconfig.tests.json`) exists because every
+`packages/*/tsconfig.json` excludes `*.test.ts` from the build, vitest transpiles without
+type-checking, and eslint is not type-aware — so for a long time `npm run verify` never
+type-checked a single test file. A test fixture could silently drift out of contract with the type
+it claims to exercise, and one had: `packages/mode-fps/src/systems.test.ts` built `InputFrame`s
+missing `released` and `pointer` from the day it was written. Tests are code; they get checked.
 
 Note: `.github/workflows/ci.yml` is documentation of intent — this repo has **no git remote**,
 so GitHub Actions never actually runs. `npm run verify` is the real gate. Keep the workflow
@@ -60,8 +73,11 @@ in sync with it anyway, so the project is CI-ready the day it gets a remote.
 Principle 3 in the charter. Concretely:
 
 - No `Date.now()`, `performance.now()`, `Math.random()`, or `Math.sin`/`cos`/`tan`/`atan2`
-  etc. in any simulation package. ESLint enforces this as an **error**; do not add an
-  eslint-disable to get around it. Use `@aegis/core/math`.
+  etc. in any simulation package **or in `games/*`** — including their tests. ESLint enforces
+  this as an **error**; do not add an eslint-disable to get around it. Use `@aegis/core/math`.
+  (`games/*` was outside the rule's `files` glob until it was extended; game code is where the
+  AI, patrols, damage and win conditions live, so it is exactly the code whose non-determinism
+  would corrupt a golden hash.)
 - No iteration over unordered structures where order affects results.
 - No wall-clock time in gameplay. Time is ticks.
 

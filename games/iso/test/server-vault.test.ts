@@ -1,26 +1,25 @@
 /**
- * Discovery shim: run "The Server Vault" game's acceptance test (its exported `defineGameTest`)
- * from inside the mode package's test suite, since the root vitest config only discovers
- * `packages/**` tests. This keeps the game honest against every mode change without waiting for
- * the PM to wire `games/**` into the config.
+ * Acceptance test for "The Server Vault" — the isometric PoC, run headless with no pixels.
  *
- * It also adds three checks the game's own test can't cleanly express: a cross-run + `replay()`
- * determinism proof, the negative `path.blocked` case (an unreachable target while the vault door
- * is still sealed), and a consistency assertion that the scene's `IsoGrid.walls` on disk still
- * matches the game's in-code `WALL_ROWS`.
+ * Discovered by the root vitest run (root `vitest.config.ts` globs every game's `test` directory),
+ * so the game is exercised by `npm run verify` exactly like every package is. This is the
+ * authoritative run: CHARTER §4.3 requires all three PoCs to complete their scripted playthrough
+ * headlessly and assert on gameplay outcomes.
+ *
+ * Beyond the game's exported `defineGameTest` it proves three things that test can't cleanly
+ * express: a cross-run + `replay()` determinism proof against the golden hash, the negative
+ * `path.blocked` case (an unreachable target while the vault door is still sealed), and a
+ * consistency assertion that the scene's `IsoGrid.walls` on disk still matches the game's in-code
+ * `WALL_ROWS`.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { runGameTest, runScene } from '@aegis/harness';
-import serverVaultTest, {
-  GOLDEN_HASH,
-  serverVaultPlugin,
-  WALL_ROWS,
-} from '../../../games/iso/src/server-vault';
+import serverVaultTest, { GOLDEN_HASH, serverVaultPlugin, WALL_ROWS } from '../src/server-vault.js';
 
 const SCENE = 'games/iso/levels/server-vault.scene.json';
 
-describe('game: The Server Vault (mode-iso acceptance)', () => {
+describe('game: The Server Vault (iso PoC acceptance)', () => {
   it('passes its exported defineGameTest as specified', async () => {
     const outcome = await runGameTest(serverVaultTest);
     if (!outcome.passed) throw outcome.error;
