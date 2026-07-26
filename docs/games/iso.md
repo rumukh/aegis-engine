@@ -35,9 +35,16 @@ Grid is integer cells; `tileSize: 1`. Tick rate 60Hz.
 | `IsoActor.moveMode`      | `realtime`                 | smooth sub-cell `progress`, logical position stays integer   |
 | pathfinding              | 4-neighbour (no diagonals) | Manhattan grid; deterministic tie-break by (x then y)        |
 | `Health`                 | 30 / 30                    | operative HP (`Health` is now shared, from `@aegis/content`) |
-| `Attacker.rangeCells`    | 4                          | max attack distance (Chebyshev) with clear line of sight     |
+| `Attacker.rangeCells`    | 3                          | max attack distance (Chebyshev) with clear line of sight     |
 | `Attacker.damage`        | 10                         | per shot                                                     |
 | `Attacker.cooldownTicks` | 30                         | 0.5 s between the operative's shots                          |
+
+> **Tuned from design intent (range 4 → 3).** The spec's operative range of 4 exceeds the guard's
+> detection/return-fire range of 3, so an attack-move would halt one cell outside the guard's reach
+> and snipe it for **zero** return fire — making the golden "exactly two hits / Health 20" outcome
+> mechanically unreachable. Dropping the operative's range to 3 forces a genuine close-quarters
+> trade (both combatants at Chebyshev 3), which is the firefight the fiction describes. The
+> operative still wins the exchange decisively via its faster cooldown (30 < 40).
 
 Two operative shots (10 + 10) kill the guard (HP 20).
 
@@ -53,13 +60,21 @@ Two operative shots (10 + 10) kill the guard (HP 20).
 | `Attacker.damage`        | 5                                 | per shot                                                   |
 | `Attacker.cooldownTicks` | 40                                | slower than the operative, so the trade favours the player |
 
-- **Patrol** is a pure function of tick: `phase = t mod 360`; sweeps 1→10 over the first 180 ticks,
-  10→1 over the next 180. Reproducible tick-for-tick until combat begins.
+- **Patrol** is a pure function of tick, `patrolCell(t)`: `leg = floor((t mod 360) / 20)`; legs 0–9
+  place the guard at `x = 1 + leg` (sweeping (1,5)→(10,5) over t0–180) and legs 10–17 at
+  `x = 19 - leg` (sweeping back (9,5)→(2,5) over t180–340), then the cycle repeats — a clockwork
+  triangle-wave ping-pong along row 5, 1 cell / 20 ticks, period 360. Reproducible tick-for-tick
+  until combat begins.
 - **Detection → fight, not fail.** When the guard sees the operative it emits `guard.alerted` and
-  becomes hostile; it stops patrolling and fires every 40 ticks while the operative is in range.
-- Expected exchange (design-intent golden outcome): the guard lands **exactly two** 5-damage shots
-  before it dies, so the operative ends the fight at **Health 20** — a specific, non-zero,
-  reproducible amount of damage taken.
+  becomes hostile; it stops patrolling, freezes on its current cell, and fires every 40 ticks while
+  the operative is in range.
+- Expected exchange (golden outcome, as implemented): the operative steps into the corridor mouth at
+  (1,2); the guard (still at its spawn (1,5)) detects it at **t18** and opens fire (hits at t18 and
+  t58). The operative attack-moves onto the guard at t40 and kills it with two shots by **t70** —
+  after the guard has landed **exactly two** 5-damage shots, so the operative ends the fight at
+  **Health 20**. The operative's delayed engagement (letting the guard fire first as it closes) is
+  what yields two hits rather than one; the outcome is a specific, non-zero, reproducible amount of
+  damage taken.
 
 > **How `click` becomes an attack:** clicking a cell occupied by a hostile actor writes an
 > `AttackOrder{ target }` instead of a `MoveOrder`. The mode's `CombatSystem` moves the operative
@@ -159,57 +174,60 @@ Fully machine-checkable from the event log and final `GridPosition`/`Health`.
 ## The scripted playthrough
 
 `play/server-vault.input` (ADR-0004 DSL). Click-to-move/attack is issued as `click x,y @tick` at
-grid cells; between clicks the operative auto-paths, fights or idles. Ticks are design intent; the
-implementer tunes exact frames so the golden outcome (guard dead, operative at Health 20) holds.
-Total ≈ **900 ticks (~15 s sim time)**.
+grid cells; between clicks the operative auto-paths, fights or idles. These are the exact tuned
+frames the acceptance test runs; the golden outcome (guard dead, operative at Health 20, mission
+completed at t465) holds against them. Budget **960 ticks (~16 s sim time)**; the run resolves well
+inside it.
 
 ```text
 # The Server Vault — infiltrate, win the firefight, breach the vault. Clicks are grid cells (x,y).
 
-click 1,5   @2      # 1) path down the winding left column to the corridor mouth
-                    #    (proves A* around single-tile gaps; ~60 ticks to arrive)
-click 6,5   @120    # 2) click the GUARD's cell -> AttackOrder: close to range and open fire.
-                    #    Trade shots on cooldown: 2 hits kill it (guard lands 2x5=10 first).
-                    #    -> guard.alerted, attack.fired..., enemy.killed, damage.taken x2
-click 9,1   @320    # 3) corridor now safe: climb the shaft to the switch
-                    #    -> switch.activated, door.opened
-click 4,7   @560    # 4) route back and through the now-open door to the exit
-                    #    -> mission.completed
+click 1,2 @2      # 1) step into the corridor mouth; the guard (at 1,5) spots us at t18 and opens fire.
+                  #    Descending the winding left column proves A* around single-tile gaps.
+click 1,5 @40     # 2) attack-move onto the guard's cell -> AttackOrder: close to Chebyshev 3 and fire.
+                  #    We let it shoot first; 2 shots kill it by t70 after it lands 2x5=10 on us.
+                  #    -> guard.alerted, attack.fired..., enemy.killed, damage.taken x2 (Health 20)
+click 9,1 @72     # 3) corridor now safe: cross row 5 and climb the col-7/col-9 shaft to the switch.
+                  #    Reaching (9,1) at t297 -> switch.activated, door.opened
+click 4,7 @300    # 4) route back along row 5 and through the now-open door to the exit.
+                  #    Repaths against the mutated grid; -> mission.completed at t465
 ```
 
 Notes for the implementer:
 
 - **Dynamic-repath proof:** author a companion _negative_ test that clicks `4,7` at tick 5 (before
   the switch) and asserts `path.blocked` is emitted and `mission.completed` is not — the test that
-  fails loudly if pathfinding ever ignores the door mutation.
-- The guard's cell at `@120` is wherever its clockwork patrol places it then; the `AttackOrder`
-  targets the guard _entity_, not a fixed cell, so it stays correct as the guard moves. Keep the
-  _semantics_ (engage the guard, kill it before it kills you) even if tuned ticks drift; the
+  fails loudly if pathfinding ever ignores the door mutation. (Implemented in
+  `packages/mode-iso/test/server-vault.game.test.ts`.)
+- The attack click at `@40` targets the guard's cell (1,5) — its spawn, which it holds until t20 and
+  freezes on again once hostile. The `AttackOrder` targets the guard _entity_, not a fixed cell, so
+  it stays correct even though the guard is briefly mid-patrol when clicked. Keep the _semantics_
+  (engage the guard, let it fire, kill it before it kills you) even if tuned ticks drift; the
   assertions check the outcome, not the frames.
+- Because the game ships a composed `ModePlugin` (the frozen `RunOptions` has no extra-systems
+  hook), the test's `plugin` is the game's **`serverVaultPlugin`**, not the mode's bare `isoPlugin`.
 
 ## The gameplay assertions
 
 ```ts
 import { defineGameTest, expectSim } from '@aegis/harness';
-import { isoPlugin, GridPosition } from '@aegis/mode-iso';
+import { GridPosition } from '@aegis/mode-iso';
 import { Health } from '@aegis/content';
-
-const WALL_CELLS = /* exported from the tilemap's '#' tiles, alongside the scene */ [] as {
-  x: number;
-  y: number;
-}[];
+// The game ships a composed ModePlugin (mode systems + its own semantic systems), the wall cells
+// derived from the level's collision rows, and the pinned golden hash.
+import { serverVaultPlugin, WALL_CELLS, GOLDEN_HASH } from './server-vault';
 
 export default defineGameTest({
   name: 'server vault: win the firefight, open the door, reach the exit',
   scene: 'games/iso/levels/server-vault.scene.json',
-  options: { plugin: isoPlugin, captureHistory: true },
+  options: { plugin: serverVaultPlugin, captureHistory: true },
   ticks: 960,
   seed: 'poc-iso',
   input: `
-    click 1,5 @2
-    click 6,5 @120
-    click 9,1 @320
-    click 4,7 @560
+    click 1,2 @2
+    click 1,5 @40
+    click 9,1 @72
+    click 4,7 @300
   `,
   expect(result) {
     expectSim(result)
@@ -235,7 +253,7 @@ export default defineGameTest({
             .one()
             .get(Health).current === 20,
       )
-      .hashEquals(result.hash); // pin the golden state hash (determinism)
+      .hashEquals(GOLDEN_HASH); // pin the golden state hash (determinism)
 
     // Whole-timeline invariant #1 — pathfinding correctness: never stand in a wall.
     result.assertInvariant('operative is always on a passable cell', (w) => {
