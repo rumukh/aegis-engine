@@ -69,17 +69,36 @@ and all three `ViewProvider` projections (orthographic, isometric, perspective).
 
 ## Running a game from the CLI
 
-Each game directory carries an `aegis.json` naming its composed plugin:
+`aegis test` discovers, by default, every compiled module whose name ends in `.gametest.js` (or
+`.mjs`/`.cjs`) and runs **every** `GameTest` that module exports. So each game keeps its
+playthroughs in a `src/*.gametest.ts`:
+
+| Game               | Discovery module                | Exports                                             |
+| ------------------ | ------------------------------- | --------------------------------------------------- |
+| `games/platformer` | `src/coyote-gap.gametest.ts`    | the winning run + 4 lose playthroughs               |
+| `games/iso`        | `src/server-vault.gametest.ts`  | re-exports the 2 tests defined in `server-vault.ts` |
+| `games/fps`        | `src/sector-breach.gametest.ts` | the winning run, the lose run, the collision probe  |
+
+They live in `src/`, not `test/`, because each game's `tsconfig.json` excludes `test/` from the
+build — a `defineGameTest` parked there is never compiled and therefore never discovered. That was
+the state until recently: iso defined its tests in `src/server-vault.ts` (which does not match the
+convention) and fps defined its inside a vitest file, so `aegis test` ran **the platformer alone**
+and exited 0 with a green summary. A gate covering one of three PoCs is a _worse_ signal than the
+empty one it replaced, because it reads as coverage. The discovery guard in
+`games/platformer/test` now enumerates `games/` from disk and fails, naming the game, if any of
+them — including a fourth added later — stops being reachable.
+
+Each game directory also carries an `aegis.json` naming its composed plugin:
 
 ```json
 { "plugin": "./dist/server-vault.js#serverVaultPlugin" }
 ```
 
-This closes a trap. Without it, `aegis run games/iso/levels/server-vault.scene.json` exits **0**
-with an empty event log: the scene validates perfectly against the stock `isoPlugin`, and because
-`Operative`/`Guard`/`Patrol` are tags, no component check can detect that the game layer never ran.
-With the file present the CLI resolves the right plugin by default rather than by the user
-remembering a flag. The three declarations are:
+This closes a related trap. Without it, `aegis run games/iso/levels/server-vault.scene.json` exits
+**0** with an empty event log: the scene validates perfectly against the stock `isoPlugin`, and
+because `Operative`/`Guard`/`Patrol` are tags, no component check can detect that the game layer
+never ran. With the file present the CLI resolves the right plugin by default rather than by the
+user remembering a flag. The three declarations are:
 
 | Game               | `aegis.json` `plugin`                      |
 | ------------------ | ------------------------------------------ |
@@ -87,7 +106,7 @@ remembering a flag. The three declarations are:
 | `games/iso`        | `./dist/server-vault.js#serverVaultPlugin` |
 | `games/fps`        | `./dist/index.js#sectorBreachPlugin`       |
 
-## Five rules learned from the mode-capability audit
+## Six rules learned from the mode-capability audit
 
 An independent audit ran ~60 source mutations and found that 7 of 12 named mode capabilities could
 be broken with all three game tests green. The structural causes are worth stating once, here,
@@ -122,6 +141,12 @@ because they apply to any future game in this repo:
    a plateau looking perfectly healthy. Prefer assertions whose failure message names the thing
    (`entityCount({ has: ['Player', 'Dead'] }, 1)` prints the matched entities; a bare `holds` prints
    only its label), and put the measured numbers in the label.
+6. **A partial gate is worse than no gate.** `aegis test` found the platformer, ran five green
+   playthroughs and exited 0 while two of the three PoCs were invisible to it — a summary that
+   reads as coverage. The empty result it replaced was at least honestly broken. Whenever a gate
+   enumerates something, make the enumeration itself testable: the discovery guard reads `games/`
+   from disk rather than hard-coding three names, so it fails on the _fourth_ game nobody
+   remembered to wire up.
 
 ## Deliberately _not_ covered
 
