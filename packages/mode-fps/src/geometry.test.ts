@@ -160,6 +160,96 @@ describe('raycastGrid', () => {
   });
 });
 
+// M6. `round` sends a coordinate sitting exactly on a cell boundary to the +side cell whatever way
+// the ray points, so a west-bound ray opened its march inside the cell *behind* it and reported a
+// distance-0 hit on the wall at its back. Every shot absorbed at range 0, every LOS probe failed.
+describe('raycastGrid — an origin on a cell boundary', () => {
+  /** A 3x3 walled room: only the centre cell is open. Boundaries fall on half-integer world x. */
+  function pocket(originX: number): CollisionGrid {
+    return extrudeFloorplan({
+      width: 3,
+      height: 3,
+      tileSize: 1,
+      origin: { x: originX, z: 0 },
+      rows: ['###', '#.#', '###'],
+      legend: {
+        '#': { solid: true, floor: 0, ceil: 4 },
+        '.': { solid: false, floor: 0, ceil: 4 },
+      },
+    });
+  }
+
+  it('does not report a hit on the wall behind a west-bound ray', () => {
+    const grid = pocket(0);
+    // x = 1.5 is the boundary between col 1 (open) and col 2 (the east wall).
+    const hit = raycastGrid(grid, { x: 1.5, y: 1, z: 1 }, { x: -1, y: 0, z: 0 }, 10);
+    expect(hit).toBeDefined();
+    expect(hit!.col).toBe(0); // the west wall, ahead of the ray — not col 2 behind it
+    expect(hit!.distance).toBeCloseTo(1, 6);
+  });
+
+  it('still reports the wall it is entering when the ray points the other way', () => {
+    const grid = pocket(0);
+    const hit = raycastGrid(grid, { x: 1.5, y: 1, z: 1 }, { x: 1, y: 0, z: 0 }, 10);
+    expect(hit).toBeDefined();
+    expect(hit!.col).toBe(2);
+    expect(hit!.distance).toBeCloseTo(0, 6);
+  });
+
+  it('is symmetric about a boundary: opposite rays report opposite walls', () => {
+    const grid = pocket(0);
+    const west = raycastGrid(grid, { x: 1.5, y: 1, z: 1 }, { x: -1, y: 0, z: 0 }, 10);
+    const east = raycastGrid(grid, { x: 1.5, y: 1, z: 1 }, { x: 1, y: 0, z: 0 }, 10);
+    expect(west!.col).not.toBe(east!.col);
+  });
+
+  it('reaches shipped content: a negative grid origin puts actors on boundaries', () => {
+    // Sector Breach's floorplan origin is x = -5, so any half-integer world x is a cell boundary.
+    const grid = extrudeFloorplan({
+      width: 11,
+      height: 1,
+      tileSize: 1,
+      origin: { x: -5, z: 0 },
+      rows: ['#.....#....'],
+      legend: {
+        '#': { solid: true, floor: 0, ceil: 4 },
+        '.': { solid: false, floor: 0, ceil: 4 },
+      },
+    });
+    // World x = 0.5 is the boundary between col 5 (open) and col 6 (a wall).
+    const hit = raycastGrid(grid, { x: 0.5, y: 1.6, z: 0 }, { x: -1, y: 0, z: 0 }, 100);
+    expect(hit).toBeDefined();
+    expect(hit!.col).toBe(0); // the far west wall, face at x = -4.5
+    expect(hit!.distance).toBeCloseTo(5, 6);
+  });
+
+  it('leaves a non-boundary origin exactly where it was', () => {
+    // Regression guard on the seeding change: cell centres must resolve as before.
+    const grid = pocket(0);
+    const hit = raycastGrid(grid, { x: 1, y: 1, z: 1 }, { x: -1, y: 0, z: 0 }, 10);
+    expect(hit!.col).toBe(0);
+    expect(hit!.distance).toBeCloseTo(0.5, 6);
+  });
+});
+
+// m17. `NaN > 0` and `NaN < 0` are both false, so a NaN component produced `step = 0`: the ray
+// quietly marched along the remaining axes and returned a confident wrong answer.
+describe('raycastGrid — a non-finite direction is a fault, not a degraded ray', () => {
+  it('throws on a NaN direction component instead of marching the other axes', () => {
+    const grid = room();
+    expect(() => raycastGrid(grid, { x: 1, y: 0.5, z: 1 }, { x: NaN, y: 0, z: 1 }, 10)).toThrow(
+      /finite/,
+    );
+  });
+
+  it('throws on an infinite direction component', () => {
+    const grid = room();
+    expect(() =>
+      raycastGrid(grid, { x: 1, y: 0.5, z: 1 }, { x: Number.POSITIVE_INFINITY, y: 0, z: 0 }, 10),
+    ).toThrow(/finite/);
+  });
+});
+
 describe('rayBox', () => {
   const center: Vec3 = { x: 3, y: 0, z: 0 };
   const half: Vec3 = { x: 0.5, y: 0.5, z: 0.5 };
@@ -176,6 +266,39 @@ describe('rayBox', () => {
 
   it('returns undefined when the box is entirely behind the origin', () => {
     const t = rayBox({ x: 0, y: 0, z: 0 }, { x: -1, y: 0, z: 0 }, center, half);
+    expect(t).toBeUndefined();
+  });
+
+  // m15. The docstring promised 0 for an origin inside the box; the code returned `tmax`, the
+  // *exit* distance. `resolveShot` picks the nearest hit by comparing these, so a shooter standing
+  // inside a hit volume ranked that volume behind things genuinely further away.
+  it('returns 0 — not the exit distance — when the origin is inside the box', () => {
+    const t = rayBox({ x: 3, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, center, half);
+    expect(t).toBe(0);
+  });
+
+  it('ranks a box the origin is inside ahead of a box further along the ray', () => {
+    // The near box is tighter than the one the origin sits in, so returning the *exit* distance
+    // for the enclosing box (the old behaviour, 0.5 here) mis-orders them.
+    const inside = rayBox({ x: 3, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, center, half);
+    const ahead = rayBox(
+      { x: 3, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
+      { x: 3.3, y: 0, z: 0 },
+      { x: 0.1, y: 0.5, z: 0.5 },
+    );
+    expect(inside).toBeDefined();
+    expect(ahead).toBeDefined();
+    expect(inside!).toBeLessThan(ahead!);
+  });
+
+  it('returns 0 rather than Infinity for a zero-length direction inside the box', () => {
+    const t = rayBox({ x: 3, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, center, half);
+    expect(t).toBe(0);
+  });
+
+  it('still returns undefined for a zero-length direction outside the box', () => {
+    const t = rayBox({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, center, half);
     expect(t).toBeUndefined();
   });
 });

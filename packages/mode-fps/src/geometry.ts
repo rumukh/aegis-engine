@@ -238,6 +238,11 @@ export function rightFromYaw(yawDeg: number): Vec3 {
   return { x: cos(y), y: 0, z: -sin(y) };
 }
 
+/** Whether every component of `v` is a finite number. */
+function isFinite3(v: Vec3): boolean {
+  return Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+}
+
 /** A hit returned by {@link raycastGrid}. */
 export interface GridRayHit {
   /** Distance from the ray origin to the wall entry point. */
@@ -249,13 +254,32 @@ export interface GridRayHit {
 }
 
 /**
+ * The cell index containing `u` (measured in tiles, cell `k` spanning `[k - 0.5, k + 0.5]`) for a
+ * ray whose step along that axis is `step`.
+ *
+ * A coordinate exactly on a cell boundary belongs to **two** cells, and `round` resolves that tie
+ * to the `+side` unconditionally. For a ray travelling in `-side` that is the cell *behind* it: the
+ * march then opens on a cell the ray is leaving, not entering, and reports a hit at distance 0 on
+ * the wall at its back. The tie is therefore broken by the direction of travel — the ray is
+ * entering the cell ahead of it. With no travel along the axis (`step === 0`) the ray runs along
+ * the boundary plane and neither side is "ahead"; that keeps the `+side` tie-break
+ * {@link worldToCell} uses, so the two functions never disagree about which cell a point is in.
+ */
+function originCell(u: number, step: number): number {
+  const k = round(u);
+  return step < 0 && k - u === 0.5 ? k - 1 : k;
+}
+
+/**
  * March a ray through the grid and return the first solid cell it enters within `maxDist`, or
  * `undefined` if it reaches `maxDist` (or leaves the grid) without hitting a wall.
  *
  * A 2D DDA over the x/z plane: walls are full columns, so only the horizontal crossing matters,
  * except that the ray's height at the crossing must lie within the cell's `[floor, ceil]` for the
  * column to actually block it (a ray angled over a short wall passes through). `dir` need not be
- * normalised for the traversal, but `distance` is only a true world distance when it is.
+ * normalised for the traversal, but `distance` is only a true world distance when it is. It must
+ * be finite: a `NaN` component would make both `> 0` and `< 0` false, silently reducing the ray to
+ * the remaining axes and returning a confident wrong answer, so it throws instead.
  */
 export function raycastGrid(
   grid: CollisionGrid,
@@ -263,13 +287,20 @@ export function raycastGrid(
   dir: Vec3,
   maxDist: number,
 ): GridRayHit | undefined {
+  if (!isFinite3(dir)) {
+    throw new Error(
+      `raycastGrid: direction must be finite, got (${dir.x}, ${dir.y}, ${dir.z}). A NaN or ` +
+        'infinite component cannot be stepped and would silently degrade the ray to the ' +
+        'remaining axes.',
+    );
+  }
   const ts = grid.tileSize;
   const half = ts * 0.5;
   // Integer cell coords in a south-west-origin frame: col east, zi north.
-  let col = round((origin.x - grid.origin.x) / ts);
-  let zi = round((origin.z - grid.origin.z) / ts);
   const stepX = dir.x > 0 ? 1 : dir.x < 0 ? -1 : 0;
   const stepZ = dir.z > 0 ? 1 : dir.z < 0 ? -1 : 0;
+  let col = originCell((origin.x - grid.origin.x) / ts, stepX);
+  let zi = originCell((origin.z - grid.origin.z) / ts, stepZ);
   // Distance along the ray to the first x / z cell boundary.
   const cellCenterX = grid.origin.x + col * ts;
   const cellCenterZ = grid.origin.z + zi * ts;
@@ -309,8 +340,14 @@ export function raycastGrid(
 
 /**
  * Ray-vs-axis-aligned-box (slab method). Returns the distance from `origin` to the box entry
- * point (0 if the origin is inside), or `undefined` if the ray misses or the box is entirely
- * behind the origin. `dir` should be normalised for `distance` to be a world distance.
+ * point, **`0` when the origin is already inside the box**, or `undefined` if the ray misses or
+ * the box is entirely behind the origin. `dir` should be normalised for `distance` to be a world
+ * distance; a zero `dir` therefore resolves to `0` inside the box and `undefined` outside it.
+ *
+ * The inside case must be `0`, not the far-slab distance: nearest-hit selection compares these
+ * against each other (`resolveShot` picks the smallest), so returning the *exit* distance for a
+ * shooter standing inside a hit volume ranks the volume it is inside behind things that are
+ * genuinely further away.
  */
 export function rayBox(origin: Vec3, dir: Vec3, center: Vec3, half: Vec3): number | undefined {
   let tmin = Number.NEGATIVE_INFINITY;
@@ -341,5 +378,5 @@ export function rayBox(origin: Vec3, dir: Vec3, center: Vec3, half: Vec3): numbe
     if (tmin > tmax) return undefined;
   }
   if (tmax < 0) return undefined;
-  return tmin >= 0 ? tmin : tmax;
+  return tmin >= 0 ? tmin : 0;
 }

@@ -11,7 +11,7 @@
  */
 import { Name, Transform } from '@aegis/core';
 import type { Entity, System, Vec3, World } from '@aegis/core';
-import { clamp, quatFromEuler, DEG2RAD } from '@aegis/core/math';
+import { clamp, quatFromEuler, abs, ceil, max, min, DEG2RAD } from '@aegis/core/math';
 import { Health } from '@aegis/content';
 import { CapsuleBody, FpsCamera, FpsController, Hitscan, HitBox, LookState } from './components.js';
 import {
@@ -42,6 +42,24 @@ export interface HitscanHitEvent {
 /** `hitscan.miss` payload. */
 export interface HitscanMissEvent {
   tick: number;
+}
+
+/**
+ * Hard ceiling on collision sub-steps per tick. Only an absurd velocity (`> 6100 units/s` for the
+ * default capsule at 60 Hz) can reach it; the cap exists so a corrupt or infinite velocity cannot
+ * spin the loop forever, which is a worse failure than the tunnelling it would allow.
+ */
+const MAX_SUBSTEPS = 256;
+
+/**
+ * How many equal sub-steps a displacement of `travel` must be split into so no sub-step exceeds
+ * `limit`. Returns `1` — the single-step path, bit-identical to the unsplit arithmetic — whenever
+ * the move already fits, and for a degenerate `limit` (a zero-radius body or a zero-size tile) or a
+ * non-finite `travel`, where splitting is meaningless and the old behaviour is the honest one.
+ */
+function substeps(travel: number, limit: number): number {
+  if (!(limit > 0) || !(travel > limit)) return 1;
+  return min(MAX_SUBSTEPS, ceil(travel / limit));
 }
 
 /** Generic weapon-fired event type (mode altitude). */
@@ -114,6 +132,16 @@ export const gravitySystem: System = {
  * Sweep the capsule against the extruded world. Horizontal motion is resolved axis-separated so
  * the capsule slides along walls instead of sticking; vertical motion clamps to the per-tile floor
  * height (setting `grounded`) and to the ceiling.
+ *
+ * The horizontal move is **sub-stepped**. {@link circleHitsSolid} is a test of one destination
+ * point, so a single tick's displacement larger than the geometry it crosses passes clean through
+ * it: from `x = 3.0` with radius `0.4` against a wall spanning `x ∈ [3.5, 4.5]`, a step of `1.8` is
+ * blocked and a step of `2.0` tunnels. That is reachable from `moveSpeed ≥ 120` at 60 Hz, and from
+ * any knockback or scripted velocity. Each sub-step is capped at `min(radius, tileSize)`, which is
+ * provably enough for an axis-aligned move: the capsule can neither start and end on opposite sides
+ * of a `tileSize`-wide wall slab, nor clear it by more than its own radius at both ends. When the
+ * displacement already fits inside that bound — the ordinary case, and every tick of the shipped
+ * game — `steps` is `1` and the arithmetic is bit-identical to a single unsplit step.
  */
 export const integrateSystem: System = {
   name: 'fps.integrate',
@@ -128,18 +156,29 @@ export const integrateSystem: System = {
       const pos = tf.position;
       const r = body.radius;
 
-      // Horizontal, axis-separated for wall sliding.
-      const nextX = pos.x + body.velocity.x * dt;
-      if (!circleHitsSolid(grid, nextX, pos.z, r)) {
-        pos.x = nextX;
-      } else {
-        body.velocity.x = 0;
-      }
-      const nextZ = pos.z + body.velocity.z * dt;
-      if (!circleHitsSolid(grid, pos.x, nextZ, r)) {
-        pos.z = nextZ;
-      } else {
-        body.velocity.z = 0;
+      // Horizontal, axis-separated for wall sliding, sub-stepped so nothing can tunnel.
+      const dx = body.velocity.x * dt;
+      const dz = body.velocity.z * dt;
+      const steps = substeps(max(abs(dx), abs(dz)), min(r, grid.tileSize));
+      const stepX = dx / steps;
+      const stepZ = dz / steps;
+      for (let i = 0; i < steps; i++) {
+        if (body.velocity.x !== 0) {
+          const nextX = pos.x + stepX;
+          if (!circleHitsSolid(grid, nextX, pos.z, r)) {
+            pos.x = nextX;
+          } else {
+            body.velocity.x = 0;
+          }
+        }
+        if (body.velocity.z !== 0) {
+          const nextZ = pos.z + stepZ;
+          if (!circleHitsSolid(grid, pos.x, nextZ, r)) {
+            pos.z = nextZ;
+          } else {
+            body.velocity.z = 0;
+          }
+        }
       }
 
       // Vertical: clamp to floor (ground) and ceiling.

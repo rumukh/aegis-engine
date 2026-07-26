@@ -12,8 +12,8 @@
  * and visible entities directly ahead.
  * @packageDocumentation
  */
-import { Transform } from '@aegis/core';
-import type { GameMode, Quat, TransformData, Vec3, World } from '@aegis/core';
+import { Name, Transform } from '@aegis/core';
+import type { Entity, GameMode, Quat, Vec3, World } from '@aegis/core';
 import {
   atan2,
   cos,
@@ -21,6 +21,7 @@ import {
   dot3,
   floor,
   length3,
+  lengthSq3,
   min,
   normalize3,
   round,
@@ -37,8 +38,8 @@ import type {
   ViewProvider,
   Viewport,
 } from '@aegis/harness';
-import { FpsCamera, LookState } from './components.js';
-import { FPS_COLLISION, forwardFromLook, raycastGrid } from './geometry.js';
+import { FpsCamera, HitBox, LookState } from './components.js';
+import { FPS_COLLISION, forwardFromLook, raycastGrid, rightFromYaw } from './geometry.js';
 import type { CollisionGrid } from './geometry.js';
 
 /** Default semantic-frame viewport (16:9). */
@@ -46,9 +47,17 @@ const DEFAULT_VIEWPORT: Viewport = { width: 320, height: 180 };
 /** Default ASCII raster size. */
 const DEFAULT_ASCII = { width: 48, height: 18 };
 
+/**
+ * Squared length below which `worldUp × forward` is treated as collapsed. At pitch ±90° the two
+ * vectors are parallel and the cross product is pure rounding noise (`|cos(90°)| ≈ 6.1e-17`),
+ * whose sign would otherwise decide the handedness of the whole basis. Anything above this bound
+ * normalises meaningfully — pitch has to be within ~6e-8° of a pole to fall below it.
+ */
+const DEGENERATE_BASIS_SQ = 1e-18;
+
 /** The camera's orthonormal basis and eye position, derived from the player's look state. */
 interface CameraRig {
-  entity: number;
+  entity: Entity;
   eye: Vec3;
   forward: Vec3;
   right: Vec3;
@@ -70,7 +79,19 @@ function cameraRig(world: World): CameraRig | undefined {
   const eye: Vec3 = { x: tf.position.x, y: tf.position.y + cam.eyeHeight, z: tf.position.z };
   const forward = forwardFromLook(look.yawDeg, look.pitchDeg);
   const worldUp: Vec3 = { x: 0, y: 1, z: 0 };
-  const right = normalize3(cross3(worldUp, forward));
+  // Looking straight up or down, `forward` is parallel to world up and this cross product carries
+  // no direction — it is pure rounding noise, and its *sign* is what decides whether the frame
+  // comes out mirrored. `normalize3` returns `(0,0,0)` outright if it ever reaches exactly zero,
+  // which would project every entity to the dead centre of the screen with zero bounds. Measured
+  // on `@aegis/core/math`, `cos(±90°)` is `+6.12e-17`, so today the noise happens to point the
+  // right way; the frame is how an agent sees in fps and should not rest on that. Below the noise
+  // floor, fall back to the yaw-only right vector — which is exactly what the cross product
+  // converges to away from the poles, so nothing off the degenerate case changes.
+  const crossRight = cross3(worldUp, forward);
+  const right =
+    lengthSq3(crossRight) > DEGENERATE_BASIS_SQ
+      ? normalize3(crossRight)
+      : rightFromYaw(look.yawDeg);
   const up = cross3(forward, right);
   return {
     entity: view.entity,
@@ -139,14 +160,22 @@ function buildSemanticFrame(world: World, options?: ViewOptions): SemanticFrame 
   const aspect = viewport.width / viewport.height;
   const f = 1 / tan((rig.fovDegrees * DEG2RAD) / 2);
 
-  const snapshot = world.snapshot();
+  // Marker components are only discoverable from a snapshot (a tag has no typed accessor), but the
+  // entity *handle* is not: taking it from the query view keeps it the branded `Entity` the frozen
+  // `VisibleEntity` asks for, all the way through. Deriving it as `Number(ent.id)` off the snapshot
+  // produced a raw `number` that only reached the contract through an `as unknown as` — a cast that
+  // asserts a conversion the compiler had refused rather than fixing it. Same shape as
+  // `IsoViewProvider`, which needs no cast for exactly this reason.
+  const tagsByEntity = new Map<number, string[]>();
+  for (const ent of world.snapshot().entities) {
+    tagsByEntity.set(Number(ent.id), tagsFromComponents(ent.components));
+  }
+
   const entities: VisibleEntity[] = [];
-  for (const ent of snapshot.entities) {
-    const entity = Number(ent.id);
+  for (const view of world.query({ has: [Transform] }).views()) {
+    const entity = view.entity;
     if (entity === rig.entity) continue; // never see yourself in first person
-    const tfData = ent.components['Transform'] as TransformData | undefined;
-    if (tfData === undefined) continue;
-    const worldPos = tfData.position;
+    const worldPos = view.get(Transform).position;
 
     const rel = sub3(worldPos, rig.eye);
     const camZ = dot3(rel, rig.forward);
@@ -169,11 +198,10 @@ function buildSemanticFrame(world: World, options?: ViewOptions): SemanticFrame 
       screen.y <= viewport.height;
     if (!onScreen && !includeOffscreen) continue;
 
-    const name = (ent.components['Name'] as { value?: string } | undefined)?.value;
-    const tags = tagsFromComponents(ent.components);
+    const name = world.get(entity, Name)?.value;
+    const tags = tagsByEntity.get(entity) ?? [];
 
-    const box = ent.components['HitBox'] as
-      { half: { x: number; y: number; z: number } } | undefined;
+    const box = world.get(entity, HitBox);
     const halfX = box ? box.half.x : 0.5;
     const halfY = box ? box.half.y : 0.5;
     const bounds =
@@ -198,8 +226,8 @@ function buildSemanticFrame(world: World, options?: ViewOptions): SemanticFrame 
     }
 
     entities.push({
-      entity: entity as unknown as VisibleEntity['entity'],
-      ...(name !== undefined ? { name } : {}),
+      entity,
+      ...(typeof name === 'string' ? { name } : {}),
       tags,
       world: { ...worldPos },
       screen,
@@ -212,9 +240,7 @@ function buildSemanticFrame(world: World, options?: ViewOptions): SemanticFrame 
     });
   }
 
-  entities.sort((a, b) =>
-    a.depth !== b.depth ? a.depth - b.depth : (a.entity as number) - (b.entity as number),
-  );
+  entities.sort((a, b) => (a.depth !== b.depth ? a.depth - b.depth : a.entity - b.entity));
   return { tick: world.tick, mode: 'fps', camera, viewport, entities };
 }
 
