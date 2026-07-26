@@ -1,6 +1,11 @@
 # Sector Breach — scripted playthrough (deterministic, tick-addressed).
 # See docs/games/fps.md for the beat-by-beat narrative.
 
+# 0. Wall-occlusion proof. We spawn facing +Z with the grunt dead ahead at z=17 and nothing but
+#    the sealed blast door between us. The ray must stop at that door (hitscan.hit target "wall"),
+#    never reach the grunt. Fired first, before any aim, so the shot's direction is unambiguous.
+press Fire @4
+
 # 1. Face the east wall panel and shoot it to open the blast door.
 aim 90 0 @8
 press Fire @20
@@ -8,6 +13,13 @@ press Fire @20
 # 2. Face north (into the facility) and advance out of the start room.
 aim 0 0 @32
 axis Forward 1 40..124
+
+# 2b. Vertical-aim proof: nose down 40 degrees and fire straight up the corridor. Level, this shot
+#     would hit the grunt; pitched down it passes under its hitbox and misses. Pitch is restored
+#     before the pit jump, and pitch does not steer movement, so the run is otherwise untouched.
+aim 0 -40 @96
+press Fire @100
+aim 0 0 @108
 
 # 3. Leap the coolant pit — take off just before its south lip.
 press Jump @124

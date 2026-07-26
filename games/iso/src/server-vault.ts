@@ -15,12 +15,21 @@
  * {@link ModePlugin} ({@link serverVaultPlugin}) rather than layering systems onto `isoPlugin`.
  * @packageDocumentation
  */
-import { createSchedule, defineTag, Name } from '@aegis/core';
-import type { ComponentType, Entity, Schedule, System, Tag, TickContext, World } from '@aegis/core';
+import { createSchedule, defineTag, hashString, Name } from '@aegis/core';
+import type {
+  ComponentType,
+  Entity,
+  Schedule,
+  StateHash,
+  System,
+  Tag,
+  TickContext,
+  World,
+} from '@aegis/core';
 import { Health } from '@aegis/content';
 import type { EntityDiedEvent } from '@aegis/content';
 import { defineGameTest, expectSim } from '@aegis/harness';
-import type { ModePlugin, ViewProvider } from '@aegis/harness';
+import type { ModePlugin, SimResult, ViewProvider } from '@aegis/harness';
 import {
   AttackOrder,
   Blocking,
@@ -305,12 +314,32 @@ export const serverVaultPlugin: ModePlugin = {
 /**
  * The tuned click script. `click x,y @tick` at grid cells: click empty ground = move,
  * click the guard's cell = attack-move. See {@link patrolCell} for where the guard is when clicked.
+ *
+ * ## Why the opening beat is a *wait*
+ * The operative holds its spawn (1,1) for 40 ticks. From (1,1) the guard is never closer than
+ * Chebyshev 4, so it cannot be detected there — which lets the clockwork patrol actually *run*.
+ * By the time the guard turns hostile at **t178** it is standing at **(9,5)**, eight cells from
+ * its spawn: the patrol has walked eight legs and the operative has chased it up the corridor.
+ * (The previous script clicked at t2 and was spotted at t18 with the guard still on its spawn
+ * cell, so `patrolSystem` could be deleted outright without any test noticing.)
+ *
+ * ## Why the exit is clicked twice
+ * The click at **t300** happens while the operative is still climbing the col-9 shaft and the
+ * vault door is still `Blocking`: the pathfinder must honestly report `path.blocked` and drop the
+ * in-flight order (the operative stops mid-route). The re-click at t308 resumes to the switch,
+ * which opens the door at t330; the *same* target then resolves at t340. Blocked-then-resolved on
+ * one target is what proves the route is computed against the **current, mutated** grid rather
+ * than a cached one — the old script clicked the exit three ticks *after* the door had already
+ * opened, so it never touched the gate at all.
  */
 export const SERVER_VAULT_SCRIPT = `
-  click 1,2 @2
   click 1,5 @40
-  click 9,1 @72
+  click 7,5 @102
+  click 9,5 @195
+  click 9,1 @232
   click 4,7 @300
+  click 9,1 @308
+  click 4,7 @340
 `;
 
 // ---------------------------------------------------------------------------
@@ -318,7 +347,51 @@ export const SERVER_VAULT_SCRIPT = `
 // ---------------------------------------------------------------------------
 
 /** The golden state hash, pinned after the first green run (determinism proof). */
-export const GOLDEN_HASH = 'a76c70407b775b92';
+export const GOLDEN_HASH = 'cb0f07007ad8608a';
+
+/**
+ * Golden digest of the **whole per-tick hash timeline**, not just the resting state.
+ *
+ * A final-state hash is nearly blind to dynamics, because this run — like all three PoCs — ends
+ * at rest: the operative parked on the exit, the guard dead, every order resolved. Two runs whose
+ * trajectories differ can converge on the identical final state, so {@link GOLDEN_HASH} alone
+ * cannot see them. (Measured: moving the last click from t340 to t420 changes when the operative
+ * walks the whole back half of the level and leaves `GOLDEN_HASH` *byte-identical*.) Digesting
+ * every tick's hash makes any changed trajectory go red.
+ */
+export const GOLDEN_TRAJECTORY = '2c6881a477e2d268';
+
+/**
+ * Digest a run's per-tick hash timeline into one comparable value, using core's frozen
+ * {@link hashString} (the same FNV-1a the world hash uses), so the digest is as portable and as
+ * deterministic as the hashes it summarises.
+ */
+export function trajectoryDigest(tickHashes: readonly StateHash[]): StateHash {
+  return hashString(tickHashes.join('|'));
+}
+
+/** The tick the guard turned hostile in the golden run; before it the patrol is clockwork. */
+const ALERT_TICK = 178;
+/** The cell the guard had patrolled to by the time it alerted (8 legs from its spawn). */
+const ALERT_CELL = { x: 9, y: 5 } as const;
+
+/** The guard's logical cell in the world captured at `tick`. */
+function guardCellAt(result: SimResult, tick: number): { x: number; y: number } {
+  const g = result
+    .at(tick)
+    .query({ has: ['Guard', 'GridPosition'] })
+    .one()
+    .get(GridPosition);
+  return { x: g.cellX, y: g.cellY };
+}
+
+/** The ascending ticks on which `type` was emitted. */
+function ticksOf(result: SimResult, type: string): number[] {
+  return result.events
+    .history()
+    .filter((e) => e.type === type)
+    .map((e) => e.tick);
+}
 
 export default defineGameTest({
   name: 'server vault: win the firefight, open the door, reach the exit',
@@ -335,6 +408,9 @@ export default defineGameTest({
       .eventNotEmitted('player.died')
       .eventEmitted('switch.activated', 1)
       .eventEmitted('door.opened', 1)
+      // The sealed door is genuinely load-bearing in the *winning* run: the exit is clicked
+      // while it is still Blocking, so the pathfinder must report no route exactly once.
+      .eventEmitted('path.blocked', 1)
       .entityExists({ has: ['Operative'] })
       .holds('operative ended on the exit cell (4,7)', (r) => {
         const g = r
@@ -350,6 +426,57 @@ export default defineGameTest({
             .query({ has: ['Operative', 'Health'] })
             .one()
             .get(Health).current === 20,
+      )
+      // --- the clockwork patrol actually walks -------------------------------------------
+      .holds(
+        `the guard walks patrolCell(t) on every tick before it alerts (t < ${ALERT_TICK})`,
+        (r) => {
+          for (let t = 0; t < ALERT_TICK; t++) {
+            const want = patrolCell(t);
+            const got = guardCellAt(r, t);
+            if (got.x !== want.x || got.y !== want.y) return false;
+          }
+          return true;
+        },
+      )
+      .holds(
+        `the patrol had carried the guard to (${ALERT_CELL.x},${ALERT_CELL.y}) — 8 cells from its spawn — before it opened fire`,
+        (r) => {
+          const at = guardCellAt(r, ALERT_TICK);
+          return at.x === ALERT_CELL.x && at.y === ALERT_CELL.y;
+        },
+      )
+      .holds('a hostile guard holds its ground instead of patrolling on', (r) => {
+        for (const t of [ALERT_TICK, 200, 224, 400, 700, 959]) {
+          const at = guardCellAt(r, t);
+          if (at.x !== ALERT_CELL.x || at.y !== ALERT_CELL.y) return false;
+        }
+        return true;
+      })
+      // --- the route is re-resolved against the mutated grid ------------------------------
+      .holds(
+        'the exit was unreachable while the door was sealed, and reachable only after it opened',
+        (r) => {
+          const blocked = ticksOf(r, 'path.blocked')[0];
+          const opened = ticksOf(r, 'door.opened')[0];
+          const completed = ticksOf(r, 'mission.completed')[0];
+          const resolvedAfterOpen = ticksOf(r, 'path.resolved').filter(
+            (t) => opened !== undefined && t > opened,
+          );
+          return (
+            blocked !== undefined &&
+            opened !== undefined &&
+            completed !== undefined &&
+            blocked < opened &&
+            opened < completed &&
+            resolvedAfterOpen.length >= 1
+          );
+        },
+      )
+      // --- the whole trajectory, not just the resting state -------------------------------
+      .holds(
+        'the per-tick hash timeline matches the golden trajectory (see GOLDEN_TRAJECTORY)',
+        (r) => trajectoryDigest(r.tickHashes) === GOLDEN_TRAJECTORY,
       )
       .hashEquals(GOLDEN_HASH);
 
@@ -369,5 +496,58 @@ export default defineGameTest({
           .one()
           .get(Health).current >= 20,
     );
+  },
+});
+
+// ---------------------------------------------------------------------------
+// The negative playthrough — the lose path, proven.
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk into the guard's field of fire and never shoot back.
+ *
+ * The operative steps to (1,2) at t2 — three cells straight up the column from the guard's spawn,
+ * so it is detected at t18 — and is then given no further orders. The guard lands its 5-damage
+ * shot every 40 ticks (t18, 58, 98, 138, 178, 218) until the operative's 30 HP is gone.
+ *
+ * This exists because `eventNotEmitted('player.died')` in the winning run proves *nothing* on its
+ * own: an event that is never emitted anywhere passes that assertion even if the emitter is
+ * deleted. Pinning the death here — once, with the right `cause` — is what gives the winning
+ * run's negative assertion its meaning, and it is the only test of the lose path the charter
+ * promises ("Lose: any `player.died` event").
+ */
+export const SERVER_VAULT_DEATH_SCRIPT = `
+  click 1,2 @2
+`;
+
+export const serverVaultDeathTest = defineGameTest({
+  name: 'server vault (lose): stand in the guard\u2019s fire and die',
+  scene: 'games/iso/levels/server-vault.scene.json',
+  options: { plugin: serverVaultPlugin, captureHistory: false },
+  ticks: 300,
+  seed: 'poc-iso',
+  input: SERVER_VAULT_DEATH_SCRIPT,
+  expect(result) {
+    expectSim(result)
+      .eventEmitted('guard.alerted', 1)
+      // Six 5-damage shots drain 30 HP; the cadence is clockwork, so the count is exact.
+      .eventEmitted('damage.taken', 6)
+      .eventEmitted('player.died', 1)
+      // The mission is not completed, and we never fired back, so nothing died but us.
+      .eventNotEmitted('mission.completed')
+      .eventNotEmitted('enemy.killed')
+      .holds('player.died reports cause "guard" on the tick the last shot lands', (r) => {
+        const died = r.events.history().find((e) => e.type === 'player.died');
+        const data = died?.data as PlayerDiedEvent | undefined;
+        return data?.cause === 'guard' && died?.tick === 218;
+      })
+      .holds(
+        'the operative was actually reduced to zero health',
+        (r) =>
+          r
+            .query({ has: ['Operative', 'Health'] })
+            .one()
+            .get(Health).current === 0,
+      );
   },
 });

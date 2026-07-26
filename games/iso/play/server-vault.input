@@ -1,9 +1,16 @@
 # The Server Vault — scripted playthrough (ADR-0004 input DSL).
-# The exact tuned script the acceptance test runs. `click x,y @tick` fires a primary
-# pointer click at grid cell (x,y) on that tick; a click on empty ground is a move order,
-# a click on the guard's cell is an attack-move. See patrolCell() for the guard's position.
+# The exact tuned script the acceptance test runs (mirrors SERVER_VAULT_SCRIPT in
+# src/server-vault.ts). `click x,y @tick` fires a primary pointer click at grid cell (x,y) on
+# that tick; a click on empty ground is a move order, a click on the guard's cell is an
+# attack-move. See patrolCell() for where the guard is at any tick.
 
-click 1,2 @2      # step into the corridor mouth; the guard (at 1,5) spots us at t18 and opens fire
-click 1,5 @40     # attack-move onto the guard; we trade at Chebyshev 3 and kill it by t70 (took 2 hits, HP 20)
-click 9,1 @72     # cross to the security switch; reaching (9,1) at t297 unseals the vault door
-click 4,7 @300    # breach the now-open door and reach the exit; mission completes at t465
+click 1,5 @40     # hold the spawn first: at (1,1) the guard can never see us (Chebyshev >= 4),
+                  # so the clockwork patrol really walks. Then descend the winding left column.
+click 7,5 @102    # chase it up the corridor. It has swept (1,5) -> (9,5) — eight legs — before it
+                  # turns and spots us at t178, and it freezes on (9,5) the moment it does.
+click 9,5 @195    # attack-move: we let it fire first (t178, t218) and kill it at t225 with two
+                  # shots -> enemy.killed, damage.taken x2, Health 20.
+click 4,7 @300    # try the vault while still climbing the col-9 shaft: the door is sealed, so the
+                  # pathfinder honestly reports path.blocked and drops the in-flight order.
+click 9,1 @308    # resume to the security switch; reaching (9,1) at t330 unseals the vault door.
+click 4,7 @340    # the same target now resolves against the mutated grid -> mission.completed t505

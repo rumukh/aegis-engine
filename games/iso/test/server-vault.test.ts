@@ -6,22 +6,35 @@
  * authoritative run: CHARTER §4.3 requires all three PoCs to complete their scripted playthrough
  * headlessly and assert on gameplay outcomes.
  *
- * Beyond the game's exported `defineGameTest` it proves three things that test can't cleanly
- * express: a cross-run + `replay()` determinism proof against the golden hash, the negative
- * `path.blocked` case (an unreachable target while the vault door is still sealed), and a
+ * Beyond the game's exported `defineGameTest`s it proves three things those tests can't cleanly
+ * express: a cross-run + `replay()` determinism proof against both goldens (the final hash **and**
+ * the per-tick trajectory digest), the negative `path.blocked` case from a cold start, and a
  * consistency assertion that the scene's `IsoGrid.walls` on disk still matches the game's in-code
  * `WALL_ROWS`.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { runGameTest, runScene } from '@aegis/harness';
-import serverVaultTest, { GOLDEN_HASH, serverVaultPlugin, WALL_ROWS } from '../src/server-vault.js';
+import serverVaultTest, {
+  GOLDEN_HASH,
+  GOLDEN_TRAJECTORY,
+  serverVaultDeathTest,
+  serverVaultPlugin,
+  trajectoryDigest,
+  WALL_ROWS,
+} from '../src/server-vault.js';
 
 const SCENE = 'games/iso/levels/server-vault.scene.json';
 
 describe('game: The Server Vault (iso PoC acceptance)', () => {
   it('passes its exported defineGameTest as specified', async () => {
     const outcome = await runGameTest(serverVaultTest);
+    if (!outcome.passed) throw outcome.error;
+    expect(outcome.passed).toBe(true);
+  });
+
+  it('loses loudly when the operative stands in the guard\u2019s fire', async () => {
+    const outcome = await runGameTest(serverVaultDeathTest);
     if (!outcome.passed) throw outcome.error;
     expect(outcome.passed).toBe(true);
   });
@@ -43,6 +56,8 @@ describe('game: The Server Vault (iso PoC acceptance)', () => {
     expect(replayed.tickHashes).toEqual(a.tickHashes);
 
     expect(a.hash).toBe(GOLDEN_HASH);
+    // ...and the whole trajectory, not just the resting state it converges on.
+    expect(trajectoryDigest(a.tickHashes)).toBe(GOLDEN_TRAJECTORY);
   });
 
   it('reports path.blocked (never a silent half-move) for an unreachable target', async () => {
