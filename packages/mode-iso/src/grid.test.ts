@@ -123,6 +123,42 @@ describe('findPath — path.blocked / unreachable', () => {
   });
 });
 
+// m16. Only the goal used to be validated, so an actor that ended up inside geometry was handed a
+// happy path — and `start === goal` on a wall returned `[]`, i.e. "already there, success". Both
+// must be a reported fault instead.
+describe('findPath — an invalid start is a fault, not a route', () => {
+  it('returns null when the start cell is a static wall', () => {
+    const nav = buildNavGrid({ width: 3, height: 1, tileSize: 1, walls: ['#..'] });
+    expect(findPath(nav, OPEN, { x: 0, y: 0 }, { x: 2, y: 0 })).toBeNull();
+  });
+
+  it('returns null when the start is out of bounds', () => {
+    const nav = buildNavGrid(openGrid(3, 3));
+    expect(findPath(nav, OPEN, { x: -1, y: 0 }, { x: 1, y: 1 })).toBeNull();
+  });
+
+  it('returns null — never [] — when start === goal inside a wall', () => {
+    const nav = buildNavGrid({ width: 3, height: 1, tileSize: 1, walls: ['#..'] });
+    expect(findPath(nav, OPEN, { x: 0, y: 0 }, { x: 0, y: 0 })).toBeNull();
+  });
+
+  it('still allows a start that is only *dynamically* blocked (an actor on an occupied cell)', () => {
+    // Dynamic blockers are other entities, and an actor legitimately shares a cell with one for a
+    // tick. Only static geometry means "you are inside a wall".
+    const nav = buildNavGrid(openGrid(3, 1));
+    const selfBlocked: Blocked = (x, y) => x === 0 && y === 0;
+    expect(findPath(nav, selfBlocked, { x: 0, y: 0 }, { x: 2, y: 0 })).toEqual([
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+    ]);
+  });
+
+  it('findAttackPath applies the same rule instead of reporting "already in position"', () => {
+    const nav = buildNavGrid({ width: 4, height: 1, tileSize: 1, walls: ['#...'] });
+    expect(findAttackPath(nav, OPEN, { x: 0, y: 0 }, { x: 2, y: 0 }, 3)).toBeNull();
+  });
+});
+
 describe('findPath — dynamic repath against a mutated grid', () => {
   it('re-resolves around a newly blocked cell rather than reusing a cached route', () => {
     const nav = buildNavGrid(openGrid(3, 3));
@@ -173,6 +209,52 @@ describe('lineOfSight', () => {
     // Endpoints (0,0) and (2,0) are walls, but the cell between is clear.
     expect(lineOfSight(nav, { x: 0, y: 0 }, { x: 2, y: 0 })).toBe(true);
   });
+
+  // M4. Sight is a symmetric relation. A raw Bresenham trace is not — it breaks ties toward the
+  // cell it started from — which lets a guard shoot an operative that cannot shoot back, because
+  // `inWeaponRange` is always asked attacker -> target. Assert the *property* over every ordered
+  // pair of a cluttered grid, not a handful of cases: on the pre-canonicalisation code this fails
+  // with 194 of 1764 pairs disagreeing.
+  it('is symmetric for every ordered pair of cells on a cluttered grid', () => {
+    const walls = ['.#...#.', '..#....', '#...#..', '...#...', '..#..#.', '.#....#'];
+    const nav = buildNavGrid({ width: 7, height: 6, tileSize: 1, walls });
+    const cells: Cell[] = [];
+    for (let y = 0; y < 6; y++) for (let x = 0; x < 7; x++) cells.push({ x, y });
+
+    const disagreements: string[] = [];
+    for (const a of cells) {
+      for (const b of cells) {
+        if (lineOfSight(nav, a, b) !== lineOfSight(nav, b, a)) {
+          disagreements.push(`(${a.x},${a.y})<->(${b.x},${b.y})`);
+        }
+      }
+    }
+    expect(disagreements).toEqual([]);
+  });
+
+  it('is symmetric on an open grid too (no wall can excuse a direction-dependent trace)', () => {
+    const nav = buildNavGrid(openGrid(9, 9));
+    for (let ax = 0; ax < 9; ax++) {
+      for (let ay = 0; ay < 9; ay++) {
+        for (let bx = 0; bx < 9; bx++) {
+          for (let by = 0; by < 9; by++) {
+            const a = { x: ax, y: ay };
+            const b = { x: bx, y: by };
+            expect(lineOfSight(nav, a, b)).toBe(lineOfSight(nav, b, a));
+          }
+        }
+      }
+    }
+  });
+
+  it('agrees in both directions on the exact pair the audit reported', () => {
+    // (0,0) -> (2,1) was `false` while (2,1) -> (0,0) was `true` on the pre-fix trace.
+    const walls = ['.#...#.', '..#....', '#...#..', '...#...', '..#..#.', '.#....#'];
+    const nav = buildNavGrid({ width: 7, height: 6, tileSize: 1, walls });
+    expect(lineOfSight(nav, { x: 0, y: 0 }, { x: 2, y: 1 })).toBe(
+      lineOfSight(nav, { x: 2, y: 1 }, { x: 0, y: 0 }),
+    );
+  });
 });
 
 describe('inWeaponRange', () => {
@@ -185,6 +267,23 @@ describe('inWeaponRange', () => {
   it('denies a target behind a wall even when in range', () => {
     const nav = buildNavGrid({ width: 4, height: 1, tileSize: 1, walls: ['.#..'] });
     expect(inWeaponRange(nav, { x: 0, y: 0 }, { x: 2, y: 0 }, 3)).toBe(false); // wall at (1,0)
+  });
+
+  // M4, at the altitude the systems actually use it: if A can shoot B, B can shoot A.
+  it('is mutual: nobody can shoot someone who cannot shoot back', () => {
+    const walls = ['.#...#.', '..#....', '#...#..', '...#...', '..#..#.', '.#....#'];
+    const nav = buildNavGrid({ width: 7, height: 6, tileSize: 1, walls });
+    for (let ax = 0; ax < 7; ax++) {
+      for (let ay = 0; ay < 6; ay++) {
+        for (let bx = 0; bx < 7; bx++) {
+          for (let by = 0; by < 6; by++) {
+            const a = { x: ax, y: ay };
+            const b = { x: bx, y: by };
+            expect(inWeaponRange(nav, a, b, 4)).toBe(inWeaponRange(nav, b, a, 4));
+          }
+        }
+      }
+    }
   });
 });
 

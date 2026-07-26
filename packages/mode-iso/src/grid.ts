@@ -63,7 +63,13 @@ const NEIGHBOURS: readonly Cell[] = [
  * cell for which `blocked` returns `true`.
  *
  * Returns the path as cells **after** `start` up to and including `goal`, `[]` when
- * `start === goal`, or `null` when `goal` is out of bounds, blocked, or unreachable.
+ * `start === goal`, or `null` when `start` is off-grid or inside static geometry, or when `goal`
+ * is out of bounds, blocked, or unreachable.
+ *
+ * The `start` check comes first, and deliberately tests **static walls only**: an actor standing
+ * inside geometry is a fault the caller must hear about (previously it got a happy path, or `[]`
+ * — "already there, success" — when `start === goal`), whereas standing on a cell some other
+ * {@link Blocked} entity also occupies is an ordinary transient state, not a fault.
  *
  * Tie-breaking is fully specified: the open node with the smallest `f = g + manhattan` is
  * expanded first; ties on `f` are broken by smaller `x`, then smaller `y`. Two runs therefore
@@ -75,6 +81,7 @@ export function findPath(
   start: Cell,
   goal: Cell,
 ): Cell[] | null {
+  if (isWallCell(nav, start.x, start.y)) return null;
   if (start.x === goal.x && start.y === goal.y) return [];
   if (isWallCell(nav, goal.x, goal.y) || blocked(goal.x, goal.y)) return null;
 
@@ -140,19 +147,30 @@ function reconstruct(width: number, cameFrom: Map<number, Cell>, goal: Cell, sta
  * Line of sight between two cells: `true` when no static wall lies strictly between them.
  * Uses an integer Bresenham traversal; endpoints are excluded. Dynamic {@link Blocked} entities
  * are intentionally *not* treated as sight-blockers — only static geometry occludes.
+ *
+ * **Sight is symmetric, and this function guarantees it.** A raw Bresenham trace is not: on a
+ * shallow diagonal it breaks ties toward whichever endpoint it started from, so a→b and b→a can
+ * visit different cells and disagree — which in a tactical game means one actor can shoot another
+ * that cannot shoot back (`inWeaponRange` is always asked attacker→target). The endpoints are
+ * therefore **canonicalised** first: the trace always runs from the `(x, then y)` smaller cell,
+ * whichever order the caller asked in. Endpoint exclusion is symmetric too, so both directions
+ * return the identical answer by construction rather than by luck.
  */
 export function lineOfSight(nav: NavGridData, a: Cell, b: Cell): boolean {
-  let x0 = a.x;
-  let y0 = a.y;
-  const x1 = b.x;
-  const y1 = b.y;
+  const inOrder = a.x !== b.x ? a.x < b.x : a.y <= b.y;
+  const from = inOrder ? a : b;
+  const to = inOrder ? b : a;
+  let x0 = from.x;
+  let y0 = from.y;
+  const x1 = to.x;
+  const y1 = to.y;
   const dx = abs(x1 - x0);
   const dy = -abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
   const sy = y0 < y1 ? 1 : -1;
   let err = dx + dy;
   for (;;) {
-    const atEndpoint = (x0 === a.x && y0 === a.y) || (x0 === x1 && y0 === y1);
+    const atEndpoint = (x0 === from.x && y0 === from.y) || (x0 === x1 && y0 === y1);
     if (!atEndpoint && isWallCell(nav, x0, y0)) return false;
     if (x0 === x1 && y0 === y1) break;
     const e2 = 2 * err;
@@ -176,8 +194,10 @@ export function inWeaponRange(nav: NavGridData, from: Cell, to: Cell, range: num
 /**
  * Shortest path to the *best* cell from which `attacker` can hit `target`: a reachable, passable
  * cell (not `target`'s own cell) within `range` and with line of sight. Returns `[]` when `start`
- * already qualifies, or `null` when no such cell is reachable. Deterministic: among equal-length
- * options the cell with the smallest `(distance, x, y)` wins.
+ * already qualifies, `null` when no such cell is reachable, and `null` when `start` is itself
+ * off-grid or inside static geometry (same fault rule as {@link findPath} — an actor inside a wall
+ * must not be told "already in position"). Deterministic: among equal-length options the cell with
+ * the smallest `(distance, x, y)` wins.
  */
 export function findAttackPath(
   nav: NavGridData,
@@ -186,6 +206,7 @@ export function findAttackPath(
   target: Cell,
   range: number,
 ): Cell[] | null {
+  if (isWallCell(nav, start.x, start.y)) return null;
   const qualifies = (c: Cell): boolean =>
     !(c.x === target.x && c.y === target.y) && inWeaponRange(nav, c, target, range);
   if (qualifies(start)) return [];
