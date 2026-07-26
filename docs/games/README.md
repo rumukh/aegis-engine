@@ -148,6 +148,32 @@ because they apply to any future game in this repo:
    from disk rather than hard-coding three names, so it fails on the _fourth_ game nobody
    remembered to wire up.
 
+## What the game layer does not cover, and why that is correct
+
+These games are the modes' acceptance tests, so it is tempting to read "all three games green" as
+"the engine is validated". It is not, and the boundary is worth stating rather than leaving to be
+rediscovered.
+
+Four engine fixes landed in `main` on the night this was written. Reverting each one in a scratch
+copy leaves **every game test green**:
+
+| Reverted fix                                                      | Why no PoC notices                                                                                                                  |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `mode-iso`: `lineOfSight` made symmetric                          | the Server Vault's sightlines run straight along a row or column; the tie-break only diverges on shallow diagonals                  |
+| `mode-iso`: `lineOfSight` rejects a start inside geometry         | it cannot arise — the whole-timeline invariant _"operative is always on a passable cell"_ guarantees no actor is ever inside a wall |
+| `mode-fps`: capsule collision sub-stepped so bodies cannot tunnel | Sector Breach moves at 6 u/s ≈ 0.1 u/tick against 1 u cells; nothing in it travels far enough in one tick to tunnel                 |
+| `mode-fps`: ray origin cell seeded by direction                   | it needs an eye sitting exactly on a cell boundary firing negative; the player stands on cell centres                               |
+
+In each case the game _structurally cannot produce the input_, and the fix is pinned where it
+belongs — in the mode's own unit tests, on the pure function. That is the right altitude: a property
+of `lineOfSight` is `grid.test.ts`'s job, not a level designer's. It also explains why none of the
+six golden hashes moved when those fixes merged: not luck, and not a stale pin.
+
+The general rule: **a game test proves the capabilities the game exercises, and says nothing
+whatever about the rest.** So when a mode fix lands and the games stay green, that is not evidence
+the fix works — it is evidence the games do not reach it. Reverting the fix and watching for red
+takes minutes and tells you which.
+
 ## Deliberately _not_ covered
 
 These are conscious scope cuts, called out so nobody mistakes them for gaps in the games:
