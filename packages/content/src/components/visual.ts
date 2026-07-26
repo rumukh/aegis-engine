@@ -10,6 +10,7 @@
  */
 import { defineComponent } from '@aegis/core';
 import type { ComponentType } from '@aegis/core';
+import { describeComponent } from '../schema.js';
 
 /** Data of {@link Sprite}. */
 export interface SpriteData {
@@ -31,6 +32,10 @@ export const Sprite: ComponentType<SpriteData> = defineComponent<SpriteData>({
   defaults: () => ({ texture: '', visible: true, z: 0 }),
 });
 
+// `frame` and `tint` are optional, so they never appear in the defaults schema validation
+// derives; declaring them here keeps authoring them legal without weakening the field check.
+describeComponent(Sprite, { optional: { frame: 'string', tint: 'string' } });
+
 /** Data of {@link Model}. */
 export interface ModelData {
   /** Mesh/gltf id resolved by the render adapter. */
@@ -49,6 +54,8 @@ export const Model: ComponentType<ModelData> = defineComponent<ModelData>({
   defaults: () => ({ mesh: '', visible: true }),
 });
 
+describeComponent(Model, { optional: { material: 'string', castShadow: 'boolean' } });
+
 /** Data of {@link Light}. */
 export interface LightData {
   /** Light kind. */
@@ -64,3 +71,5 @@ export const Light: ComponentType<LightData> = defineComponent<LightData>({
   id: 'Light',
   defaults: () => ({ kind: 'point', color: '#ffffff', intensity: 1 }),
 });
+
+describeComponent(Light, { enums: { kind: ['ambient', 'directional', 'point'] } });

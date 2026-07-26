@@ -32,6 +32,21 @@ export const ContentCode = {
   UnknownTile: 'AEG-CONTENT-0010',
   /** The scene's `mode` is not one of the supported game modes. */
   UnknownMode: 'AEG-CONTENT-0011',
+  /**
+   * Authored component data carries a field the component's shape does not have — a typo
+   * (`curent`) or an invention (`hp`). The value would be stored and never read by any system.
+   */
+  UnknownField: 'AEG-CONTENT-0012',
+  /**
+   * An authored **nested** object is missing keys the default has. Component data is merged
+   * one level deep, so a nested object replaces the default wholesale and the missing keys
+   * become `undefined` at runtime (`{ position: { x: 3 } }` loses `y` and `z`).
+   */
+  IncompleteNestedObject: 'AEG-CONTENT-0013',
+  /** A scene sets a resource id that is not registered (only checked when a registry is given). */
+  UnknownResource: 'AEG-CONTENT-0014',
+  /** A field's value is outside the closed set of values the component declares for it. */
+  InvalidFieldValue: 'AEG-CONTENT-0015',
 } as const;
 
 /** A content diagnostic code value. */

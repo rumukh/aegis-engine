@@ -1,9 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, defineComponent, defineTag, Name, Transform } from '@aegis/core';
 import type { World } from '@aegis/core';
-import { createRegistry } from './registry.js';
+import { createRegistry, createResourceRegistry } from './registry.js';
 import { createSceneBuilder } from './builder.js';
-import { parseScene, parsePrefab, parseTilemap, validateScene, instantiateScene } from './load.js';
+import {
+  parseScene,
+  parsePrefab,
+  parseTilemap,
+  validatePrefab,
+  validateScene,
+  instantiateScene,
+} from './load.js';
 import type { PrefabResolver } from './load.js';
 import { ContentCode } from './diagnostics.js';
 import { Sprite } from './components/visual.js';
@@ -159,6 +166,103 @@ describe('validateScene', () => {
     };
     const r = validateScene(scene, opts());
     expect(r.diagnostics.some((d) => d.code === ContentCode.UnknownPrefab)).toBe(true);
+  });
+
+  it('checks the component data a referenced prefab carries, once per prefab', () => {
+    // A prefab's data is merged in ahead of the entity's, so a typo there breaks every
+    // instance — and reporting it twenty times for twenty instances helps nobody.
+    const prefabs: PrefabResolver = {
+      resolve: (name) =>
+        name === 'grunt'
+          ? ({
+              aegis: 'prefab/1',
+              name: 'grunt',
+              components: { Velocity: { dx: 1, dy: 0, speed: 4 } },
+            } satisfies PrefabFile)
+          : undefined,
+    };
+    const scene: SceneFile = {
+      aegis: 'scene/1',
+      name: 'S',
+      mode: 'platformer',
+      entities: [
+        { id: 'a', prefab: 'grunt' },
+        { id: 'b', prefab: 'grunt' },
+      ],
+    };
+    const r = validateScene(scene, { registry: registry(), prefabs });
+    expect(r.ok).toBe(false);
+    const unknown = r.diagnostics.filter((d) => d.code === ContentCode.UnknownField);
+    expect(unknown).toHaveLength(1);
+    expect(unknown[0]?.location?.path).toBe('prefabs["grunt"].components.Velocity.speed');
+  });
+
+  it('validates a prefab document on its own', () => {
+    const prefab: PrefabFile = {
+      aegis: 'prefab/1',
+      name: 'grunt',
+      components: { Velocity: { dx: 'fast' } },
+    };
+    const r = validatePrefab(prefab, opts());
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.code).toBe(ContentCode.TypeMismatch);
+    expect(r.diagnostics[0]?.location?.path).toBe('components.Velocity.dx');
+  });
+});
+
+describe('resource ids', () => {
+  const scene = (resources: Record<string, unknown>): SceneFile => ({
+    aegis: 'scene/1',
+    name: 'S',
+    mode: 'platformer',
+    resources,
+    entities: [],
+  });
+
+  it('flags an unknown resource id with a did-you-mean', () => {
+    const resources = createResourceRegistry('platformer.tilemap', 'platformer.collision');
+    const r = validateScene(scene({ 'platformer.tilemp': {} }), {
+      registry: registry(),
+      resources,
+      file: 'level.scene.json',
+    });
+    expect(r.ok).toBe(false);
+    const d = r.diagnostics[0];
+    expect(d?.code).toBe(ContentCode.UnknownResource);
+    expect(d?.message).toContain('did you mean "platformer.tilemap"?');
+    expect(d?.location).toEqual({
+      file: 'level.scene.json',
+      path: 'resources.platformer.tilemp',
+    });
+    expect(d?.data?.['known']).toEqual(['platformer.collision', 'platformer.tilemap']);
+  });
+
+  it('accepts a registered id, registered by type or by bare id', () => {
+    const resources = createResourceRegistry(
+      { id: 'IsoGrid', create: () => ({}) },
+      'fps.floorplan',
+    );
+    const r = validateScene(scene({ IsoGrid: {}, 'fps.floorplan': {} }), {
+      registry: registry(),
+      resources,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.diagnostics).toEqual([]);
+  });
+
+  it('says nothing about resources when no registry is supplied (opt-in)', () => {
+    const r = validateScene(scene({ whatever: 1 }), { registry: registry() });
+    expect(r.ok).toBe(true);
+  });
+
+  it('refuses to instantiate a scene whose resource id is unknown', () => {
+    const w = createWorld({ seed: 1 });
+    const result = instantiateScene(w, scene({ Gravty: { y: -1 } }), {
+      registry: registry(),
+      resources: createResourceRegistry('Gravity'),
+    });
+    expect(result.ok).toBe(false);
+    expect(w.getResource({ id: 'Gravty', create: () => undefined })).toBeUndefined();
   });
 });
 
