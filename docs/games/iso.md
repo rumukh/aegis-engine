@@ -1,6 +1,6 @@
 # Isometric PoC — "The Server Vault"
 
-> Isometric / three-quarter tactical. Reference feel: *Fallout 2*, *Dragon Age: Origins*.
+> Isometric / three-quarter tactical. Reference feel: _Fallout 2_, _Dragon Age: Origins_.
 > Mode: `iso` (`@aegis/mode-iso`). Runs headless, verified without pixels.
 
 ## Concept and fantasy
@@ -12,7 +12,7 @@ it sees you it opens fire. You engage it Dragon-Age-style: click the guard, trad
 cooldown, and drop it before it drops you. There is no dice-roll — the guard's route and its firing
 cadence are clockwork, the walls are fixed, and success is reading the grid, winning the one
 firefight, and threading the door. For its 30–45 seconds it is a compressed Fallout/DA:O tactical
-beat: *move, hold, fight, move*.
+beat: _move, hold, fight, move_.
 
 ## Core loop
 
@@ -29,29 +29,29 @@ Grid is integer cells; `tileSize: 1`. Tick rate 60Hz.
 **Operative** — `GridPosition` + `IsoActor` + `Health` + `Attacker`, and (on click) `MoveOrder` or
 `AttackOrder`:
 
-| Tunable | Value | Consequence |
-| --- | --- | --- |
-| `IsoActor.speed` | 4 cells/s | 15 ticks per cell |
-| `IsoActor.moveMode` | `realtime` | smooth sub-cell `progress`, logical position stays integer |
-| pathfinding | 4-neighbour (no diagonals) | Manhattan grid; deterministic tie-break by (x then y) |
-| `Health` | 30 / 30 | operative HP (`Health` is now shared, from `@aegis/content`) |
-| `Attacker.rangeCells` | 4 | max attack distance (Chebyshev) with clear line of sight |
-| `Attacker.damage` | 10 | per shot |
-| `Attacker.cooldownTicks` | 30 | 0.5 s between the operative's shots |
+| Tunable                  | Value                      | Consequence                                                  |
+| ------------------------ | -------------------------- | ------------------------------------------------------------ |
+| `IsoActor.speed`         | 4 cells/s                  | 15 ticks per cell                                            |
+| `IsoActor.moveMode`      | `realtime`                 | smooth sub-cell `progress`, logical position stays integer   |
+| pathfinding              | 4-neighbour (no diagonals) | Manhattan grid; deterministic tie-break by (x then y)        |
+| `Health`                 | 30 / 30                    | operative HP (`Health` is now shared, from `@aegis/content`) |
+| `Attacker.rangeCells`    | 4                          | max attack distance (Chebyshev) with clear line of sight     |
+| `Attacker.damage`        | 10                         | per shot                                                     |
+| `Attacker.cooldownTicks` | 30                         | 0.5 s between the operative's shots                          |
 
 Two operative shots (10 + 10) kill the guard (HP 20).
 
 **The guard** — `GridPosition` + `IsoActor` + `Health` + `Attacker`, driven by a deterministic
 `PatrolSystem` + `CombatSystem` (RNG-free):
 
-| Tunable | Value | Consequence |
-| --- | --- | --- |
-| patrol | (1,5) ⇄ (10,5), 1 cell / 20 ticks | clockwork ping-pong along row 5 |
-| detection | Chebyshev ≤ 3 with line of sight | seeing the operative flips it hostile |
-| `Health` | 20 / 20 | dies to two operative shots |
-| `Attacker.rangeCells` | 3 | return-fire range |
-| `Attacker.damage` | 5 | per shot |
-| `Attacker.cooldownTicks` | 40 | slower than the operative, so the trade favours the player |
+| Tunable                  | Value                             | Consequence                                                |
+| ------------------------ | --------------------------------- | ---------------------------------------------------------- |
+| patrol                   | (1,5) ⇄ (10,5), 1 cell / 20 ticks | clockwork ping-pong along row 5                            |
+| detection                | Chebyshev ≤ 3 with line of sight  | seeing the operative flips it hostile                      |
+| `Health`                 | 20 / 20                           | dies to two operative shots                                |
+| `Attacker.rangeCells`    | 3                                 | return-fire range                                          |
+| `Attacker.damage`        | 5                                 | per shot                                                   |
+| `Attacker.cooldownTicks` | 40                                | slower than the operative, so the trade favours the player |
 
 - **Patrol** is a pure function of tick: `phase = t mod 360`; sweeps 1→10 over the first 180 ticks,
   10→1 over the next 180. Reproducible tick-for-tick until combat begins.
@@ -71,7 +71,7 @@ Two operative shots (10 + 10) kill the guard (HP 20).
 data-room. A `Trigger` volume (from `@aegis/content`) on the switch cell (9,1) fires when the
 operative enters it; a `SwitchSystem` removes the door's `Blocking` tag, emitting `switch.activated`
 then `door.opened`. **Clicking the exit before the switch is flipped must yield `path.blocked`** (no
-route exists) — the proof that pathfinding re-resolves against a *mutated* grid, not a cached one.
+route exists) — the proof that pathfinding re-resolves against a _mutated_ grid, not a cached one.
 
 **Exit** — a `Trigger` volume on exit cell (4,7): operative enters → `mission.completed`.
 
@@ -139,22 +139,22 @@ Fully machine-checkable from the event log and final `GridPosition`/`Health`.
 
 ## Events emitted
 
-| Event | Payload | Emitted by | When |
-| --- | --- | --- | --- |
-| `move.ordered` | `{ target: {x,y} }` | mode | a `click` on empty ground produces a `MoveOrder` |
-| `attack.ordered` | `{ target }` | mode | a `click` on a hostile produces an `AttackOrder` |
-| `path.resolved` | `{ target, length }` | mode | pathfinder finds a route |
-| `path.blocked` | `{ target }` | mode | no route exists to the clicked cell |
-| `cell.entered` | `{ x, y, tick }` | mode | operative arrives at a new cell |
-| `guard.alerted` | `{ tick }` | game | guard sees the operative and turns hostile |
-| `attack.fired` | `{ attacker, target, tick }` | mode | either combatant fires a shot |
-| `enemy.damaged` | `{ name, amount, remaining }` | mode | the guard takes a hit |
-| `enemy.killed` | `{ name, tick }` | mode | the guard's `Health` reaches 0 |
-| `damage.taken` | `{ amount, source, remaining }` | mode | the operative is hit by the guard |
-| `switch.activated` | `{ name }` | game | operative enters the switch trigger |
-| `door.opened` | `{ name }` | game | the door's `Blocking` tag is removed |
-| `player.died` | `{ cause, tick }` | game | operative `Health` ≤ 0, once |
-| `mission.completed` | `{ tick }` | game | operative enters the exit trigger, once |
+| Event               | Payload                         | Emitted by | When                                             |
+| ------------------- | ------------------------------- | ---------- | ------------------------------------------------ |
+| `move.ordered`      | `{ target: {x,y} }`             | mode       | a `click` on empty ground produces a `MoveOrder` |
+| `attack.ordered`    | `{ target }`                    | mode       | a `click` on a hostile produces an `AttackOrder` |
+| `path.resolved`     | `{ target, length }`            | mode       | pathfinder finds a route                         |
+| `path.blocked`      | `{ target }`                    | mode       | no route exists to the clicked cell              |
+| `cell.entered`      | `{ x, y, tick }`                | mode       | operative arrives at a new cell                  |
+| `guard.alerted`     | `{ tick }`                      | game       | guard sees the operative and turns hostile       |
+| `attack.fired`      | `{ attacker, target, tick }`    | mode       | either combatant fires a shot                    |
+| `enemy.damaged`     | `{ name, amount, remaining }`   | mode       | the guard takes a hit                            |
+| `enemy.killed`      | `{ name, tick }`                | mode       | the guard's `Health` reaches 0                   |
+| `damage.taken`      | `{ amount, source, remaining }` | mode       | the operative is hit by the guard                |
+| `switch.activated`  | `{ name }`                      | game       | operative enters the switch trigger              |
+| `door.opened`       | `{ name }`                      | game       | the door's `Blocking` tag is removed             |
+| `player.died`       | `{ cause, tick }`               | game       | operative `Health` ≤ 0, once                     |
+| `mission.completed` | `{ tick }`                      | game       | operative enters the exit trigger, once          |
 
 ## The scripted playthrough
 
@@ -178,12 +178,13 @@ click 4,7   @560    # 4) route back and through the now-open door to the exit
 ```
 
 Notes for the implementer:
-- **Dynamic-repath proof:** author a companion *negative* test that clicks `4,7` at tick 5 (before
+
+- **Dynamic-repath proof:** author a companion _negative_ test that clicks `4,7` at tick 5 (before
   the switch) and asserts `path.blocked` is emitted and `mission.completed` is not — the test that
   fails loudly if pathfinding ever ignores the door mutation.
 - The guard's cell at `@120` is wherever its clockwork patrol places it then; the `AttackOrder`
-  targets the guard *entity*, not a fixed cell, so it stays correct as the guard moves. Keep the
-  *semantics* (engage the guard, kill it before it kills you) even if tuned ticks drift; the
+  targets the guard _entity_, not a fixed cell, so it stays correct as the guard moves. Keep the
+  _semantics_ (engage the guard, kill it before it kills you) even if tuned ticks drift; the
   assertions check the outcome, not the frames.
 
 ## The gameplay assertions
@@ -212,36 +213,47 @@ export default defineGameTest({
   `,
   expect(result) {
     expectSim(result)
-      .eventEmitted('mission.completed', 1)  // reached the exit, once
-      .eventEmitted('enemy.killed', 1)       // the guard was actually defeated (DoD §4.3)
-      .eventEmitted('damage.taken', 2)       // took exactly two guard hits...
-      .eventNotEmitted('player.died')        // ...but survived
-      .eventEmitted('switch.activated', 1)   // the switch was actually flipped
-      .eventEmitted('door.opened', 1)        // which opened the sealed door
+      .eventEmitted('mission.completed', 1) // reached the exit, once
+      .eventEmitted('enemy.killed', 1) // the guard was actually defeated (DoD §4.3)
+      .eventEmitted('damage.taken', 2) // took exactly two guard hits...
+      .eventNotEmitted('player.died') // ...but survived
+      .eventEmitted('switch.activated', 1) // the switch was actually flipped
+      .eventEmitted('door.opened', 1) // which opened the sealed door
       .entityExists({ has: ['Operative'] })
-      .holds(
-        'operative ended on the exit cell (4,7)',
-        (r) => {
-          const g = r.query({ has: ['Operative', 'GridPosition'] }).one().get(GridPosition);
-          return g.cellX === 4 && g.cellY === 7;
-        },
-      )
+      .holds('operative ended on the exit cell (4,7)', (r) => {
+        const g = r
+          .query({ has: ['Operative', 'GridPosition'] })
+          .one()
+          .get(GridPosition);
+        return g.cellX === 4 && g.cellY === 7;
+      })
       .holds(
         'operative took the correct damage (30 - 2x5 = 20)',
-        (r) => r.query({ has: ['Operative', 'Health'] }).one().get(Health).current === 20,
+        (r) =>
+          r
+            .query({ has: ['Operative', 'Health'] })
+            .one()
+            .get(Health).current === 20,
       )
-      .hashEquals(result.hash);              // pin the golden state hash (determinism)
+      .hashEquals(result.hash); // pin the golden state hash (determinism)
 
     // Whole-timeline invariant #1 — pathfinding correctness: never stand in a wall.
     result.assertInvariant('operative is always on a passable cell', (w) => {
-      const g = w.query({ has: ['Operative', 'GridPosition'] }).one().get(GridPosition);
+      const g = w
+        .query({ has: ['Operative', 'GridPosition'] })
+        .one()
+        .get(GridPosition);
       return WALL_CELLS.every((c) => !(c.x === g.cellX && c.y === g.cellY));
     });
 
     // Whole-timeline invariant #2 — bounded, deterministic incoming damage.
     result.assertInvariant(
       'operative health never dropped below the golden floor',
-      (w) => w.query({ has: ['Operative', 'Health'] }).one().get(Health).current >= 20,
+      (w) =>
+        w
+          .query({ has: ['Operative', 'Health'] })
+          .one()
+          .get(Health).current >= 20,
     );
   },
 });
@@ -254,18 +266,18 @@ below 20 on some tick — failing precisely when the AI drifted.
 
 ## What this game proves about the engine
 
-| Game element | Engine capability exercised |
-| --- | --- |
-| Winding path S → corridor | Grid pathfinding around single-tile gaps (not a straight line) |
-| The col-7 shaft to the switch | A*/BFS finding the one valid route among decoys |
-| `click x,y` on ground | Pointer/`click` input → `MoveOrder` (ADR-0004 iso path) |
-| `click` on the guard | Pointer input → `AttackOrder`: attack-move + fire on cooldown |
-| Cell-by-cell stepping | `IsoActor` realtime interpolation, integer logical `GridPosition` |
-| The firefight | Shared `Health`, `Attacker` cooldown combat, `enemy.killed` + `damage.taken` |
-| Guard patrol + detection | Deterministic, RNG-free AI as a pure function of tick, LOS check |
-| Door blocks, then opens | `Blocking` tag mutation forcing pathfinding **re-resolution** |
-| `path.blocked` before switch | Pathfinder correctly reports "no route" on a gated grid |
-| Switch / exit triggers | Shared `Trigger`/volume component from `@aegis/content` |
-| Reaching the exit | Event emission + one-shot latching (`mission.completed` once) |
-| `hashEquals` + repeated run | Byte-identical determinism (ADR-0001) |
-| Health / passable-cell invariants | Whole-timeline safety properties across a moving fight |
+| Game element                      | Engine capability exercised                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------- |
+| Winding path S → corridor         | Grid pathfinding around single-tile gaps (not a straight line)               |
+| The col-7 shaft to the switch     | A*/BFS finding the one valid route among decoys                              |
+| `click x,y` on ground             | Pointer/`click` input → `MoveOrder` (ADR-0004 iso path)                      |
+| `click` on the guard              | Pointer input → `AttackOrder`: attack-move + fire on cooldown                |
+| Cell-by-cell stepping             | `IsoActor` realtime interpolation, integer logical `GridPosition`            |
+| The firefight                     | Shared `Health`, `Attacker` cooldown combat, `enemy.killed` + `damage.taken` |
+| Guard patrol + detection          | Deterministic, RNG-free AI as a pure function of tick, LOS check             |
+| Door blocks, then opens           | `Blocking` tag mutation forcing pathfinding **re-resolution**                |
+| `path.blocked` before switch      | Pathfinder correctly reports "no route" on a gated grid                      |
+| Switch / exit triggers            | Shared `Trigger`/volume component from `@aegis/content`                      |
+| Reaching the exit                 | Event emission + one-shot latching (`mission.completed` once)                |
+| `hashEquals` + repeated run       | Byte-identical determinism (ADR-0001)                                        |
+| Health / passable-cell invariants | Whole-timeline safety properties across a moving fight                       |

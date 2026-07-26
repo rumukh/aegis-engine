@@ -11,11 +11,11 @@ by assertions over emitted events and world state (ADR-0008), never by looking a
 gameplay is deterministic; the only randomness allowed is the engine's seeded PRNG, and enemy
 behaviour is a pure function of the tick.
 
-| Doc | Mode | Game | Length | The hard thing it proves |
-| --- | --- | --- | --- | --- |
-| [`platformer.md`](./platformer.md) | `platformer` | **Coyote Gap** | ~360 ticks (~6 s) | Gravity, tile collision, coyote/buffer timing windows, **moving-platform (non-static) collision** |
-| [`iso.md`](./iso.md) | `iso` | **The Server Vault** | ~900 ticks (~15 s) | Grid **pathfinding**, click-to-move, **dynamic repath** on a mutated grid, deterministic patrol + detection, **real-time cooldown combat** (`enemy.killed` + `damage.taken`) |
-| [`fps.md`](./fps.md) | `fps` | **Sector Breach** | ~560 ticks (~9 s) | Look-**steered raycasting/hitscan**, capsule movement, **3D gravity + jump**, `Health` damage |
+| Doc                                | Mode         | Game                 | Length             | The hard thing it proves                                                                                                                                                     |
+| ---------------------------------- | ------------ | -------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`platformer.md`](./platformer.md) | `platformer` | **Coyote Gap**       | ~360 ticks (~6 s)  | Gravity, tile collision, coyote/buffer timing windows, **moving-platform (non-static) collision**                                                                            |
+| [`iso.md`](./iso.md)               | `iso`        | **The Server Vault** | ~900 ticks (~15 s) | Grid **pathfinding**, click-to-move, **dynamic repath** on a mutated grid, deterministic patrol + detection, **real-time cooldown combat** (`enemy.killed` + `damage.taken`) |
+| [`fps.md`](./fps.md)               | `fps`        | **Sector Breach**    | ~560 ticks (~9 s)  | Look-**steered raycasting/hitscan**, capsule movement, **3D gravity + jump**, `Health` damage                                                                                |
 
 ## Why these three cover the engine's surface
 
@@ -23,21 +23,21 @@ The three modes divide the engine's spatial and simulation surface into three no
 regions, and each game is chosen to push on the region its mode owns — not on things any mode could
 do.
 
-- **Platformer → continuous 2D physics + timing feel.** The unique risks here are *analog*: sub-tick
+- **Platformer → continuous 2D physics + timing feel.** The unique risks here are _analog_: sub-tick
   gravity integration, AABB-vs-tile resolution, and the grace windows (coyote time, jump buffering)
   that make a platformer feel right and are trivial to get subtly wrong. Coyote Gap forces each one
   with a dedicated beat, plus a moving platform to prove collision against geometry that isn't the
   static tilemap.
 
 - **Iso → discrete grid reasoning + pathfinding + grid tactics.** The unique risks here are
-  *combinatorial*: finding a route through a maze, re-finding it when the grid changes (a door
+  _combinatorial_: finding a route through a maze, re-finding it when the grid changes (a door
   opens), reporting "no path" honestly, and running a second actor deterministically alongside the
   player. The Server Vault needs a real A*/BFS (a straight-line mover cannot solve it), mutates the
   passability grid mid-mission, and makes success depend on timing against a clockwork guard — which,
   when it spots the operative, becomes a hostile that must be **defeated in real-time cooldown combat**
   (attack range in cells, per-hit damage, return fire against a shared `Health` pool).
 
-- **FPS → 3D orientation + rays.** The unique risks here are *directional and volumetric*: turning
+- **FPS → 3D orientation + rays.** The unique risks here are _directional and volumetric_: turning
   the camera and having a hitscan ray actually follow the look vector, moving a capsule through
   extruded 3D geometry, gravity/jumping in three dimensions, and applying damage from a ray. Sector
   Breach makes the door depend on a look-steered shot, the progress depend on a 3D jump, and the
@@ -51,11 +51,11 @@ event bus (each game asserts on named events), the assertion harness (`expectSim
 
 ## The shared design rules
 
-1. **Small.** One level / one mission each, completable in 1–2 minutes of *simulated* time (a few
+1. **Small.** One level / one mission each, completable in 1–2 minutes of _simulated_ time (a few
    hundred to ~900 ticks). We are proving the engine, not shipping a game.
 2. **Text-only assets.** Geometry is tiles/grids/extruded floorplans; appearance is a glyph, a
    colour and a primitive. No sprite sheets, models or audio.
-3. **Observable outcomes.** Mechanics are designed to emit *assertable* events (`level.completed`,
+3. **Observable outcomes.** Mechanics are designed to emit _assertable_ events (`level.completed`,
    `enemy.killed`, `damage.taken`, `mission.completed`, `door.opened`, `player.died`, …) and to move
    world state that assertions can read — never a purely visual "feel".
 4. **Deterministic AI.** Every enemy/guard is a pure function of the tick; no `Math.random`, only
@@ -64,11 +64,11 @@ event bus (each game asserts on named events), the assertion harness (`expectSim
    completes it headlessly, and a `defineGameTest` block whose assertions — including at least one
    whole-timeline invariant — would fail if the game (or the engine under it) broke.
 
-## Deliberately *not* covered
+## Deliberately _not_ covered
 
 These are conscious scope cuts, called out so nobody mistakes them for gaps in the games:
 
-- **No turn-based / initiative combat.** The iso mission is a *real-time-with-cooldown* fight
+- **No turn-based / initiative combat.** The iso mission is a _real-time-with-cooldown_ fight
   (authentic to Dragon Age: Origins, half our stated iso reference), **not** a turn/action-point
   system. True turn-based initiative (Fallout-style) is **deferred to v2** and will be recorded in a
   PM ADR, so `mode-iso` carries a single movement model in v1.
@@ -93,7 +93,7 @@ shared-vocabulary gaps — recorded here as an index (details live in each doc):
 2. **Iso — grid combat** → **added.** `mode-iso` gains a real-time-with-cooldown attack contract
    (attack range in cells, per-hit damage, cooldown, return fire) so the Server Vault guard can be
    engaged and defeated (`iso.md`). This satisfies charter §4.3's Definition of Done ("defeated the
-   enemy, took the correct damage"). Turn-based initiative is deferred to v2 (see *not covered*).
+   enemy, took the correct damage"). Turn-based initiative is deferred to v2 (see _not covered_).
 3. **FPS — 3D geometry authoring + ray/collision against it** → **confirmed + extended.** `mode-fps`
    builds capsule collision **and** resolves hitscan rays against a **top-down tilemap floorplan
    extruded to walls** (plus entities), with an **optional per-tile floor/ceiling height** so pits and

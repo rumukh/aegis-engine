@@ -1,6 +1,6 @@
 # FPS PoC — "Sector Breach"
 
-> First-person 3D. Reference feel: *Half-Life*.
+> First-person 3D. Reference feel: _Half-Life_.
 > Mode: `fps` (`@aegis/mode-fps`). Runs headless; verified without pixels via the semantic frame.
 
 ## Concept and fantasy
@@ -8,7 +8,7 @@
 A 30-second Black-Mesa-style facility breach. You spawn in a sealed antechamber, **turn and shoot a
 wall panel** to blow the blast door, jog down a service corridor, **hop a toxic-coolant pit**, then
 gun down a lone security grunt guarding the exit before it whittles you down. It is the classic
-Half-Life micro-loop — *look, shoot, move, jump, shoot* — compressed to its smallest honest form.
+Half-Life micro-loop — _look, shoot, move, jump, shoot_ — compressed to its smallest honest form.
 Its whole reason to exist is to make the hard 3D things (look-driven raycasting, capsule-vs-geometry
 movement, gravity in three dimensions, hitscan damage) observable and assertable.
 
@@ -25,7 +25,7 @@ jump clears a pit or drops you into it.
 - **Yaw 0° faces +Z**; increasing yaw turns toward +X (right). Pitch 0° is level; +pitch looks up,
   clamped to `±89°`. Look uses `@aegis/core/math` deterministic trig (ADR-0001) — never `Math.sin`.
 - `aim <yaw> <pitch>` sets an absolute look target (compiled to `look` deltas); `look <dyaw>
-  <dpitch>` is relative.
+<dpitch>` is relative.
 
 ## Mechanics (design intent — implementers may tune)
 
@@ -33,17 +33,17 @@ Tick rate 60Hz, `dt = 1/60`.
 
 **Player** — `CapsuleBody` + `FpsController` + `LookState` + `FpsCamera` + `Hitscan` + `Health`:
 
-| Tunable | Value | Consequence |
-| --- | --- | --- |
-| `FpsController.moveSpeed` | 6 u/s | corridor traversal pace |
-| `FpsController.gravity` | 24 u/s² | fall accel |
-| `FpsController.jumpSpeed` | 8 u/s | apex ≈ 1.33 u high, ~40 ticks airborne, ~4 u of forward reach |
-| `FpsController.maxPitchDeg` | 89 | look clamp |
-| `CapsuleBody` | r 0.4, h 1.8 | collision volume |
-| `Hitscan.range` | 100 u | ray length |
-| `Hitscan.damage` | 25 | per shot |
-| `Hitscan.cooldownTicks` | 12 | ≥12 ticks between shots (0.2 s) |
-| `Health.current/max` | 100 | player HP (`Health` is shared, from `@aegis/content`) |
+| Tunable                     | Value        | Consequence                                                   |
+| --------------------------- | ------------ | ------------------------------------------------------------- |
+| `FpsController.moveSpeed`   | 6 u/s        | corridor traversal pace                                       |
+| `FpsController.gravity`     | 24 u/s²      | fall accel                                                    |
+| `FpsController.jumpSpeed`   | 8 u/s        | apex ≈ 1.33 u high, ~40 ticks airborne, ~4 u of forward reach |
+| `FpsController.maxPitchDeg` | 89           | look clamp                                                    |
+| `CapsuleBody`               | r 0.4, h 1.8 | collision volume                                              |
+| `Hitscan.range`             | 100 u        | ray length                                                    |
+| `Hitscan.damage`            | 25           | per shot                                                      |
+| `Hitscan.cooldownTicks`     | 12           | ≥12 ticks between shots (0.2 s)                               |
+| `Health.current/max`        | 100          | player HP (`Health` is shared, from `@aegis/content`)         |
 
 Derived: an 8 u/s jump under 24 u/s² gravity clears a **2–3 u pit** with margin; the coolant pit is
 2 u across.
@@ -58,6 +58,7 @@ removes the wall, emitting `door.opened`. The button is on the **east wall**, so
 **yaw right ~90°** to hit it — this is the proof that look direction actually steers the ray.
 
 **The grunt** — a game `GruntAiSystem` (deterministic, RNG-free):
+
 - Stands at the far end of the security room, facing −Z (toward the incoming player), `Health 50`.
 - When the player is within 15 u and roughly in front, it fires every 30 ticks, dealing 10 damage →
   `damage.taken` on the player. Cadence is a pure function of tick, so damage totals are
@@ -146,17 +147,17 @@ The breach reads as four beats, each proving one hard thing:
 
 ## Events emitted
 
-| Event | Payload | Emitted by | When |
-| --- | --- | --- | --- |
-| `weapon.fired` | `{ tick }` | mode | a `Fire` press launches a ray (past cooldown) |
-| `hitscan.hit` | `{ target, distance, tick }` | mode | a ray hits an entity or wall |
-| `hitscan.miss` | `{ tick }` | mode | a ray hits nothing in range |
-| `door.opened` | `{ name }` | game | the button is hit and the blast door is removed |
-| `enemy.damaged` | `{ name, amount, remaining }` | game | the grunt takes a hit |
-| `enemy.killed` | `{ name, tick }` | game | the grunt's `Health` reaches 0 |
-| `damage.taken` | `{ amount, source, remaining }` | game | the grunt hits the player |
-| `player.died` | `{ cause, tick }` | game | player `Health` ≤ 0 or fell in the pit, once |
-| `level.completed` | `{ tick }` | game | player reaches the exit trigger, once |
+| Event             | Payload                         | Emitted by | When                                            |
+| ----------------- | ------------------------------- | ---------- | ----------------------------------------------- |
+| `weapon.fired`    | `{ tick }`                      | mode       | a `Fire` press launches a ray (past cooldown)   |
+| `hitscan.hit`     | `{ target, distance, tick }`    | mode       | a ray hits an entity or wall                    |
+| `hitscan.miss`    | `{ tick }`                      | mode       | a ray hits nothing in range                     |
+| `door.opened`     | `{ name }`                      | game       | the button is hit and the blast door is removed |
+| `enemy.damaged`   | `{ name, amount, remaining }`   | game       | the grunt takes a hit                           |
+| `enemy.killed`    | `{ name, tick }`                | game       | the grunt's `Health` reaches 0                  |
+| `damage.taken`    | `{ amount, source, remaining }` | game       | the grunt hits the player                       |
+| `player.died`     | `{ cause, tick }`               | game       | player `Health` ≤ 0 or fell in the pit, once    |
+| `level.completed` | `{ tick }`                      | game       | player reaches the exit trigger, once           |
 
 ## The scripted playthrough
 
@@ -183,10 +184,11 @@ axis  Forward 1 360..520  # advance past the grunt to the exit trigger -> level.
 ```
 
 Notes for the implementer:
+
 - The `aim 90 0` / `aim 0 0` pair is the look-drives-the-ray proof; if yaw fails to steer the
   hitscan, the button shot misses, the door never opens, and the run cannot progress — a loud
   failure.
-- Keep the *semantics* (turn→shoot button, jump the pit, two shots on the grunt) even if tuned tick
+- Keep the _semantics_ (turn→shoot button, jump the pit, two shots on the grunt) even if tuned tick
   numbers drift; the assertions below check those, not the exact frames.
 
 ## The gameplay assertions
@@ -215,28 +217,39 @@ export default defineGameTest({
   `,
   expect(result) {
     expectSim(result)
-      .eventEmitted('door.opened', 1)        // the button shot actually opened the door
-      .eventEmitted('enemy.killed', 1)       // the grunt actually died
-      .eventEmitted('level.completed', 1)    // reached the exit, once
-      .eventNotEmitted('player.died')        // survived (pit + firefight)
+      .eventEmitted('door.opened', 1) // the button shot actually opened the door
+      .eventEmitted('enemy.killed', 1) // the grunt actually died
+      .eventEmitted('level.completed', 1) // reached the exit, once
+      .eventNotEmitted('player.died') // survived (pit + firefight)
       .entityExists({ has: ['Player'] })
       .holds(
         'player ended in the security room, past the grunt',
         (r) =>
-          r.query({ has: ['Player', 'Transform'] }).one().get(Transform).position.z >= 17,
+          r
+            .query({ has: ['Player', 'Transform'] })
+            .one()
+            .get(Transform).position.z >= 17,
       )
-      .hashEquals(result.hash);              // pin the golden state hash (determinism)
+      .hashEquals(result.hash); // pin the golden state hash (determinism)
 
     // Whole-timeline invariant #1 — 3D collision/jump: never fell through the world.
     result.assertInvariant(
       'player feet never dropped into the void',
-      (w) => w.query({ has: ['Player', 'Transform'] }).one().get(Transform).position.y > -1,
+      (w) =>
+        w
+          .query({ has: ['Player', 'Transform'] })
+          .one()
+          .get(Transform).position.y > -1,
     );
 
     // Whole-timeline invariant #2 — bounded, deterministic incoming damage.
     result.assertInvariant(
       'player health stayed above the safe floor',
-      (w) => w.query({ has: ['Player', 'Health'] }).one().get(Health).current >= 70,
+      (w) =>
+        w
+          .query({ has: ['Player', 'Health'] })
+          .one()
+          .get(Health).current >= 70,
     );
   },
 });
@@ -249,16 +262,16 @@ on some tick — failing precisely when the AI drifted.
 
 ## What this game proves about the engine
 
-| Game element | Engine capability exercised |
-| --- | --- |
-| Turn to the east-wall button | Yaw/pitch `LookState` **steering the hitscan ray direction** |
-| Shooting the button | `Hitscan` raycast resolving against a specific entity + cooldown |
-| Blast door opens on hit | Event-driven world mutation (`Blocking` removal) from a ray hit |
-| Walking the corridor | Capsule movement over extruded floorplan geometry, wall sliding |
-| Jumping the coolant pit | **3D gravity + jump arc + capsule-vs-floor** over a per-tile floor height; `hazard` `Trigger` pit-fall death |
-| The grunt firefight | `Health` damage from hitscan; two-shot kill math |
-| Grunt shooting back | Deterministic, RNG-free enemy AI cadence → `damage.taken` |
-| Reaching the exit | Goal `Trigger` volume detection in 3D + one-shot latch (`level.completed` once) |
-| Semantic frame of the room | `ViewProvider` perspective projection (agent "sees" without a GPU) |
-| `hashEquals` + repeated run | Byte-identical determinism across `sin/cos` look math (ADR-0001) |
-| Health/`position.y` invariants | Whole-timeline safety properties, not just final state |
+| Game element                   | Engine capability exercised                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Turn to the east-wall button   | Yaw/pitch `LookState` **steering the hitscan ray direction**                                                 |
+| Shooting the button            | `Hitscan` raycast resolving against a specific entity + cooldown                                             |
+| Blast door opens on hit        | Event-driven world mutation (`Blocking` removal) from a ray hit                                              |
+| Walking the corridor           | Capsule movement over extruded floorplan geometry, wall sliding                                              |
+| Jumping the coolant pit        | **3D gravity + jump arc + capsule-vs-floor** over a per-tile floor height; `hazard` `Trigger` pit-fall death |
+| The grunt firefight            | `Health` damage from hitscan; two-shot kill math                                                             |
+| Grunt shooting back            | Deterministic, RNG-free enemy AI cadence → `damage.taken`                                                    |
+| Reaching the exit              | Goal `Trigger` volume detection in 3D + one-shot latch (`level.completed` once)                              |
+| Semantic frame of the room     | `ViewProvider` perspective projection (agent "sees" without a GPU)                                           |
+| `hashEquals` + repeated run    | Byte-identical determinism across `sin/cos` look math (ADR-0001)                                             |
+| Health/`position.y` invariants | Whole-timeline safety properties, not just final state                                                       |
