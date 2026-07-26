@@ -35,6 +35,39 @@ describe('canonical serialisation', () => {
   });
 });
 
+describe('hashing — pinned golden digests', () => {
+  // FNV-1a-64 IS the cross-machine reproducibility contract. `toMatch(/^[0-9a-f]{16}$/)` would
+  // stay green if FNV_PRIME_64 or FNV_OFFSET_64 changed, or if the byte order flipped — while
+  // every stored replay and every game's GOLDEN_HASH silently broke. These literals pin it.
+  //
+  // Do NOT regenerate from the implementation. A diff here is an approved algorithm change or
+  // a bug.
+  it('hashString matches its pinned digests', () => {
+    expect(hashString('')).toBe('cbf29ce484222325'); // the FNV-1a-64 offset basis, unmixed
+    expect(hashString('hello')).toBe('32964f71b2764b97');
+    expect(hashString('a')).toBe('089be207b544f1e4');
+    expect(hashString('{"a":1}')).toBe('4d11c27d39f25a19');
+  });
+
+  it('processes each UTF-16 code unit low byte first (byte order is pinned)', () => {
+    // A non-ASCII character exercises the high byte, so swapping the two folds shows up here.
+    expect(hashString('é')).toBe('0a6a1207b6cd9fac');
+    expect(hashString('\u1234')).toBe('07ee9e07b4b1c883');
+  });
+
+  it('hashSnapshot matches its pinned digest for a fixed snapshot', () => {
+    const snap: WorldSnapshot = {
+      version: 1,
+      tick: 3,
+      entities: [{ id: '4294967296', name: 'hero', components: { A: { x: 1 }, B: { y: 2 } } }],
+      resources: { G: { y: -1 } },
+      prng: { s: [1, 2, 3, 4] },
+      allocator: { slots: [1], free: [] },
+    };
+    expect(hashSnapshot(snap)).toBe('b7cff77d597af2e2');
+  });
+});
+
 describe('hashing', () => {
   it('is 16 lowercase hex chars', () => {
     const h = hashString('hello');

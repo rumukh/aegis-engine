@@ -108,6 +108,30 @@ function run(
 describe('DETERMINISM PROOF — the project canary', () => {
   const TICKS = 300;
 
+  /**
+   * The pinned end state of the canary run.
+   *
+   * Everything else in this file compares two runs *inside one process*, which proves only
+   * repeatability — a much weaker property than the charter's "on any machine, every time".
+   * This literal is the cross-machine half: it is the byte-for-byte state hash after 300 ticks
+   * of PRNG-driven spawn/despawn churn and float integration, so it transitively pins sfc32,
+   * FNV-1a-64, the canonical encoding, the entity allocator and the scheduler order together.
+   *
+   * If this moves, the engine's observable behaviour changed. That is either an approved
+   * semantic change (and every stored replay and game GOLDEN_HASH must be re-pinned with it)
+   * or a bug. Do NOT regenerate it to make the test pass.
+   */
+  const CANARY_FINAL_HASH = 'd8dbdd4f3900e148';
+  /** Hash after the first tick — catches a divergence that later churn might mask. */
+  const CANARY_TICK_1_HASH = '030de9d252cba762';
+
+  it('matches its pinned golden hash (the cross-machine half of the proof)', () => {
+    const { trace, final } = run('canary-seed', TICKS);
+    expect(trace[0]).toBe(CANARY_TICK_1_HASH);
+    expect(final).toBe(CANARY_FINAL_HASH);
+    expect(trace).toHaveLength(TICKS);
+  });
+
   it('two independent runs with the same seed are byte-identical tick-for-tick', () => {
     const a = run('canary-seed', TICKS);
     const b = run('canary-seed', TICKS);

@@ -1,6 +1,61 @@
 import { describe, it, expect } from 'vitest';
 import { createPrng, prngFromState } from './prng.js';
 
+describe('seeded PRNG (sfc32) — pinned golden streams', () => {
+  // sfc32 IS the reproducibility contract. Comparing two instances in one process proves only
+  // that the code is a function; it would stay green if sfc32 were swapped for xorshift, or if
+  // the SplitMix32 seed stretch or the 12-draw warm-up changed — while every stored replay and
+  // every game's GOLDEN_HASH silently broke. These literals pin the actual stream.
+  //
+  // Do NOT regenerate from the implementation. A diff here is an approved algorithm change or
+  // a bug.
+  it("createPrng('canary') emits its pinned first six words", () => {
+    const p = createPrng('canary');
+    expect([
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+    ]).toEqual([2711998900, 1445806634, 4071225372, 3672052703, 2782830211, 4195305835]);
+  });
+
+  it('createPrng(42) emits its pinned first six words', () => {
+    const p = createPrng(42);
+    expect([
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+      p.nextUint32(),
+    ]).toEqual([3976162122, 2741447109, 1221645428, 3115966693, 491674442, 1768825807]);
+  });
+
+  it('derived helpers are pinned to the same stream', () => {
+    const p = createPrng('canary');
+    // nextFloat is nextUint32 / 2^32 — pinned so the divisor cannot change either.
+    expect(p.nextFloat()).toBe(2711998900 / 4294967296);
+    expect(createPrng(42).nextFloat()).toBe(3976162122 / 4294967296);
+  });
+
+  it('the seed expansion is pinned (state words after seeding)', () => {
+    // Guards the FNV-1a-32 digest, the SplitMix32 stretch and the warm-up loop together.
+    expect(createPrng('canary').save()).toEqual({
+      s: [2361883112, 37630527, 3939484998, 312485261],
+    });
+    expect(createPrng(0).save()).toEqual({ s: [2695173805, 1801505024, 241347181, 3251959231] });
+  });
+
+  it("fork('sub') from a fresh seed is pinned", () => {
+    const child = createPrng('canary').fork('sub');
+    expect([child.nextUint32(), child.nextUint32(), child.nextUint32()]).toEqual([
+      1501104017, 2679450520, 1860735835,
+    ]);
+  });
+});
+
 describe('seeded PRNG (sfc32)', () => {
   it('is deterministic for a given seed', () => {
     const a = createPrng(42);
