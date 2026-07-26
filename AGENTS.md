@@ -114,8 +114,10 @@ prettier) over the **whole workspace**. Not your package — the workspace. `.gi
 exists but this repo has no git remote, so it never runs. `npm run verify` is the gate.
 
 `npm run test` runs Vitest over `packages/*/{src,test}/**/*.test.ts` and
-`games/*/{src,test}/**/*.test.ts`. That is where all three PoC games are actually exercised.
-(`aegis test` is a different, weaker discovery mechanism — see [§9](#9-known-rough-edges).)
+`games/*/{src,test}/**/*.test.ts`. `aegis test` is a second, independent runner over the same
+specs, discovering compiled `*.gametest.{js,mjs,cjs}` modules
+([§6.6](#66-the-template)). Both should be green; they fail differently, and the one you reach for
+depends on whether you are debugging the game or the gate.
 
 ### 1.5 Setup
 
@@ -594,11 +596,24 @@ what proves the moving platform actually carries the player.
 **iso** — pointer clicks on grid cells (`games/iso/play/server-vault.input`):
 
 ```text
-click 1,2 @2      # step into the corridor mouth; the guard (at 1,5) spots us at t18 and opens fire
-click 1,5 @40     # attack-move onto the guard; we trade at Chebyshev 3 and kill it by t70 (took 2 hits, HP 20)
-click 9,1 @72     # cross to the security switch; reaching (9,1) at t297 unseals the vault door
-click 4,7 @300    # breach the now-open door and reach the exit; mission completes at t465
+click 1,5 @40     # hold the spawn first: at (1,1) the guard can never see us (Chebyshev >= 4),
+                  # so the clockwork patrol really walks. Then descend the winding left column.
+click 7,5 @102    # chase it up the corridor. It has swept (1,5) -> (9,5) — eight legs — before it
+                  # turns and spots us at t178, and it freezes on (9,5) the moment it does.
+click 9,5 @195    # attack-move: we let it fire first (t178, t218) and kill it at t225 with two
+                  # shots -> enemy.killed, damage.taken x2, Health 20.
+click 9,1 @232    # head for the security switch: cross to the col-7 shaft and climb toward (9,1).
+click 4,7 @300    # try the vault while still climbing the col-9 shaft: the door is sealed, so the
+                  # pathfinder honestly reports path.blocked and drops the in-flight order.
+click 9,1 @308    # resume to the security switch; reaching (9,1) at t330 unseals the vault door.
+click 4,7 @340    # the same target now resolves against the mutated grid -> mission.completed t505
 ```
+
+Read that script as a specification of the _playthrough_, not just the input. Every comment names
+a beat and a tick, and the beats are chosen so the run cannot succeed by accident — it holds the
+spawn so the patrol actually walks, and it clicks the vault once while the door is still sealed so
+the blocked-path branch is exercised. [§7.2](#72-when-a-golden-moves) explains why that matters
+more than it looks.
 
 **fps** — absolute aim plus analog movement (`games/fps/play/sector-breach.input`):
 
@@ -887,13 +902,13 @@ guide.
 ```js
 // probe.mjs — run from the repo root: node probe.mjs
 import { runScene } from '@aegis/harness';
-import { serverVaultPlugin } from '@aegis/game-iso';
+import { serverVaultPlugin, SERVER_VAULT_SCRIPT } from '@aegis/game-iso';
 
 const result = await runScene('games/iso/levels/server-vault.scene.json', {
   plugin: serverVaultPlugin,
   ticks: 960,
   seed: 'poc-iso',
-  input: 'click 1,2 @2\nclick 1,5 @40\nclick 9,1 @72\nclick 4,7 @300',
+  input: SERVER_VAULT_SCRIPT, // or your own DSL text
   captureHistory: true, // needed for result.at(tick) and assertInvariant
 });
 
@@ -933,21 +948,20 @@ Measured, on the shipped iso PoC. I rebuilt its plugin with one system removed �
 the system that lets the guard notice the operative — and ran the game's own spec against it:
 
 ```
-$ node .tmp/mutation-probe.mjs
+$ node .tmp/mut.mjs
 passed=false
-Expected exactly 1 "enemy.killed" event, but 0 were emitted during the 960-tick run.
-Events that WERE emitted:
-  - cell.entered ×27
-  - move.ordered ×4
-  - path.resolved ×4
-  - trigger.entered ×2
-  - door.opened ×1
-  - mission.completed ×1
-  - switch.activated ×1
+Expected "a hostile guard holds its ground instead of patrolling on" to hold on the final world (tick 960), but the predicate returned false.
 ```
 
-That message is a bug report: the firefight never happened, everything else did. A golden-hash
-mismatch on the same run would have said only that sixteen hex characters differ.
+That message is a bug report before you have opened a single file: the guard never turned hostile.
+A golden-hash mismatch on the same run would have said only that sixteen hex characters differ.
+
+Note _which_ assertion caught it, though. This one came through `holds`, which prints only its
+label — so the label is carrying the entire diagnosis. When the broken capability is expressed as
+an event, the message is far richer; the same mutation on a `eventEmitted` assertion prints the
+whole histogram of what _did_ happen ([§6.5](#65-mutation-check-your-own-test) has one). Prefer
+event assertions where a capability emits an event, and write `holds` labels that would read as a
+bug report on their own ([§6.7](#67-assertion-reference)).
 
 ### 6.2 Rule 2 — an equality assertion is an oracle only if the two sides have independent provenance
 
@@ -1027,53 +1041,58 @@ Two shipped examples are worth reading before you write your own, because both s
 _provenance_ of the number rather than just declaring it golden:
 [`games/iso/src/server-vault.ts`](./games/iso/src/server-vault.ts) (`GOLDEN_HASH`, pinned after
 the first green run) and
-[`games/fps/test/sector-breach.test.ts`](./games/fps/test/sector-breach.test.ts), whose comment
-states explicitly that the value is a literal "not `result.hash`, which is self-referential and
-can never fail". Copy that habit: the comment on a golden should say where the number came from
-and what re-pinning it requires, not merely that it is a golden.
+[`games/fps/src/sector-breach.gametest.ts`](./games/fps/src/sector-breach.gametest.ts), whose
+comment states explicitly that the value is a literal "not `result.hash`, which is
+self-referential and can never fail". Copy that habit: the comment on a golden should say where
+the number came from and what re-pinning it requires, not merely that it is a golden.
 
 ### 6.4 `GOLDEN_TRAJECTORY` — because the final hash is blind to timing
 
 The final state hash describes the world after the last tick. It says nothing about _when_
-anything happened along the way. A change that shifts every beat by eighty ticks and still ends in
-the same place is invisible to it.
+anything happened along the way, and playthroughs characteristically **end at rest** — player
+parked on the goal, enemy dead, cooldowns expired. Two runs whose timelines differ throughout can
+converge on the same resting state, and the final hash cannot tell them apart.
 
 Measured, on the shipped iso PoC. I moved one line of its input script — the final
-`click 4,7 @300` that breaches the vault — and changed nothing else:
+`click 4,7 @340` that breaches the vault, to `@420` — and changed nothing else:
 
 ```
-$ node .tmp/trajectory-probe.mjs
-exit click @300  mission.completed@465  hash=a76c70407b775b92  golden=true  trajectory=bbce0cfa4e7c634e
-exit click @380  mission.completed@545  hash=a76c70407b775b92  golden=true  trajectory=a8fd6c458a732ed6
+$ node .tmp/timing.mjs
+breach click @340  mission.completed@505  hash=cb0f07007ad8608a  hashMatchesGolden=true  trajectory=2c6881a477e2d268  trajectoryMatchesGolden=true
+breach click @420  mission.completed@585  hash=cb0f07007ad8608a  hashMatchesGolden=true  trajectory=3d533c9edb70690f  trajectoryMatchesGolden=false
 ```
 
 The mission completed **eighty ticks later** and `GOLDEN_HASH` was byte-identical. A test pinned
-only on the final hash would not have noticed that the pacing of the entire second half of the
-level had moved.
+only on the final hash would not have noticed that the pacing of the entire back half of the level
+had moved. The trajectory pin caught it.
 
-A trajectory digest fixes that, using only public API — `hashString` from `@aegis/core` is the
-same deterministic FNV-1a the engine hashes world state with:
+All three PoCs now carry both pins plus the same digest helper, which uses `hashString` from
+`@aegis/core` — the same frozen FNV-1a the world hash uses, so the digest is exactly as portable
+and deterministic as the hashes it summarises. Copy this shape rather than inventing your own, so
+digests are comparable across games:
 
-```js
+```ts
 import { hashString } from '@aegis/core';
+import type { StateHash } from '@aegis/core';
 
-/** A 16-char digest of the entire per-tick hash timeline. */
-export function trajectoryOf(result) {
-  return hashString(result.tickHashes.join('\n'));
+/** Digest a run's per-tick hash timeline into one comparable value. */
+export function trajectoryDigest(tickHashes: readonly StateHash[]): StateHash {
+  return hashString(tickHashes.join('|'));
 }
 ```
 
 Pin the result exactly like `GOLDEN_HASH` — capture once from a green run, write the literal down,
-re-pin only on purpose — and assert it with `holds`. [§6.6](#66-the-template) shows it in place.
+re-pin only on purpose and only with an explanation ([§7.2](#72-when-a-golden-moves)).
 `tickHashes` is captured by default, so this costs nothing.
+[§6.6](#66-the-template) shows both pins in place.
 
 If you care about a specific beat's timing — and you usually should — assert on it directly as
 well, because that produces a far better failure message than a digest can. As a complete
 expectation over the iso PoC's `SimResult`:
 
 ```js
-expectSim(result).holds('mission completed on tick 465', (r) =>
-  r.events.history().some((e) => e.type === 'mission.completed' && e.tick === 465),
+expectSim(result).holds('mission completed on tick 505', (r) =>
+  r.events.history().some((e) => e.type === 'mission.completed' && e.tick === 505),
 );
 ```
 
@@ -1156,15 +1175,21 @@ import { BodyState, platformerPlugin } from '@aegis/mode-platformer';
 
 /**
  * Golden final-state hash. Captured once from a green run and pinned here as a literal, so a
- * later regression changes the run but never this number. Re-pin only on a deliberate change.
+ * later regression changes the run but never this number. Re-pin only on a deliberate change,
+ * and only with an explanation — see §7.2.
  */
 const GOLDEN_HASH = 'ff0c3d6ee3f19d81';
 
 /**
- * Digest of the entire per-tick hash timeline. GOLDEN_HASH is blind to *when* things happened;
- * this is not. Same pinning rules.
+ * Golden digest of the entire per-tick hash timeline. GOLDEN_HASH describes where the run *ends*;
+ * this describes how it got there. Same pinning rules.
  */
-const GOLDEN_TRAJECTORY = '8ceef8be706d2434';
+const GOLDEN_TRAJECTORY = '4eb1220792762ac2';
+
+/** Digest a run's per-tick hash timeline into one comparable value (same shape the PoCs use). */
+function trajectoryDigest(tickHashes) {
+  return hashString(tickHashes.join('|'));
+}
 
 export default defineGameTest({
   name: 'ledge hop: run right, clear the gap, land on the far ledge',
@@ -1199,8 +1224,8 @@ export default defineGameTest({
       // Change detectors, checked last: they catch drift the named assertions did not model.
       .hashEquals(GOLDEN_HASH)
       .holds(
-        'per-tick trajectory unchanged',
-        (r) => hashString(r.tickHashes.join('\n')) === GOLDEN_TRAJECTORY,
+        'the per-tick hash timeline matches the golden trajectory (see GOLDEN_TRAJECTORY)',
+        (r) => trajectoryDigest(r.tickHashes) === GOLDEN_TRAJECTORY,
       );
 
     // A property that must hold on EVERY tick, not just the last one.
@@ -1218,9 +1243,29 @@ export default defineGameTest({
 For a game with its own systems, one line changes: `plugin: platformerPlugin` becomes
 `plugin: myGamePlugin` ([§3](#3-the-composed-plugin-pattern)). Everything else is identical.
 
-A shipped game additionally wraps the spec in a Vitest file under `games/<name>/test/` so
-`npm run verify` runs it — that is what the three PoCs do, and it is the only discovery mechanism
-that reaches all of them ([§9](#9-known-rough-edges)). The wrapper is small:
+#### Where the file has to live
+
+A shipped game puts its spec in **`games/<name>/src/<name>.gametest.ts`**. Not in `test/`. This is
+a build constraint, not a style preference, and getting it wrong fails silently:
+
+```json
+// games/fps/tsconfig.json
+"include": ["src/**/*.ts"],
+"exclude": ["src/**/*.test.ts", "src/**/*.spec.ts", "test", "dist"]
+```
+
+`aegis test` globs **compiled** output (`**/*.gametest.{js,mjs,cjs}`), so a spec the build excludes
+never reaches `dist` and the CLI cannot see it — no error, no warning, just a green run over fewer
+games than you think. All three PoCs sat that way for a while: iso defined its playthroughs inside
+`src/server-vault.ts`, fps defined its inside a Vitest file under `test/`, and `aegis test` ran the
+platformer alone and exited 0 with a green summary. **A gate over one of three PoCs is a more
+dangerous signal than no gate at all, because it reads as coverage.**
+
+`games/platformer/test/gametest-discovery.test.ts` now enumerates `games/` from disk and fails if
+any game ships no discoverable `dist/*.gametest.js`, so a fourth game is covered automatically.
+
+Then wrap the spec in a Vitest file under `games/<name>/test/` so `npm run verify` runs it too —
+the two runners fail differently and that is the point. The wrapper is small:
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -1253,7 +1298,7 @@ describe('My Game', () => {
 
 ```
 FAIL ledge hop: run right, clear the gap, land on the far ledge (120 ticks)
-     Expected "per-tick trajectory unchanged" to hold on the final world (tick 120), but the predicate returned false.
+     Expected "the per-tick hash timeline matches the golden trajectory (see GOLDEN_TRAJECTORY)" to hold on the final world (tick 120), but the predicate returned false.
 ```
 
 That is the entire message. Write labels that carry the threshold —
@@ -1287,20 +1332,44 @@ Work down it. Each rung is cheaper than the one below.
 
 ### 7.2 When a golden moves
 
-**A moved golden is not automatically wrong. It is automatically _unexplained_.** The only
-unacceptable response is re-pinning it because the test went red.
+**A moved golden is not automatically wrong. It is automatically _unexplained_.** Re-pinning
+without an explanation converts a detector into a rubber stamp — and it is silent, because the
+test goes green and nothing records that you never found out why.
 
 1. Did any named assertion also fail? If yes, fix that first — the golden is downstream noise.
 2. If _only_ the golden moved, you changed behaviour without changing any beat you had modelled.
    Find out which. Diff the two runs' `tickHashes` for the first divergent tick, then dump
-   `at(tick)` on both sides of it.
+   `at(tick)` on both sides of it. `aegis replay` already names the first divergent tick for you.
 3. Once you can state in one sentence what changed and why it is correct, re-pin the literal in
-   the same commit as the change that caused it, and say so in the commit message.
+   the same commit as the change that caused it, and put the sentence in the commit message.
 4. If you cannot state it, you have a bug, not a stale golden.
 
-The same applies to `GOLDEN_TRAJECTORY` with one extra clue: if the trajectory moved and the final
-hash did not, the change is **pure timing**. Something happens earlier or later than it used to,
-and the world still ends up in the same place.
+If the trajectory moved and the final hash did not, the change is **pure timing** — something
+happens earlier or later than it used to and the world still ends up in the same place. If the
+final hash moved and the trajectory did not, you have a determinism problem, not a gameplay one:
+the same timeline cannot produce two endings.
+
+#### A golden pinned to a degenerate playthrough certifies nothing
+
+The most instructive move is a legitimate one. The iso PoC's `GOLDEN_HASH` changed from
+`a76c70407b775b92` to `cb0f07007ad8608a` — not because engine behaviour changed, but because the
+**input script was rewritten**. The old playthrough was degenerate in two ways it was possible to
+believe were fine:
+
+- The operative was spotted at t18, while the guard was still on its spawn cell — so the run
+  never exercised the clockwork patrol it existed to prove. The new script holds the spawn until
+  t40, where the guard cannot see it (Chebyshev ≥ 4), and lets the patrol actually walk.
+- It clicked the exit at t300, **three ticks after** the door had already unsealed at t297 — so
+  the "breach the sealed door" beat was decided before the click. The new script clicks the vault
+  at t300 while the door is still sealed (proving `path.blocked` fires and the order is dropped)
+  and again at t340 once it is open.
+
+Both old runs completed. Both hashed stably. Both would have passed a `hashEquals` pin forever.
+The golden was doing its job perfectly and certifying a playthrough that proved almost nothing —
+which is the same failure as
+[§6.5](#65-mutation-check-your-own-test)'s scaffolded test, one level up: **a pin is only as good
+as the run underneath it.** Before you pin, ask what the run would have to break for the
+playthrough to stop being valid, and check it is not already broken.
 
 ### 7.3 Determinism failures
 
@@ -1423,17 +1492,17 @@ expensive.
 Verified on this revision. Each is a real limitation, not a caveat about how you are holding it.
 If you plan around them you will lose no time; if you assume they are fixed you will lose hours.
 
-| #   | Rough edge                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Work around it by…                                                                                                                                                                                                              |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **`aegis run`/`inspect`/`validate`/`record`/`replay` cannot load a game's composed plugin.** They resolve only the three stock mode plugins. `games/platformer` and `games/fps` scenes therefore fail `aegis validate` outright.                                                                                                                                                                                                                                        | Using `runScene` from a script or a test ([§5.6](#56-observing-a-game-that-has-its-own-plugin)).                                                                                                                                |
-| 2   | **There is no `aegis.json`.** No project config exists in the repo and the CLI has no mechanism to read one. There is no `--plugin` flag either.                                                                                                                                                                                                                                                                                                                        | Passing the plugin in code.                                                                                                                                                                                                     |
-| 3   | **`aegis test` finds 1 of the 3 PoC games.** Its glob is `**/*.gametest.{js,mjs,cjs}`; only the platformer ships its spec that way.                                                                                                                                                                                                                                                                                                                                     | Treating `npm run verify` (Vitest) as the real gate, and wrapping every spec in a Vitest file.                                                                                                                                  |
-| 4   | **`aegis scaffold game` output does not run, and its starter test cannot fail.** No controller or gravity on the player, no tilemap wired into the scene, and the emitted `*.tilemap.json` is an orphan — so nothing moves and `--ascii` fails with `AEG-CLI-0009: Mode "platformer" has no ASCII view`. The generated `*.gametest.mjs` passes immediately, and keeps passing with `ticks: 0` and with every system removed ([§6.5](#65-mutation-check-your-own-test)). | Copying [§2.1](#21-the-running-example) and [§6.6](#66-the-template) instead, and never building on the generated `expect` callback.                                                                                            |
-| 5   | **Unknown CLI flags are silently ignored.** `--totally-bogus` produces no error, and neither does `--ticks` on `inspect` (which wants `--tick` and otherwise silently inspects tick 0). Relatedly, `docs/architecture.md` §6 shows `aegis replay … --verify`, which is not in the command's help — verification is on by default and `--no-verify` turns it off, so that flag is a no-op.                                                                               | Reading `aegis <cmd> --help` and checking the echoed `tick:`/`ticks:` line in the output.                                                                                                                                       |
-| 6   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                                                                                                                                                                                                                   | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                                                                                                    |
-| 7   | **`aegis inspect --view world` prints every resource in full**, including the entire baked collision grid — hundreds of booleans for a small level.                                                                                                                                                                                                                                                                                                                     | Using `--query` to narrow entities and reading the `Transform` lines; redirect to a file for large levels.                                                                                                                      |
-| 8   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated.                                                                                                                                                                                                                                                                                                                                                         | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                                                                                                    |
-| 9   | **Self-referential golden assertions are still present in the tree and in the docs.** `games/platformer/src/coyote-gap.gametest.ts:76`, `docs/architecture.md` §7 and `docs/games/platformer.md` all pass the run's own hash to `hashEquals`. A lint rule banning the idiom is in flight but has **not** landed: `npx eslint games/platformer/src/coyote-gap.gametest.ts` reports zero problems on the file that contains it.                                           | Following [§6.2](#62-rule-2--an-equality-assertion-is-an-oracle-only-if-the-two-sides-have-independent-provenance) and pinning literals. Do not copy those three. Re-check the rule before relying on lint to catch it for you. |
+| #   | Rough edge                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Work around it by…                                                                                                                                                                                                              |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **`aegis run`/`inspect`/`validate`/`record`/`replay` cannot load a game's composed plugin.** They resolve only the three stock mode plugins. `games/platformer` and `games/fps` scenes therefore fail `aegis validate` outright.                                                                                                                                                                                                                                                                         | Using `runScene` from a script or a test ([§5.6](#56-observing-a-game-that-has-its-own-plugin)).                                                                                                                                |
+| 2   | **There is no `aegis.json`.** No project config exists in the tree and the CLI has no mechanism to read one; there is no `--plugin` flag either. Per-game manifests were added and then removed again in `ded72c8` ("the CLI session owns them"), so this is expected to change — re-check before relying on it.                                                                                                                                                                                         | Passing the plugin in code.                                                                                                                                                                                                     |
+| 3   | **A spec the build excludes is invisible to `aegis test`, silently.** The CLI globs compiled `dist/*.gametest.{js,mjs,cjs}`; every `games/*/tsconfig.json` excludes `test/`. A spec in the wrong directory produces no error — just a green run over fewer games than you think. Fixed for the three PoCs and now guarded by `games/platformer/test/gametest-discovery.test.ts`.                                                                                                                         | Putting the spec in `games/<name>/src/<name>.gametest.ts` ([§6.6](#66-the-template)), and checking `aegis test` names your game.                                                                                                |
+| 4   | **`aegis scaffold game` output does not run, and its starter test cannot fail.** No controller or gravity on the player, no tilemap wired into the scene, and the emitted `*.tilemap.json` is an orphan — so nothing moves and `--ascii` fails with `AEG-CLI-0009: Mode "platformer" has no ASCII view`. The generated `*.gametest.mjs` passes immediately, and keeps passing with `ticks: 0` and with every system removed ([§6.5](#65-mutation-check-your-own-test)).                                  | Copying [§2.1](#21-the-running-example) and [§6.6](#66-the-template) instead, and never building on the generated `expect` callback.                                                                                            |
+| 5   | **Unknown CLI flags are silently ignored.** `--totally-bogus` produces no error, and neither does `--ticks` on `inspect` (which wants `--tick` and otherwise silently inspects tick 0). Relatedly, `docs/architecture.md` §6 shows `aegis replay … --verify`, which is not in the command's help — verification is on by default and `--no-verify` turns it off, so that flag is a no-op.                                                                                                                | Reading `aegis <cmd> --help` and checking the echoed `tick:`/`ticks:` line in the output.                                                                                                                                       |
+| 6   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                                                                                                                                                                                                                                                    | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                                                                                                    |
+| 7   | **`aegis inspect --view world` prints every resource in full**, including the entire baked collision grid — hundreds of booleans for a small level.                                                                                                                                                                                                                                                                                                                                                      | Using `--query` to narrow entities and reading the `Transform` lines; redirect to a file for large levels.                                                                                                                      |
+| 8   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated.                                                                                                                                                                                                                                                                                                                                                                                          | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                                                                                                    |
+| 9   | **Self-referential golden assertions are still in the tree and in the docs.** `games/platformer/src/coyote-gap.gametest.ts:78`, `docs/architecture.md` §7 and `docs/games/platformer.md` still pass the run's own hash to `hashEquals`. The platformer file now carries a comment saying so and a correct `GOLDEN_HASH` literal beside it — the acknowledgement landed, the call site did not. No lint rule prevents it: `npx eslint games/platformer/src/coyote-gap.gametest.ts` reports zero problems. | Following [§6.2](#62-rule-2--an-equality-assertion-is-an-oracle-only-if-the-two-sides-have-independent-provenance) and pinning literals. Do not copy those three. Re-check the rule before relying on lint to catch it for you. |
 
 Rough edge 9 is the reason [§6](#6-writing-a-game-test-that-can-actually-fail) is written the way
 it is, and its history is the reason this file is written the way it is. That idiom entered the
