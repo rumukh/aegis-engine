@@ -27,6 +27,25 @@ import { Transform } from '@aegis/core';
 import { BodyState } from '@aegis/mode-platformer';
 import { coyoteGapPlugin } from './plugin.js';
 
+/**
+ * The golden state hash of the completing run (scene `coyote-gap`, seed `poc-platformer`, 400
+ * ticks, the script below). Pinned as a **literal**, exported so the acceptance runner can assert
+ * it alongside its cross-run determinism proof — the same shape `games/iso` uses.
+ *
+ * This line used to read `hashEquals(result.hash)`, copied from the ideal test in
+ * `docs/architecture.md` §7. That compares the run to itself: vacuously true, unable to fail, and
+ * pinning nothing, while reading exactly like a determinism regression test. ESLint now rejects
+ * it (`no-restricted-syntax`).
+ *
+ * What it buys, precisely: the acceptance runner already proves *intra-run* determinism (two runs
+ * plus `replay()`, compared over the whole per-tick hash timeline), so that dimension was never
+ * unprotected. This is the **cross-commit** golden master — it catches a change that is still
+ * perfectly deterministic but is now deterministically doing something *different*. Re-derive it
+ * from a green run and update it deliberately if the physics, the scene or the script change on
+ * purpose.
+ */
+export const GOLDEN_HASH = 'd813e4e19db7444d';
+
 export default defineGameTest({
   name: 'coyote gap: stomp, ferry across the lava, coyote-jump, buffer onto the flag',
   scene: 'games/platformer/levels/coyote-gap.scene.json',
@@ -73,7 +92,7 @@ export default defineGameTest({
           return before.carriedBy !== -1 && after.carriedBy !== -1 && after.x > before.x;
         },
       )
-      .hashEquals('d813e4e19db7444d'); // golden master, pinned as a literal (never result.hash — self-referential); re-derive deliberately if the design changes
+      .hashEquals(GOLDEN_HASH); // cross-commit golden-master pin (see GOLDEN_HASH)
 
     // Whole-timeline invariants (require captureHistory):
     result.assertInvariant(
