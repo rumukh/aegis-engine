@@ -270,7 +270,13 @@ describe('aegis record / replay', () => {
 
 describe('aegis test', () => {
   /** Write a self-locating gametest module into `dir`. */
-  function writeGameTest(dir: string, file: string, name: string, query: string): void {
+  function writeGameTest(
+    dir: string,
+    file: string,
+    name: string,
+    query: string,
+    assertion = `entityExists(${query})`,
+  ): void {
     const scene = join(dir, 'level.scene.json').split('\\').join('\\\\');
     const src = [
       `import { defineGameTest, expectSim } from '@aegis/harness';`,
@@ -281,7 +287,7 @@ describe('aegis test', () => {
       `  ticks: 30,`,
       `  options: { plugin: fakeMode },`,
       `  input: 'hold Right 0..30',`,
-      `  expect(result) { expectSim(result).entityExists(${query}); },`,
+      `  expect(result) { expectSim(result).${assertion}; },`,
       `});`,
       ``,
     ].join('\n');
@@ -304,6 +310,29 @@ describe('aegis test', () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain('FAIL dragon exists');
     expect(r.out).toContain('Expected at least one entity matching has:[Dragon]');
+  });
+
+  it('decomposes packed handles in harness failure messages (pretty + json)', async () => {
+    const dir = makeDir();
+    // entityCount fails while the Player DOES match, so the harness samples it as `#<packed> "name"`.
+    writeGameTest(
+      dir,
+      'count.gametest.mjs',
+      'one player only',
+      `{ has: ['Player'] }`,
+      `entityCount({ has: ['Player'] }, 5)`,
+    );
+    const r = await cli(['test'], dir);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('Matched entities:');
+    // The sampled handle is decomposed, not the raw packed integer.
+    expect(r.out).toContain('#0 "hero"');
+    expect(r.out).not.toContain('#4294967296');
+
+    const j = await cli(['test', '--json'], dir);
+    const data = JSON.parse(j.out) as { tests: { error?: string }[] };
+    expect(data.tests[0]!.error).toContain('#0 "hero"');
+    expect(data.tests[0]!.error).not.toContain('#4294967296');
   });
 
   it('--reporter tap emits TAP', async () => {

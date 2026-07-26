@@ -32,6 +32,22 @@ export function entityParts(handle: number): { id: string; index: number; genera
   return { id: String(handle), index: entityIndex(e), generation: entityGeneration(e) };
 }
 
+/**
+ * Rewrite packed entity handles embedded in free text (e.g. `@aegis/harness` assertion-failure
+ * messages, which render `#<packed> "Name"`) into the same decomposed `#<index>[@<gen>]` form used
+ * everywhere else in the CLI. The guard is deliberately conservative: only `#<digits>` tokens whose
+ * decoded generation is >= 1 — i.e. genuine *live* handles, which are always >= 2**32 — are
+ * rewritten, so small literal numbers like `#3` in a message are left untouched. This is the one
+ * place the handle text originates outside this package; we can only fix it at the print boundary.
+ */
+export function decomposeHandlesInText(text: string): string {
+  return text.replace(/#(\d+)/g, (whole, digits: string) => {
+    const n = Number(digits);
+    if (!Number.isSafeInteger(n)) return whole;
+    return entityGeneration(n as Entity) >= 1 ? formatEntity(n) : whole;
+  });
+}
+
 /** Whether any diagnostic is error severity. */
 export function hasErrors(diagnostics: readonly Diagnostic[]): boolean {
   return diagnostics.some((d) => d.severity === 'error');
