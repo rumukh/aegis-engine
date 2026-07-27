@@ -125,6 +125,22 @@ describe('circleHitsSolid', () => {
     expect(circleHitsSolid(grid, 1.35, 2, 0.4)).toBe(true); // 1.35 + 0.4 = 1.75 > 1.5
     expect(circleHitsSolid(grid, 1.0, 2, 0.4)).toBe(false); // 1.0 + 0.4 = 1.4 < 1.5
   });
+
+  // The cells to test are chosen from a `radius`-sized window, but the decision is a *circle*
+  // test — so the two can disagree, and until this case nothing checked the disagreement. The
+  // assertions above sit either well inside a cell or square-on to a wall face, where the window
+  // alone decides the answer; inflate the distance comparison ninefold and they all still pass.
+  // A corner is the one geometry where a solid cell is inside the scanned window and outside the
+  // radius, which makes this the only place the distance test is load-bearing.
+  it('judges a circle near a wall corner by distance, not by the cells it scanned', () => {
+    const grid = room();
+    // The pillar's nearest point to (1.2, 1.2) is its corner (1.5, 1.5), sqrt(0.3² + 0.3²) ≈
+    // 0.4243 away: outside a 0.4 radius, inside a 0.45 one, with the pillar inside the scanned
+    // window in both cases. The second assertion is the positive control — without it, a
+    // `circleHitsSolid` that never reports a hit would satisfy the first.
+    expect(circleHitsSolid(grid, 1.2, 1.2, 0.4)).toBe(false);
+    expect(circleHitsSolid(grid, 1.2, 1.2, 0.45)).toBe(true);
+  });
 });
 
 describe('raycastGrid', () => {

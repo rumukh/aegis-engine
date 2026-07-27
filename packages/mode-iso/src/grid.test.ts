@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Cell, IsoGridConfig } from './components.js';
+import type { Cell, IsoGridConfig, NavGridData } from './components.js';
 import {
   buildNavGrid,
   chebyshev,
@@ -316,5 +316,283 @@ describe('findAttackPath', () => {
     });
     // The attacker starts outside; (1,1) is the target, fully walled.
     expect(findAttackPath(nav, OPEN, { x: 1, y: 1 }, { x: 1, y: 1 }, 3)).toBeNull();
+  });
+});
+// ---------------------------------------------------------------------------------------------
+// A* optimality — pinned by an independently derived oracle, not by a recorded route.
+//
+// Until this block, optimality was pinned only on an *open* grid (`findPath — correctness`, where
+// the shortest path is the Manhattan distance by construction) and by one golden tie-break route
+// on an open 3x3. Nothing asserted that a route around real geometry is as short as it could be.
+// So the standard way A* is accidentally turned into a greedy search — weighting the heuristic —
+// changed nothing any test could see, and a pathfinder returning a route many times longer than
+// optimal is a gameplay bug that never throws: every step it returns is still adjacent,
+// in-bounds and passable.
+//
+// The pin is deliberately not a recorded route. A golden captured from `findPath` shares its
+// ancestor with the thing it checks, so it survives that ancestor being wrong and the next
+// maintainer can re-record it without noticing. The oracle below is a plain breadth-first flood
+// written from scratch over the authored ASCII rows — a different algorithm, provably optimal on
+// a uniform-cost 4-neighbour grid — and the oracle is itself checked against costs worked out by
+// hand before it is trusted to judge anything.
+// ---------------------------------------------------------------------------------------------
+
+/** The four 4-neighbour offsets, spelled out here so the oracle shares no code with `grid.ts`. */
+const STEPS: readonly (readonly [number, number])[] = [
+  [0, -1],
+  [0, 1],
+  [-1, 0],
+  [1, 0],
+];
+
+/**
+ * Optimal 4-neighbour cost from `start` to `goal` over ASCII wall rows, by breadth-first search:
+ * `0` when they are the same passable cell, `null` when either endpoint is a wall or off-grid, or
+ * when no route exists.
+ *
+ * Independent of the module under test on purpose — it reads the authored rows rather than a
+ * baked `NavGridData`, and brings its own bounds test, frontier and visited set. That
+ * independence is the whole point: an equality between this and `findPath` is an oracle, whereas
+ * an equality between `findPath` and a route recorded from `findPath` is a tautology.
+ */
+function bfsCost(walls: readonly string[], start: Cell, goal: Cell): number | null {
+  const height = walls.length;
+  const width = walls[0]?.length ?? 0;
+  const isWall = (x: number, y: number): boolean =>
+    x < 0 || y < 0 || x >= width || y >= height || walls[y]?.[x] === '#';
+  if (isWall(start.x, start.y) || isWall(goal.x, goal.y)) return null;
+  if (start.x === goal.x && start.y === goal.y) return 0;
+
+  const seen = new Set<string>([`${start.x},${start.y}`]);
+  let frontier: Cell[] = [start];
+  let cost = 0;
+  while (frontier.length > 0) {
+    cost += 1;
+    const next: Cell[] = [];
+    for (const c of frontier) {
+      for (const [dx, dy] of STEPS) {
+        const nx = c.x + dx;
+        const ny = c.y + dy;
+        if (isWall(nx, ny)) continue;
+        const k = `${nx},${ny}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (nx === goal.x && ny === goal.y) return cost;
+        next.push({ x: nx, y: ny });
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+/** A hand-drawn map whose optimal cost was worked out on paper, not recorded from a run. */
+interface HandCheckedMap {
+  readonly name: string;
+  readonly walls: readonly string[];
+  readonly start: Cell;
+  readonly goal: Cell;
+  /** The optimal 4-neighbour cost, or `null` when the goal cannot be reached. */
+  readonly cost: number | null;
+}
+
+/**
+ * Five maps with hand-computed answers. These are the L3 pins of this file: an expected value
+ * authored independently of *both* implementations, which nothing can re-record. They are also
+ * the oracle's negative control — `bfsCost` must reproduce all five before it is fit to judge the
+ * exhaustive sweep.
+ */
+const HAND_CHECKED: readonly HandCheckedMap[] = [
+  {
+    // Open ground: the cost is exactly the Manhattan distance, 4 across and 2 down.
+    name: 'open 5x3, (0,0) -> (4,2)',
+    walls: ['.....', '.....', '.....'],
+    start: { x: 0, y: 0 },
+    goal: { x: 4, y: 2 },
+    cost: 6,
+  },
+  {
+    // A two-cell wall at x=2 seals the top rows; the only way across is the bottom row, so the
+    // straight-line 4 becomes 2 down + 4 across + 2 up = 8.
+    name: 'detour under a two-cell wall',
+    walls: ['..#..', '..#..', '.....'],
+    start: { x: 0, y: 0 },
+    goal: { x: 4, y: 0 },
+    cost: 8,
+  },
+  {
+    // Two staggered walls force a full zig-zag: right to x=5 (5), down to row 2 (2), back left to
+    // x=1 (4), down to row 4 (2), left to x=0 (1) = 14, against a Manhattan distance of 4.
+    name: 'staggered zig-zag',
+    walls: ['.......', '#####..', '.......', '..#####', '.......'],
+    start: { x: 0, y: 0 },
+    goal: { x: 0, y: 4 },
+    cost: 14,
+  },
+  {
+    // A spiral. The only way in is the outer ring to (8,6): 8 across + 6 down = 14; the row-6
+    // corridor west to (2,6) = 6; up column 2 to (2,2) = 4; east along row 2 to (6,2) = 4; down
+    // column 6 to (6,4) = 2; west to (4,4) = 2. Total 32, against a Manhattan distance of 8.
+    name: 'spiral, (0,0) -> the heart at (4,4)',
+    walls: [
+      '.........',
+      '.#######.',
+      '.#.....#.',
+      '.#.###.#.',
+      '.#.#...#.',
+      '.#.#####.',
+      '.#.......',
+      '.#######.',
+      '.........',
+    ],
+    start: { x: 0, y: 0 },
+    goal: { x: 4, y: 4 },
+    cost: 32,
+  },
+  {
+    // The same spiral, but a route that should NOT wind: straight down the open east column to
+    // (8,6), then straight west along the row-6 corridor. 6 + 6 = 12, exactly the Manhattan
+    // distance. This is the case a greedy search gets wrong — it dives into the spiral's mouth
+    // and comes back out, and the shipped algorithm must not.
+    name: 'spiral, (8,0) -> (2,6) down the east side and along the corridor',
+    walls: [
+      '.........',
+      '.#######.',
+      '.#.....#.',
+      '.#.###.#.',
+      '.#.#...#.',
+      '.#.#####.',
+      '.#.......',
+      '.#######.',
+      '.........',
+    ],
+    start: { x: 8, y: 0 },
+    goal: { x: 2, y: 6 },
+    cost: 12,
+  },
+  {
+    // Two parallel corridors with no join: genuinely unreachable, not merely expensive.
+    name: 'two sealed corridors',
+    walls: ['#####', '#.#.#', '#.#.#', '#.#.#', '#####'],
+    start: { x: 1, y: 1 },
+    goal: { x: 3, y: 1 },
+    cost: null,
+  },
+];
+
+/** Build a nav grid straight from ASCII rows (width taken from the first row). */
+function navOf(walls: readonly string[]): NavGridData {
+  return buildNavGrid({
+    width: walls[0]?.length ?? 0,
+    height: walls.length,
+    tileSize: 1,
+    walls,
+  });
+}
+
+describe('findPath — optimality against an independent oracle', () => {
+  it('the BFS oracle reproduces every hand-computed cost (the oracle\u2019s own control)', () => {
+    const wrong = HAND_CHECKED.filter((m) => bfsCost(m.walls, m.start, m.goal) !== m.cost).map(
+      (m) =>
+        `${m.name}: oracle said ${String(bfsCost(m.walls, m.start, m.goal))}, hand says ${String(m.cost)}`,
+    );
+    expect(wrong).toEqual([]);
+  });
+
+  it('returns a path of exactly the hand-computed optimal length on each map', () => {
+    const wrong: string[] = [];
+    for (const m of HAND_CHECKED) {
+      const path = findPath(navOf(m.walls), OPEN, m.start, m.goal);
+      const got = path === null ? null : path.length;
+      if (got !== m.cost)
+        wrong.push(`${m.name}: findPath cost ${String(got)}, optimal ${String(m.cost)}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it('agrees with the oracle on every ordered pair of cells in the spiral', () => {
+    const walls = HAND_CHECKED[3]!.walls;
+    const nav = navOf(walls);
+    const cells: Cell[] = [];
+    for (let y = 0; y < walls.length; y++) {
+      for (let x = 0; x < (walls[0]?.length ?? 0); x++) cells.push({ x, y });
+    }
+
+    const disagreements: string[] = [];
+    let detours = 0;
+    for (const s of cells) {
+      for (const g of cells) {
+        const want = bfsCost(walls, s, g);
+        const path = findPath(nav, OPEN, s, g);
+        const got = path === null ? null : path.length;
+        if (got !== want) {
+          disagreements.push(
+            `(${s.x},${s.y})->(${g.x},${g.y}): got ${String(got)}, optimal ${String(want)}`,
+          );
+        }
+        if (want !== null && want > manhattan(s, g)) detours += 1;
+      }
+    }
+    expect(disagreements).toEqual([]);
+    // The sweep only means something if the map actually forces routes longer than the
+    // straight-line distance: on an open grid every monotone route is optimal, so the same loop
+    // would pass over a badly broken search. This is a non-degeneracy floor, not a recorded
+    // value — a single winding corridor puts most of the 6561 ordered pairs above their
+    // Manhattan distance, and any figure in the hundreds means the map is still a maze.
+    expect(detours).toBeGreaterThan(500);
+  });
+});
+
+describe('findAttackPath — closes by the shortest route', () => {
+  it('reaches a nearest qualifying cell, at the oracle\u2019s cost', () => {
+    // The `detour under a two-cell wall` map: attacker at (0,0), target at (4,0), range 1.
+    // Cells that qualify (Chebyshev 1 of the target, not the target's own cell, LOS clear) are
+    // (3,0), (3,1) and (4,1), at oracle costs 7, 6 and 7. The closing path must therefore be 6.
+    const walls = ['..#..', '..#..', '.....'];
+    const nav = navOf(walls);
+    const start = { x: 0, y: 0 };
+    const target = { x: 4, y: 0 };
+    const range = 1;
+
+    const path = findAttackPath(nav, OPEN, start, target, range);
+    expect(path).not.toBeNull();
+    expect(path!.length).toBe(6);
+
+    // …and the same number derived independently: the cheapest reachable cell that qualifies.
+    let best: number | null = null;
+    for (let y = 0; y < walls.length; y++) {
+      for (let x = 0; x < (walls[0]?.length ?? 0); x++) {
+        const c = { x, y };
+        if (c.x === target.x && c.y === target.y) continue;
+        if (!inWeaponRange(nav, c, target, range)) continue;
+        const d = bfsCost(walls, start, c);
+        if (d !== null && (best === null || d < best)) best = d;
+      }
+    }
+    expect(path!.length).toBe(best);
+  });
+
+  it('breaks a tie among equally close firing positions by (x, then y)', () => {
+    // A pillar at (2,2) splits the approach from (2,0) to a target at (2,4) into two mirror
+    // routes. The nearest cells that can hit the target are (1,3) and (3,3), both exactly four
+    // steps out — so the documented rule (smallest distance, then smallest x, then smallest y) is
+    // the only thing that decides between them. Relax the comparison to `<=` and the answer
+    // becomes whichever cell the flood happened to reach last, which is not a rule at all: it is
+    // an implementation detail that a change to the neighbour scan order would silently move.
+    const walls = ['.....', '.....', '..#..', '.....', '.....'];
+    const nav = navOf(walls);
+    const start = { x: 2, y: 0 };
+    const target = { x: 2, y: 4 };
+
+    // The tie is real, and established independently of the function under test.
+    expect(bfsCost(walls, start, { x: 1, y: 3 })).toBe(4);
+    expect(bfsCost(walls, start, { x: 3, y: 3 })).toBe(4);
+    expect(inWeaponRange(nav, { x: 1, y: 3 }, target, 1)).toBe(true);
+    expect(inWeaponRange(nav, { x: 3, y: 3 }, target, 1)).toBe(true);
+
+    const path = findAttackPath(nav, OPEN, start, target, 1);
+    expect(path).not.toBeNull();
+    expect(path!.length).toBe(4);
+    expect(path![path!.length - 1]).toEqual({ x: 1, y: 3 });
   });
 });
