@@ -65,6 +65,8 @@ import type { InputCollector } from './client/input.js';
 import { createFpsAdapter } from './adapters/fps.js';
 import type { FpsAdapter } from './adapters/fps.js';
 import { FPS_SCENE } from './testing/scenes.js';
+import { installFakeDom, keyEvent } from './testing/dom.js';
+import type { FakeDom } from './testing/dom.js';
 
 /** Canvas size the rig pretends to render at. Only ratios matter; these are the capture's. */
 const VIEWPORT = { width: 1280, height: 720 };
@@ -81,73 +83,6 @@ const NUDGE_PIXELS = 100;
  * broke nothing a human cares about.
  */
 const CLEARLY = 20;
-
-/** A stand-in for the browser objects `createInputCollector` reaches for. */
-interface FakeDom {
-  /** The element the collector treats as the canvas. */
-  canvas: HTMLCanvasElement;
-  /** Deliver an event to every listener the collector registered for `type`. */
-  dispatch(type: string, event: object): void;
-  /** Undo the globals. */
-  restore(): void;
-}
-
-/**
- * Install the smallest DOM the collector needs, and hand back a way to fire events at it.
- *
- * The collector's contract with a browser is narrow and worth writing down: `movementX` /
- * `movementY` on a mouse move under pointer lock, `code` / `repeat` on a key event, and
- * `document.pointerLockElement`. Everything else it does is arithmetic. Faking exactly that keeps
- * the *code under test* real — this is the same module the page loads, not a re-implementation —
- * while letting the assertion run in the same deterministic process as the simulation.
- */
-function installFakeDom(): FakeDom {
-  const listeners = new Map<string, ((event: object) => void)[]>();
-  const add = (type: string, handler: (event: object) => void): void => {
-    const existing = listeners.get(type);
-    if (existing === undefined) listeners.set(type, [handler]);
-    else existing.push(handler);
-  };
-  const remove = (type: string, handler: (event: object) => void): void => {
-    const existing = listeners.get(type);
-    if (existing === undefined) return;
-    const at = existing.indexOf(handler);
-    if (at >= 0) existing.splice(at, 1);
-  };
-
-  const canvas = {
-    addEventListener: add,
-    removeEventListener: remove,
-    getBoundingClientRect: () => ({
-      left: 0,
-      top: 0,
-      width: VIEWPORT.width,
-      height: VIEWPORT.height,
-    }),
-    requestPointerLock: () => undefined,
-    clientWidth: VIEWPORT.width,
-    clientHeight: VIEWPORT.height,
-  } as unknown as HTMLCanvasElement;
-
-  const globals = globalThis as unknown as Record<string, unknown>;
-  const priorWindow = globals['window'];
-  const priorDocument = globals['document'];
-  globals['window'] = { addEventListener: add, removeEventListener: remove };
-  // Pointer lock is engaged: the collector ignores mouse movement without it, and a human plays
-  // the fps game locked. A rig that forgot this would silently measure nothing at all.
-  globals['document'] = { pointerLockElement: canvas };
-
-  return {
-    canvas,
-    dispatch(type: string, event: object): void {
-      for (const handler of [...(listeners.get(type) ?? [])]) handler(event);
-    },
-    restore(): void {
-      globals['window'] = priorWindow;
-      globals['document'] = priorDocument;
-    },
-  };
-}
 
 /** Everything one first-person rig needs: hardware in, pixels out. */
 interface FpsRig {
@@ -222,11 +157,6 @@ function landmarkAhead(rig: FpsRig): { x: number; y: number; z: number } {
   const eye = rig.eye();
   const yaw = (eye.yawDeg * Math.PI) / 180;
   return { x: eye.x + 6 * Math.sin(yaw), y: eye.y, z: eye.z + 6 * Math.cos(yaw) };
-}
-
-/** A keyboard event shaped the way the collector expects one: `code`, `repeat`, `preventDefault`. */
-function keyEvent(code: string): object {
-  return { code, repeat: false, preventDefault: () => undefined };
 }
 
 describe('what the human sees when they move their hands', () => {
