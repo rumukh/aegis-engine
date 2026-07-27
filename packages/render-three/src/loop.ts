@@ -12,13 +12,34 @@
  * @packageDocumentation
  */
 
+/**
+ * The longest stretch of wall-clock one displayed frame may convert into simulation, in seconds.
+ *
+ * This is the project's single answer to "how far behind may the simulation fall before we start
+ * dropping time?", and it exists as one constant because it used to be two. The dev server capped
+ * the elapsed time it handed in at 0.25s while this module capped the steps it would run at 8 —
+ * 0.133s at 60Hz — and then **discarded** the difference. Every displayed frame slower than 133ms
+ * silently lost simulated time, so a slow picture became a slow *game*: measured on `/play/fps`
+ * at ~6.5fps, 42.5 simulated ticks per wall-clock second against a 60Hz simulation.
+ *
+ * Both the elapsed clamp and the step cap are now derived from this, so they cannot disagree
+ * again. `frame-pacing.test.ts` asserts that.
+ */
+export const MAX_CATCHUP_SECONDS = 0.25;
+
+/** Steps that {@link MAX_CATCHUP_SECONDS} of wall-clock buys at `tickRate`. */
+export function maxStepsFor(tickRate: number): number {
+  return Math.max(1, Math.ceil(MAX_CATCHUP_SECONDS * tickRate));
+}
+
 /** Options for {@link createFixedStepLoop}. */
 export interface FixedStepLoopOptions {
   /** Simulation ticks per second. Must be > 0. */
   tickRate: number;
   /**
    * Maximum simulation steps executed for one frame. Caps the "spiral of death" when the host
-   * stalls: time beyond this is dropped rather than simulated in a burst. Defaults to `8`.
+   * stalls: time beyond this is dropped rather than simulated in a burst. Defaults to
+   * {@link maxStepsFor}, i.e. {@link MAX_CATCHUP_SECONDS} at this tick rate.
    */
   maxStepsPerFrame?: number;
 }
@@ -53,7 +74,7 @@ export function createFixedStepLoop(options: FixedStepLoopOptions): FixedStepLoo
     );
   }
   const dt = 1 / options.tickRate;
-  const maxSteps = options.maxStepsPerFrame ?? 8;
+  const maxSteps = options.maxStepsPerFrame ?? maxStepsFor(options.tickRate);
   let accumulator = 0;
   let steps = 0;
 

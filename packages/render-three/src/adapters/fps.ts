@@ -214,6 +214,11 @@ export class FpsAdapter extends BaseAdapter {
     this.camera.up.set(0, 1, 0);
     this.camera.lookAt(position.x + forward.x, eyeY + forward.y, position.z + forward.z);
     this.camera.updateProjectionMatrix();
+    // `lookAt` writes the quaternion; `matrixWorld` (and its inverse, which is what a projection
+    // reads) is only refreshed by a render. Anything that projects between `sync` and the next
+    // `renderer.render` — `aegis.project`, and every test in this package — would otherwise
+    // measure against the previous frame's camera. Same staleness the iso adapter already guards.
+    this.camera.updateMatrixWorld(true);
     this.#eyeLight.position.set(position.x, eyeY, position.z);
   }
 }

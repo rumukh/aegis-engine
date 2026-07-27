@@ -205,15 +205,26 @@ export class PlatformerAdapter extends BaseAdapter {
     if (rig !== undefined) {
       const focus = rig.get(Transform).position;
       this.#applyFrustum(rig.get(PlatformerCamera).viewHeight);
-      this.camera.position.set(focus.x, focus.y, CAMERA_Z);
-      this.camera.lookAt(focus.x, focus.y, 0);
+      this.#aimAt(focus.x, focus.y);
       return;
     }
     const player = world.query({ has: [PlatformerController, Transform] }).first();
     const focus = player?.get(Transform).position ?? { x: 0, y: 0 };
     this.#applyFrustum(FALLBACK_VIEW_HEIGHT);
-    this.camera.position.set(focus.x, focus.y, CAMERA_Z);
-    this.camera.lookAt(focus.x, focus.y, 0);
+    this.#aimAt(focus.x, focus.y);
+  }
+
+  /**
+   * Point the camera at a world position and refresh the matrix a projection reads.
+   *
+   * `lookAt` writes the quaternion; `matrixWorld` and its inverse are only refreshed by a render.
+   * Anything projecting between `sync` and the next `renderer.render` — `aegis.project`, and this
+   * package's tests — would otherwise measure against the previous frame's camera.
+   */
+  #aimAt(x: number, y: number): void {
+    this.camera.position.set(x, y, CAMERA_Z);
+    this.camera.lookAt(x, y, 0);
+    this.camera.updateMatrixWorld(true);
   }
 
   /** Set the orthographic frustum so the viewport spans `viewHeight` world units vertically. */

@@ -25,7 +25,7 @@ import type { LiveSession } from './session.js';
 import { findRepoRoot } from './catalog.js';
 import type { GameDefinition } from './catalog.js';
 import { renderIndexPage, renderPlayPage } from './pages.js';
-import { systemClock } from './loop.js';
+import { MAX_CATCHUP_SECONDS, systemClock } from './loop.js';
 import type { Clock } from './loop.js';
 import type {
   ControlRequest,
@@ -66,31 +66,12 @@ export interface DevServer {
 /**
  * Longest wall-clock gap fed to the accumulator, in seconds. Caps catch-up after a stall.
  *
- * This is the *only* place time is deliberately dropped. It must therefore be at least as tight
- * as the accumulator's own step cap, or the two disagree and the loop silently discards time it
- * was handed — see {@link maxStepsFor}.
+ * Derived from the accumulator's own budget rather than chosen here, because the two used to be
+ * separate numbers that disagreed — see {@link MAX_CATCHUP_SECONDS}.
  */
-const MAX_FRAME_SECONDS = 0.25;
+const MAX_FRAME_SECONDS = MAX_CATCHUP_SECONDS;
 /** Maximum accepted request body, in bytes. */
 const MAX_BODY_BYTES = 1 << 20;
-/** Default fixed ticks per second, matching {@link createLiveSession}'s own default. */
-const DEFAULT_TICK_RATE = 60;
-
-/**
- * Steps the accumulator must be allowed to run so that {@link MAX_FRAME_SECONDS} is the only
- * limit on catch-up.
- *
- * `createFixedStepLoop` defaults to 8 steps per frame and **discards** the remainder
- * (`loop.ts`: `if (accumulator >= dt) accumulator = 0`). At 60Hz that is 133ms of simulated time,
- * while this server hands it up to 250ms — so any displayed frame slower than 133ms lost the
- * difference and the game ran in slow motion, with no error and no event. Measured on
- * `/play/fps` in a headless browser at ~6.5fps: **42.5 simulated ticks per wall-clock second
- * against a 60Hz simulation**, i.e. the game played at 71% speed. Deriving the cap from the same
- * constant removes the disagreement by construction.
- */
-export function maxStepsFor(tickRate: number): number {
-  return Math.max(1, Math.ceil(MAX_FRAME_SECONDS * tickRate));
-}
 
 /** Content types for the handful of extensions `/vendor` can serve. */
 const MIME: Readonly<Record<string, string>> = {
@@ -208,7 +189,6 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         plugin: game.plugin,
         ...(game.seed !== undefined ? { seed: game.seed } : {}),
         ...(game.tickRate !== undefined ? { tickRate: game.tickRate } : {}),
-        maxStepsPerFrame: maxStepsFor(game.tickRate ?? DEFAULT_TICK_RATE),
       }),
       lastFrameAt: clock(),
       eventCursor: 0,
