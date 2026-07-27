@@ -59,20 +59,49 @@ function commandsOf(script: string): string[] {
 }
 
 /**
- * Budget for the determinism case, which is the only expensive test in this file.
+ * What the determinism case costs, and why there is deliberately **no local timeout** on it.
  *
- * Measured on the development box: **20.0 s** for the case run alone, and the PM measured
- * **26.7 s** in a full parallel suite — the latter against a root `testTimeout` that was 30 s at
- * the time, i.e. 1.06 s of margin on a determinism assertion whose timeout would have read as a
- * determinism regression. Dropping the third run below takes those to roughly two thirds. Sized at
- * 60 s so a machine **3x slower** than this one still passes with the in-suite figure, and set
- * deliberately *below* the 120 s root: an explicit local budget fails fast and names itself,
- * whereas a blanket root timeout tells the next person nothing about what the test should cost.
+ * An earlier revision of this file carried `DETERMINISM_BUDGET_MS = 60_000`, justified in a
+ * comment as "3x headroom over the in-suite figure". That budget was wrong, and wrong in the
+ * dangerous direction — it is worth recording why rather than just deleting it.
  *
- * Re-derive rather than trust: `node node_modules/vitest/vitest.mjs run games/fps/test/sector-breach.test.ts`.
+ * The number it was sized against was **inferred, not taken**: the alone figure was measured
+ * post-change (13.1 s) and the in-suite figure was obtained by scaling the old in-suite
+ * measurement by the same ratio (~17.8 s). Measured in-suite figures for this case, all on the
+ * post-change code:
+ *
+ * | observer | conditions                              | duration  |
+ * | -------- | --------------------------------------- | --------- |
+ * | here     | 104-108 node procs, CPU pegged at 100 % | 12.4 s    |
+ * | here     | 104-108 node procs, CPU pegged at 100 % | 12.4 s    |
+ * | here     | 104-108 node procs, CPU pegged at 100 % | 13.5 s    |
+ * | here     | full suite, lighter load                | 13.9 s    |
+ * | PM       | 103 node procs, separate gate worktree  | **30.0 s** |
+ *
+ * Two observers, nominally comparable load, **2.4x apart** — and the high reading has never
+ * reproduced here. That spread is the finding: a single wall-clock sample cannot bound a
+ * wall-clock quantity, so no honestly-derived local budget is available. Sized at 3x the worst
+ * observation it would be 90 s against a 120 s root, which is not meaningfully tighter than the
+ * root and would have been kept for appearance.
+ *
+ * Worse, at 60 s it was a **CI hazard rather than a CI protection**. A hosted runner has 2-4 vCPU
+ * against this box's 16; at the PM's 30 s reading a runner merely 2x slower breaches 60 s, and the
+ * failure presents as "Sector Breach is not deterministic" — precisely the misattribution the
+ * budget existed to prevent. The 120 s root remains and is the operative bound.
+ *
+ * **Why this case is expensive at all**, since that is the thing actually worth fixing: the
+ * harness hashes the world once per tick to build `tickHashes`, and per-tick cost tracks
+ * serialised world size almost linearly across the three PoCs — fps 10.9 ms/tick at a 19.6 kB
+ * snapshot, platformer 5.1 ms/tick at 10.0 kB, iso 1.7 ms/tick at 2.6 kB. **86 % of the fps
+ * snapshot (16.8 kB) is `fps.collision`**, whose `FloorplanCell[]` spends one object with six
+ * fields on every tile, and which is constant for the whole run bar the tick the blast door
+ * opens. A compact cell representation would take this case to roughly iso's cost. It is not done
+ * here because `CollisionGrid.cells` is consumed by `packages/render-three` (`adapters/fps.ts`),
+ * so the shape is a cross-package contract and not this session's to change alone. Reported.
+ *
+ * Re-derive rather than trust — and record what the machine was doing when you do:
+ * `node node_modules/vitest/vitest.mjs run --reporter=json --outputFile=t.json`
  */
-const DETERMINISM_BUDGET_MS = 60_000;
-
 describe('Sector Breach', () => {
   it('completes the playthrough exactly as the spec asserts', async () => {
     await expectGameTest(sectorBreach);
@@ -104,27 +133,23 @@ describe('Sector Breach', () => {
    * second is a run compared to a **pinned literal** (it catches drift *across* processes and
    * machines, which no pair of live runs can see).
    */
-  it(
-    'is deterministic: two independent runs agree tick for tick, and match the pinned goldens',
-    async () => {
-      const options = {
-        plugin: sectorBreachPlugin,
-        ticks: TICKS,
-        seed: SEED,
-        input: SECTOR_BREACH_SCRIPT,
-      } as const;
-      const first = await runScene(SCENE, options);
-      const second = await runScene(SCENE, options);
-      expect(second.hash).toBe(first.hash);
-      // Every per-tick hash matches too — determinism holds tick-by-tick, not just at the end.
-      expect(second.tickHashes).toEqual(first.tickHashes);
-      // ...and the run is byte-stable against the recorded golden master, resting state and
-      // trajectory alike.
-      expect(first.hash).toBe(GOLDEN_HASH);
-      expect(trajectoryDigest(first.tickHashes)).toBe(GOLDEN_TRAJECTORY);
-    },
-    DETERMINISM_BUDGET_MS,
-  );
+  it('is deterministic: two independent runs agree tick for tick, and match the pinned goldens', async () => {
+    const options = {
+      plugin: sectorBreachPlugin,
+      ticks: TICKS,
+      seed: SEED,
+      input: SECTOR_BREACH_SCRIPT,
+    } as const;
+    const first = await runScene(SCENE, options);
+    const second = await runScene(SCENE, options);
+    expect(second.hash).toBe(first.hash);
+    // Every per-tick hash matches too — determinism holds tick-by-tick, not just at the end.
+    expect(second.tickHashes).toEqual(first.tickHashes);
+    // ...and the run is byte-stable against the recorded golden master, resting state and
+    // trajectory alike.
+    expect(first.hash).toBe(GOLDEN_HASH);
+    expect(trajectoryDigest(first.tickHashes)).toBe(GOLDEN_TRAJECTORY);
+  });
 
   it('tilemap and scene floorplans extrude to identical collision (no drift)', () => {
     const tilemap = JSON.parse(readFileSync(TILEMAP, 'utf8')) as TilemapFile;
