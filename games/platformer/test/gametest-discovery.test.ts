@@ -122,34 +122,42 @@ function tsconfigInclude(game: string): string[] {
 }
 
 /**
- * `AGENTS.md` §9 #3 is the hazard these checks close — but **its stated mechanism is wrong, and
- * this comment used to repeat it.** The row says the CLI globs compiled `dist/*.gametest.js`, so a
- * spec in the wrong *directory* is invisible. Measured instead at
- * `packages/cli/src/commands/test.ts:36`, the default is three recursive patterns — a
- * double-star prefix over `*.gametest.js`, `.mjs` and `.cjs`, rooted at the working directory —
- * and that file's own header says discovery is "glob + shape based, never layout based".
- * `dist/*.gametest.js` is merely what each game's own `aegis.json` *declares*; it is not what the
- * CLI looks for. Verified behaviourally: a hand-written `.gametest.mjs` placed inside an excluded
+ * The hazard these checks close is the one recorded in
+ * (`AGENTS.md` §9, "A spec the build excludes is invisible") — a spec that never reaches the
+ * build is never run, and nothing says so out loud.
+ *
+ * Cited by title fragment rather than by row number on purpose: §9 is a numbered table whose rows
+ * get removed and renumbered, so `#3` is an index into a list nobody validates and goes silently
+ * wrong the moment a row above it is deleted. The same reasoning is why nothing below quotes the
+ * row's *wording*. A comment that restates another document's current text is stale by
+ * construction — it decays exactly like the row number does, and a reader who trusts it inherits
+ * whatever the other document used to say. What follows is measured from this repository instead,
+ * so it is checkable here and does not depend on any other file staying still.
+ *
+ * **Measured mechanism.** `packages/cli/src/commands/test.ts:36` sets three *recursive* default
+ * patterns over `*.gametest.js`, `.mjs` and `.cjs`, rooted at the working directory, and that
+ * file's own header states discovery is "glob + shape based, never layout based".
+ * `dist/*.gametest.js` is only what each game's `aegis.json` declares; it is not what the CLI
+ * looks for. Confirmed behaviourally: a hand-written `.gametest.mjs` placed inside an excluded
  * `test/` directory is found and run (`1 file(s) scanned, 1 test(s) found`).
  *
- * So the real precondition is **"the build compiles this file to JS"**, not "this file lives under
- * `src/`". Compilation is the mechanism; location is only this repo's convention. That distinction
- * decides which check below is load-bearing:
+ * So the binding precondition is **"the build compiles this file to JS"**, not "the file lives
+ * under `src/`". Compilation is the mechanism; location is only this repo's convention. That
+ * distinction is what makes the three checks below different claims rather than one repeated:
  *
- *  1. **`compiles to a dist artefact` — the mechanism check.** It holds for a spec in any
- *     directory, and it is the one that actually catches a spec `aegis test` cannot see. A
- *     TypeScript spec the build skips produces no `.js`, so the layout-agnostic glob finds
- *     nothing to match.
- *  2. **`lives under src/` — a convention check**, and narrower than the mechanism on purpose.
- *     Deriving "will tsc compile this?" properly would mean re-implementing TypeScript's
+ *  1. **`compiles to a dist artefact` — the mechanism check.** True of a spec in any directory,
+ *     and the one that actually catches a spec `aegis test` cannot see: a TypeScript spec the
+ *     build skips emits no `.js`, so the layout-agnostic glob has nothing to match.
+ *  2. **`lives under src/` — a convention check**, narrower than the mechanism on purpose.
+ *     Deriving "will tsc compile this?" honestly would mean re-implementing TypeScript's
  *     include/exclude resolution here, which is a new place to be wrong *in the same direction as
- *     the thing it checks*. The literal test is honest as long as it is labelled as convention.
+ *     the thing it checks*. A literal test is fine so long as it is labelled convention.
  *  3. **`src/ is every game's only compiled root` — the check that keeps #2 honest.** It asserts
- *     the assumption #2 rests on, so if a game ever grows a second compiled root, this file says
- *     which assumption broke instead of failing #2 on a perfectly good layout.
+ *     the assumption #2 rests on, so the day a game grows a second compiled root this file names
+ *     the broken assumption instead of failing #2 on a perfectly good layout.
  *
- * The mitigation §9 #3 documents — read the scan count in the CLI summary — is what these replace.
- * A number a human is supposed to notice is not a gate; a test that names the offending path is.
+ * These replace a mitigation that asked a human to read the scan count in the CLI summary. A
+ * number someone is supposed to notice is not a gate; a test that names the offending path is.
  */
 describe('a game spec cannot hide from the build', () => {
   it('compiles to a dist artefact — the mechanism `aegis test` actually depends on', () => {
