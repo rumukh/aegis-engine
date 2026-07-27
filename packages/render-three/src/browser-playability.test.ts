@@ -36,7 +36,11 @@ import type { GameDefinition } from './catalog.js';
 import { BINDINGS } from './bindings.js';
 import { closeAllPages, evaluate, launchBrowser, openPage, sleep, until } from './browser.js';
 import type { CdpSession, LaunchedBrowser } from './browser.js';
-import { FPS_SCENE, ISO_SCENE, PLATFORMER_SCENE } from './testing/scenes.js';
+import {
+  FPS_BUDGET_SCENE,
+  ISO_BUDGET_SCENE,
+  PLATFORMER_BUDGET_SCENE,
+} from './testing/budget-scenes.js';
 
 /** Viewport used for every measurement, in CSS pixels. */
 const VIEWPORT = { width: 1280, height: 720 };
@@ -48,7 +52,8 @@ const SAMPLE_MS = 2500;
  * Milliseconds of **main-thread work** one displayed frame may cost the page: restoring the
  * snapshot, reconciling the scene graph, submitting the draw calls and updating the HUD.
  *
- * Half a 60Hz frame. Measured today across the three PoCs the total is 0.8-2.6ms, so this is not
+ * Half a 60Hz frame. Measured at shipped level scale: platformer 0.60ms, iso 1.00ms, fps 2.20ms,
+ * so this is not
  * a tight fit around current behaviour — it is the point past which the page could not hold 60fps
  * even on a machine with an infinitely fast GPU, which is the only threshold that means anything
  * independent of hardware. Note what it excludes: the `/frame` round trip is not awaited by the
@@ -60,15 +65,23 @@ const FRAME_WORK_BUDGET_MS = 8;
 /**
  * Draw calls one displayed frame may issue.
  *
- * Every draw call is main-thread work in three.js — state changes, uniform uploads, a WebGL call
- * — costing roughly 20-40µs on a real GPU. At 320 that is 6-13ms of CPU before a single pixel is
- * shaded, i.e. most or all of a 60Hz frame, which is why this is the right shape of budget for
- * the symptom reported (34ms frame gaps: exactly one dropped vsync). Measured today: platformer
- * 65, iso 119, fps 285. The fps scene draws one box per floorplan cell plus a ceiling slab, and
- * is the one with no headroom — a level twice the size would need instancing, not a bigger
- * number here.
+ * The fps adapter draws one box per floorplan cell — a column for a solid cell, a floor slab
+ * *and* a ceiling slab for a walkable one — so its draw-call count scales linearly with level
+ * area. At the shipped 11x21 that is about 340 after frustum culling, and the measurement above
+ * puts submission at 1.40ms for 337 calls: **4.2µs each** on this machine.
+ *
+ * The honest cost bound is therefore {@link FRAME_WORK_BUDGET_MS}, which measures that time
+ * directly. This number exists to catch a change of *kind* rather than of degree — an extra
+ * object per cell, a second pass over the level, a decoration on every tile — so it sits at
+ * roughly twice the shipped-scale count: ordinary level growth does not trip it, a per-cell
+ * multiplier does. Verified by mutation: three extra boxes per walkable cell takes it past 800.
+ *
+ * An earlier draft set this to 320 on a guessed 20-40µs per call. That was measured and found
+ * wrong by an order of magnitude, and the number moved rather than the reasoning being kept. If a
+ * level ever does need to be much bigger, the fix is instancing — one `InstancedMesh` per visual
+ * role would take the whole floorplan to about five calls — not a larger number here.
  */
-const DRAW_CALL_BUDGET = 320;
+const DRAW_CALL_BUDGET = 700;
 
 /**
  * Bytes of JSON one displayed frame may carry.
@@ -91,7 +104,7 @@ const GAMES: GameDefinition[] = [
     objective: 'reach the goal',
     mode: 'platformer',
     plugin: platformerPlugin,
-    scene: PLATFORMER_SCENE,
+    scene: PLATFORMER_BUDGET_SCENE,
     bindings: BINDINGS.platformer,
   },
   {
@@ -101,7 +114,7 @@ const GAMES: GameDefinition[] = [
     objective: 'reach the exit',
     mode: 'iso',
     plugin: isoPlugin,
-    scene: ISO_SCENE,
+    scene: ISO_BUDGET_SCENE,
     bindings: BINDINGS.iso,
   },
   {
@@ -111,7 +124,7 @@ const GAMES: GameDefinition[] = [
     objective: 'reach the exit',
     mode: 'fps',
     plugin: fpsPlugin,
-    scene: FPS_SCENE,
+    scene: FPS_BUDGET_SCENE,
     bindings: BINDINGS.fps,
   },
 ];
