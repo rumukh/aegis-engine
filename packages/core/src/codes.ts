@@ -17,6 +17,14 @@ export const CoreDiagnosticCode = {
   NonFiniteState: 'AEG-CORE-0001',
   /** A {@link "./serialize".WorldSnapshot} handed to `World.restore` is structurally invalid. */
   InvalidSnapshot: 'AEG-CORE-0002',
+  /**
+   * A component value, resource value or event payload cannot be held by world state for a
+   * reason other than being non-finite: an explicit `undefined` (which JSON deletes on a save
+   * round trip and the state hash cannot see), a cycle or runaway nesting, a class instance
+   * (which canonicalises to `{}`), or a function/symbol/bigint. See `serialisable.ts` for the
+   * single statement of the rule and why each one matters.
+   */
+  UnserialisableState: 'AEG-CORE-0003',
 } as const;
 
 /** One of the {@link CoreDiagnosticCode} values. */

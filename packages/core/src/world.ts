@@ -14,8 +14,14 @@ import { createEventBus } from './events.js';
 import { createPrng } from './prng.js';
 import { hashSnapshot } from './hash.js';
 import { CoreDiagnosticCode } from './codes.js';
-import { assertFinite, deepClone, deepCloneSerialisable, NonFiniteValueError } from './clone.js';
-import { nonFiniteAtWrite } from './component.js';
+import {
+  assertSerialisable,
+  deepClone,
+  deepCloneSerialisable,
+  UnserialisableValueError,
+} from './clone.js';
+import { explainUnserialisable } from './serialisable.js';
+import { unserialisableAtWrite } from './component.js';
 import { DiagnosticError } from './diagnostics.js';
 import { RESET_LOG, SET_TICK } from './internal.js';
 import type { ComponentInstance, ComponentType, ResourceType } from './component.js';
@@ -94,7 +100,7 @@ export interface WorldConfig {
 }
 
 /**
- * Build the structured diagnostic for a non-finite value found while snapshotting.
+ * Build the structured diagnostic for an unstorable value found while snapshotting.
  *
  * Detection on the live-mutation path is necessarily later than production — catching
  * `world.get(e, C).v = 0 / 0` at a write boundary would mean proxying every component read —
@@ -103,26 +109,27 @@ export interface WorldConfig {
  * the field and the entity, not just the structured `location`/`data`: a caller that only logs
  * `err.message` must still get a usable address.
  */
-function nonFiniteDiagnostic(
-  err: NonFiniteValueError,
+function unserialisableDiagnostic(
+  err: UnserialisableValueError,
   where: string,
   subject: string,
   data: Readonly<Record<string, unknown>>,
 ): DiagnosticError {
   const path = err.path === '' ? where : `${where}.${err.path}`;
   const field = err.path === '' ? '(the whole value)' : err.path;
+  const explained = explainUnserialisable(err.reason, err.detail);
   const diagnostic: Diagnostic = {
-    code: CoreDiagnosticCode.NonFiniteState,
+    code:
+      err.reason === 'non-finite'
+        ? CoreDiagnosticCode.NonFiniteState
+        : CoreDiagnosticCode.UnserialisableState,
     severity: 'error',
     message:
-      `World state holds a non-finite number (${String(err.value)}) at ${path} — ` +
+      `World state holds ${explained.what} at ${path} — ` +
       `${subject}, field "${field}". The world cannot be serialised or hashed while it does.`,
     location: { path },
-    fix:
-      `Find the system that wrote ${path}. ${String(err.value)} almost always comes from a ` +
-      `divide-by-zero, a sqrt of a negative, an uninitialised accumulator, or an out-of-domain ` +
-      `angle. Guard the input rather than the output.`,
-    data: { ...data, field, path, value: String(err.value) },
+    fix: `Find the system that wrote ${path}. ${explained.fix}`,
+    data: { ...data, field, path, reason: err.reason, value: err.detail },
   };
   return new DiagnosticError([diagnostic]);
 }
@@ -179,27 +186,33 @@ function refId(ref: ComponentRef): string {
   return typeof ref === 'string' ? ref : ref.id;
 }
 
-/** Rejection raised when a non-finite value is written into a resource. */
-function nonFiniteAtWriteResource(resourceId: string, err: NonFiniteValueError): DiagnosticError {
+/** Rejection raised when an unstorable value is written into a resource. */
+function unserialisableAtWriteResource(
+  resourceId: string,
+  err: UnserialisableValueError,
+): DiagnosticError {
   const where = `resources.${resourceId}${err.path === '' ? '' : `.${err.path}`}`;
   const field = err.path === '' ? '(the whole value)' : err.path;
+  const explained = explainUnserialisable(err.reason, err.detail);
   return new DiagnosticError([
     {
-      code: CoreDiagnosticCode.NonFiniteState,
+      code:
+        err.reason === 'non-finite'
+          ? CoreDiagnosticCode.NonFiniteState
+          : CoreDiagnosticCode.UnserialisableState,
       severity: 'error',
       message:
-        `Cannot write a non-finite number (${String(err.value)}) to ${where} — ` +
-        `resource "${resourceId}", field "${field}". World state must serialise to JSON ` +
-        `(CHARTER principle 4), and JSON has no representation for NaN or ±Infinity — it would ` +
-        `be silently written out as null.`,
+        `Cannot write ${explained.what} to ${where} — ` +
+        `resource "${resourceId}", field "${field}". ${explained.why}`,
       location: { path: where },
-      fix: `Guard the computation that produced ${String(err.value)} before setting the resource.`,
+      fix: explained.fix,
       data: {
         entity: null,
         component: resourceId,
         field,
         path: where,
-        value: String(err.value),
+        reason: err.reason,
+        value: err.detail,
       },
     },
   ]);
@@ -390,14 +403,27 @@ export function createWorld(config: WorldConfig): World {
   // Component + resource stores.
   const stores = new Map<string, ComponentStore>();
   const resources = new Map<string, unknown>();
+  /**
+   * `stores` keys, sorted, cached until a new component type appears. `snapshot()` needs them in
+   * a canonical order and runs once per `hash()` — every tick, in the harness — so re-sorting per
+   * call would put an O(n log n) on the hot path for a list that changes a handful of times in a
+   * whole run.
+   */
+  let sortedComponentIds: readonly string[] | null = null;
 
   function store(id: string): ComponentStore {
     let s = stores.get(id);
     if (s === undefined) {
       s = makeStore();
       stores.set(id, s);
+      sortedComponentIds = null;
     }
     return s;
+  }
+
+  function componentIdsSorted(): readonly string[] {
+    if (sortedComponentIds === null) sortedComponentIds = [...stores.keys()].sort();
+    return sortedComponentIds;
   }
 
   function isAlive(entity: Entity): boolean {
@@ -427,9 +453,9 @@ export function createWorld(config: WorldConfig): World {
     // allocator holding a half-built entity, perturbing every future entity id.
     for (const c of components) {
       try {
-        assertFinite(c.value);
+        assertSerialisable(c.value);
       } catch (err) {
-        if (err instanceof NonFiniteValueError) throw nonFiniteAtWrite(c.type.id, err);
+        if (err instanceof UnserialisableValueError) throw unserialisableAtWrite(c.type.id, err);
         throw err;
       }
     }
@@ -472,10 +498,10 @@ export function createWorld(config: WorldConfig): World {
     // non-finite that came from `defaults()`), with component-level context.
     if (value !== undefined) {
       try {
-        assertFinite(value);
+        assertSerialisable(value);
       } catch (err) {
-        if (err instanceof NonFiniteValueError) {
-          throw nonFiniteAtWrite(type.id, err, String(entity));
+        if (err instanceof UnserialisableValueError) {
+          throw unserialisableAtWrite(type.id, err, String(entity));
         }
         throw err;
       }
@@ -519,8 +545,8 @@ export function createWorld(config: WorldConfig): World {
     try {
       resources.set(type.id, deepCloneSerialisable(value));
     } catch (err) {
-      if (err instanceof NonFiniteValueError) {
-        throw nonFiniteAtWriteResource(type.id, err);
+      if (err instanceof UnserialisableValueError) {
+        throw unserialisableAtWriteResource(type.id, err);
       }
       throw err;
     }
@@ -710,9 +736,18 @@ export function createWorld(config: WorldConfig): World {
    * {@link CoreDiagnosticCode.NonFiniteState} diagnostic naming the entity, its authoring name,
    * the component and the JSON path — so the answer to "where did the NaN come from?" is in the
    * error, not in a bisect.
+   *
+   * **Component and resource keys are emitted in sorted order.** The snapshot used to inherit
+   * the insertion order of the world's store map, which made it non-canonical: two worlds with
+   * an identical `hash()` — taken over `canonicalStringify`, which sorts — wrote *different save
+   * bytes* after the same operations, purely because their components had been added in a
+   * different order. A save that differs while the state does not defeats the one thing a
+   * diffable save is for, so the ordering is fixed here and not only at the hash. Entities stay
+   * in ascending slot order, which is already canonical.
    */
   function snapshot(): WorldSnapshot {
     const entities: EntitySnapshot[] = [];
+    const componentIds = componentIdsSorted();
     for (const slot of liveSlotsAscending()) {
       const components: Record<string, unknown> = {};
       const id = String(handleFor(slot));
@@ -723,13 +758,14 @@ export function createWorld(config: WorldConfig): World {
         const n = (storeGet(nameStore, slot) as { value?: unknown }).value;
         if (typeof n === 'string') name = n;
       }
-      for (const [componentId, s] of stores) {
+      for (const componentId of componentIds) {
+        const s = stores.get(componentId) as ComponentStore;
         if (!storeHas(s, slot)) continue;
         try {
           components[componentId] = deepCloneSerialisable(storeGet(s, slot));
         } catch (err) {
-          if (err instanceof NonFiniteValueError) {
-            throw nonFiniteDiagnostic(
+          if (err instanceof UnserialisableValueError) {
+            throw unserialisableDiagnostic(
               err,
               `entities[${id}].components.${componentId}`,
               `entity ${id}${name === undefined ? '' : ` ("${name}")`}, component "${componentId}"`,
@@ -745,12 +781,12 @@ export function createWorld(config: WorldConfig): World {
     }
 
     const resourcesOut: Record<string, unknown> = {};
-    for (const [id, value] of resources) {
+    for (const id of [...resources.keys()].sort()) {
       try {
-        resourcesOut[id] = deepCloneSerialisable(value);
+        resourcesOut[id] = deepCloneSerialisable(resources.get(id));
       } catch (err) {
-        if (err instanceof NonFiniteValueError) {
-          throw nonFiniteDiagnostic(err, `resources.${id}`, `resource "${id}"`, {
+        if (err instanceof UnserialisableValueError) {
+          throw unserialisableDiagnostic(err, `resources.${id}`, `resource "${id}"`, {
             entity: null,
             entityName: null,
             component: id,
@@ -793,6 +829,7 @@ export function createWorld(config: WorldConfig): World {
     for (const f of snap.allocator.free) free.push(f);
 
     stores.clear();
+    sortedComponentIds = null;
     resources.clear();
     liveCount = 0;
 

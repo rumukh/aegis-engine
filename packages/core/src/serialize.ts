@@ -6,6 +6,16 @@
  * **canonical** — object keys are emitted in a fixed (sorted) order, `-0` is normalised to
  * `0`, and non-finite numbers (`NaN`, `±Infinity`) are rejected — so the byte stream depends
  * only on state, which is what makes {@link "./hash".hashSnapshot} reproducible.
+ *
+ * That property belongs to the *snapshot* as well as to {@link canonicalStringify}, and for a
+ * while only the encoder had it: `World.snapshot` emitted each entity's components, and the
+ * world's resources, in the order the world happened to learn them. Two worlds with an
+ * identical `hash()` therefore wrote **different save bytes** after the same operations. The
+ * hash was fine (it goes through the sorting encoder); the *save* was not, and a save that
+ * differs while the state does not is the one thing a plain-JSON save must never do. `snapshot`
+ * now sorts both maps. The surrounding fixed-shape structs (`version`/`tick`/`entities`/… and
+ * `id`/`name`/`components`) keep declaration order: they come from object literals, so their
+ * order is already invariant, and reading `version` first beats reading `allocator` first.
  * @packageDocumentation
  */
 import type { PrngState } from './prng.js';

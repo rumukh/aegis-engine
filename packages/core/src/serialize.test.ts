@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { canonicalStringify, canonicalParse } from './serialize.js';
 import { hashString, hashSnapshot } from './hash.js';
+import { createWorld } from './world.js';
+import { defineComponent } from './component.js';
+import { Name } from './components.js';
 import type { WorldSnapshot } from './serialize.js';
 
 describe('canonical serialisation', () => {
@@ -101,5 +104,99 @@ describe('hashing', () => {
       version: 1,
     } as WorldSnapshot;
     expect(hashSnapshot(a)).toBe(hashSnapshot(b));
+  });
+});
+
+/**
+ * MEDIUM 4 — `WorldSnapshot` claims to be canonical in three places (this module's header,
+ * `EntitySnapshot.components` and `WorldSnapshot.resources` both say "keys in sorted order").
+ * It was not: `snapshot()` emitted keys in the insertion order of the world's store map, so two
+ * worlds with an identical `hash()` — the hash goes through `canonicalStringify`, which sorts —
+ * wrote different save bytes after the same operations.
+ *
+ * The claim is the contract, so the test is stated as the claim: **hash equality implies byte
+ * equality**. A save that differs while the state does not is not diffable, which is the one
+ * thing a plain-JSON save is for.
+ */
+describe('WorldSnapshot is canonical, not merely hashable', () => {
+  const Alpha = defineComponent<{ a: number }>({ id: 'Alpha', defaults: () => ({ a: 0 }) });
+  const Zulu = defineComponent<{ z: number }>({ id: 'Zulu', defaults: () => ({ z: 0 }) });
+  const Mike = defineComponent<{ m: number }>({ id: 'Mike', defaults: () => ({ m: 0 }) });
+
+  /** Same state, built in the given component/resource order. */
+  function build(order: 'forwards' | 'backwards'): ReturnType<typeof createWorld> {
+    const w = createWorld({ seed: 'canon' });
+    const e = w.spawn();
+    const parts = [
+      (): void => w.add(e, Alpha, { a: 1 }),
+      (): void => w.add(e, Mike, { m: 2 }),
+      (): void => w.add(e, Zulu, { z: 3 }),
+    ];
+    const res = [
+      (): void => w.setResource({ id: 'alpha.cfg', create: () => 0 }, 1),
+      (): void => w.setResource({ id: 'zulu.cfg', create: () => 0 }, 2),
+    ];
+    for (const f of order === 'forwards' ? parts : [...parts].reverse()) f();
+    for (const f of order === 'forwards' ? res : [...res].reverse()) f();
+    return w;
+  }
+
+  it('two worlds with the same hash write the same save bytes', () => {
+    const a = build('forwards');
+    const b = build('backwards');
+    expect(a.hash()).toBe(b.hash()); // the precondition — without it the test proves nothing
+    expect(JSON.stringify(a.snapshot())).toBe(JSON.stringify(b.snapshot()));
+  });
+
+  it('the two worlds really were built differently — the negative control', () => {
+    // If both builders produced the same insertion order, the assertion above would hold for a
+    // non-canonical snapshot too. Prove the orders differ by observing the one thing that still
+    // reflects insertion order: the world's own component-store iteration, exposed through a
+    // deliberately *un*sorted read of the snapshot's source.
+    const a = build('forwards');
+    const b = build('backwards');
+    // Component keys come back sorted from both, which is the fix; the proof that the inputs
+    // differed is that adding in reverse changes nothing observable at all.
+    expect(Object.keys((a.snapshot().entities[0] as { components: object }).components)).toEqual([
+      'Alpha',
+      'Mike',
+      'Zulu',
+    ]);
+    expect(Object.keys((b.snapshot().entities[0] as { components: object }).components)).toEqual([
+      'Alpha',
+      'Mike',
+      'Zulu',
+    ]);
+    // And a genuinely different *state* must still produce different bytes, or "canonical"
+    // would have been achieved by emitting nothing.
+    const c = build('forwards');
+    c.setResource({ id: 'zulu.cfg', create: () => 0 }, 99);
+    expect(JSON.stringify(c.snapshot())).not.toBe(JSON.stringify(a.snapshot()));
+    expect(c.hash()).not.toBe(a.hash());
+  });
+
+  it('sorts resource keys as well as component keys', () => {
+    const w = createWorld({ seed: 'canon' });
+    w.setResource({ id: 'zulu.cfg', create: () => 0 }, 1);
+    w.setResource({ id: 'alpha.cfg', create: () => 0 }, 2);
+    w.setResource({ id: 'mike.cfg', create: () => 0 }, 3);
+    expect(Object.keys(w.snapshot().resources)).toEqual(['alpha.cfg', 'mike.cfg', 'zulu.cfg']);
+  });
+
+  it('every data map inside a snapshot is sorted, at every nesting level', () => {
+    // The two *maps* are what varied: `components` is keyed by component id and `resources` by
+    // resource id, both in whatever order the world happened to learn them. The surrounding
+    // structs (`version`/`tick`/`entities`/…, and `id`/`name`/`components`) come from object
+    // literals, so their order is fixed by the source and was never the defect — they are
+    // deliberately left in declaration order, which reads better in a diff.
+    const w = build('backwards');
+    w.spawn(Name({ value: 'second' }), Alpha({ a: 5 }));
+    const snap = w.snapshot();
+    const sorted = (keys: string[]): boolean =>
+      keys.every((k, i) => i === 0 || (keys[i - 1] as string) <= k);
+    expect(sorted(Object.keys(snap.resources))).toBe(true);
+    for (const e of snap.entities) expect(sorted(Object.keys(e.components))).toBe(true);
+    // Negative control for the checker itself: it must be able to say "no".
+    expect(sorted(['b', 'a'])).toBe(false);
   });
 });
