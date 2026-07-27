@@ -671,7 +671,24 @@ describe('a stalled frame request must not freeze the game', () => {
         'globalThis.aegis.timings().exchangeErrors',
         atStall.exchangeErrors,
         'abort recorded',
-      );
+      ).catch(async (error: unknown) => {
+        // Distinguish "recovery is broken" from "the browser was never scheduled". The page's
+        // abort is a 2s timer; if it has not fired within this budget then either the timer is
+        // gone — a real defect — or the page has not run at all, which is a fact about the
+        // machine. The frame counter tells them apart, and a red that cannot say which is a red
+        // nobody can act on. Measured once at `swallowed +721ms` during a 62-file `verify`.
+        const now = JSON.parse(
+          await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
+        ) as Timings;
+        const drew = now.frames - atStall.frames;
+        log.push(
+          drew > 0
+            ? `page drew ${drew} frames while waiting, so it WAS running and the abort never came`
+            : 'page drew NO frames while waiting: it was never scheduled, which is the machine ' +
+                'and not the product — this file competes with sixty others for a software rasteriser',
+        );
+        throw error;
+      });
 
       // 3. Recovery: the exchange loop goes round again on its own, without a reload or a click.
       await awaitCounter(
