@@ -58,6 +58,26 @@ const eslint = new ESLint({ cwd: REPO_ROOT });
  * cheaper without linting against a *different* config, which is precisely what this file exists
  * to prevent.
  *
+ * ## Where the load actually goes, since "make it cheap" is the obvious first ask
+ *
+ * ```
+ * import('typescript')          760 - 1031 ms
+ * import('eslint')             5957 - 13959 ms
+ * import('typescript-eslint') 21000 - 34668 ms   <- the whole cost
+ * import('./eslint.config.js')    83 -   306 ms   (once its deps are loaded)
+ * ```
+ *
+ * It is **package-graph loading**, not compilation and not linting: TypeScript itself is a second,
+ * and the config module evaluates in a tenth of one. The figures do not settle as the OS cache
+ * warms, which on Windows points at on-access AV scanning of tens of thousands of small files.
+ *
+ * The consequence worth knowing before treating this file as an outlier: `npm run lint:code`
+ * (`eslint .`) pays the same entry fee, and was measured at **125.5 s** on this box — roughly
+ * **2×** this whole 19-case file (68.8 s wall) and ~4.6× its slowest case. A runner that cannot
+ * afford this test cannot afford the gate's own lint step, which fails first and more loudly, with
+ * no timeout to misattribute. So the honest reading is that this file is not expensive in itself;
+ * it is one of two places that must load this repository's lint config at all.
+ *
  * What can be fixed is where the cost lands. It used to be billed to whichever case ran first,
  * putting ~19 s of setup inside a 30 s per-test budget: ~10 s of headroom, so the file went red
  * under load — on this machine during a parallel `npm run verify`, and predictably on a cold,
@@ -90,10 +110,11 @@ const eslint = new ESLint({ cwd: REPO_ROOT });
  * The spread is dominated by **cold I/O**, not CPU: saturating all sixteen cores barely moves it
  * (16.6 s → 13.5 s, within noise), while an uncached module graph quadruples it. A CI runner is
  * the bad case on both axes — cold every time, and 2-4 cores against this box's 16 — so 600 s is
- * ~4.6× the worst seen. That looks extravagant and is deliberate: a hook budget is a *hang*
- * detector, its only cost is how long a genuine hang takes to surface, and the failure it must
- * never produce is a timeout that an agent cannot tell apart from a real cross-OS determinism
- * finding on the first CI run this project has ever had.
+ * ~4.6× the worst seen here and ~22× the PM's 27 s single-case reading. A machine **3× slower than
+ * this one** would land near 390 s at the worst observed and still pass. That looks extravagant
+ * and is deliberate: a hook budget is a *hang* detector, its only cost is how long a genuine hang
+ * takes to surface, and the failure it must never produce is a timeout that an agent cannot tell
+ * apart from a real cross-OS determinism finding on the first CI run this project has ever had.
  */
 const CONFIG_LOAD_BUDGET_MS = 600_000;
 
