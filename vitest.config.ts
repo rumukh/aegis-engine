@@ -62,7 +62,25 @@ export default defineConfig({
     // slow test to be fixed; it is the work the charter asks for. Left at the default it fails
     // intermittently *by timeout*, which in a deterministic engine reads exactly like a
     // determinism regression and sends whoever sees it hunting a bug that isn't there.
-    testTimeout: 30_000,
+    //
+    // 30s was still too tight, and the measurement that shows it is not the obvious one. Per-test
+    // durations from a full `--reporter=json` run on a busy 16-core box:
+    //
+    //   129.3s  harness  lint-guard-rails.invariant  "the probe pipeline itself works"
+    //    28.9s  games    sector-breach  "is deterministic: identical hash across independent runs"
+    //    14.3s  games    gametest-discovery  "every game exposes at least one runnable GameTest"
+    //
+    // The dangerous row is the middle one: a *determinism* test finishing 1.06s inside a 30s
+    // limit. Nothing about that test is broken — it is one loaded machine from turning red, and
+    // the red it produces is the exact false positive the paragraph above exists to prevent. CI
+    // runners have 2-4 cores against this box's 16, so the margin there is smaller still, and the
+    // `ubuntu-latest` leg is the first cross-OS determinism run this project has ever executed:
+    // a timeout there would be indistinguishable from the finding that leg exists to produce.
+    //
+    // 120s is four times the slowest test that is not a subprocess pipeline. It is a bound on
+    // hangs, not a budget — the 129s outlier spawns a real eslint run and needs its own explicit
+    // timeout in its own file, which belongs to whoever owns `packages/harness`.
+    testTimeout: 120_000,
     environment: 'node',
     reporters: ['default'],
   },
