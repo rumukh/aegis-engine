@@ -314,11 +314,16 @@ async function sample(url: string): Promise<{
   cdp: CdpSession;
   timings: Timings;
   samples: Samples;
+  bootMs: number;
+  sampleMs: number;
 }> {
+  const openedAt = Date.now();
   await closeAllPages(browser.port);
   const cdp = await openPage(browser.port, url, VIEWPORT);
   await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
+  const bootMs = Date.now() - openedAt;
   await sleep(400);
+  const sampleStart = Date.now();
   await evaluate<null>(cdp, 'globalThis.aegis.resetTimings(); null');
   const startedSnapshots = (
     JSON.parse(await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())')) as Timings
@@ -342,7 +347,7 @@ async function sample(url: string): Promise<{
   const samples = JSON.parse(
     await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.samples())'),
   ) as Samples;
-  return { cdp, timings, samples };
+  return { cdp, timings, samples, bootMs, sampleMs: Date.now() - sampleStart };
 }
 
 describe('the frame budget, measured in a real browser', () => {
@@ -365,7 +370,9 @@ describe('the frame budget, measured in a real browser', () => {
 
   for (const game of GAMES) {
     it(`${game.id}: holds the per-frame budget`, async () => {
-      const { cdp, timings, samples } = await sample(`${server.url}/play/${game.id}`);
+      const { cdp, timings, samples, bootMs, sampleMs } = await sample(
+        `${server.url}/play/${game.id}`,
+      );
       cdp.close();
 
       // The page's own bookkeeping, excluding the GPU-bound submit. See the constant's docblock.
@@ -388,7 +395,7 @@ describe('the frame budget, measured in a real browser', () => {
           ` · gap p95 ${percentile(samples.gaps, 95).toFixed(1)}ms [reporting only; control ` +
           `${controlGapP95.toFixed(1)}ms, bound ${FRAME_GAP_P95_REPORTING_MS}ms] · ` +
           `${timings.drawCalls} draws · ${timings.exchangeBytes}B · ` +
-          `exchange ${timings.exchange.toFixed(1)}ms · ${timings.frames} frames, ` +
+          `exchange ${timings.exchange.toFixed(1)}ms · boot ${bootMs}ms + sample ${sampleMs}ms · ${timings.frames} frames, ` +
           `${timings.snapshots} snapshots, ${timings.exchangeErrors} exchange errors, ` +
           `${samples.work.length} samples`,
       );
@@ -568,53 +575,119 @@ function stallingProxy(target: string): {
   };
 }
 
+/**
+ * How long any single state transition in the freeze tests may take, in milliseconds.
+ *
+ * Every wait in those tests is on a **transition**, never on a duration, because the first
+ * version waited fixed intervals and failed 2 runs in 3 under full-suite load: it slept 900ms and
+ * then asserted the proxy had swallowed a request, on a page whose exchange round trip has been
+ * measured at 688ms and 992ms on this box. At roughly one exchange per second a 900ms window is a
+ * coin flip on whether a request was even *issued* — so the test was sampling an outcome instead
+ * of observing the mechanism, which is the failure it exists to catch, committed by the test.
+ *
+ * It also asserted `inFlight === true`, a state that lives only between the stall and the page's
+ * own 2s abort. Catching a transient over a CDP round trip on a loaded machine is another coin
+ * flip; the durable evidence that a request was abandoned rather than answered is that
+ * `exchangeErrors` rose, and that is what is asserted now.
+ *
+ * 30s is fifteen times the mechanism's own 2s timeout, so it holds on a machine several times
+ * slower than this one. It is a bound on hanging, not a budget: in a healthy run every one of
+ * these transitions lands in well under a second, and the test prints how long each actually took
+ * so a drift toward the bound is visible rather than sudden.
+ */
+const FREEZE_TRANSITION_BUDGET_MS = 30_000;
+
+/** Poll an in-process predicate until it holds, naming what was being waited for on timeout. */
+async function untilLocal(
+  predicate: () => boolean,
+  what: string,
+  timeoutMs = FREEZE_TRANSITION_BUDGET_MS,
+): Promise<number> {
+  const started = Date.now();
+  for (;;) {
+    if (predicate()) return Date.now() - started;
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`[freeze test] waited ${timeoutMs}ms for ${what} and it never happened`);
+    }
+    await sleep(20);
+  }
+}
+
 describe('a stalled frame request must not freeze the game', () => {
   it('recovers on its own after a request that never answers', async () => {
     const proxy = stallingProxy(server.url);
     const proxyUrl = await proxy.url;
+    const log: string[] = [];
     try {
       await closeAllPages(browser.port);
       const cdp = await openPage(browser.port, `${proxyUrl}/play/platformer`, VIEWPORT);
       await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
-      await sleep(300);
 
       const read = async (): Promise<Timings> =>
         JSON.parse(
           await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
         ) as Timings;
+      /** Wait for a page-side counter to pass `floor`, timing and logging the transition. */
+      const awaitCounter = async (
+        expression: string,
+        floor: number,
+        what: string,
+      ): Promise<void> => {
+        const started = Date.now();
+        await until<number>(cdp, expression, (n) => n > floor, FREEZE_TRANSITION_BUDGET_MS);
+        log.push(`${what} +${Date.now() - started}ms`);
+      };
 
-      const healthy = await read();
-      // Precondition: the page is talking through the proxy at all. Without this, a page that
-      // failed to boot would "recover" trivially.
-      expect(healthy.snapshots).toBeGreaterThan(0);
-
-      proxy.stallNext();
-      // Give the page long enough to send the doomed request and sit on it. The page's own
-      // timeout is 2s, so the stall is real and visible in between.
-      await sleep(900);
-      expect(proxy.stalled(), 'the proxy must actually have swallowed a request').toBe(1);
-      const frozen = await read();
-      expect(frozen.inFlight, 'the page must be waiting on the swallowed request').toBe(true);
-      const frozenSnapshots = frozen.snapshots;
-
-      // The whole assertion: the page comes back by itself, without a reload, without a click.
-      const recovered = await until<number>(
+      // Precondition, waited for rather than slept for: the page is demonstrably exchanging
+      // through the proxy. A page that failed to boot would otherwise "recover" trivially.
+      await until<number>(
         cdp,
         'globalThis.aegis.timings().snapshots',
-        (count) => count > frozenSnapshots,
-        15_000,
+        (n) => n >= SAMPLE_EXCHANGES,
+        FREEZE_TRANSITION_BUDGET_MS,
       );
-      expect(recovered).toBeGreaterThan(frozenSnapshots);
-      const after = await read();
-      // And it recorded the failure rather than swallowing it: an instrument that recovered
-      // silently would leave nobody able to tell a stall from a slow frame.
-      expect(after.exchangeErrors).toBeGreaterThan(0);
+      const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+
+      // 1. Arm the stall and wait for the proxy to actually swallow a request. This is in-process
+      //    and exact — no assumption about how often the page talks.
+      proxy.stallNext();
+      log.push(
+        `swallowed +${await untilLocal(() => proxy.stalled() === 1, 'a /frame request to be swallowed')}ms`,
+      );
+      const atStall = await read();
+
+      // 2. The durable evidence that the swallowed request was *abandoned* rather than answered:
+      //    the page recorded a failed exchange. Nothing else in this test can raise that counter.
+      await awaitCounter(
+        'globalThis.aegis.timings().exchangeErrors',
+        atStall.exchangeErrors,
+        'abort recorded',
+      );
+
+      // 3. Recovery: the exchange loop goes round again on its own, without a reload or a click.
+      await awaitCounter(
+        'globalThis.aegis.timings().snapshots',
+        atStall.snapshots,
+        'exchange resumed',
+      );
+
+      // 4. And the world moved — a page that resumed fetching but never advanced would pass 3.
+      const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+      report(`freeze/stall: ${log.join(' · ')} · tick ${tickBefore} -> ${tickAfter}`);
+      expect(tickAfter).toBeGreaterThan(tickBefore);
+      expect(proxy.stalled()).toBe(1);
       cdp.close();
+    } catch (error) {
+      // A failure here must say which transition never arrived, not just that a wait expired.
+      report(
+        `freeze/stall FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
+      );
+      throw error;
     } finally {
       proxy.server.closeAllConnections();
       proxy.server.close();
     }
-  }, 90_000);
+  }, 120_000);
 
   it('resumes after a run of exchanges that are refused outright', async () => {
     // The other half of the guard's contract, and the cheaper failure to cause: a *settled*
@@ -624,52 +697,74 @@ describe('a stalled frame request must not freeze the game', () => {
     // the loop did not resume the game would be dead until the human reloaded.
     const proxy = stallingProxy(server.url);
     const proxyUrl = await proxy.url;
+    const log: string[] = [];
     try {
       await closeAllPages(browser.port);
       const cdp = await openPage(browser.port, `${proxyUrl}/play/iso`, VIEWPORT);
       await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
-      await sleep(300);
 
       const read = async (): Promise<Timings> =>
         JSON.parse(
           await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
         ) as Timings;
+      const awaitCounter = async (
+        expression: string,
+        floor: number,
+        what: string,
+      ): Promise<void> => {
+        const started = Date.now();
+        await until<number>(cdp, expression, (n) => n > floor, FREEZE_TRANSITION_BUDGET_MS);
+        log.push(`${what} +${Date.now() - started}ms`);
+      };
 
-      const healthy = await read();
-      expect(
-        healthy.snapshots,
-        'the page must be exchanging before anything is broken',
-      ).toBeGreaterThan(0);
-      const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-
-      proxy.rejectNext(25);
-      await until<number>(cdp, 'globalThis.aegis.timings().exchangeErrors', (n) => n >= 5, 15_000);
-      // Precondition: the failures were real and were seen. Without this, a proxy that never
-      // refused anything would make "the page recovered" a statement about nothing.
-      expect(proxy.rejected(), 'the proxy must actually have refused requests').toBeGreaterThan(4);
-
-      const failing = await read();
-      const snapshotsAtFailure = failing.snapshots;
-
-      const recovered = await until<number>(
+      // Waited for, not slept for — same reason as the stall test above.
+      await until<number>(
         cdp,
         'globalThis.aegis.timings().snapshots',
-        (count) => count > snapshotsAtFailure,
-        15_000,
+        (n) => n >= SAMPLE_EXCHANGES,
+        FREEZE_TRANSITION_BUDGET_MS,
+      );
+      const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+
+      // 1. Refuse a run of exchanges, then wait for the proxy to have actually refused them.
+      proxy.rejectNext(25);
+      log.push(
+        `refused +${await untilLocal(() => proxy.rejected() >= 5, 'the proxy to refuse five requests')}ms`,
+      );
+      // 2. And wait for the page to have *seen* them. A proxy that refused into the void would
+      //    make "the page recovered" a statement about nothing.
+      await until<number>(
+        cdp,
+        'globalThis.aegis.timings().exchangeErrors',
+        (n) => n >= 5,
+        FREEZE_TRANSITION_BUDGET_MS,
+      );
+      const failing = await read();
+
+      // 3. Recovery, and 4. the world moving again.
+      await awaitCounter(
+        'globalThis.aegis.timings().snapshots',
+        failing.snapshots,
+        'exchange resumed',
       );
       const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
       report(
-        `refused ${proxy.rejected()} exchanges; page recovered to ${recovered} snapshots, ` +
+        `freeze/reject: refused ${proxy.rejected()} · ${log.join(' · ')} · ` +
           `tick ${tickBefore} -> ${tickAfter}`,
       );
-      expect(recovered).toBeGreaterThan(snapshotsAtFailure);
+      expect(proxy.rejected()).toBeGreaterThan(4);
       // Liveness, not just plumbing: the simulation is advancing again, which is what a human
-      // would check. A page that resumed fetching but never advanced would pass the line above.
+      // would check. A page that resumed fetching but never advanced would pass step 3.
       expect(tickAfter).toBeGreaterThan(tickBefore);
       cdp.close();
+    } catch (error) {
+      report(
+        `freeze/reject FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
+      );
+      throw error;
     } finally {
       proxy.server.closeAllConnections();
       proxy.server.close();
     }
-  }, 90_000);
+  }, 120_000);
 });
