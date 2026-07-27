@@ -30,7 +30,7 @@
  * @packageDocumentation
  */
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { ESLint } from 'eslint';
 import type { Linter } from 'eslint';
 
@@ -38,6 +38,66 @@ import type { Linter } from 'eslint';
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const eslint = new ESLint({ cwd: REPO_ROOT });
+
+/**
+ * Budget for the one-time flat-config load, and for each case afterwards.
+ *
+ * Measured on this repository, in one process:
+ *
+ * ```
+ * new ESLint({ cwd })                            3 ms
+ * calculateConfigForFile (flat config load)  16634 ms
+ * 1st lintText                                 141 ms
+ * 2nd lintText                                   8 ms
+ * 18 further lintText calls (warm)             304 ms
+ * ```
+ *
+ * So the ~19 s this file used to cost is **not** the linting — all 19 probes together are under
+ * half a second on a warm process. It is a single, process-wide load of `eslint.config.js`, which
+ * pulls in `typescript-eslint` and through it the TypeScript compiler. Nothing here can make that
+ * cheaper without linting against a *different* config, which is precisely what this file exists
+ * to prevent.
+ *
+ * What can be fixed is where the cost lands. It used to be billed to whichever case ran first,
+ * putting ~19 s of setup inside a 30 s per-test budget: ~10 s of headroom, so the file went red
+ * under load — on this machine during a parallel `npm run verify`, and predictably on a cold,
+ * slower CI runner. A timeout is indistinguishable from a broken guard, and it would blame
+ * whichever unrelated commit happened to be in flight.
+ *
+ * The load now happens once in `beforeAll`, so every case below is billed only its own ~20 ms.
+ *
+ * The number is sized against the **cold** figure, not the warm one. On a freshly `npm ci`-ed
+ * tree under full parallel load — the CI condition — the same load was measured at **67.5 s**,
+ * about 4× the warm 16.6 s, because none of the module graph is in the OS file cache. 300 s is
+ * ~4.4× that, which leaves a 2-core hosted runner room to be twice as slow again and still have
+ * 2× margin. The point of a budget on a known-slow, known-bounded step is to fail only when it
+ * has genuinely hung.
+ */
+const CONFIG_LOAD_BUDGET_MS = 300_000;
+
+/**
+ * Load the flat config once, and prove it is the real one.
+ *
+ * The proof is not decoration. Everything below asks "did rule X fire?", and an empty or
+ * unresolved config answers "no" to all of them — which reads as eighteen negative cases passing.
+ * The first case guards that from one side (a clean file must produce no violations, which is also
+ * what linting nothing produces); this guards it from the other, by requiring the rules under test
+ * to be *configured* for a path they must cover before any case runs.
+ *
+ * It is falsifiable, measured rather than assumed: `calculateConfigForFile` returns 269 rules for
+ * `packages/core/src/zz-warm.ts` and `undefined` for a path the config ignores (anything under
+ * `dist/`). Point this at the wrong tree and the hook fails.
+ */
+beforeAll(async () => {
+  const config: Linter.Config | undefined = await eslint.calculateConfigForFile(
+    `${REPO_ROOT}packages/core/src/zz-warm.ts`,
+  );
+  expect(
+    Object.keys(config?.rules ?? {}),
+    'the flat config resolved to nothing, or to something without the rules this file tests — ' +
+      'every case below would then "pass" by linting against nothing',
+  ).toEqual(expect.arrayContaining(['no-restricted-syntax', 'no-restricted-properties']));
+}, CONFIG_LOAD_BUDGET_MS);
 
 /** Lint `source` as if it were the file at `relPath`, which selects the config blocks that apply. */
 async function lintAs(relPath: string, source: string): Promise<Linter.LintMessage[]> {
@@ -73,13 +133,13 @@ const MATH_COMPUTED_VIOLATION = `const k = 'sin';\nexport const probe = (): numb
 const WALL_CLOCK_VIOLATION = `export const probe = (): number => new Date().getTime();\n`;
 
 /**
- * Every case here runs a real ESLint pass, and the first pays a cold start (flat-config
- * resolution plus the TypeScript parser). Measured on this repository that lands within a few
- * seconds of Vitest's 30 s default, so the file failed roughly half the time — as a *timeout*,
- * which reads like a broken guard rather than a slow one. The work is genuine; the budget was
- * simply too tight.
+ * Per-case budget, for the residual after the one-time load in `beforeAll`.
+ *
+ * Each case is ~20 ms once the config is loaded, so the default 30 s would be ample here — but a
+ * cold CI runner's *first* `lintText` was measured at 141 ms against ~8 ms warm, and the honest
+ * budget for a step whose cost is dominated by first-use I/O is one that fails only on a hang.
  */
-const LINT_TIMEOUT_MS = 180_000;
+const LINT_TIMEOUT_MS = 60_000;
 
 describe(
   'eslint.config.js — every guard-rail family still fires',
