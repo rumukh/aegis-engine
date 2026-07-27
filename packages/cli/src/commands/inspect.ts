@@ -9,7 +9,7 @@
  */
 import { canonicalStringify } from '@aegis/core';
 import { runScene } from '@aegis/harness';
-import type { RunOptions } from '@aegis/harness';
+import type { RunOptions, SemanticFrame, SimResult } from '@aegis/harness';
 import { Exit } from '../errors.js';
 import {
   formatAscii,
@@ -44,6 +44,31 @@ import {
 
 const VIEWS = ['world', 'frame', 'ascii'] as const;
 
+/**
+ * The advice line under a frame's exclusion count, **derived by asking the provider** rather than
+ * stated from belief: re-project with `includeOffscreen` and report how many entities that
+ * actually recovers. A mode that filters by component (iso keeps only entities with
+ * `GridPosition`) recovers none, and telling its user to "pass --offscreen" would send them to a
+ * flag that changes nothing.
+ */
+function offscreenNote(
+  result: SimResult,
+  mode: string,
+  frame: SemanticFrame,
+  offscreenAlreadyOn: boolean,
+): string | undefined {
+  if ((frame.excludedEntities ?? 0) <= 0) return undefined;
+  const unconditional = `--view world lists every entity unconditionally.`;
+  if (offscreenAlreadyOn) {
+    return `#   --offscreen is already on and these are still absent — this mode's view provider does not project them at all. ${unconditional}`;
+  }
+  const all = frameOf(result, mode, undefined, { includeOffscreen: true });
+  const extra = all.entities.length - frame.entities.length;
+  return extra > 0
+    ? `#   --offscreen recovers ${extra} of them. ${unconditional}`
+    : `#   --offscreen recovers none of them — this mode's view provider does not project them at all. ${unconditional}`;
+}
+
 const USAGE = [
   'aegis inspect <scene> [options]',
   '',
@@ -56,6 +81,7 @@ const USAGE = [
   '  --seed <value>    PRNG seed override.',
   '  --max-ticks <n>   Raise the tick ceiling (default: 1000000).',
   '  --view <kind>     world | frame | ascii (default: world).',
+  '  --offscreen       Include entities outside the viewport in the frame view.',
   '  --query <expr>    Filter the world dump, e.g. "has:Player none:Dead" (world view).',
   '  --json            Emit as JSON.',
   '',
@@ -79,6 +105,7 @@ export const inspectCommand: Command = {
     seed: 'value',
     'max-ticks': 'value',
     view: 'value',
+    offscreen: 'boolean',
     query: 'value',
   },
   async run(ctx: CommandContext): Promise<number> {
@@ -107,8 +134,22 @@ export const inspectCommand: Command = {
     if (warning !== undefined && (view !== 'world' || wantJson)) io.err(warning + '\n');
 
     if (view === 'frame') {
-      const frame = frameOf(result, modeName);
-      io.out(wantJson ? json(frame) : formatFrame(frame) + '\n');
+      // `--offscreen` is the acted-on half of the frame's census line. What it recovers is
+      // measured here rather than asserted: the platformer and fps providers cull by viewport and
+      // honour `includeOffscreen`, the iso provider filters by component and ignores it, so a
+      // fixed "pass --offscreen to see them" would be wrong for a third of the engine.
+      const offscreen = flagBool(args, 'offscreen');
+      const frame = frameOf(
+        result,
+        modeName,
+        undefined,
+        offscreen ? { includeOffscreen: true } : undefined,
+      );
+      io.out(
+        wantJson
+          ? json(frame)
+          : formatFrame(frame, offscreenNote(result, modeName, frame, offscreen)) + '\n',
+      );
       return Exit.Ok;
     }
     if (view === 'ascii') {

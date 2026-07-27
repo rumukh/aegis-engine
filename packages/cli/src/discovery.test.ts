@@ -6,9 +6,13 @@
  * at all, and the suite reported `1 passed, 0 failed` and exited 0.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { runGameTest } from '@aegis/harness';
+import type { GameTest } from '@aegis/harness';
 import { main } from './cli.js';
 import type { CliDeps } from './cli.js';
 import { createModeResolver, defaultModeResolver } from './modes.js';
@@ -464,11 +468,7 @@ describe('aegis scaffold produces a runnable game', () => {
       const scaffold = await cli(['scaffold', 'game', name, '--mode', mode], dir, realDeps);
       expect(scaffold.code).toBe(0);
 
-      const validated = await cli(
-        ['validate', `${name}/${name}.scene.json`, `${name}/${name}.tilemap.json`],
-        dir,
-        realDeps,
-      );
+      const validated = await cli(['validate', `${name}/${name}.scene.json`], dir, realDeps);
       expect(validated.code).toBe(0);
 
       const ran = await cli(
@@ -493,26 +493,120 @@ describe('aegis scaffold produces a runnable game', () => {
     },
   );
 
-  it('scaffolds a game whose scene and tilemap both validate', async () => {
+  /**
+   * Regression (`AGENTS.md` §9 #1): `scaffold game` used to write a standalone `<name>.tilemap.json`
+   * next to the scene. **Nothing loads it** — there is no scene → tilemap reference in the format —
+   * so an author could edit it all afternoon and the run would be byte-identical. A decoy artefact
+   * in the one command whose whole job is "start here" is worse than no artefact.
+   *
+   * The negative control is the second half: `scaffold tilemap` must still write one, so this test
+   * cannot pass by the tilemap template having quietly been deleted.
+   */
+  it('writes no standalone tilemap for a game, but still writes one on request', async () => {
     const dir = makeDir();
     await cli(['scaffold', 'game', 'demo', '--mode', 'platformer'], dir, realDeps);
-    const validated = await cli(
-      ['validate', 'demo/demo.scene.json', 'demo/demo.tilemap.json'],
-      dir,
-      realDeps,
-    );
+    expect(existsSync(join(dir, 'demo', 'demo.tilemap.json'))).toBe(false);
+
+    // The inline copy is the one that matters, and it is present and complete.
+    const scene = JSON.parse(readFileSync(join(dir, 'demo', 'demo.scene.json'), 'utf8')) as {
+      resources: Record<string, { layers?: { data?: string[] }[] }>;
+    };
+    expect(scene.resources['platformer.tilemap']?.layers?.[0]?.data?.length).toBeGreaterThan(0);
+
+    const standalone = await cli(['scaffold', 'tilemap', 'level2'], dir, realDeps);
+    expect(standalone.code).toBe(0);
+    expect(existsSync(join(dir, 'level2.tilemap.json'))).toBe(true);
+    const validated = await cli(['validate', 'demo/demo.scene.json', 'level2.tilemap.json'], dir, realDeps);
     expect(validated.code).toBe(0);
     expect(validated.out).toContain('no problems found');
   });
 
   // Regression: the generated test said "Run with: aegis test" but imported bare
-  // '@aegis/harness' with no package.json, so it died with `Cannot find package`.
-  it('generates a test module with no bare package imports', async () => {
+  // '@aegis/harness' with no package.json, so it died with `Cannot find package`. A *static* bare
+  // import is fatal at link time in a folder with no node_modules, so there must still be none;
+  // the plugin is reached through a dynamic import with a fallback instead, which the two tests
+  // below exercise from both sides.
+  it('generates a test module with no static bare package imports', async () => {
     const dir = makeDir();
     await cli(['scaffold', 'game', 'demo', '--mode', 'platformer'], dir);
     const source = readFileSync(join(dir, 'demo', 'demo.gametest.mjs'), 'utf8');
     const imports = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1]!);
     expect(imports).toEqual(['node:url']);
+  });
+
+  /**
+   * Regression (`AGENTS.md` §9 #6): the scaffolded test named its plugin as the string
+   * `'platformer'`, which only the CLI resolves — so `runGameTest(spec)` on the emitted file died
+   * with `TypeError: plugin.components is not a function`. The generated file now resolves the
+   * mode package when it can reach one, so the artefact the scaffold advertises is runnable by the
+   * harness directly, with nothing edited.
+   */
+  it('emits a game test runGameTest can run unmodified', async () => {
+    const dir = makeDir(); // inside this package, so @aegis/mode-platformer resolves
+    await cli(['scaffold', 'game', 'inproc', '--mode', 'platformer'], dir, realDeps);
+
+    const spec = (
+      (await import(pathToFileURL(join(dir, 'inproc', 'inproc.gametest.mjs')).href)) as {
+        default: GameTest;
+      }
+    ).default;
+    // Precondition: this asserts the *import* branch was taken. Without it the test would pass
+    // just as happily on the string fallback, i.e. on the defect.
+    expect(typeof spec.options.plugin).toBe('object');
+
+    const outcome = await runGameTest(spec);
+    expect(outcome.error?.message ?? '').not.toContain('plugin.components is not a function');
+    expect(outcome.passed).toBe(true);
+    expect(outcome.assertions).toBeGreaterThan(0);
+  });
+
+  /**
+   * The other half of the same contract, and the reason the plugin cannot simply be imported: a
+   * scaffolded folder outside any workspace has no `node_modules`, so the fallback to the plugin
+   * *spec string* must still work under the CLI.
+   *
+   * This one runs **out of process**. Vitest resolves bare specifiers with its own resolver rooted
+   * at the project, so an in-process `import('@aegis/mode-platformer')` succeeds even from an OS
+   * temp directory — the first draft of this test asserted the fallback and was handed a live
+   * ModePlugin. Only a real `node` child in that directory resolves the way a user's shell does.
+   */
+  it('runs from a directory outside the workspace, where no @aegis package resolves', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aegis-scaffold-'));
+    const cliMain = join(PACKAGE_ROOT, 'dist', 'main.js');
+    expect(
+      existsSync(cliMain),
+      `${cliMain} is missing — run \`npm run build\` (\`npm run verify\` builds before it tests)`,
+    ).toBe(true);
+    try {
+      const scaffolded = spawnSync(process.execPath, [cliMain, 'scaffold', 'game', 'bare'], {
+        cwd: dir,
+        encoding: 'utf8',
+      });
+      expect(scaffolded.status).toBe(0);
+
+      // Precondition: in a real Node process rooted here the mode package is genuinely
+      // unreachable, so the string fallback — not the import — is what the run below exercises.
+      const probe = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `import(process.argv[1]).then((m) => console.log(typeof m.default.options.plugin, m.default.options.plugin))`,
+          pathToFileURL(join(dir, 'bare', 'bare.gametest.mjs')).href,
+        ],
+        { cwd: dir, encoding: 'utf8' },
+      );
+      expect(probe.status).toBe(0);
+      expect(probe.stdout.trim()).toBe('string platformer');
+
+      const tested = spawnSync(process.execPath, [cliMain, 'test', 'bare/*.gametest.mjs'], {
+        cwd: dir,
+        encoding: 'utf8',
+      });
+      expect(tested.stdout).toContain('PASS bare plays for 120 ticks');
+      expect(tested.status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // Regression: scaffold wrote artifacts one at a time and threw on the FIRST clash, leaving a
@@ -588,7 +682,6 @@ describe('aegis scaffold produces a runnable game', () => {
     expect(data.files).toEqual([
       'demo/aegis.json',
       'demo/demo.scene.json',
-      'demo/demo.tilemap.json',
       'demo/demo.input',
       'demo/demo.gametest.mjs',
     ]);

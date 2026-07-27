@@ -234,6 +234,43 @@ function invariantMessage(invariant: string, tick: number, context: InvariantCon
   return lines.join('\n');
 }
 
+/**
+ * Run one invariant check, converting a **throw** into a message that names the invariant and the
+ * tick it happened on.
+ *
+ * A predicate that walks `.query(...).one().get(...)` throws the moment the entity it names is
+ * gone. Unwrapped, that surfaced as a bare `[aegis] QueryResult.one: expected exactly 1 match,
+ * got 0` from somewhere inside a 400-iteration loop: no invariant name, no tick, nothing to act
+ * on — and it means the *check* is broken, not that the property was violated.
+ */
+function checkAt(
+  name: string,
+  check: (world: World) => CheckResult,
+  world: World,
+  tick: number,
+  run: { sceneRef: string; seed: number | string; ticks: number },
+): CheckResult {
+  try {
+    return check(world);
+  } catch (err) {
+    const inner = err instanceof Error ? err : new Error(String(err));
+    const where = describeRun({
+      scene: run.sceneRef,
+      seed: run.seed,
+      tick,
+      ticks: run.ticks,
+    });
+    throw new Error(
+      `[aegis] the check for invariant "${name}" threw at ${where}, so it produced no verdict.\n` +
+        `  ${inner.name}: ${inner.message}\n` +
+        `  world   : ${summariseWorld(world)}\n` +
+        `  This is a broken check rather than a violated invariant: \`.one()\` throws when the ` +
+        `entity has died, despawned or was never spawned. Guard the lookup, or narrow the query.`,
+      { cause: inner },
+    );
+  }
+}
+
 /** Core + content component types the harness always registers before a scene loads. */
 const BASE_COMPONENTS: readonly ComponentType<unknown>[] = [
   Transform,
@@ -359,7 +396,7 @@ function executeRun(run: ResolvedRun): RunTrace {
     if (run.captureTickHashes) tickHashes.push(world.hash());
     if (run.captureHistory) history.push(world.snapshot());
     for (const inv of run.invariants) {
-      const outcome = toOutcome(inv.check(world));
+      const outcome = toOutcome(checkAt(inv.name, inv.check, world, t, run));
       if (outcome.ok) continue;
       throw new InvariantError(inv.name, t, {
         scene: run.sceneRef,
@@ -452,7 +489,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
       }
       for (let t = 0; t < run.ticks; t++) {
         const w = t === finalIndex ? world : worldFromSnapshot(run.seed, history[t]!);
-        const outcome = toOutcome(check(w));
+        const outcome = toOutcome(checkAt(name, check, w, t, run));
         if (outcome.ok) continue;
         throw new InvariantError(name, t, {
           scene: run.sceneRef,
@@ -516,8 +553,50 @@ function withEntityCensus(frame: SemanticFrame, world: World): SemanticFrame {
   };
 }
 
+/**
+ * Reject anything that is not a live {@link ModePlugin} **before** the run touches it.
+ *
+ * `options.plugin` is typed, but the values that reach here at runtime are frequently untyped: a
+ * `*.gametest.mjs` discovered from disk, a JSON-ish literal, a scaffolded template. Those name
+ * their plugin as a **string** (`'platformer'`, `'./dist/game.js#gamePlugin'`) because only the
+ * CLI can resolve one — the harness must not import a concrete `@aegis/mode-*`, which is the
+ * package boundary ADR-0006 draws and `scripts/check-deps.mjs` enforces.
+ *
+ * Unguarded, a string got as far as `plugin.components()` and produced
+ * `TypeError: plugin.components is not a function` with no mention of plugins, strings or who
+ * resolves them. Naming the seam is the whole fix: the harness cannot resolve the string, and it
+ * can say exactly who can.
+ */
+function requirePlugin(plugin: ModePlugin): void {
+  if (
+    typeof plugin === 'object' &&
+    plugin !== null &&
+    typeof plugin.components === 'function' &&
+    typeof plugin.systems === 'function' &&
+    typeof plugin.view === 'function'
+  ) {
+    return;
+  }
+  const named = typeof plugin === 'string' ? ` (got the string ${JSON.stringify(plugin)})` : '';
+  const advice =
+    typeof plugin === 'string'
+      ? `A plugin *spec* string is resolved by the CLI — \`aegis test\`, \`--plugin ${plugin}\`, or ` +
+        `{ "plugin": ${JSON.stringify(plugin)} } in an aegis.json beside the scene. The harness ` +
+        `cannot resolve it itself: importing a concrete @aegis/mode-* would invert the package ` +
+        `graph (ADR-0006). To run this test in-process, substitute the plugin object, e.g.\n` +
+        `  import { platformerPlugin } from '@aegis/mode-platformer';\n` +
+        `  await runGameTest({ ...spec, options: { ...spec.options, plugin: platformerPlugin } });`
+      : `Pass the ModePlugin object itself — the value a mode package exports (platformerPlugin, ` +
+        `isoPlugin, fpsPlugin) or your game's composed plugin.`;
+  throw new TypeError(
+    `[aegis] runScene: options.plugin is not a ModePlugin${named}. A ModePlugin is an object with ` +
+      `components(), systems() and view() methods.\n${advice}`,
+  );
+}
+
 /** Resolve raw {@link RunOptions} + a scene into a fully-resolved, executable run. */
 function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): ResolvedRun {
+  requirePlugin(options.plugin);
   if (!Number.isInteger(options.ticks) || options.ticks < 0) {
     throw new RangeError(
       `[aegis] runScene: ticks must be a non-negative integer, got ${options.ticks}`,

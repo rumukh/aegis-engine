@@ -23,7 +23,7 @@ import {
 import type { ComponentRegistry, EntityDecl, SceneFile } from '@aegis/content';
 import { DiagnosticError, Name, Transform } from '@aegis/core';
 import type { Diagnostic, EventReader, World } from '@aegis/core';
-import type { AsciiView, ModePlugin, SemanticFrame, SimResult } from '@aegis/harness';
+import type { AsciiView, ModePlugin, SemanticFrame, SimResult, ViewOptions } from '@aegis/harness';
 import { dirname } from 'node:path';
 import type { CommandContext } from '../command.js';
 import { AegisCliError, CliCode, messageOf } from '../errors.js';
@@ -336,9 +336,14 @@ export function eventCountsObject(events: EventReader): Record<string, number> {
 }
 
 /** Produce the semantic frame, mapping a not-yet-implemented mode view to {@link CliCode.ViewUnavailable}. */
-export function frameOf(result: SimResult, mode: string, tick?: number): SemanticFrame {
+export function frameOf(
+  result: SimResult,
+  mode: string,
+  tick?: number,
+  options?: ViewOptions,
+): SemanticFrame {
   try {
-    return result.frame(tick);
+    return result.frame(tick, options);
   } catch (err) {
     if (err instanceof AegisCliError) throw err;
     throw new AegisCliError(

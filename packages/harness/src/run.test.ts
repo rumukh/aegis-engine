@@ -210,6 +210,73 @@ describe('runScene — live invariants', () => {
     const result = await runScene(level(), { plugin: fakeMode, ticks: 0, captureHistory: true });
     expect(() => result.assertInvariant('always false', () => false)).toThrow(/no tick to check/);
   });
+
+  /**
+   * A check that **throws** produces no verdict at all, which is a different failure from a
+   * violated invariant and used to be reported as neither: the bare inner error escaped the
+   * per-tick loop with no invariant name and no tick, e.g.
+   * `[aegis] QueryResult.one: expected exactly 1 match, got 0`.
+   */
+  it('names the invariant and the tick when the check itself throws', async () => {
+    let err: Error | undefined;
+    try {
+      await runScene(level(), {
+        plugin: fakeMode,
+        ticks: 5,
+        invariants: [
+          {
+            name: 'the boss is alive',
+            check: (world) => world.query({ has: ['Enemy', 'Nonexistent'] }).one() !== undefined,
+          },
+        ],
+      });
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err).toBeDefined();
+    expect(err!.message).toContain('the boss is alive');
+    expect(err!.message).toContain('tick 0');
+    expect(err!.message).toContain('expected exactly 1 match'); // the underlying cause
+    expect(err!.message).toContain('broken check rather than a violated invariant');
+  });
+
+  it('names the invariant and the tick when an assertInvariant check throws', async () => {
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 5, captureHistory: true });
+    // Negative control first: a check that returns normally must not be reported as throwing.
+    expect(() => result.assertInvariant('hero exists', (w) => w.entityCount > 0)).not.toThrow();
+    expect(() =>
+      result.assertInvariant('hero has a Nonexistent', (w) => {
+        return w.query({ has: ['Nonexistent'] }).one() !== undefined;
+      }),
+    ).toThrow(/hero has a Nonexistent[\s\S]*broken check/);
+  });
+});
+
+/**
+ * `options.plugin` is typed, but the values that reach `runScene` at runtime often are not: a
+ * discovered `*.gametest.mjs`, a scaffolded template, a JSON-ish literal. Those name their plugin
+ * as a **spec string** because only the CLI can resolve one. Unguarded, the string reached
+ * `plugin.components()` and produced `TypeError: plugin.components is not a function` — a message
+ * that mentions neither plugins nor strings nor who resolves them (`AGENTS.md` §9 #6).
+ */
+describe('runScene — a plugin that is not a ModePlugin', () => {
+  it('names the string and who can resolve it', async () => {
+    await expect(
+      runScene(level(), { plugin: 'platformer' as unknown as ModePlugin, ticks: 5 }),
+    ).rejects.toThrow(/options\.plugin is not a ModePlugin[\s\S]*"platformer"[\s\S]*aegis\.json/);
+  });
+
+  it('names the missing methods for any other non-plugin value', async () => {
+    await expect(
+      runScene(level(), { plugin: { mode: 'platformer' } as unknown as ModePlugin, ticks: 5 }),
+    ).rejects.toThrow(/components\(\), systems\(\) and view\(\)/);
+  });
+
+  // Negative control: the guard must accept the real thing, or every test above passes for the
+  // wrong reason — a guard that rejects everything is not a guard.
+  it('accepts a real ModePlugin', async () => {
+    await expect(runScene(level(), { plugin: fakeMode, ticks: 5 })).resolves.toBeDefined();
+  });
 });
 
 /**

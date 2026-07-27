@@ -44,8 +44,8 @@ import {
 
 /** Thrown when a gameplay assertion fails. */
 export class GameAssertionError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'GameAssertionError';
   }
 }
@@ -234,15 +234,42 @@ export function expectSim(result: SimResult): GameplayAssertions {
 
     holds(label: string, predicate: (r: SimResult) => CheckResult): GameplayAssertions {
       recordAssertion(result, 'holds', label);
-      const outcome = toOutcome(predicate(result));
+      const where = describeRun({ seed: result.seed, tick: result.tick });
+      let raw: CheckResult;
+      try {
+        raw = predicate(result);
+      } catch (err) {
+        // A predicate that throws used to surface as its bare inner error — most often
+        // `[aegis] QueryResult.one: expected exactly 1 match, got 0`, with no label, no seed, no
+        // tick and no clue which of a dozen `holds` calls it came from. Every PoC predicate walks
+        // `.query(...).one().get(...)`, so this fires whenever the entity it names is gone, and
+        // it means the *test* is broken rather than the game.
+        const inner = asError(err);
+        throw new GameAssertionError(
+          `The predicate for "${label}" threw while checking the final world (${where}).\n` +
+            `  ${inner.name}: ${inner.message}\n` +
+            `  world   : ${summariseWorld(result.world)}\n` +
+            `This is a broken expectation, not a failing playthrough: the check never produced a ` +
+            `verdict. A query that must match exactly one entity (\`.one()\`) throws when the ` +
+            `entity has died, despawned or was never spawned — guard it, or assert on the count ` +
+            `first with entityCount(...).`,
+          { cause: inner },
+        );
+      }
+      const outcome = toOutcome(raw);
       if (!outcome.ok) {
-        const where = describeRun({ seed: result.seed, tick: result.tick });
+        // Only nudge when the predicate said nothing. Telling a caller who already returned
+        // { ok, actual, expected } to return { ok, actual, expected } reads as the tool not having
+        // looked at its own input.
+        const said = outcome.actual !== undefined || outcome.expected !== undefined;
         fail(
           `Expected "${label}" to hold on the final world (${where}), but it did not.` +
             renderOutcome(outcome) +
             (outcome.detail === undefined ? `\n  world   : ${summariseWorld(result.world)}` : '') +
-            `\nReturn { ok, actual, expected } from the predicate (instead of a bare boolean) to ` +
-            `have the offending value printed here.`,
+            (said
+              ? ''
+              : `\nThe predicate returned a bare boolean, so nothing above names the offending ` +
+                `value. Return { ok, actual, expected } instead and they are printed here.`),
         );
       }
       return assertions;

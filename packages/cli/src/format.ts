@@ -126,16 +126,44 @@ export function formatAscii(view: AsciiView): string {
  * and `occluded`/`visibleFraction` are the whole point of the fps frame (principle 7) — a fully
  * hidden entity must not read as a visible one. Optional fields are omitted rather than faked, so
  * "not reported by this mode" stays distinguishable from "reported as visible".
+ *
+ * The header reports the **census**, not just the row count. A frame lists only what the camera
+ * sees, so on `server-vault` it prints 3 rows for a 6-entity world with both mission objectives
+ * culled — and `entities=3` alone reads as "the world holds 3 entities", i.e. "the objective does
+ * not exist". `aegis inspect --view world` has always said `entities: 3 of 6`; this now does too.
+ * The harness fills `totalEntities`/`excludedEntities` for every frame it produces; a frame
+ * without them (a hand-built one) prints the old bare form rather than inventing a total.
+ *
+ * `note` is an optional extra `#` line the caller has **measured** (e.g. how many of the excluded
+ * entities `--offscreen` actually recovers). It is a parameter rather than a constant because the
+ * answer differs per mode — the platformer and fps providers cull by viewport and honour
+ * `includeOffscreen`; the iso provider filters by component and ignores it — and a fixed sentence
+ * naming a flag that changes nothing would be exactly the kind of confident-but-wrong advice this
+ * output exists to avoid.
  */
-export function formatFrame(frame: SemanticFrame): string {
+export function formatFrame(frame: SemanticFrame, note?: string): string {
+  const shown = frame.entities.length;
+  const total = frame.totalEntities;
+  const excluded = frame.excludedEntities ?? (total === undefined ? undefined : total - shown);
+  const census = total === undefined ? `entities=${shown}` : `entities=${shown} of ${total}`;
   const header =
     `# frame tick=${frame.tick} mode=${frame.mode} ` +
-    `viewport=${frame.viewport.width}x${frame.viewport.height} entities=${frame.entities.length}`;
+    `viewport=${frame.viewport.width}x${frame.viewport.height} ${census}`;
   const cam = frame.camera;
   const camLine =
     `# camera pos=(${cam.position.x},${cam.position.y},${cam.position.z}) ` +
     `projection=${cam.projection}`;
-  if (frame.entities.length === 0) return [header, camLine, '  (no visible entities)'].join('\n');
+  const excludedLine =
+    excluded !== undefined && excluded > 0
+      ? [
+          `# ${excluded} entit${excluded === 1 ? 'y is' : 'ies are'} NOT in this frame — the ` +
+            `mode's view provider left them out (off-screen, or not projected at all).`,
+          ...(note === undefined ? [] : [note]),
+        ]
+      : [];
+  if (shown === 0) {
+    return [header, camLine, ...excludedLine, '  (no visible entities)'].join('\n');
+  }
   const rows = frame.entities.map((e) => {
     const name = e.name ?? '';
     const tags = e.tags.length > 0 ? e.tags.join('|') : '-';
@@ -152,7 +180,7 @@ export function formatFrame(frame: SemanticFrame): string {
     parts.push(`glyph=${e.glyph ?? '?'}`);
     return parts.join(' ');
   });
-  return [header, camLine, ...rows].join('\n');
+  return [header, camLine, ...excludedLine, ...rows].join('\n');
 }
 
 /** Round to 2 decimals for display only (never feeds a hash). */

@@ -229,6 +229,45 @@ describe('expectSim — failure messages are actionable', () => {
     expect(msg).toContain('expected: ">= 500"');
     expect(msg).toContain('actual  : 8');
     expect(msg).toContain('detail  : player ran out of runway');
+    // …and does not then tell the caller to return the values they just returned. The nudge is
+    // for a bare boolean; printing it here reads as the tool not having looked at its own input.
+    expect(msg).not.toContain('{ ok, actual, expected }');
+  });
+
+  /**
+   * The failure mode `holds` actually has in the shipped games (`AGENTS.md` §9 #5): every PoC
+   * predicate walks `.query(...).one().get(...)`, which **throws** the moment the entity it names
+   * is gone. That escaped `holds` unwrapped, so the reader got
+   * `[aegis] QueryResult.one: expected exactly 1 match, got 0` — no label, no seed, no tick, and
+   * no hint which of a dozen `holds` calls it came from.
+   */
+  it('holds names itself when the predicate throws instead of returning', () => {
+    const boom = new Error('the entity is gone');
+    let caught: unknown;
+    try {
+      expectSim(result).holds('the boss is at half health', () => {
+        throw boom;
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(GameAssertionError);
+    const msg = (caught as Error).message;
+    expect(msg).toContain('the boss is at half health'); // which assertion
+    expect(msg).toContain('seed "poc-fake"'); // reproducible from the string alone
+    expect(msg).toContain('tick 60');
+    expect(msg).toContain('the entity is gone'); // the underlying cause, verbatim
+    expect(msg).toContain('#0 "hero"'); // the world it was looking at
+    expect(msg).toContain('broken expectation, not a failing playthrough');
+    expect((caught as Error).cause).toBe(boom); // the original, for a stack trace
+  });
+
+  // Negative control for the wrapper: a predicate that returns normally must not be reported as
+  // having thrown, and a passing one must not be reported at all.
+  it('does not claim a predicate threw when it merely returned false', () => {
+    const msg = messageFrom(() => expectSim(result).holds('never true', () => false));
+    expect(msg).not.toContain('threw');
+    expect(() => expectSim(result).holds('always true', () => true)).not.toThrow();
   });
 });
 

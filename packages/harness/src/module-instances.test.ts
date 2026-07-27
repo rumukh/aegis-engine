@@ -18,11 +18,26 @@
  * that accidentally deduplicates them turns this file red rather than making it vacuous.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { SceneFile } from '@aegis/content';
-import { defineGameTest, expectSim, runGameTest, runScene, UnknownComponentError } from './index.js';
+import {
+  defineGameTest,
+  expectSim,
+  runGameTest,
+  runScene,
+  UnknownComponentError,
+} from './index.js';
 import type { GameTest } from './assert.js';
 import { fakeMode } from './testing/fake-mode.js';
 
@@ -56,6 +71,29 @@ let copyDir: string;
 let sceneDir: string;
 let scenePath: string;
 
+/**
+ * Detach the copied `.js` files from their source maps.
+ *
+ * The maps are excluded from the copy (they resolve `../src/*.ts` relative to `dist`, which is not
+ * beside the copy), but each `.js` still carries a `sourceMappingURL` comment — and Vite's
+ * transform then logs a warning per file, which is exactly the sort of noise that trains a reader
+ * to ignore the gate's output.
+ */
+function stripSourcemapRefs(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) stripSourcemapRefs(path);
+    else if (entry.name.endsWith('.js')) {
+      const source = readFileSync(path, 'utf8');
+      const stripped = source
+        .split('\n')
+        .filter((line) => !line.startsWith('//# sourceMappingURL='))
+        .join('\n');
+      if (stripped !== source) writeFileSync(path, stripped, 'utf8');
+    }
+  }
+}
+
 beforeAll(async () => {
   if (!existsSync(join(DIST, 'index.js'))) {
     throw new Error(
@@ -65,7 +103,8 @@ beforeAll(async () => {
   }
   mkdirSync(SCRATCH, { recursive: true });
   copyDir = mkdtempSync(join(SCRATCH, 'harness-copy-'));
-  cpSync(DIST, copyDir, { recursive: true });
+  cpSync(DIST, copyDir, { recursive: true, filter: (src) => !src.endsWith('.map') });
+  stripSourcemapRefs(copyDir);
   other = (await import(pathToFileURL(join(copyDir, 'index.js')).href)) as typeof other;
 
   sceneDir = mkdtempSync(join(SCRATCH, 'harness-scene-'));

@@ -8,12 +8,14 @@
  *
  * 1. The scene **embeds its tilemap** under `resources`, exactly as the shipped games do — a
  *    tilemap file that nothing references gives a level with no ground, no collision and no
- *    ASCII view.
+ *    ASCII view. `scaffold game` therefore writes *no* standalone `*.tilemap.json` at all: there
+ *    is no scene → tilemap reference in the format, so a sibling file is a decoy you can edit all
+ *    day without changing the run. `scaffold tilemap` still writes one on request.
  * 2. An **input script** is written, because a scene with no input is a player standing still;
  *    "it ran and nothing happened" is not a working scaffold.
- * 3. The starter test has **no bare imports**. A scaffolded directory has no `node_modules`, so
- *    `import ... from '@aegis/harness'` fails with `Cannot find package`. It names its plugin as
- *    a string instead, which `aegis test` resolves — the same extension point as `--plugin`.
+ * 3. The starter test resolves its plugin **both** ways — importing `@aegis/mode-<mode>` when that
+ *    package is reachable, falling back to the plugin *spec string* the CLI resolves when it is
+ *    not — so the emitted file runs unmodified from a bare folder *and* under `runGameTest`.
  * 4. An `aegis.json` declares both the plugin and the test, so the naive `aegis run` resolves a
  *    plugin instead of silently falling back to stock, and `aegis test` counts this game.
  *
@@ -328,12 +330,16 @@ function assertionsFor(mode: GameMode): string[] {
 }
 
 /**
- * A starter GameTest that runs from the scaffolded directory.
+ * A starter GameTest that runs from the scaffolded directory **and** from inside a workspace.
  *
- * Deliberately import-free apart from `node:url`: a freshly scaffolded folder has no
- * `node_modules`, so a bare `@aegis/harness` import cannot resolve. `options.plugin` is the
- * plugin *spec* `aegis test` resolves — swap it for `'./dist/my-game.js#myGamePlugin'` once the
- * game grows its own systems.
+ * It resolves its plugin twice over: `import('@aegis/mode-<mode>')` when that package is
+ * resolvable, and the plugin *spec string* the CLI resolves when it is not. A scaffolded folder
+ * has no `node_modules`, so a hard bare import would fail with `Cannot find package` — but the
+ * string-only form it replaced could not be run by `runGameTest` at all (only the CLI resolves
+ * specs), so `runGameTest(spec)` on a scaffolded file died with
+ * `TypeError: plugin.components is not a function`. Resolving both ways makes the emitted file
+ * runnable unmodified in both places. The fallback catches only `ERR_MODULE_NOT_FOUND`: a mode
+ * package that exists and throws must surface rather than degrade into a spec string.
  *
  * That constraint shapes the assertions, and the shape is the lesson. `result.assertInvariant()`
  * is a method on the result object, so it needs no import — and the harness **counts** it, which
@@ -343,21 +349,33 @@ function assertionsFor(mode: GameMode): string[] {
  * A template that used only those would teach every scaffolded game to be invisible to the audit.
  */
 function testDoc(name: string, mode: GameMode, sceneRel: string): string {
+  const pkg = `@aegis/mode-${mode}`;
+  const modePlugin = `${mode}Plugin`;
   return [
     `// Starter GameTest for "${name}" (${mode}).`,
     `//`,
     `//   aegis test                       # from this directory`,
     `//   aegis test "**/*.gametest.mjs"   # or point it at a glob`,
     `//`,
-    `// No package imports: a scaffolded folder has no node_modules, so this file names its`,
-    `// plugin as a string and lets the CLI resolve it. Once your game ships its own composed`,
-    `// ModePlugin, change options.plugin to './dist/${name}.js#${pluginIdent(name)}'`,
-    `// and the same test keeps working.`,
+    `// The plugin is resolved twice over, so this file runs unmodified in both worlds:`,
+    `//   * inside a workspace that has ${pkg} installed, the import wins and the`,
+    `//     spec carries a real ModePlugin — so runGameTest(spec) works directly, in-process;`,
+    `//   * in a bare scaffolded folder there is no node_modules, the import cannot resolve, and`,
+    `//     the spec falls back to the *spec string* the CLI resolves for itself.`,
+    `// Only a genuine "module not found" is caught: a ${pkg} that exists and throws`,
+    `// must surface, not be swallowed into a silent fallback.`,
     `//`,
-    `// Inside a workspace that HAS @aegis/harness installed, import { defineGameTest, expectSim }`,
-    `// and express these as an expectSim(result) chain — it type-checks the shape at compile time`,
-    `// and gives richer failure messages. The assertions below say the same things without it.`,
+    `// Once your game ships its own composed ModePlugin, replace the whole block with an import`,
+    `// of it (or name './dist/${name}.js#${pluginIdent(name)}' for the CLI to resolve).`,
     `import { fileURLToPath } from 'node:url';`,
+    ``,
+    `const plugin = await import('${pkg}').then(`,
+    `  (m) => m.${modePlugin},`,
+    `  (err) => {`,
+    `    if (err?.code !== 'ERR_MODULE_NOT_FOUND') throw err;`,
+    `    return '${mode}';`,
+    `  },`,
+    `);`,
     ``,
     `const scene = fileURLToPath(new URL('./${sceneRel}', import.meta.url));`,
     ``,
@@ -367,7 +385,7 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
     `  ticks: ${TICKS},`,
     `  seed: 1,`,
     `  // captureHistory lets assertInvariant re-check every tick, not just the last one.`,
-    `  options: { plugin: '${mode}', captureHistory: true },`,
+    `  options: { plugin, captureHistory: true },`,
     `  input: \`${inputDoc(mode)
       .split('\n')
       .filter((l) => l.length > 0 && !l.startsWith('#'))
@@ -409,10 +427,15 @@ function pluginIdent(name: string): string {
 function artifactsFor(kind: Kind, name: string, mode: GameMode): Artifact[] {
   switch (kind) {
     case 'game':
+      // No standalone `<name>.tilemap.json`. The scene embeds its level data under `resources`,
+      // and **nothing loads a sibling tilemap file** — there is no scene → tilemap reference in
+      // the format. Emitting one alongside the scene handed every new game a decoy: edit it, run,
+      // and the run is byte-identical because the copy that matters is the inline one. `aegis
+      // scaffold tilemap <name>` still writes a standalone document for the case where that is
+      // what you actually want (authoring it, validating it, pasting it into `resources`).
       return [
         { rel: `${name}/aegis.json`, content: configDoc(name, mode) },
         { rel: `${name}/${name}.scene.json`, content: sceneDoc(name, mode) },
-        { rel: `${name}/${name}.tilemap.json`, content: tilemapDoc(name, mode) },
         { rel: `${name}/${name}.input`, content: inputDoc(mode) },
         { rel: `${name}/${name}.gametest.mjs`, content: testDoc(name, mode, `${name}.scene.json`) },
       ];

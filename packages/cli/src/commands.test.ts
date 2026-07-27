@@ -185,6 +185,70 @@ describe('aegis inspect', () => {
     expect(r.out).not.toContain('#4294967296');
   });
 
+  /**
+   * A frame lists only what the camera sees, so `entities=3` for a 6-entity world reads as "the
+   * world holds 3 entities" — i.e. "the mission objective does not exist". The header now carries
+   * the census the harness already computed, and the advice under it is **measured** by
+   * re-projecting with `includeOffscreen` rather than asserted, because a provider that filters by
+   * component recovers nothing and must not be told to pass a flag that changes nothing.
+   *
+   * The fake mode's `init` spawns a `platform` at x = 20, off-screen — so the plain fixture
+   * already has one excluded entity, and these tests are written against that.
+   */
+  describe('--view frame reports what it left out', () => {
+    /** The fixture scene plus an entity with no `Transform`, which no projection can ever place. */
+    function dirWithUnprojectableEntity(): string {
+      const dir = makeDir();
+      const scene = structuredClone(SCENE) as typeof SCENE;
+      scene.entities.push({
+        id: 'ghost',
+        components: { Health: { current: 1, max: 1 } },
+      } as (typeof SCENE)['entities'][number]);
+      writeFileSync(join(dir, 'level.scene.json'), JSON.stringify(scene, null, 2), 'utf8');
+      return dir;
+    }
+
+    it('says how many entities are missing, and how many --offscreen recovers', async () => {
+      const dir = makeDir();
+      const r = await cli(['inspect', 'level.scene.json', '--view', 'frame'], dir);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain('entities=3 of 4');
+      expect(r.out).toContain('1 entity is NOT in this frame');
+      expect(r.out).toContain('--offscreen recovers 1 of them');
+    });
+
+    // Negative control for the block itself: it is conditional, not boilerplate on every frame.
+    // Without this, the assertions above would pass just as well if the lines were unconditional.
+    it('--offscreen recovers it, and then says nothing about exclusions', async () => {
+      const dir = makeDir();
+      const r = await cli(['inspect', 'level.scene.json', '--view', 'frame', '--offscreen'], dir);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain('entities=4 of 4');
+      expect(r.out).toContain('platform');
+      expect(r.out).not.toContain('NOT in this frame');
+      expect(r.out).not.toContain('--offscreen');
+    });
+
+    // The branch that makes the advice worth measuring: an entity the provider never projects at
+    // all is not recoverable, and saying "pass --offscreen" would be false.
+    it('says so when --offscreen cannot recover what is missing', async () => {
+      const dir = dirWithUnprojectableEntity();
+      const withFlag = await cli(
+        ['inspect', 'level.scene.json', '--view', 'frame', '--offscreen'],
+        dir,
+      );
+      expect(withFlag.code).toBe(0);
+      expect(withFlag.out).toContain('entities=4 of 5');
+      expect(withFlag.out).toContain('1 entity is NOT in this frame');
+      expect(withFlag.out).toContain('--offscreen is already on');
+
+      // …and without the flag the count it quotes is still only what the flag really recovers.
+      const without = await cli(['inspect', 'level.scene.json', '--view', 'frame'], dir);
+      expect(without.out).toContain('entities=3 of 5');
+      expect(without.out).toContain('--offscreen recovers 1 of them');
+    });
+  });
+
   it('--view ascii prints the ASCII raster', async () => {
     const dir = makeDir();
     const r = await cli(['inspect', 'level.scene.json', '--view', 'ascii'], dir);
@@ -375,15 +439,17 @@ describe('aegis scaffold', () => {
     const r = await cli(['scaffold', 'game', 'demo', '--mode', 'platformer'], dir);
     expect(r.code).toBe(0);
     expect(existsSync(join(dir, 'demo', 'demo.scene.json'))).toBe(true);
-    expect(existsSync(join(dir, 'demo', 'demo.tilemap.json'))).toBe(true);
     expect(existsSync(join(dir, 'demo', 'demo.gametest.mjs'))).toBe(true);
+    // No standalone tilemap: nothing loads a sibling `*.tilemap.json`, so emitting one gave every
+    // new game a file it could edit with no effect on the run. The scene inlines it instead.
+    expect(existsSync(join(dir, 'demo', 'demo.tilemap.json'))).toBe(false);
 
     // The scaffolded scene uses the real platformer mode's components, so it must be validated
     // against the real resolver — the CLI's fake mode does not provide them.
     let out = '';
     const code = await main(
       {
-        argv: ['validate', 'demo/demo.scene.json', 'demo/demo.tilemap.json'],
+        argv: ['validate', 'demo/demo.scene.json'],
         cwd: dir,
         out: (t) => (out += t),
         err: () => {},
