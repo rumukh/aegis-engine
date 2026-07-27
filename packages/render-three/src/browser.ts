@@ -200,6 +200,20 @@ export interface LaunchOptions {
   port?: number;
   /** Window size in CSS pixels. Defaults to 1280x720. */
   viewport?: { width: number; height: number };
+  /**
+   * Let animation frames run as fast as the page can produce them, instead of at the compositor's
+   * pace.
+   *
+   * Headless Chrome paces `requestAnimationFrame` to a virtual display, and on this project's
+   * machine that is ~30fps *for a page doing nothing at all* — measured, blank page, 30.0fps and
+   * a p95 frame gap of 60.1ms. Any frame-time budget measured under that cap is a measurement of
+   * the cap. Uncapped, the same blank page runs at 508fps with a p95 gap of 10.9ms, which leaves
+   * room for the page's own cost to be what the number reflects.
+   *
+   * Only measurement should use this. The screenshot capture deliberately does not: it wants the
+   * ordinary pacing a human gets, and it drives time explicitly anyway.
+   */
+  uncapFrameRate?: boolean;
 }
 
 /** Launch a headless browser with the DevTools endpoint open. */
@@ -217,6 +231,13 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--disable-extensions',
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
+    ...(options.uncapFrameRate === true
+      ? [
+          '--disable-frame-rate-limit',
+          '--disable-gpu-vsync',
+          '--run-all-compositor-stages-before-draw',
+        ]
+      : []),
     'about:blank',
   ];
   if (options.headed !== true) args.unshift('--headless=new');

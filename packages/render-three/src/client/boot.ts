@@ -67,6 +67,29 @@ export interface FrameTimings {
 }
 
 /**
+ * A rolling window of per-frame samples, newest last.
+ *
+ * `FrameTimings` reports the *last* frame, which cannot answer "how bad does it get?". A budget
+ * has to be stated at a percentile or it says nothing about the frames a human notices — those are
+ * the tail, not the median. Ten seconds at 60Hz is 600 frames, which is enough for a p95 to mean
+ * something and small enough to keep in a page that must not allocate per frame.
+ */
+export interface FrameSamples {
+  /** Milliseconds between consecutive animation frames. */
+  gaps: readonly number[];
+  /** Milliseconds of main-thread work inside each of those frames. */
+  work: readonly number[];
+  /** The `restore` component of each entry in `work`. */
+  restore: readonly number[];
+  /** The `sync` component of each entry in `work`. */
+  sync: readonly number[];
+  /** The `render` component of each entry in `work`. */
+  render: readonly number[];
+  /** The `hud` component of each entry in `work`. */
+  hud: readonly number[];
+}
+
+/**
  * The debug handle the page hangs on `globalThis`. It is read-only introspection over what is
  * already on screen — the adapter's scene/camera and the renderer's mirror world — so a human (or
  * an automated capture run) can ask "where is that on screen?" without a devtools breakpoint.
@@ -80,6 +103,8 @@ export interface AegisDebugHandle {
   tick(): number;
   /** Per-phase frame costs. See {@link FrameTimings}. */
   timings(): FrameTimings;
+  /** The rolling window of per-frame samples. See {@link FrameSamples}. */
+  samples(): FrameSamples;
   /** Start a fresh sampling window for {@link FrameTimings.meanGap} and `worstGap`. */
   resetTimings(): void;
   /** Project a world point to canvas pixels, or `null` when it is behind the camera. */
@@ -177,6 +202,19 @@ export function boot(config: BootConfig): void {
   let lastFrameAt = 0;
   let windowStart = performance.now();
   let windowFrames = 0;
+  /** How many frames the rolling sample window holds: ten seconds at 60Hz. */
+  const SAMPLE_WINDOW = 600;
+  const gapSamples: number[] = [];
+  const workSamples: number[] = [];
+  const restoreSamples: number[] = [];
+  const syncSamples: number[] = [];
+  const renderSamples: number[] = [];
+  const hudSamples: number[] = [];
+  /** Append to a bounded ring, dropping the oldest. Never allocates a new array. */
+  const record = (into: number[], value: number): void => {
+    into.push(value);
+    if (into.length > SAMPLE_WINDOW) into.shift();
+  };
 
   const resize = (): void => {
     const width = canvas.clientWidth || globalThis.innerWidth;
@@ -238,6 +276,7 @@ export function boot(config: BootConfig): void {
     if (lastFrameAt !== 0) {
       timings.gap = frameStart - lastFrameAt;
       if (timings.gap > timings.worstGap) timings.worstGap = timings.gap;
+      record(gapSamples, timings.gap);
     }
     lastFrameAt = frameStart;
     timings.frames++;
@@ -276,6 +315,14 @@ export function boot(config: BootConfig): void {
     hud.setStatus(lastTick, paused, fps);
     hud.setStats(mode, mirror);
     timings.hud = performance.now() - t3;
+    // The frame's own cost: everything between the snapshot arriving and the HUD being written.
+    // `restore` happens in the exchange continuation rather than here, so it is added rather than
+    // measured across this span — leaving it out would understate the frames that carry one.
+    record(workSamples, timings.restore + timings.sync + timings.render + timings.hud);
+    record(restoreSamples, timings.restore);
+    record(syncSamples, timings.sync);
+    record(renderSamples, timings.render);
+    record(hudSamples, timings.hud);
   };
 
   globalThis.addEventListener('resize', resize);
@@ -290,11 +337,29 @@ export function boot(config: BootConfig): void {
     adapter,
     tick: () => lastTick,
     timings: () => ({ ...timings }),
+    samples: () => ({
+      gaps: [...gapSamples],
+      work: [...workSamples],
+      restore: [...restoreSamples],
+      sync: [...syncSamples],
+      render: [...renderSamples],
+      hud: [...hudSamples],
+    }),
     resetTimings(): void {
       windowStart = performance.now();
       windowFrames = 0;
       timings.worstGap = 0;
       timings.meanGap = 0;
+      for (const list of [
+        gapSamples,
+        workSamples,
+        restoreSamples,
+        syncSamples,
+        renderSamples,
+        hudSamples,
+      ]) {
+        list.length = 0;
+      }
     },
     project(x: number, y: number, z: number): { x: number; y: number } | null {
       // Aim the camera at the mirror's current state before measuring against it. The frame loop

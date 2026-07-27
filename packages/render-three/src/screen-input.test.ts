@@ -25,6 +25,30 @@
  * - *Strafing right* means you end up to the right of where you were, as seen from where you
  *   were standing.
  *
+ * ## Why those are facts and not preferences
+ *
+ * A camera with forward `f` and up `u` has right `r = cross(f, u)` — that is what makes the basis
+ * right-handed, and it is the same rule three.js applies (its cameras look down local `-Z`, so
+ * `cross(-Z, +Y) = +X`, the local axis NDC `x` increases along). "Turn right" means rotate so `f`
+ * sweeps *toward* `r`. A landmark that was on the old `f` is therefore, after the turn, on the
+ * side of the new `f` **away** from `r` — i.e. at negative NDC `x`. So:
+ *
+ * > **turning right ⇒ a fixed landmark ahead moves leftward in NDC.**
+ *
+ * Nothing in that sentence mentions this engine. Substitute any convention you like for `f` and
+ * `u` and it still holds, because the two appearances of `r` cancel. The same argument about the
+ * camera's up axis gives *looking down ⇒ a landmark at eye level moves upward in NDC*, and about
+ * `r` itself gives *strafing right ⇒ your new position projects to positive NDC x from where you
+ * stood*. A reader can check all three without running anything, which is the point: an
+ * expectation re-recorded from current behaviour would have pinned the defect instead of catching
+ * it, and that is exactly how this criterion passed review the first time.
+ *
+ * Concretely, and this is what the fps mode got wrong: `mode-fps` defines yaw 0 as `f = (0,0,1)`
+ * with its own right vector at `+X` (`geometry.ts` `rightFromYaw`). But `cross((0,0,1),(0,1,0))`
+ * is `(-1,0,0)`. The mode's right and the camera's right are opposite vectors, so a mouse move
+ * the mode read as "turn right" rendered as a turn to the left. The fix is a sign on the human's
+ * input, in this package's binding layer; see `SCREEN_HANDEDNESS` in `bindings.ts`.
+ *
  * Pinning a recorded NDC value instead would have pinned the bug. There are no goldens here.
  * @packageDocumentation
  */
@@ -32,7 +56,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { Transform } from '@aegis/core';
 import type { World } from '@aegis/core';
-import { FpsCamera, LookState, fpsPlugin } from '@aegis/mode-fps';
+import { FpsCamera, LookState, fpsPlugin, rightFromYaw } from '@aegis/mode-fps';
 import { BINDINGS } from './bindings.js';
 import { createLiveSession } from './session.js';
 import type { LiveSession } from './session.js';
@@ -262,6 +286,33 @@ describe('what the human sees when they move their hands', () => {
     const { before, after } = nudge(NUDGE_PIXELS, 0);
     // Turning right slides the world left: a landmark that was dead ahead ends up on the left.
     expect(after.x).toBeLessThan(before.x - CLEARLY);
+  });
+
+  it("the rendered camera's right vector is the opposite of the mode's own", () => {
+    // The prose above argues from `r = cross(f, u)`. This is that argument as an executable
+    // statement, so the premise every other test here rests on is checked rather than asserted
+    // in a comment — and so the mirror itself is on the record, not only its consequences.
+    rig = fpsRig();
+    rig.play(1);
+
+    // The camera's local +X in world space: the axis NDC `x` increases along.
+    const cameraRight = new Vector3(1, 0, 0).applyQuaternion(rig.adapter.camera.quaternion);
+    // Its view direction, i.e. local -Z.
+    const forward = new Vector3(0, 0, -1).applyQuaternion(rig.adapter.camera.quaternion);
+
+    // Premise: the camera basis really is right-handed in the stated sense, `r = cross(f, u)`.
+    const derived = new Vector3().crossVectors(forward, new Vector3(0, 1, 0)).normalize();
+    expect(derived.x).toBeCloseTo(cameraRight.x, 6);
+    expect(derived.z).toBeCloseTo(cameraRight.z, 6);
+
+    // The mode's own right vector at this yaw, taken from the mode rather than re-derived here.
+    const modeRight = rightFromYaw(rig.eye().yawDeg);
+    // Anti-vacuity: a zero vector would satisfy the dot-product test below trivially.
+    expect(Math.hypot(modeRight.x, modeRight.z)).toBeCloseTo(1, 6);
+    // And they point opposite ways. That single fact is the whole defect: anything a human
+    // expresses in screen terms has to be negated on the way into a frame that disagrees with
+    // the screen about which way right is.
+    expect(cameraRight.x * modeRight.x + cameraRight.z * modeRight.z).toBeLessThan(-0.99);
   });
 
   it('turns the view left when the mouse moves left', () => {
