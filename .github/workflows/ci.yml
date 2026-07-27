@@ -15,6 +15,14 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
 
+    # Measured locally on a 16-core Windows box under load from four concurrent sessions:
+    # `npm ci` 112s + `npm run verify` 248s = 6 minutes. Hosted runners are 2-4 vCPU, so budget
+    # 3x for the machine and 1.7x on top of that for a cold module cache and network variance:
+    # 30 minutes is ~5x the measured local wall clock. This is a guard against a *hang*, not a
+    # performance assertion -- GitHub's default is 360 minutes, which would burn six hours to
+    # tell us nothing. If this ever fires, the answer is to find what hung, not to raise it.
+    timeout-minutes: 30
+
     # The committed root .npmrc pins the corporate Azure Artifacts proxy, which is correct for
     # local development (ENVIRONMENT.md) and unreachable from a GitHub-hosted runner. An env var
     # outranks a project .npmrc in npm's config precedence, so this selects the public registry
