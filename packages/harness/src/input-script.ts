@@ -22,6 +22,14 @@
  * Ranges `a..b` are half-open (include `a`, exclude `b`). `@t` is the single tick `t`.
  * Example (platformer): `hold Right 0..90` then `press Jump @30`.
  *
+ * ## `<Action>` is a logical name, not a key
+ * `Right`, `Jump`, `Fire`, `Forward` are the names each mode's input system reads. A script sets
+ * them **directly**; a human sets them through a key/mouse binding table that lives with the
+ * renderer, which this DSL never touches. That is deliberate — a script must not break because
+ * someone rebinds a key — but it means a script cannot exercise, and a passing test cannot vouch
+ * for, the mapping itself: an inverted axis sign, a key bound to the wrong action, or a key bound
+ * to nothing look identical from here. See the header of `assert.ts` for what that rules out.
+ *
  * ## Compilation model
  * Digital actions are compiled through a single per-action **held** timeline: `hold`/`press`
  * set it true across their span, and `release @r` clears it from `r` up to the next hold-start

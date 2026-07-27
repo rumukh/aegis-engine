@@ -4,9 +4,32 @@
  * These assertions are runner-agnostic: they throw {@link GameAssertionError} on failure, so
  * they work identically under Vitest and under the `aegis test` CLI (which has no test
  * runner). A {@link GameTest} is a plain, declarative description of a headless playthrough
- * plus its expectations — the unit the CLI discovers and runs to prove a PoC is completable.
+ * plus its expectations — the unit the CLI discovers and runs to prove that a scripted sequence
+ * of **logical actions** drives the simulation to a named state.
  *
  * The design flows backwards from the ideal test in docs/architecture.md; read that first.
+ *
+ * ## What a green GameTest does not prove
+ * Read this before writing one, and before believing one.
+ *
+ * A GameTest injects input as logical actions — `Right`, `Jump`, `Fire`, `Forward` — straight into
+ * the simulation. A human's input arrives instead through a **binding table** that maps a key code
+ * or a mouse delta onto those same action names (`packages/render-three/src/bindings.ts`), and
+ * through a renderer that draws the result. **The harness sits downstream of both.** So a passing
+ * GameTest says the simulation reaches the state; it says nothing whatsoever about whether a
+ * person can get it there. Invisible to every assertion in this file, by construction:
+ *
+ * - an inverted or wrongly-signed look/move axis — the sign is applied identically on both sides
+ *   of any comparison the harness can make, so it cancels;
+ * - a key bound to the wrong action, or to nothing at all;
+ * - anything about frame rate, input latency or what is actually drawn.
+ *
+ * This is not a gap to be closed here. Verifying a binding table needs an oracle **outside** the
+ * loop that applies it — an independently-authored expectation of what a given key must do — and
+ * that oracle belongs with the bindings, not with the simulation harness. What this file owes the
+ * reader is that a green result never be mistaken for one. Criterion 5 was reopened because three
+ * PoCs shipped with an inverted axis and a half-rate renderer while every instrument said they
+ * were fine; the instruments were correct and were measuring the other loop.
  *
  * ## Failure messages are the product
  * When a playthrough fails, the *only* thing an agent sees is the thrown message. So every
@@ -17,10 +40,12 @@
  * of the world it rejected. An agent should be able to act on the message alone.
  *
  * ## An assertion that cannot fail is worse than no assertion
- * Two silent ways this API used to report success without checking anything, both now loud:
+ * Three silent ways this API used to report success without checking anything, all now loud:
  * a query naming a component that does not exist matched nothing rather than erroring (so
- * `entityCount({ has: ['Enmy'] }, 0)` passed on every world), and an `expect` block that ran no
- * assertions at all was reported as a clean pass. See `verification.ts`.
+ * `entityCount({ has: ['Enmy'] }, 0)` passed on every world); an `expect` block that ran no
+ * assertions at all was reported as a clean pass; and a **self-referential** check, whose expected
+ * value is produced by the run it is checking, reported success for every possible run. See
+ * `verification.ts` for the first two and {@link "./run".SelfReferentialCheckError} for the third.
  * @packageDocumentation
  */
 import type { EventReader, GameEvent, QueryDescriptor, StateHash } from '@aegis/core';
@@ -425,7 +450,13 @@ export function expectSim(result: SimResult): GameplayAssertions {
 
 // --- game tests ----------------------------------------------------------------------------
 
-/** A declarative, headless gameplay test. */
+/**
+ * A declarative, headless gameplay test.
+ *
+ * Scope, stated on the type rather than only in the module header: this drives the **simulation**
+ * with logical actions. It is downstream of the key/mouse binding table and of the renderer, so a
+ * green result cannot speak for either — see the module header for what that rules out.
+ */
 export interface GameTest {
   /** Human-readable test name. */
   name: string;

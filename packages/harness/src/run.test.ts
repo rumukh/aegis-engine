@@ -14,7 +14,13 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { Transform } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
 import type { Diagnostic, World } from '@aegis/core';
-import { InvariantError, runScene, replayRecording } from './run.js';
+import {
+  InvariantError,
+  runScene,
+  replayRecording,
+  SelfReferentialCheckError,
+  verifyReplay,
+} from './run.js';
 import { parseInputScript } from './input-script.js';
 import type { ModePlugin } from './plugin.js';
 import { parseRecording, serializeRecording } from './replay.js';
@@ -276,6 +282,70 @@ describe('runScene — a plugin that is not a ModePlugin', () => {
   // wrong reason — a guard that rejects everything is not a guard.
   it('accepts a real ModePlugin', async () => {
     await expect(runScene(level(), { plugin: fakeMode, ticks: 5 })).resolves.toBeDefined();
+  });
+});
+
+/**
+ * L1 provenance: a check whose expected value is produced by the thing it is checking.
+ *
+ * `verifyReplay(result.recording(), result)` reads as the most thorough check the harness offers
+ * and was the least. Measured before the guard existed:
+ *
+ * ```
+ * verifyReplay(result.recording(), result) -> ok = true | problems = 0 | unverified = 0
+ * ```
+ *
+ * Every comparison — final hash, tick count, the whole per-tick timeline — was a value against a
+ * copy of itself, so it reported a clean, complete verification for any run whatsoever. This is
+ * the same defect that reopened CHARTER §4.3 criterion 5 one level up: an instrument comparing two
+ * live derivations of the same thing runs perfectly and measures nothing.
+ */
+describe('a verification cannot take its expected value from the run it verifies', () => {
+  it('refuses a recording produced by the very result being verified', async () => {
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 20, input: WINNING_INPUT });
+    expect(() => verifyReplay(result.recording(), result)).toThrow(SelfReferentialCheckError);
+    expect(() => verifyReplay(result.recording(), result)).toThrow(/every comparison below is a/);
+  });
+
+  /**
+   * Negative control, and the boundary that makes the guard usable: a recording that has been
+   * through a file is frozen evidence, not the run's own shadow. It must still verify — and must
+   * still catch a changed run, or the guard has replaced one useless check with another.
+   */
+  it('still verifies a recording that has been serialised', async () => {
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 20, input: WINNING_INPUT });
+    const onDisk = parseRecording(serializeRecording(result.recording()));
+
+    const clean = verifyReplay(onDisk, result);
+    expect(clean.ok).toBe(true);
+    expect(clean.problems).toEqual([]);
+
+    const tampered = { ...onDisk, finalHash: '0000000000000000' };
+    expect(verifyReplay(tampered, result).ok).toBe(false);
+  });
+
+  /**
+   * The other legitimate shape: two **independent executions** of the same run description. Both
+   * sides are live, but they are different computations, so the comparison can fail — that is
+   * exactly the determinism property, and the guard must not confuse it with a tautology.
+   */
+  it('allows a recording checked against an independent re-execution', async () => {
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 20, input: WINNING_INPUT });
+    const verified = verifyReplay(result.recording(), result.replay());
+    expect(verified.ok).toBe(true);
+    expect(verified.problems).toEqual([]);
+  });
+
+  it('leaves the recording document itself untouched', async () => {
+    const result = await runScene(level(), { plugin: fakeMode, ticks: 20, input: WINNING_INPUT });
+    const recording = result.recording();
+    // The mark is a non-enumerable symbol: nothing that walks or serialises the document sees it,
+    // which is why a round-trip through JSON legitimately clears it.
+    expect(Object.keys(recording)).not.toContain('origin');
+    expect(JSON.parse(serializeRecording(recording))).toEqual(
+      JSON.parse(JSON.stringify(recording)),
+    );
+    expect(serializeRecording(recording)).not.toContain('origin');
   });
 });
 

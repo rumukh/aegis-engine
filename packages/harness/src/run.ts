@@ -522,7 +522,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
         finalHash: world.hash(),
         ...(tickHashes.length > 0 ? { tickHashes } : {}),
       };
-      return rec;
+      return markRecordingOrigin(rec, self);
     },
     replay(): SimResult {
       return makeResult(run, executeRun(run));
@@ -691,6 +691,50 @@ export async function replayRecording(
   return result;
 }
 
+/**
+ * Thrown when a verification's expected value was produced by the thing it is verifying.
+ *
+ * The provenance rule this enforces: **L1** — two live derivations compared to each other — is a
+ * tautology wearing the shape of a test. `verifyReplay(result.recording(), result)` reads as the
+ * most thorough check available and is the least: measured before this guard existed, it returned
+ * `ok: true` with **zero problems and zero unverified**, having compared a run's hash, its tick
+ * count and its whole per-tick timeline to copies of themselves. It could not fail for any run,
+ * correct or broken.
+ *
+ * A recording that has been through a file is a different thing entirely — a frozen artefact
+ * (**L2**), which is what `aegis replay` and `replayRecording` compare against, and which does
+ * catch a changed run. The mark this guard reads is a non-enumerable symbol, so it does not
+ * survive `JSON.stringify`: the moment a recording is serialised it stops being the run's own
+ * shadow and starts being evidence.
+ */
+export class SelfReferentialCheckError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SelfReferentialCheckError';
+  }
+}
+
+/** Marks a {@link Recording} with the {@link SimResult} that produced it, for the L1 guard. */
+const RECORDING_ORIGIN = Symbol.for('aegis.harness.recording.origin/1');
+
+type OriginMarked = { [RECORDING_ORIGIN]?: object };
+
+/** Record that `recording` was derived from `origin`. Invisible to JSON and to `Object.keys`. */
+function markRecordingOrigin(recording: Recording, origin: object): Recording {
+  Object.defineProperty(recording, RECORDING_ORIGIN, {
+    value: origin,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return recording;
+}
+
+/** The run a recording was derived from, if it is still the in-memory object that run produced. */
+function recordingOrigin(recording: Recording): object | undefined {
+  return (recording as OriginMarked)[RECORDING_ORIGIN];
+}
+
 /** What a replay proved — and, as importantly, what it could not check. */
 export interface ReplayVerification {
   /** Everything the recording pinned was reproduced. */
@@ -730,6 +774,17 @@ export interface ReplayVerification {
  * unverified removed exactly the check a golden trajectory exists to provide.
  */
 export function verifyReplay(recording: Recording, result: SimResult): ReplayVerification {
+  if (recordingOrigin(recording) === result) {
+    throw new SelfReferentialCheckError(
+      `[aegis] verifyReplay: this recording was produced by the very run being verified ` +
+        `(result.recording()), so every comparison below is a value against a copy of itself. ` +
+        `It would report ok with nothing unverified, for a correct run and a broken one alike.\n` +
+        `To prove determinism, replay independently: verifyReplay(result.recording(), result.replay()) ` +
+        `re-executes the run, and replayRecording(recording, options) does the same from a file.\n` +
+        `To prove a run still matches a *pinned* artefact, compare against a recording read back ` +
+        `from disk — a serialised recording is frozen evidence and does catch a changed run.`,
+    );
+  }
   const problems: string[] = [];
   const unverified: string[] = [];
   const finalHashMatched = result.hash === recording.finalHash;
