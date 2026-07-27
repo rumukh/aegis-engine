@@ -58,6 +58,21 @@ function commandsOf(script: string): string[] {
     .sort();
 }
 
+/**
+ * Budget for the determinism case, which is the only expensive test in this file.
+ *
+ * Measured on the development box: **20.0 s** for the case run alone, and the PM measured
+ * **26.7 s** in a full parallel suite — the latter against a root `testTimeout` that was 30 s at
+ * the time, i.e. 1.06 s of margin on a determinism assertion whose timeout would have read as a
+ * determinism regression. Dropping the third run below takes those to roughly two thirds. Sized at
+ * 60 s so a machine **3x slower** than this one still passes with the in-suite figure, and set
+ * deliberately *below* the 120 s root: an explicit local budget fails fast and names itself,
+ * whereas a blanket root timeout tells the next person nothing about what the test should cost.
+ *
+ * Re-derive rather than trust: `node node_modules/vitest/vitest.mjs run games/fps/test/sector-breach.test.ts`.
+ */
+const DETERMINISM_BUDGET_MS = 60_000;
+
 describe('Sector Breach', () => {
   it('completes the playthrough exactly as the spec asserts', async () => {
     await expectGameTest(sectorBreach);
@@ -71,24 +86,45 @@ describe('Sector Breach', () => {
     await expectGameTest(sectorBreachWallSlide);
   });
 
-  it('is deterministic: identical hash across independent runs and on replay', async () => {
-    const options = {
-      plugin: sectorBreachPlugin,
-      ticks: TICKS,
-      seed: SEED,
-      input: SECTOR_BREACH_SCRIPT,
-    } as const;
-    const first = await runScene(SCENE, options);
-    const second = await runScene(SCENE, options);
-    expect(second.hash).toBe(first.hash);
-    expect(first.replay().hash).toBe(first.hash);
-    // Every per-tick hash matches too — determinism holds tick-by-tick, not just at the end.
-    expect(second.tickHashes).toEqual(first.tickHashes);
-    // ...and the run is byte-stable against the recorded golden master, resting state and
-    // trajectory alike.
-    expect(first.hash).toBe(GOLDEN_HASH);
-    expect(trajectoryDigest(first.tickHashes)).toBe(GOLDEN_TRAJECTORY);
-  });
+  /**
+   * Two independent runs, not three.
+   *
+   * This used to run the playthrough three times: two `runScene` calls plus `first.replay()`.
+   * `replay()` is `makeResult(run, executeRun(run))` — it re-executes the run that was **already
+   * resolved**, reusing the parsed scene and the built registry. A second `runScene` re-reads the
+   * scene from disk, re-validates it, re-instantiates the world and *then* re-executes, so it
+   * proves everything `replay()` proves and the load path as well. The third run was strictly
+   * weaker than one of the two it accompanied, and the `replay()` API itself is proven where it
+   * belongs — in `packages/harness`, and end-to-end by `aegis record` / `aegis replay` in
+   * `packages/cli`. Dropping it removes a third of the cost of this file's slowest case and
+   * removes no claim.
+   *
+   * What remains is two claims with different provenance, which is the point: the first is two
+   * live runs compared to each other (it catches non-determinism *inside this process*), and the
+   * second is a run compared to a **pinned literal** (it catches drift *across* processes and
+   * machines, which no pair of live runs can see).
+   */
+  it(
+    'is deterministic: two independent runs agree tick for tick, and match the pinned goldens',
+    async () => {
+      const options = {
+        plugin: sectorBreachPlugin,
+        ticks: TICKS,
+        seed: SEED,
+        input: SECTOR_BREACH_SCRIPT,
+      } as const;
+      const first = await runScene(SCENE, options);
+      const second = await runScene(SCENE, options);
+      expect(second.hash).toBe(first.hash);
+      // Every per-tick hash matches too — determinism holds tick-by-tick, not just at the end.
+      expect(second.tickHashes).toEqual(first.tickHashes);
+      // ...and the run is byte-stable against the recorded golden master, resting state and
+      // trajectory alike.
+      expect(first.hash).toBe(GOLDEN_HASH);
+      expect(trajectoryDigest(first.tickHashes)).toBe(GOLDEN_TRAJECTORY);
+    },
+    DETERMINISM_BUDGET_MS,
+  );
 
   it('tilemap and scene floorplans extrude to identical collision (no drift)', () => {
     const tilemap = JSON.parse(readFileSync(TILEMAP, 'utf8')) as TilemapFile;
