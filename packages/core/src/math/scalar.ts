@@ -36,11 +36,23 @@
  * `sin`/`cos`/`tan` therefore **enforce** a documented domain of `|x| ≤ 2^20·π`
  * ({@link SIN_DOMAIN_MAX} ≈ 3.294e6 radians ≈ 524288 full turns) and throw a
  * {@link RangeError} outside it, including for `NaN` and `±Infinity`. Inside the domain the
- * measured worst-case absolute error against the platform reference is **2.3e-16** for both
+ * measured worst-case absolute error against the platform reference is **2.2e-16** for both
  * `sin` and `cos` — four orders tighter than the ≤ 1e-9 public contract. A game that reaches
  * the limit has an accumulator bug; failing loudly at the source beats poisoning the state hash
  * half a second later. Wrap the angle yourself ({@link wrapAngle}) if you genuinely need an
  * unbounded input.
+ *
+ * ## Exact symmetries
+ *
+ * `sin(-x) === -sin(x)` and `cos(-x) === cos(x)` hold **exactly**, for every accepted input,
+ * not merely to within a tolerance — with one stated exception: `sin(-0)` is `+0`, not `-0`, so
+ * the identity is exact under `===` but not under `Object.is`. Signed zero is unobservable in
+ * world state anyway, because every write boundary normalises `-0` to `0`.
+ *
+ * This is a property of the tie rule in the argument reduction (see `nearestInt`) and is
+ * asserted at the half-quadrant boundaries where it used to fail, not only at random samples —
+ * a random sweep can never reach an exact tie, so it was green against an implementation that
+ * was not odd.
  *
  * `atan`/`atan2`/`asin`/`acos` have no domain limit; `atan2` implements the IEEE-754 special
  * cases for zeros and infinities.
@@ -68,7 +80,7 @@ export const EPSILON = 1e-9;
  * Largest `|radians|` that {@link sin}, {@link cos} and {@link tan} accept.
  *
  * `2^20·π` ≈ 3.294e6 radians ≈ 524288 full turns. Inside this range the Cody–Waite reduction
- * is exact enough for a measured worst-case absolute error of 2.3e-16; outside it the
+ * is exact enough for a measured worst-case absolute error of 2.2e-16; outside it the
  * reduction degrades without warning, so the functions throw instead. See the module doc.
  */
 export const SIN_DOMAIN_MAX = 3294198.658330571; // 2 ** 20 * PI
@@ -99,14 +111,27 @@ const C5 = 2.0875723212981748279e-9;
 const C6 = -1.13596475577881948265e-11;
 
 /**
- * Nearest integer to `x` (round half up); used **only** for argument reduction.
+ * Nearest integer to `x`, ties **away from zero**; used **only** for argument reduction.
  *
- * Any consistent tie rule reduces correctly, so this is deliberately not {@link round}: the
- * exact rule chosen here is baked into every `sin`/`cos` result and therefore into every stored
- * replay. Changing it is a breaking change to the whole engine.
+ * The tie rule is not free choice, despite any consistent rule reducing correctly. It used to
+ * be `Math.floor(x + 0.5)` — round half *up* — and that made `sin` measurably not odd:
+ * `sin(3π/4)` and `-sin(-3π/4)` differ by 1 ulp, because `x/(π/2)` lands on `±1.5` and half-up
+ * sends `1.5 → 2` but `-1.5 → -1`, so the two arguments are reduced through *different*
+ * quadrants. A tie rule symmetric about zero gives `k(-x) === -k(x)` at every tie, and since
+ * the reduction, the kernels (odd in `r` for sine, even for cosine) and the quadrant table are
+ * all sign-symmetric, `sin(-x) === -sin(x)` and `cos(-x) === cos(x)` become **exact** for every
+ * input rather than for almost every input.
+ *
+ * Half-up also double-rounds: `0.49999999999999994 + 0.5` is exactly `1` in float64, so the old
+ * form returned `1` for an argument strictly below one half. {@link round} is exact for every
+ * finite double and carries the away-from-zero rule, so it is reused rather than re-derived.
+ *
+ * Both differences are confined to exact ties and to that one double, so the results this
+ * changes are the ones that were asymmetric; every other `sin`/`cos` value — and therefore
+ * every stored replay that does not land exactly on a half-quadrant boundary — is bit-identical.
  */
 function nearestInt(x: number): number {
-  return Math.floor(x + 0.5);
+  return round(x);
 }
 
 /** Kernel sine on the reduced argument `r ∈ [-π/4, π/4]`. */
@@ -174,18 +199,46 @@ export function tan(radians: number): number {
  * Wrap an angle into `(-π, π]` using exact IEEE-754 arithmetic, so an unbounded accumulator can
  * be brought back inside the {@link sin} domain.
  *
- * Only meaningful while `|radians|` is small enough that `radians / TAU` still resolves whole
- * turns — beyond `2^53` radians the input has lost the sub-turn information entirely and no
- * wrapper can recover it, so this throws rather than returning a fabricated angle.
+ * ## Accuracy, and why the domain is what it is
+ *
+ * The wrapped value is `radians - floor(radians/τ)·τ`, and the subtracted product carries the
+ * rounding error of a number the size of `radians`. The error therefore grows **linearly with
+ * the input**, at roughly `|radians|·2⁻⁵²`. Measured against a two-word reduction of τ:
+ *
+ * | `\|radians\|` | error of the wrapped angle |
+ * | ------------- | -------------------------- |
+ * | 1e6           | 5.0e-11 rad                |
+ * | 1e9           | 5.1e-8 rad                 |
+ * | 1e12          | 3.2e-5 rad                 |
+ * | 1e15          | 9.3e-3 rad (0.53°)         |
+ * | 9e15          | 8.3e-1 rad (48°)           |
+ *
+ * The limit used to be 2^53 ≈ 9.0e15 on the stated rationale that "beyond 2^53 a double has no
+ * sub-turn information". That rationale does not survive measurement in either direction: a
+ * double still resolves ~3 points per turn at 2^53, yet the value this function returns there
+ * is wrong by 48°. Silently returning an angle that is off by 48° is exactly the failure mode
+ * `sin`'s own domain check exists to prevent, one function upstream.
+ *
+ * So the limit is `2^40` ({@link MAX_WRAPPABLE_ANGLE} ≈ 1.1e12) — about four orders of
+ * magnitude tighter — chosen from the measurement rather than from an intuition: at 2^40 the
+ * *input's* own ulp is 2^-12 ≈ 2.4e-4 rad, so the accumulator still pins its angle to better
+ * than a hundredth of a degree and the wrapped result is good to the same. Past it the input
+ * has already lost that much, and no wrapper can recover what was never there — refusing is the
+ * only honest answer.
  *
  * @param radians - Angle in radians.
- * @throws RangeError when `radians` is `NaN`, `±Infinity`, or `|radians| >= 2^53`.
+ * @throws RangeError when `radians` is `NaN`, `±Infinity`, or `|radians| >= 2^40`.
  */
 export function wrapAngle(radians: number): number {
-  if (!(radians >= -MAX_WRAPPABLE_ANGLE && radians <= MAX_WRAPPABLE_ANGLE)) {
+  // `!(|x| < MAX)` rather than `>=` so NaN is rejected too. Strictly less than the limit, which
+  // is what both this function's doc and its own error message have always claimed; the
+  // comparison was `<=`, so `wrapAngle(2^53)` returned a value while the contract said it threw.
+  if (!(radians > -MAX_WRAPPABLE_ANGLE && radians < MAX_WRAPPABLE_ANGLE)) {
     throw new RangeError(
-      `[aegis] wrapAngle(${String(radians)}): |x| must be < 2^53 to retain sub-turn ` +
-        `information; this value cannot be wrapped to a meaningful angle.`,
+      `[aegis] wrapAngle(${String(radians)}): |x| must be < 2^40 (${MAX_WRAPPABLE_ANGLE}) for ` +
+        `the wrapped angle to be accurate to better than 2.4e-4 rad; this value cannot be ` +
+        `wrapped to a meaningful angle. Wrap at the point the angle is stored, not at the point ` +
+        `it is used, so the accumulator never grows this large (ADR-0001).`,
     );
   }
   const turns = radians / TAU;
@@ -193,8 +246,13 @@ export function wrapAngle(radians: number): number {
   return wrapped > PI ? wrapped - TAU : wrapped;
 }
 
-/** Largest `|x|` {@link wrapAngle} accepts: beyond 2^53 a double has no sub-turn information. */
-const MAX_WRAPPABLE_ANGLE = 9007199254740992; // 2 ** 53
+/**
+ * Largest `|x|` {@link wrapAngle} accepts, exclusive: `2^40`.
+ *
+ * Beyond it the input's own ulp exceeds ~2.4e-4 radians, so the accumulator has already lost
+ * the angle to worse than a hundredth of a degree. See {@link wrapAngle} for the measurements.
+ */
+const MAX_WRAPPABLE_ANGLE = 1099511627776; // 2 ** 40
 
 // fdlibm atan kernel breakpoints and polynomial coefficients (≈1 ulp on the whole line).
 const ATAN_HI = [

@@ -25,7 +25,13 @@ import type {
   World,
 } from '@aegis/core';
 import { ContentCode, diagnostic } from './diagnostics.js';
-import { componentSchema, isDescribedId, suggestName, validateComponentData } from './schema.js';
+import {
+  componentSchema,
+  isDescribedId,
+  reportUnserialisable,
+  suggestName,
+  validateComponentData,
+} from './schema.js';
 import type { ComponentData, EntityDecl, PrefabFile, SceneFile, TilemapFile } from './scene.js';
 import type { ComponentRegistry, ResourceRegistry } from './registry.js';
 
@@ -594,11 +600,29 @@ function checkSchemaDeclarations(ctx: SemanticContext): void {
   }
 }
 
-/** Validate the resource ids a scene sets, when the caller supplied a resource registry. */
+/**
+ * Validate the resource ids a scene sets (when the caller supplied a resource registry) and
+ * every resource **value** (always).
+ *
+ * The two halves are deliberately independent. Id checking needs a registry, which `runScene`
+ * does not supply, so it is inert in the shipped run path. Value checking needs nothing: a
+ * resource value is written straight into the world with `setResource`, which rejects anything
+ * it cannot serialise — and `1e999` in a scene file is `Infinity` the moment `JSON.parse`
+ * touches it, which is how a document validated clean and then killed the run.
+ */
 function validateResources(
   resources: Readonly<Record<string, unknown>>,
   ctx: SemanticContext,
 ): void {
+  for (const [id, value] of Object.entries(resources)) {
+    reportUnserialisable(
+      value,
+      `resources[${JSON.stringify(id)}]`,
+      `Resource "${id}"`,
+      ctx.file,
+      ctx.diags,
+    );
+  }
   const known = ctx.options.resources;
   if (known === undefined) return;
   for (const id of Object.keys(resources)) {

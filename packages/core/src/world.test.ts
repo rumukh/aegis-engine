@@ -235,13 +235,16 @@ describe('World — non-finite state (C1)', () => {
   const V = defineComponent<{ v: number }>({ id: 'V', defaults: () => ({ v: 0 }) });
 
   /** Extract the single diagnostic from a thrown DiagnosticError. */
-  function diagnosticFrom(fn: () => unknown): Diagnostic {
+  function diagnosticFrom(
+    fn: () => unknown,
+    code: string = CoreDiagnosticCode.NonFiniteState,
+  ): Diagnostic {
     try {
       fn();
     } catch (err) {
       expect(err).toBeInstanceOf(DiagnosticError);
       const d = (err as DiagnosticError).diagnostics[0] as Diagnostic;
-      expect(d.code).toBe(CoreDiagnosticCode.NonFiniteState);
+      expect(d.code).toBe(code);
       return d;
     }
     throw new Error('expected the call to throw a DiagnosticError');
@@ -460,7 +463,16 @@ describe('World — non-finite state (C1)', () => {
     const w = createWorld({ seed: 1 });
     // A Map has no enumerable own keys, so it used to survive into state and hash as `{}`.
     expect(() => w.spawn(V({ v: new Map() as unknown as number }))).toThrow(/plain JSON/);
-    expect(() => w.spawn(V({ v: (() => 1) as unknown as number }))).toThrow(/not simulation data/);
+    expect(() => w.spawn(V({ v: (() => 1) as unknown as number }))).toThrow(/plain JSON/);
+    // Both are the same refusal, so both carry the structured code an agent branches on —
+    // matching the message alone would pass for a stack overflow with the right words in it.
+    for (const bad of [new Map(), () => 1, Symbol('s'), 10n]) {
+      const d = diagnosticFrom(
+        () => w.spawn(V({ v: bad as unknown as number })),
+        CoreDiagnosticCode.UnserialisableState,
+      );
+      expect(d.data?.['reason']).toBe(bad instanceof Map ? 'non-plain' : 'unsupported');
+    }
   });
 
   it('normalises -0 to 0 on every path, so state never holds what the hash cannot see', () => {
@@ -578,17 +590,36 @@ describe('World — C2 acceptance criteria (slot-reuse aliasing: identity, not l
   it('the lazily-built row never materialises a handle to the current occupant', () => {
     // Pre-fix this row read {"entity":"8589934593","get":999,"tryGet":999,"has":true,
     // "isAlive":true} — a fresh, valid handle to the impostor, with every accessor agreeing.
+    //
+    // The `if (view !== undefined)` this used to be guarded by was **provably not taken**: the
+    // assertion at :688 in this same file pins `first: undefined`, so every expectation inside
+    // it was dead code and the test's only live assertion was `not.toContain` on an empty
+    // array — true for any implementation, including a broken one. Assert the disjunction
+    // directly instead, so whichever branch the implementation takes is checked.
     const { result, original, impostor } = afterSlotReuse();
     const view = result.first();
-    if (view !== undefined) {
+    if (view === undefined) {
+      // The row is gone — the shape the fix actually produces. Pin it as such rather than
+      // leaving "row present" untested-and-unreachable.
+      expect(result.count()).toBe(0);
+    } else {
       expect(view.entity).toBe(original);
       expect(view.entity).not.toBe(impostor);
       expect(view.tryGet(Tag)?.v).not.toBe(IMPOSTOR);
       expect(view.has(Tag)).toBe(false);
       expect(() => view.get(Tag)).toThrow();
     }
-    // Either the row is gone, or it still refers to the original. Never the impostor.
+    // Either the row is gone, or it still refers to the original. Never the impostor. Stated
+    // against a *populated* result too, so an implementation that returns nothing at all — the
+    // trivial way to pass an emptiness check — cannot satisfy it.
     expect(result.entities()).not.toContain(impostor);
+    const fresh = afterSlotReuse();
+    expect(
+      fresh.world
+        .query({ has: [Tag] })
+        .first()
+        ?.get(Tag).v,
+    ).toBe(IMPOSTOR);
   });
 
   for (const [name, extract] of [
@@ -711,11 +742,31 @@ describe('World — C2 acceptance criteria (slot-reuse aliasing: identity, not l
   });
 
   it('entities() returns query-time handles, never a freshly packed one', () => {
-    const { result, original, impostor } = afterSlotReuse();
-    for (const e of result.entities()) {
-      expect(e).not.toBe(impostor);
-      expect(e).toBe(original);
-    }
+    // This used to be a `for (const e of result.entities())` loop asserting on `e`. The
+    // assertion two tests down pins `count()` at 0, so `entities()` is empty here and the loop
+    // body **never ran**: the test executed zero expectations and would have passed against
+    // `entities: () => []` and against the original defect alike.
+    //
+    // The property is about *identity*, so it needs a result that actually has rows. Keep a
+    // survivor alive alongside the reused slot: the handle that comes back must be the one the
+    // query saw, and the reborn occupant of the recycled slot must not appear under any handle.
+    const w = createWorld({ seed: 1 });
+    const doomed = w.spawn(Tag({ v: ORIGINAL }));
+    const survivor = w.spawn(Tag({ v: 7 }));
+    const result = w.query({ has: [Tag] });
+    expect(result.entities()).toEqual([doomed, survivor]); // the instrument reads something
+
+    w.despawn(doomed);
+    const reborn = w.spawn(Tag({ v: IMPOSTOR }));
+    expect(entityIndex(reborn as never)).toBe(entityIndex(doomed as never)); // same slot reused
+
+    const after = result.entities();
+    expect(after).toEqual([survivor]); // query-time handle, and only that one
+    expect(after).not.toContain(reborn);
+    expect(after).not.toContain(doomed); // the dead row is dropped, not resurrected
+    // Handles are values, so identity has to be checked as equality against the *packed* handle
+    // the query saw — not merely as "some entity in the same slot".
+    for (const e of after) expect(entityIndex(e as never)).not.toBe(entityIndex(reborn as never));
   });
 
   it('count() does not count the entity that took the slot', () => {
