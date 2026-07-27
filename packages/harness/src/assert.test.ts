@@ -270,6 +270,23 @@ describe('expectSim — failure messages are actionable', () => {
     expect(msg).not.toContain('threw');
     expect(() => expectSim(result).holds('always true', () => true)).not.toThrow();
   });
+
+  /**
+   * The nudge is for a **bare boolean**. Deciding it from `actual`/`expected` alone told a caller
+   * who returned `{ ok, detail }` — a documented CheckOutcome form — that they had "returned a
+   * bare boolean, so nothing above names the offending value", directly under the `detail` line
+   * that named it.
+   */
+  it('does not nudge a predicate that reported only a detail', () => {
+    const msg = messageFrom(() =>
+      expectSim(result).holds('hero is grounded', () => ({
+        ok: false,
+        detail: 'hero was airborne on tick 12',
+      })),
+    );
+    expect(msg).toContain('detail  : hero was airborne on tick 12');
+    expect(msg).not.toContain('bare boolean');
+  });
 });
 
 /**
@@ -292,6 +309,57 @@ describe('event types: a typo is a loud error, absence is not', () => {
     result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
   });
 
+  /** A minimal view provider — these plugins exist only to put chosen event types in the log. */
+  const noView = (): ViewProvider => ({
+    mode: 'platformer',
+    semanticFrame: (world: World): SemanticFrame => ({
+      tick: world.tick,
+      mode: 'platformer',
+      camera: {
+        mode: 'platformer',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0, w: 1 },
+        projection: 'orthographic',
+        viewport: { width: 1, height: 1 },
+      },
+      viewport: { width: 1, height: 1 },
+      entities: [],
+    }),
+    asciiView: (): AsciiView | undefined => undefined,
+  });
+
+  /** A plugin that emits exactly the event types named, on the ticks named. */
+  function emitterPlugin(schedule: Record<string, readonly number[]>): ModePlugin {
+    const emit: System = {
+      name: 'test.emit',
+      run({ world }: TickContext): void {
+        for (const [type, ticks] of Object.entries(schedule)) {
+          if (ticks.includes(world.tick)) world.events.emit(type, {});
+        }
+      },
+    };
+    return {
+      mode: 'platformer',
+      components: () => [],
+      systems: () => createSchedule().add(emit),
+      view: noView,
+    };
+  }
+
+  /** Two real, distinct event types that are one letter-for-letter edit apart. */
+  const twinEventMode = emitterPlugin({ 'p1.died': [1, 3], 'p2.died': [2] });
+  /** Only the first of that pair. */
+  const oneEventMode = emitterPlugin({ 'p1.died': [1, 3] });
+
+  /** An empty scene: these runs are about the event log, not about any world content. */
+  const emptyScene = (): SceneFile => ({
+    aegis: 'scene/1',
+    name: 'events-only',
+    mode: 'platformer',
+    seed: 'twins',
+    entities: [],
+  });
+
   it.each([
     ['eventNotEmitted, one edit out', () => expectSim(result).eventNotEmitted('enemy.kiled')],
     ['eventNotEmitted, wrong case', () => expectSim(result).eventNotEmitted('ENEMY.KILLED')],
@@ -309,6 +377,52 @@ describe('event types: a typo is a loud error, absence is not', () => {
   it('still passes for a type that is genuinely absent', () => {
     expect(() => expectSim(result).eventNotEmitted('boss.defeated')).not.toThrow();
     expect(() => expectSim(result).eventEmitted('boss.defeated', 0)).not.toThrow();
+  });
+
+  /**
+   * The guard is about an **absent** type. Reviewed defect: `nearMisses` skips the exact match, so
+   * on a run emitting both `enemy.killed` and a one-edit neighbour it fired anyway — announcing
+   * "no event of that type exists in this run" about a type that had fired, and swallowing the
+   * genuine failure that names the ticks. Three false claims in one message, on working code.
+   */
+  it('says nothing when the asserted type really fired, near miss or not', async () => {
+    const twins = await runScene(emptyScene(), {
+      plugin: twinEventMode,
+      ticks: 6,
+      seed: 'twins',
+    });
+    // Precondition: BOTH names are in the log and they are one edit apart.
+    expect(twins.events.count('p1.died')).toBe(2);
+    expect(twins.events.count('p2.died')).toBe(1);
+
+    const msg = messageFrom(() => expectSim(twins).eventNotEmitted('p1.died'));
+    expect(msg).not.toContain('typo');
+    expect(msg).toContain('Expected no "p1.died" event');
+    expect(msg).toContain('ticks 1, 3'); // the real, actionable failure
+  });
+
+  /**
+   * Numbering is how a game names a *family* of distinct events, so a one-edit difference that is
+   * a digit is never a misspelling. Without this, `eventNotEmitted('p2.died')` on a run emitting
+   * `p1.died` was rejected outright, with no way to express a perfectly valid assertion.
+   */
+  it('treats a digit difference as a distinct event, not a typo', async () => {
+    const only1 = await runScene(emptyScene(), { plugin: oneEventMode, ticks: 6, seed: 'twins' });
+    expect(only1.events.count('p1.died')).toBeGreaterThan(0);
+    expect(() => expectSim(only1).eventNotEmitted('p2.died')).not.toThrow();
+    expect(() => expectSim(only1).eventNotEmitted('wave2.spawned')).not.toThrow();
+    // …but a letter difference in the same run is still caught.
+    expect(() => expectSim(only1).eventNotEmitted('p1.dies')).toThrow(UnknownEventError);
+  });
+
+  it('can be overridden when the resemblance really is a coincidence', () => {
+    expect(() => expectSim(result).eventNotEmitted('enemy.kiled')).toThrow(UnknownEventError);
+    expect(() =>
+      expectSim(result).eventNotEmitted('enemy.kiled', { allowNearMiss: true }),
+    ).not.toThrow();
+    expect(() =>
+      expectSim(result).eventEmitted('enemy.kiled', 0, { allowNearMiss: true }),
+    ).not.toThrow();
   });
 
   it('suggests the near miss on a failing positive assertion too', () => {

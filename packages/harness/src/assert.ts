@@ -81,6 +81,19 @@ export class UnknownEventError extends GameAssertionError {
   }
 }
 
+/** Options shared by the event assertions. */
+export interface EventAssertionOptions {
+  /**
+   * Accept a type that looks like a typo for one that really fired.
+   *
+   * The near-miss guard is a heuristic, and a heuristic with no override is a wall. Two genuinely
+   * distinct event types can be one edit apart (`player.hit` / `player.hits`), and asserting that
+   * one never fired while the other did is exactly what these assertions are for. Set this to say
+   * "I know what it looks like; it is not a typo."
+   */
+  allowNearMiss?: boolean;
+}
+
 /** Fluent, readable assertions over a {@link SimResult}. Every method throws on failure. */
 export interface GameplayAssertions {
   /** At least one entity matches the query. */
@@ -88,9 +101,9 @@ export interface GameplayAssertions {
   /** Exactly `n` entities match the query. */
   entityCount(query: QueryDescriptor, n: number): this;
   /** An event of `type` was emitted (optionally exactly `times`). */
-  eventEmitted(type: string, times?: number): this;
+  eventEmitted(type: string, times?: number, options?: EventAssertionOptions): this;
   /** No event of `type` was ever emitted. */
-  eventNotEmitted(type: string): this;
+  eventNotEmitted(type: string, options?: EventAssertionOptions): this;
   /** The final state hash equals `expected` (determinism / golden-master check). */
   hashEquals(expected: StateHash): this;
   /**
@@ -128,6 +141,33 @@ function ticksOf(events: EventReader, type: string): number[] {
 /** Every distinct event type in the log, sorted. */
 function emittedTypes(events: EventReader): string[] {
   return [...new Set(events.history().map((e) => e.type))].sort();
+}
+
+/**
+ * Whether two one-edit-apart names differ **only in a digit** — `wave1.spawned` / `wave2.spawned`,
+ * `p1.died` / `p2.died`.
+ *
+ * Numbering is how games name a family of distinct events, so a digit difference is the one
+ * near-miss that is never a misspelling. Called only on pairs {@link nearMisses} already accepted,
+ * so the shapes here are "same length, one substitution" or "one insertion/deletion".
+ */
+function differsOnlyByDigit(a: string, b: string): boolean {
+  const isDigit = (c: string | undefined): boolean => c !== undefined && c >= '0' && c <= '9';
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++;
+  }
+  // The characters that actually differ, on each side. One of them is empty for an insertion.
+  const fromA = a.slice(head, a.length - tail);
+  const fromB = b.slice(head, b.length - tail);
+  if (fromA.length > 1 || fromB.length > 1) return false;
+  return isDigit(fromA[0]) || isDigit(fromB[0]);
 }
 
 /** Sample up to `limit` entities matching `query`, as a readable, comma-separated line. */
@@ -194,26 +234,48 @@ export function expectSim(result: SimResult): GameplayAssertions {
   };
 
   /**
-   * Reject a **negative** event assertion whose type is a near miss for one that really fired.
+   * Reject a **negative** event assertion whose type looks like a typo for one that really fired.
    *
    * The mirror of {@link requireResolvable}: an event type has no registry, so "absent" cannot be
    * distinguished from "misspelled" by lookup — only by neighbourhood. `eventNotEmitted` on a
    * genuinely absent type is the assertion's entire purpose and must keep passing; on a type one
-   * edit (or one case change) away from a type that fired 3× it is a typo, and it was silently
-   * reporting success on exactly the event it was written to forbid.
+   * letter away from a type that fired 3× it is a typo, and it was silently reporting success on
+   * exactly the event it was written to forbid.
+   *
+   * Three things keep the heuristic from becoming a wall:
+   *
+   * 1. **It never speaks when the asserted type really fired.** `nearMisses` skips the exact
+   *    match, so without this the guard fired on a run emitting both `p1.died` and `p2.died` —
+   *    announcing "no event of that type exists in this run" about a type that fired twice, and
+   *    swallowing the genuine failure that names the ticks.
+   * 2. **A digit is not a typo.** `wave1.spawned` / `wave2.spawned` and `p1.died` / `p2.died` are
+   *    one edit apart and are obviously distinct events, so a difference involving a digit is
+   *    never treated as a misspelling.
+   * 3. **`allowNearMiss` overrides it**, for the residual `player.hit` / `player.hits` case.
    */
-  const rejectNearMiss = (assertion: string, type: string): void => {
+  const rejectNearMiss = (
+    assertion: string,
+    type: string,
+    options: EventAssertionOptions | undefined,
+  ): void => {
+    if (options?.allowNearMiss === true) return;
+    // The guard is only about a type that is ABSENT. If it fired, the real assertion below has a
+    // true and far more useful thing to say.
+    if (result.events.count(type) > 0) return;
     const emitted = emittedTypes(result.events);
-    const suggestions = nearMisses(type, emitted);
+    const suggestions = nearMisses(type, emitted).filter((s) => !differsOnlyByDigit(type, s));
     if (suggestions.length === 0) return;
     const counts = suggestions
       .map((s) => `"${s}" (×${result.events.count(s)})`)
       .join(suggestions.length === 2 ? ' or ' : ', ');
     throw new UnknownEventError(
-      `${assertion}("${type}") would pass, but no event of that type exists in this run — and ` +
-        `${counts} does. That is a typo, not a proven absence.\n` +
+      `${assertion}("${type}") would pass — no event of that type was emitted — but ${counts} ` +
+        `was, and the two names are one edit apart. That looks like a typo rather than a proven ` +
+        `absence.\n` +
         `A negative assertion on a misspelled type passes on every world, including one where the ` +
         `event it was written to forbid fired on every tick.\n` +
+        `If the name is right and the resemblance is a coincidence, say so: ` +
+        `${assertion}("${type}", { allowNearMiss: true }).\n` +
         `Event types emitted by this run: ${emitted.length > 0 ? emitted.join(', ') : '(none)'}`,
     );
   };
@@ -252,11 +314,15 @@ export function expectSim(result: SimResult): GameplayAssertions {
       return assertions;
     },
 
-    eventEmitted(type: string, times?: number): GameplayAssertions {
+    eventEmitted(
+      type: string,
+      times?: number,
+      options?: EventAssertionOptions,
+    ): GameplayAssertions {
       requireEventLog('eventEmitted', type);
       // `eventEmitted(type, 0)` is a negative assertion wearing a positive's clothes, and has the
       // same typo hole.
-      if (times === 0) rejectNearMiss('eventEmitted', type);
+      if (times === 0) rejectNearMiss('eventEmitted', type, options);
       recordAssertion(
         result,
         'eventEmitted',
@@ -285,9 +351,9 @@ export function expectSim(result: SimResult): GameplayAssertions {
       return assertions;
     },
 
-    eventNotEmitted(type: string): GameplayAssertions {
+    eventNotEmitted(type: string, options?: EventAssertionOptions): GameplayAssertions {
       requireEventLog('eventNotEmitted', type);
-      rejectNearMiss('eventNotEmitted', type);
+      rejectNearMiss('eventNotEmitted', type, options);
       recordAssertion(result, 'eventNotEmitted', `"${type}" never emitted`);
       const ticks = ticksOf(result.events, type);
       if (ticks.length > 0) {
@@ -336,10 +402,11 @@ export function expectSim(result: SimResult): GameplayAssertions {
       }
       const outcome = toOutcome(raw);
       if (!outcome.ok) {
-        // Only nudge when the predicate said nothing. Telling a caller who already returned
-        // { ok, actual, expected } to return { ok, actual, expected } reads as the tool not having
-        // looked at its own input.
-        const said = outcome.actual !== undefined || outcome.expected !== undefined;
+        // Only nudge when the predicate really did return a bare boolean. Deciding this from
+        // `actual`/`expected` alone told a caller who returned { ok, detail } that they had
+        // "returned a bare boolean, so nothing above names the offending value" — directly under
+        // the detail line that named it.
+        const said = typeof raw !== 'boolean';
         fail(
           `Expected "${label}" to hold on the final world (${where}), but it did not.` +
             renderOutcome(outcome) +

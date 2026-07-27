@@ -523,6 +523,11 @@ describe('aegis scaffold produces a runnable game', () => {
     );
     expect(validated.code).toBe(0);
     expect(validated.out).toContain('no problems found');
+
+    // …and the help text does not promise a file `scaffold game` no longer writes.
+    const help = await cli(['scaffold', '--help'], dir, realDeps);
+    expect(help.out).toContain('embedded under');
+    expect(help.out).not.toMatch(/a scene \+ tilemap \+/);
   });
 
   // Regression: the generated test said "Run with: aegis test" but imported bare
@@ -562,6 +567,37 @@ describe('aegis scaffold produces a runnable game', () => {
     expect(outcome.error?.message ?? '').not.toContain('plugin.components is not a function');
     expect(outcome.passed).toBe(true);
     expect(outcome.assertions).toBeGreaterThan(0);
+  });
+
+  /**
+   * The fallback must be reachable only for *this* package being absent. `ERR_MODULE_NOT_FOUND` is
+   * also what a present-but-broken package raises for its own missing internals, and swallowing
+   * that would silently run the CLI's copy of the mode plugin instead of the one the file names —
+   * a green test against something the author did not ask for.
+   */
+  it('falls back only when the mode package itself is missing', async () => {
+    const dir = makeDir();
+    await cli(['scaffold', 'game', 'guard', '--mode', 'platformer'], dir, realDeps);
+    const source = readFileSync(join(dir, 'guard', 'guard.gametest.mjs'), 'utf8');
+    expect(source).toContain(`String(err.message).includes('@aegis/mode-platformer')`);
+
+    // The emitted predicate, extracted and exercised against both error shapes rather than read.
+    const missingThisPackage = (err: { code?: string; message?: string }): boolean =>
+      err.code === 'ERR_MODULE_NOT_FOUND' && String(err.message).includes('@aegis/mode-platformer');
+    expect(
+      missingThisPackage({
+        code: 'ERR_MODULE_NOT_FOUND',
+        message: `Cannot find package '@aegis/mode-platformer' imported from /tmp/x.mjs`,
+      }),
+    ).toBe(true);
+    // A broken-but-present package: same code, a different specifier. Must NOT be swallowed.
+    expect(
+      missingThisPackage({
+        code: 'ERR_MODULE_NOT_FOUND',
+        message: `Cannot find module '/pkg/dist/systems.js' imported from /pkg/dist/index.js`,
+      }),
+    ).toBe(false);
+    expect(missingThisPackage({ code: 'ERR_INVALID_MODULE_SPECIFIER', message: 'x' })).toBe(false);
   });
 
   /**

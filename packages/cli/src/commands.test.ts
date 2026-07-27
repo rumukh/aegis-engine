@@ -395,6 +395,17 @@ describe('aegis record / replay', () => {
       expect(r.err).toContain('claims 30 ticks but pins 3 per-tick hashes');
     });
 
+    // Truncating to *zero* is the same corruption as truncating to three, and it used to be the
+    // one length that replayed clean: an empty array was routed to the "this recording pins none"
+    // branch, which skipped the length check entirely.
+    it('rejects a timeline truncated all the way to an empty array', async () => {
+      const r = await replayMutated((doc) => {
+        doc.tickHashes = [];
+      });
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('claims 30 ticks but pins 0 per-tick hashes');
+    });
+
     // Omitting `tickHashes` is legal — the field is optional. What must not happen is a green
     // result that reads identically to one where the timeline was checked and agreed.
     it('accepts a recording with no timeline, but says it could not check one', async () => {

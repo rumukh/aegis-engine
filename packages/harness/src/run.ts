@@ -741,7 +741,11 @@ export function verifyReplay(recording: Recording, result: SimResult): ReplayVer
 
   const recorded = recording.tickHashes;
   let divergentTick: number | undefined;
-  if (recorded === undefined || recorded.length === 0) {
+  // Only an ABSENT key means "this recording pins no timeline". A present-but-empty array against
+  // a non-zero tick count is a *truncated* timeline — the same corruption as slicing it to three
+  // entries, and routing it to the "pins none" branch made truncating to zero the one length that
+  // replayed clean.
+  if (recorded === undefined) {
     unverified.push(
       `the per-tick hash timeline (this recording pins none, so only its final state was checked — ` +
         `a change in *when* things happen can leave the final hash identical)`,
@@ -753,9 +757,10 @@ export function verifyReplay(recording: Recording, result: SimResult): ReplayVer
           `${recorded.length} per-tick hash${recorded.length === 1 ? '' : 'es'}`,
       );
     }
-    if (result.tickHashes.length === 0) {
+    if (recorded.length === 0 || result.tickHashes.length === 0) {
       unverified.push(
-        `the per-tick hash timeline (the replay captured none — it ran with captureTickHashes off)`,
+        `the per-tick hash timeline (nothing to compare — the recording pins ${recorded.length} ` +
+          `hash${recorded.length === 1 ? '' : 'es'} and the replay captured ${result.tickHashes.length})`,
       );
     } else {
       divergentTick = firstDivergentTick(recorded, result.tickHashes);
