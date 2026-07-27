@@ -12,6 +12,11 @@
   // This is a check-only program: `noEmit`, no `composite`, no declarations. It never contributes
   // to `tsc -b` output and cannot pollute `dist`.
   //
+  // The root `test/` entry covers repository-level checks that belong to no single package —
+  // today, the guard that every code template in `AGENTS.md` is still a verbatim quote of a file
+  // the gate runs. It is listed here for the same reason as everything else: a test directory
+  // that nothing type-checks is a test directory that can drift.
+  //
   // Deliberate trade-off: this is ONE program covering every project, so `lib` and `types` are the
   // union of what the individual projects need (DOM for render-three/cli, node for anything
   // touching `node:*`). A `packages/core` test could therefore reference `document` without a type
@@ -38,7 +43,8 @@
     "packages/*/test/**/*.ts",
     "games/*/src/**/*.test.ts",
     "games/*/src/**/*.spec.ts",
-    "games/*/test/**/*.ts"
+    "games/*/test/**/*.ts",
+    "test/**/*.ts"
   ],
   "exclude": ["**/dist/**", "**/node_modules/**"]
 }

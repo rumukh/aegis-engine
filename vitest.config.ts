@@ -41,11 +41,19 @@ export default defineConfig({
     // their scripted playthrough headlessly in CI, and assert on gameplay outcomes", so their
     // tests are discovered here — not by a per-game vitest config, and not through a shim
     // parked inside a `packages/mode-<x>` directory.
+    //
+    // The root `test/` entry covers checks whose subject is the *repository*, not any one
+    // package: today, that every code template in `AGENTS.md` is still a verbatim quote of a file
+    // this gate runs. Those belong to whoever owns the root documents — the PM — and putting them
+    // in a package would hand the guard to an owner who does not own the thing guarded. Adding
+    // the glob is what keeps that directory from being an un-gated tree at the repo root, which
+    // is the reason a scaffolded `ledge-hop/` was deliberately not committed.
     include: [
       'packages/*/src/**/*.{test,spec}.ts',
       'packages/*/test/**/*.{test,spec}.ts',
       'games/*/src/**/*.{test,spec}.ts',
       'games/*/test/**/*.{test,spec}.ts',
+      'test/**/*.{test,spec}.ts',
     ],
     // Vitest's 5s default is wrong for this project. A determinism proof legitimately runs the
     // same scripted playthrough two or three times end to end — the fps PoC is three 600-tick

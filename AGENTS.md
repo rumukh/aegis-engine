@@ -172,6 +172,8 @@ Everything from here to [§6](#6-writing-a-game-test-that-can-actually-fail) use
 
 Create `ledge-hop/ledge-hop.scene.json` at the repo root, exactly as follows.
 
+<!-- template-exempt: authored for this guide — Ledge Hop has no file in the repository (see §9) -->
+
 ```json
 {
   "aegis": "scene/1",
@@ -235,6 +237,8 @@ so the tutorial cannot collide with anyone's package.
 It also needs an `aegis.json` beside it, or the CLI will refuse to run it
 ([§3.4](#34-how-a-plugin-reaches-a-run)). Ledge Hop uses only stock components, so the stock
 plugin is the honest answer — `ledge-hop/aegis.json`:
+
+<!-- template-exempt: authored for this guide — Ledge Hop has no file in the repository (see §9) -->
 
 ```json
 {
@@ -301,6 +305,8 @@ The three vocabularies, obtained exactly that way:
 Your game adds its own on top, through its plugin ([§3](#3-the-composed-plugin-pattern)).
 
 ### 2.5 Trap: `tags` are permissive, `components` are strict
+
+<!-- template-exempt: sketch — an entity fragment illustrating the tags/components trap -->
 
 ```json
 {
@@ -402,6 +408,8 @@ The harness composes a run's schedule **only** from `plugin.systems()`. There is
 systems must ship its own `ModePlugin`: the stock mode plugin with the game's components and
 systems folded in.
 
+<!-- template-exempt: contract summary of packages/harness/src/plugin.ts, re-annotated; an interface declaration is read, not copied into a game -->
+
 ```ts
 interface ModePlugin {
   readonly mode: GameMode; // 'platformer' | 'iso' | 'fps'
@@ -415,6 +423,8 @@ interface ModePlugin {
 The shipped platformer PoC, [`games/platformer/src/plugin.ts`](./games/platformer/src/plugin.ts),
 is the canonical shape. It reuses the mode's `init` and `view` verbatim and only enriches the
 component set and the schedule:
+
+<!-- template-source: games/platformer/src/plugin.ts #file -->
 
 ```ts
 import { createSchedule } from '@aegis/core';
@@ -482,6 +492,8 @@ $ node .tmp/registry-probe.mjs
 
 That probe did exactly one thing:
 
+<!-- template-exempt: sketch — the single line a throwaway probe ran -->
+
 ```js
 createRegistry().registerAll([...COYOTE_GAP_COMPONENTS, ...ISO_GAME_COMPONENTS]);
 ```
@@ -509,6 +521,8 @@ The CLI resolves a plugin three ways, in precedence order:
 3. **Nothing** — the stock plugin for the scene's `mode`.
 
 Declare it once and every command picks it up. `games/platformer/aegis.json` in full:
+
+<!-- template-source: games/platformer/aegis.json #file -->
 
 ```json
 {
@@ -971,6 +985,8 @@ hash      : ff0c3d6ee3f19d81
 The recording is readable JSON, and the input round-trips back to canonical DSL text — a
 recording _is_ a script (first 9 lines; `tickHashes` continues for 120 entries):
 
+<!-- template-exempt: transcript — truncated output of `aegis record` -->
+
 ```json
 {
   "aegis": "recording/1",
@@ -1006,6 +1022,8 @@ But it only exposes what its flags expose. The moment you want a value it does n
 world at tick 400, a specific component's field over time, a derived digest — write a throwaway
 script against `runScene` instead. That is not a workaround; it is the same API the CLI is built
 on, and it is what produced several transcripts in this guide.
+
+<!-- template-exempt: sketch — a throwaway probe script, not shipped -->
 
 ```js
 // probe.mjs — run from the repo root: node probe.mjs
@@ -1123,6 +1141,8 @@ The fix is always the same: **write the value down.** A literal has no ancestor.
 
 ### 6.3 `GOLDEN_HASH` — pin it as a literal
 
+<!-- template-exempt: sketch — the shape of a pinned literal, not a file -->
+
 ```js
 /**
  * Golden final-state hash. Captured once from a green run and pinned here as a literal, so a
@@ -1186,6 +1206,8 @@ and deterministic as the hashes it summarises. This is `trajectoryDigest` as it 
 separator is part of the convention, and a different one yields digests that silently match
 nobody:
 
+<!-- template-source: games/platformer/src/coyote-gap.gametest.ts #region -->
+
 ```ts
 export function trajectoryDigest(tickHashes: readonly StateHash[]): StateHash {
   return hashString(tickHashes.join('|'));
@@ -1200,6 +1222,8 @@ re-pin only on purpose and only with an explanation ([§7.2](#72-when-a-golden-m
 If you care about a specific beat's timing — and you usually should — assert on it directly as
 well, because that produces a far better failure message than a digest can. As a complete
 expectation over the iso PoC's `SimResult`:
+
+<!-- template-exempt: sketch — one illustrative expectation -->
 
 ```js
 expectSim(result).holds('mission completed on tick 505', (r) =>
@@ -1295,6 +1319,8 @@ not a robust system. Add the assertion that catches it.
 `ledge-hop/ledge-hop.gametest.mjs` in full. This file runs green as written, is lint- and
 prettier-clean, and every assertion in it has been observed to fail under mutation.
 
+<!-- template-exempt: authored for this guide — Ledge Hop has no file in the repository (see §9) -->
+
 ```js
 // "Ledge Hop" — the acceptance test. Run with: aegis test "ledge-hop/**/*.gametest.mjs"
 import { hashString, Transform } from '@aegis/core';
@@ -1376,10 +1402,12 @@ For a game with its own systems, one line changes: `plugin: platformerPlugin` be
 A shipped game puts its spec in **`games/<name>/src/<name>.gametest.ts`**. Not in `test/`. This is
 a build constraint, not a style preference, and getting it wrong fails silently:
 
+<!-- template-source: games/fps/tsconfig.json #region -->
+
 ```json
 // games/fps/tsconfig.json
 "include": ["src/**/*.ts"],
-"exclude": ["src/**/*.test.ts", "src/**/*.spec.ts", "test", "dist"]
+"exclude": ["src/**/*.test.ts", "src/**/*.spec.ts", "test", "dist"],
 ```
 
 `aegis test` globs **compiled** output (`**/*.gametest.{js,mjs,cjs}`), so a spec the build excludes
@@ -1394,6 +1422,8 @@ any game ships no discoverable `dist/*.gametest.js`, so a fourth game is covered
 
 Then wrap the spec in a Vitest file under `games/<name>/test/` so `npm run verify` runs it too —
 the two runners fail differently and that is the point. The wrapper is small:
+
+<!-- template-exempt: skeleton with `my-game` placeholders; its real twins are games/*/test/*.test.ts -->
 
 ```ts
 import { describe, expect, it } from 'vitest';
