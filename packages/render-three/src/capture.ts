@@ -317,6 +317,10 @@ async function replayPlan(
     }
 
     if (segment.click !== undefined) {
+      // Settle an exchange first, so the mirror holds the snapshot the previous segment's `step`r
+      // produced. Projecting before that measures a world the page has not fetched yet — the same
+      // staleness as an unsynced camera, one layer up, and equally invisible on an idle machine.
+      await syncInput(cdp);
       const at = await evaluate<{ x: number; y: number } | null>(
         cdp,
         `globalThis.aegis.project(${segment.click.x}, 0, ${segment.click.y})`,
