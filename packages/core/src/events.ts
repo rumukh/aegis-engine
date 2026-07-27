@@ -22,12 +22,52 @@
  * its event trace should too. See ADR-0001 for why the two digests are kept separate.
  * @packageDocumentation
  */
-import { deepClone, deepFreeze } from './clone.js';
+import { deepCloneSerialisable, deepFreeze, UnserialisableValueError } from './clone.js';
 import { hashString } from './hash.js';
 import { canonicalStringify } from './serialize.js';
+import { CoreDiagnosticCode } from './codes.js';
+import { DiagnosticError } from './diagnostics.js';
+import { explainUnserialisable } from './serialisable.js';
 import { CLEAR_TICK, RESET_LOG } from './internal.js';
 import type { ManagedEventBus } from './internal.js';
 import type { StateHash } from './hash.js';
+
+/**
+ * Rejection raised when an event payload holds something the digest cannot encode.
+ *
+ * `emit` was the one write boundary that skipped this check, and the consequence was
+ * asymmetric in the worst way: `world.hash()` succeeded (the event stream is not part of the
+ * state hash) while `events.digest()` died several ticks later with a bare, unaddressed
+ * `Error: non-finite number (NaN) is not serialisable` from inside `canonicalStringify` — no
+ * event type, no tick, no path. Checking at `emit` moves the failure to the system that
+ * produced the value and names it.
+ */
+function unserialisableAtEmit(
+  type: string,
+  tick: number,
+  err: UnserialisableValueError,
+): DiagnosticError {
+  const where = `events["${type}"].data${err.path === '' ? '' : `.${err.path}`}`;
+  const field = err.path === '' ? '(the whole payload)' : err.path;
+  const explained = explainUnserialisable(err.reason, err.detail);
+  return new DiagnosticError([
+    {
+      code:
+        err.reason === 'non-finite'
+          ? CoreDiagnosticCode.NonFiniteState
+          : CoreDiagnosticCode.UnserialisableState,
+      severity: 'error',
+      message:
+        `Cannot emit ${explained.what} in the payload of "${type}" at ${where} — ` +
+        `field "${field}", tick ${tick}. ${explained.why} The event log is hashed by ` +
+        `EventReader.digest(), so an unencodable payload breaks the determinism proof for the ` +
+        `whole run.`,
+      location: { path: where },
+      fix: explained.fix,
+      data: { event: type, tick, field, path: where, reason: err.reason, value: err.detail },
+    },
+  ]);
+}
 
 /** A single emitted event, stamped with the tick on which it was emitted. */
 export interface GameEvent<T = unknown> {
@@ -98,7 +138,16 @@ export function createEventBus(options?: EventBusOptions): EventBus {
     emit<T>(type: string, data: T): void {
       // The bus owns the copy. Systems routinely emit a live component (`data: trig.data`);
       // without this the recorded event would keep mutating with the world after the fact.
-      const event: GameEvent<T> = deepFreeze({ type, data: deepFreeze(deepClone(data)), tick });
+      // The *checked* clone, so a payload the digest cannot encode is refused here — at the
+      // system that produced it — instead of at `digest()`, arbitrarily many ticks later.
+      let copy: T;
+      try {
+        copy = deepCloneSerialisable(data);
+      } catch (err) {
+        if (err instanceof UnserialisableValueError) throw unserialisableAtEmit(type, tick, err);
+        throw err;
+      }
+      const event: GameEvent<T> = deepFreeze({ type, data: deepFreeze(copy), tick });
       current.push(event as GameEvent);
       if (record) log.push(event as GameEvent);
     },
