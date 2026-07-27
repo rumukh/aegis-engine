@@ -176,7 +176,11 @@ export function createLiveSession(options: LiveSessionOptions): LiveSession {
         loop.reset();
         return 0;
       }
-      return loop.advance(elapsedSeconds, () => built.simulation.step());
+      return loop.advance(elapsedSeconds, (index, count) => {
+        // One displayed frame's mouse motion belongs to every tick it covers, not just the first.
+        if (index === 0) built.input.spreadLookOver(count);
+        built.simulation.step();
+      });
     },
     snapshot(): WorldSnapshot {
       return built.world.snapshot();

@@ -22,6 +22,51 @@ import type { SessionCommand } from './input.js';
 import { createHud } from './hud.js';
 
 /**
+ * Where a displayed frame's wall-clock went, in milliseconds.
+ *
+ * The page used to report only its frame rate, which is an *outcome*: 28fps against a 60Hz
+ * simulation is a fact nothing could attribute, so nobody could act on it. These are the
+ * quantities underneath it, each measured around the call that incurs it, so a budget failure
+ * names the phase that blew it instead of restating the frame rate.
+ *
+ * `gap` is the interval between consecutive animation frames — the number a human actually feels.
+ * The others are pieces of the work done inside one; `exchange` is wall-clock the *network* took
+ * and is deliberately not part of the frame's own budget, because the exchange is not awaited.
+ */
+export interface FrameTimings {
+  /** Animation frames observed since boot. */
+  frames: number;
+  /** Snapshots applied since boot. Fewer than `frames` once render and exchange are decoupled. */
+  snapshots: number;
+  /** Milliseconds between the last two animation frames. */
+  gap: number;
+  /** Mean `gap` over the whole sampling window. */
+  meanGap: number;
+  /** Worst `gap` seen since the last {@link AegisDebugHandle.resetTimings}. */
+  worstGap: number;
+  /** Last `mirror.restore(snapshot)`. */
+  restore: number;
+  /** Last `adapter.sync(mirror)`. */
+  sync: number;
+  /** Last `renderer.render(scene, camera)`. */
+  render: number;
+  /** Last HUD update. */
+  hud: number;
+  /** Last full `POST /frame` round trip, including `response.json()`. */
+  exchange: number;
+  /** Bytes of JSON in the last frame response. */
+  exchangeBytes: number;
+  /** Draw calls issued by the last `renderer.render`. */
+  drawCalls: number;
+  /** Triangles submitted by the last `renderer.render`. */
+  triangles: number;
+  /** Exchanges that failed since boot. A latched loop shows up here, or as a stalled `snapshots`. */
+  exchangeErrors: number;
+  /** Whether an exchange is outstanding right now. */
+  inFlight: boolean;
+}
+
+/**
  * The debug handle the page hangs on `globalThis`. It is read-only introspection over what is
  * already on screen — the adapter's scene/camera and the renderer's mirror world — so a human (or
  * an automated capture run) can ask "where is that on screen?" without a devtools breakpoint.
@@ -33,6 +78,10 @@ export interface AegisDebugHandle {
   readonly adapter: RenderAdapter;
   /** The tick the mirror world currently represents. */
   tick(): number;
+  /** Per-phase frame costs. See {@link FrameTimings}. */
+  timings(): FrameTimings;
+  /** Start a fresh sampling window for {@link FrameTimings.meanGap} and `worstGap`. */
+  resetTimings(): void;
   /** Project a world point to canvas pixels, or `null` when it is behind the camera. */
   project(x: number, y: number, z: number): { x: number; y: number } | null;
   /**
@@ -53,15 +102,34 @@ const COMMANDS: Readonly<Record<SessionCommand, ControlCommand>> = {
   restart: 'restart',
 };
 
-/** Post JSON and parse the JSON response. */
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+/**
+ * How long one frame exchange may take before the page abandons it, in milliseconds.
+ *
+ * The frame loop guards `exchange()` with an `inFlight` flag so only one request is outstanding.
+ * `fetch` has **no default timeout**, so a request that never settles never clears that flag: the
+ * page keeps animating the last snapshot it received and silently stops talking to the server,
+ * forever, with no exception and nothing in the console. That is indistinguishable from a frozen
+ * game, and it is the only way the guard can latch. Abandoning the request restores the loop on
+ * the very next animation frame.
+ *
+ * 2000ms is far longer than any healthy exchange (measured: 8-80ms locally, worst case a whole
+ * `MAX_FRAME_SECONDS` catch-up batch) and far shorter than a human's patience.
+ */
+const FRAME_TIMEOUT_MS = 2000;
+
+/** Post JSON and parse the JSON response, abandoning the request if it stalls. */
+async function postJson<T>(url: string, body: unknown): Promise<{ value: T; bytes: number }> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(FRAME_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`${url} responded ${response.status}`);
-  return (await response.json()) as T;
+  // Read the text rather than `response.json()` so the payload size is a measured fact: the
+  // whole world crosses this wire every frame, and nothing else in the page can see how big it is.
+  const text = await response.text();
+  return { value: JSON.parse(text) as T, bytes: text.length };
 }
 
 /** Boot the renderer for one game. Called by the served page. */
@@ -88,6 +156,28 @@ export function boot(config: BootConfig): void {
   /** Waiters registered by {@link AegisDebugHandle.sync}, settled by the next exchange. */
   let syncWaiters: (() => void)[] = [];
 
+  /** Mutable accumulator behind {@link AegisDebugHandle.timings}. */
+  const timings: FrameTimings = {
+    frames: 0,
+    snapshots: 0,
+    gap: 0,
+    meanGap: 0,
+    worstGap: 0,
+    restore: 0,
+    sync: 0,
+    render: 0,
+    hud: 0,
+    exchange: 0,
+    exchangeBytes: 0,
+    drawCalls: 0,
+    triangles: 0,
+    exchangeErrors: 0,
+    inFlight: false,
+  };
+  let lastFrameAt = 0;
+  let windowStart = performance.now();
+  let windowFrames = 0;
+
   const resize = (): void => {
     const width = canvas.clientWidth || globalThis.innerWidth;
     const height = canvas.clientHeight || globalThis.innerHeight;
@@ -105,7 +195,10 @@ export function boot(config: BootConfig): void {
   });
 
   const applySnapshot = (snapshot: WorldSnapshot): void => {
+    const t0 = performance.now();
     mirror.restore(snapshot);
+    timings.restore = performance.now() - t0;
+    timings.snapshots++;
     if (!mounted) {
       adapter.mount(mirror);
       mounted = true;
@@ -118,15 +211,20 @@ export function boot(config: BootConfig): void {
     // Claim the waiters registered before this collection: their events are in this packet.
     const settling = syncWaiters;
     syncWaiters = [];
+    const started = performance.now();
     try {
-      const response = await postJson<FrameResponse>(`${config.api}/frame`, {
+      const { value: response, bytes } = await postJson<FrameResponse>(`${config.api}/frame`, {
         input: collector.take(),
       });
+      timings.exchange = performance.now() - started;
+      timings.exchangeBytes = bytes;
       paused = response.paused;
       applySnapshot(response.snapshot);
       hud.pushEvents(response.events);
       for (const resolve of settling) resolve();
     } catch (error) {
+      timings.exchange = performance.now() - started;
+      timings.exchangeErrors++;
       // A failed exchange never delivered the input, so put the waiters back rather than
       // resolving them — otherwise automation would step on input the server never saw.
       syncWaiters.push(...settling);
@@ -136,18 +234,37 @@ export function boot(config: BootConfig): void {
 
   const frame = (): void => {
     globalThis.requestAnimationFrame(frame);
+    const frameStart = performance.now();
+    if (lastFrameAt !== 0) {
+      timings.gap = frameStart - lastFrameAt;
+      if (timings.gap > timings.worstGap) timings.worstGap = timings.gap;
+    }
+    lastFrameAt = frameStart;
+    timings.frames++;
+    windowFrames++;
+    timings.meanGap = windowFrames > 1 ? (frameStart - windowStart) / (windowFrames - 1) : 0;
+
     if (!inFlight) {
       inFlight = true;
+      timings.inFlight = true;
       void exchange()
         .catch(() => undefined)
         .finally(() => {
           inFlight = false;
+          timings.inFlight = false;
         });
     }
     if (!mounted) return;
 
+    const t1 = performance.now();
     adapter.sync(mirror);
+    const t2 = performance.now();
     renderer.render(adapter.scene, adapter.camera);
+    const t3 = performance.now();
+    timings.sync = t2 - t1;
+    timings.render = t3 - t2;
+    timings.drawCalls = renderer.info.render.calls;
+    timings.triangles = renderer.info.render.triangles;
 
     framesThisSecond++;
     const now = performance.now();
@@ -158,6 +275,7 @@ export function boot(config: BootConfig): void {
     }
     hud.setStatus(lastTick, paused, fps);
     hud.setStats(mode, mirror);
+    timings.hud = performance.now() - t3;
   };
 
   globalThis.addEventListener('resize', resize);
@@ -171,6 +289,13 @@ export function boot(config: BootConfig): void {
     world: mirror,
     adapter,
     tick: () => lastTick,
+    timings: () => ({ ...timings }),
+    resetTimings(): void {
+      windowStart = performance.now();
+      windowFrames = 0;
+      timings.worstGap = 0;
+      timings.meanGap = 0;
+    },
     project(x: number, y: number, z: number): { x: number; y: number } | null {
       // Aim the camera at the mirror's current state before measuring against it. The frame loop
       // does this once per animation frame; under load those frames are scarce, and a caller

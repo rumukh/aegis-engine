@@ -32,8 +32,18 @@ export interface FrameResponse {
   steps: number;
   /** Whether the session is paused. */
   paused: boolean;
-  /** Deterministic digest of the state in `snapshot`. */
-  hash: StateHash;
+  /**
+   * Deterministic digest of the state in `snapshot`, when the endpoint computes one.
+   *
+   * `POST /frame` deliberately leaves this **undefined**. Hashing a world walks every component
+   * of every entity *and every resource*, and the fps PoC carries a 17.5 KB extruded floorplan as
+   * a resource: measured, `world.hash()` costs 11.3ms there (platformer 5.3ms, iso 1.9ms) against
+   * 0.55ms to snapshot it and 0.14ms to serialise it. Computing it once per displayed frame put a
+   * hard ceiling of ~26 exchanges per second on the fps game — for a value the page never read.
+   * The low-frequency `GET /state` and `POST /control` responses still carry it, which is where
+   * anything that wants to check the snapshot is lossless should look.
+   */
+  hash?: StateHash;
   /** The full world state as plain JSON. */
   snapshot: WorldSnapshot;
   /** Events emitted since the previous frame response. */

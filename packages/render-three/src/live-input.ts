@@ -40,6 +40,23 @@ export interface LiveInput extends InputSource {
   submit(packet: InputPacket): boolean;
   /** Build (and consume the edges of) the frame for `tick`. */
   frameFor(tick: number): InputFrame;
+  /**
+   * Declare that the next `steps` frames all belong to one displayed frame, so the look delta
+   * accumulated for it is handed out in equal shares instead of landing entirely on the first
+   * tick.
+   *
+   * A displayed frame covers however many simulation ticks the wall clock earned — 1 on a fast
+   * machine, up to the accumulator's cap on a slow one. Draining the whole accumulated mouse
+   * delta into the first tick and then running the rest with zero look makes the camera lurch
+   * once per displayed frame, and `fps.look` clamps pitch to `±maxPitchDeg` **per tick**, so a
+   * single large lump silently loses everything past the clamp while fifteen small ones do not.
+   * Same total rotation, same determinism (the batch is drained synchronously, so nothing new
+   * can arrive mid-batch), and the human gets a camera that tracks their hand.
+   *
+   * Edges (`pressed`/`released`) and the pointer sample are deliberately **not** spread: they are
+   * impulses and must land on exactly one tick.
+   */
+  spreadLookOver(steps: number): void;
   /** Drop all held state and pending edges — used on pause and restart. */
   clear(): void;
   /** The highest packet sequence accepted so far. */
@@ -62,6 +79,8 @@ export function createLiveInput(): LiveInput {
   let lookDy = 0;
   let pendingPointer: PointerInput | null = null;
   let lastSeq = -1;
+  /** Frames left in the current displayed-frame batch; `<= 1` means "hand over everything". */
+  let lookShares = 0;
 
   const live: LiveInput = {
     get lastSeq() {
@@ -83,14 +102,23 @@ export function createLiveInput(): LiveInput {
       return true;
     },
 
+    spreadLookOver(steps: number): void {
+      lookShares = Number.isFinite(steps) && steps > 1 ? Math.floor(steps) : 0;
+    },
+
     frameFor(tick: number): InputFrame {
       const pressed = pendingPressed;
       const released = pendingReleased;
       pendingPressed = [];
       pendingReleased = [];
-      const look = { dx: lookDx, dy: lookDy };
-      lookDx = 0;
-      lookDy = 0;
+      // Take this tick's share and leave the rest. Taking `1/n`, then `1/(n-1)` of what is left,
+      // and so on, hands out equal shares and drains to exactly zero on the last tick — so the
+      // total rotation is the same whether or not the batch was spread.
+      const share = lookShares > 1 ? 1 / lookShares : 1;
+      const look = { dx: lookDx * share, dy: lookDy * share };
+      lookDx -= look.dx;
+      lookDy -= look.dy;
+      if (lookShares > 0) lookShares--;
       const pointer = pendingPointer;
       pendingPointer = null;
 
@@ -120,6 +148,7 @@ export function createLiveInput(): LiveInput {
       pendingReleased = [];
       lookDx = 0;
       lookDy = 0;
+      lookShares = 0;
       pendingPointer = null;
     },
   };

@@ -168,6 +168,7 @@ export function compileDomInput(
   options: CompileOptions = {},
 ): DomInputPlan {
   const degreesPerPixel = options.degreesPerPixel ?? bindings.lookDegreesPerPixel ?? 0.14;
+  const lookXSign = bindings.lookXSign ?? 1;
   const segments: InputSegment[] = [];
   let previous: HeldState = { codes: [], button: false };
   let carryX = 0;
@@ -189,7 +190,9 @@ export function compileDomInput(
 
     let mouse: { dx: number; dy: number } | undefined;
     if (bindings.pointer === 'lock' && (frame.look.dx !== 0 || frame.look.dy !== 0)) {
-      carryX += frame.look.dx / degreesPerPixel;
+      // The collector reads `movementX * sensitivity * lookXSign`, so a script asking to turn
+      // right on screen moves the cursor the other way. See SCREEN_HANDEDNESS in bindings.ts.
+      carryX += (frame.look.dx * lookXSign) / degreesPerPixel;
       // The collector reads `lookDy -= movementY * sensitivity`, so pitching up is -movementY.
       carryY += -frame.look.dy / degreesPerPixel;
       const dx = Math.round(carryX);
@@ -246,6 +249,7 @@ export function framesFromPlan(
   degreesPerPixel = bindings.lookDegreesPerPixel ?? 0.14,
 ): InputFrame[] {
   const live = createLiveInput();
+  const lookXSign = bindings.lookXSign ?? 1;
   const heldCodes = new Set<string>();
   const heldActions = new Set<string>();
   let button = false;
@@ -299,7 +303,10 @@ export function framesFromPlan(
       look:
         segment.mouse === undefined
           ? { dx: 0, dy: 0 }
-          : { dx: segment.mouse.dx * degreesPerPixel, dy: -segment.mouse.dy * degreesPerPixel },
+          : {
+              dx: segment.mouse.dx * degreesPerPixel * lookXSign,
+              dy: -segment.mouse.dy * degreesPerPixel,
+            },
       pointer:
         segment.click === undefined
           ? null

@@ -27,7 +27,7 @@ import {
   Vector2,
   Vector3,
 } from 'three';
-import type { Mesh } from 'three';
+import type { Mesh, Object3D } from 'three';
 import { DEG2RAD, Name, Transform, cos, sin } from '@aegis/core';
 import type { Entity, GameMode, World } from '@aegis/core';
 import { Health, Sprite, Trigger } from '@aegis/content';
@@ -54,8 +54,29 @@ const ISO_ELEVATION_DEG = 35.264389682754654;
 const CAMERA_DISTANCE = 60;
 /** Orthographic height used when a scene authored no `IsoCamera`. */
 const FALLBACK_VIEW_HEIGHT = 16;
-/** Height of a wall column, world units. */
-const WALL_HEIGHT = 1.6;
+/**
+ * Height of a wall column, world units — and the number that decides whether the game is
+ * playable at all.
+ *
+ * The camera looks along `(-1,-1,-1)` (that is what a 45° yaw at `atan(1/√2)` elevation is), so
+ * the pixel showing floor point `(x, 0, z)` also shows every point `(x+t, t, z+t)`. A wall on the
+ * cell **diagonally in front** spans `t ∈ [0.5, 1.5]` at that pixel, so any wall taller than
+ * `0.5` hides the centre of the cell behind it completely — and with it every way a human has of
+ * clicking that cell.
+ *
+ * At the old height of `1.6` that was most of the level. Measured on "The Server Vault" (12x9,
+ * 46 passable cells): a click on the guard's body resolved to a cell one step behind it, a click
+ * on the operative's own tile resolved to `wall:2:2`, and **the exit pad at (4,7) could not be
+ * clicked at any pixel** — the whole bottom corridor sits behind the outer wall ring. Only the
+ * handful of cells with an open diagonal neighbour could be ordered to, which is exactly the
+ * reported symptom: in isometry, only walking works.
+ *
+ * `0.45` is the largest value under that `0.5` bound with room for floating point, so **every**
+ * passable cell is reachable by a click regardless of the level's shape. `iso-pick.test.ts`
+ * asserts that over the whole grid rather than trusting the arithmetic here. Actors stay 1.1
+ * tall and now read *above* the walls, which is what a tactical view wants anyway.
+ */
+const WALL_HEIGHT = 0.45;
 
 /** The ground plane the pointer is projected onto. */
 const GROUND = new Plane(new Vector3(0, 1, 0), 0);
@@ -137,13 +158,51 @@ export class IsoAdapter extends BaseAdapter {
     this.#applyFrustum(this.camera.top - this.camera.bottom);
   }
 
-  /** Project a viewport pointer onto the ground plane and snap it to a grid cell. */
+  /**
+   * Resolve a viewport pointer to the grid cell a human aimed at.
+   *
+   * The pointer must be resolved against **what is drawn**, not against the ground plane. Actors
+   * are 1.1 units tall and walls 1.6, and in a 3/4 view a solid body hides the very floor tile it
+   * stands on — so the only part of the guard a human can click is its body, and a ray through
+   * that body reaches the ground several cells further away. Measured on "The Server Vault" with
+   * the guard on cell (2,5): a click on the ground under it resolved to (2,5), but a click on its
+   * body centre resolved to **(1,4)**, its head to (1,4), and a click on the top face of the wall
+   * at (0,0) resolved to (-2,-2), off the grid entirely. Every click that landed on something
+   * with height went to the wrong cell — which is why the guard could not be attacked and the
+   * switch could not be reached by anything but bare floor, while walking looked fine.
+   *
+   * So: intersect the real scene graph, take the nearest hit, and read the cell off the object
+   * that owns it (walls, floor plates, doors, pads and actor groups are all positioned on their
+   * own cell). Only when the ray leaves the level entirely does it fall back to the ground plane,
+   * which keeps a click on empty background resolving to something rather than nothing.
+   */
   override pick(ndcX: number, ndcY: number): PickedPoint | null {
     this.#raycaster.setFromCamera(new Vector2(ndcX, ndcY), this.camera);
-    const hit = this.#raycaster.ray.intersectPlane(GROUND, new Vector3());
-    if (hit === null) return null;
-    // `iso.intake` reads `pointer.world.x/.y` as *cell* coordinates (see mode-iso/systems.ts).
-    return { x: Math.round(hit.x), y: Math.round(hit.z), z: 0 };
+    const hits = this.#raycaster.intersectObjects([this.#level, this.#entities], true);
+    for (const hit of hits) {
+      const owner = this.#ownerOf(hit.object);
+      if (owner === null) continue;
+      const at = owner.getWorldPosition(new Vector3());
+      // `iso.intake` reads `pointer.world.x/.y` as *cell* coordinates (see mode-iso/systems.ts).
+      return { x: Math.round(at.x), y: Math.round(at.z), z: 0 };
+    }
+    const ground = this.#raycaster.ray.intersectPlane(GROUND, new Vector3());
+    if (ground === null) return null;
+    return { x: Math.round(ground.x), y: Math.round(ground.z), z: 0 };
+  }
+
+  /**
+   * The object that owns a hit surface: the direct child of the level or entity group. A hit on an
+   * actor's health bar or body must resolve to the actor's group, whose position is the cell.
+   */
+  #ownerOf(hit: Object3D): Object3D | null {
+    let node: Object3D | null = hit;
+    while (node !== null) {
+      const parent: Object3D | null = node.parent;
+      if (parent === this.#level || parent === this.#entities) return node;
+      node = parent;
+    }
+    return null;
   }
 
   override dispose(): void {

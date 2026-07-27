@@ -63,10 +63,34 @@ export interface DevServer {
   close(): Promise<void>;
 }
 
-/** Longest wall-clock gap fed to the accumulator, in seconds. Caps catch-up after a stall. */
+/**
+ * Longest wall-clock gap fed to the accumulator, in seconds. Caps catch-up after a stall.
+ *
+ * This is the *only* place time is deliberately dropped. It must therefore be at least as tight
+ * as the accumulator's own step cap, or the two disagree and the loop silently discards time it
+ * was handed — see {@link maxStepsFor}.
+ */
 const MAX_FRAME_SECONDS = 0.25;
 /** Maximum accepted request body, in bytes. */
 const MAX_BODY_BYTES = 1 << 20;
+/** Default fixed ticks per second, matching {@link createLiveSession}'s own default. */
+const DEFAULT_TICK_RATE = 60;
+
+/**
+ * Steps the accumulator must be allowed to run so that {@link MAX_FRAME_SECONDS} is the only
+ * limit on catch-up.
+ *
+ * `createFixedStepLoop` defaults to 8 steps per frame and **discards** the remainder
+ * (`loop.ts`: `if (accumulator >= dt) accumulator = 0`). At 60Hz that is 133ms of simulated time,
+ * while this server hands it up to 250ms — so any displayed frame slower than 133ms lost the
+ * difference and the game ran in slow motion, with no error and no event. Measured on
+ * `/play/fps` in a headless browser at ~6.5fps: **42.5 simulated ticks per wall-clock second
+ * against a 60Hz simulation**, i.e. the game played at 71% speed. Deriving the cap from the same
+ * constant removes the disagreement by construction.
+ */
+export function maxStepsFor(tickRate: number): number {
+  return Math.max(1, Math.ceil(MAX_FRAME_SECONDS * tickRate));
+}
 
 /** Content types for the handful of extensions `/vendor` can serve. */
 const MIME: Readonly<Record<string, string>> = {
@@ -184,6 +208,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         plugin: game.plugin,
         ...(game.seed !== undefined ? { seed: game.seed } : {}),
         ...(game.tickRate !== undefined ? { tickRate: game.tickRate } : {}),
+        maxStepsPerFrame: maxStepsFor(game.tickRate ?? DEFAULT_TICK_RATE),
       }),
       lastFrameAt: clock(),
       eventCursor: 0,
@@ -200,10 +225,17 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
    * would silently empty the on-screen feed — which is exactly what happened when the screenshot
    * capture began driving the session through `control`, leaving the photograph with no evidence
    * of the run it had just performed.
+   *
+   * `withHash` is opt-in for a measured reason: see {@link FrameResponse.hash}. The per-frame
+   * channel cannot afford it and does not read it.
    */
-  const frameBody = (runtime: GameRuntime, steps: number, drainEvents = false): FrameResponse => {
+  const frameBody = (
+    runtime: GameRuntime,
+    steps: number,
+    options: { drainEvents?: boolean; withHash?: boolean } = {},
+  ): FrameResponse => {
     let fresh: readonly GameEvent[] = [];
-    if (drainEvents) {
+    if (options.drainEvents === true) {
       const history = runtime.session.world.events.history();
       fresh = history.slice(runtime.eventCursor);
       runtime.eventCursor = history.length;
@@ -212,7 +244,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       tick: runtime.session.tick,
       steps,
       paused: runtime.session.paused,
-      hash: runtime.session.hash(),
+      ...(options.withHash === true ? { hash: runtime.session.hash() } : {}),
       snapshot: runtime.session.snapshot(),
       events: toEventLines(fresh),
     };
@@ -276,7 +308,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       const endpoint = api[2];
 
       if (endpoint === 'state' && request.method === 'GET') {
-        sendJson(response, 200, frameBody(runtime, 0));
+        sendJson(response, 200, frameBody(runtime, 0, { withHash: true }));
         return;
       }
 
@@ -299,7 +331,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         const elapsed = Math.min(Math.max(now - runtime.lastFrameAt, 0), MAX_FRAME_SECONDS);
         runtime.lastFrameAt = now;
         const steps = runtime.session.advance(elapsed);
-        sendJson(response, 200, frameBody(runtime, steps, true));
+        sendJson(response, 200, frameBody(runtime, steps, { drainEvents: true }));
         return;
       }
 
@@ -320,7 +352,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
           runtime.eventCursor = 0;
         }
         runtime.lastFrameAt = clock();
-        sendJson(response, 200, frameBody(runtime, 0));
+        sendJson(response, 200, frameBody(runtime, 0, { withHash: true }));
         return;
       }
 

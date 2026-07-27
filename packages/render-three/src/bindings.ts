@@ -71,11 +71,51 @@ export interface ModeBindings {
   primaryButtonAction?: string;
   /** Degrees of look per pixel of mouse movement (fps). */
   lookDegreesPerPixel?: number;
+  /**
+   * Sign converting rightward *screen* mouse motion into the mode's yaw delta. Defaults to `1`.
+   *
+   * See {@link SCREEN_HANDEDNESS} for why the fps mode needs `-1`. Anything that turns pixels
+   * into degrees, or degrees back into pixels, must apply it — the browser collector and the
+   * script compiler both do.
+   */
+  lookXSign?: 1 | -1;
   /** Action spellings of an axis direction, for replaying scripts that use them. */
   directionAliases?: readonly DirectionAlias[];
   /** On-screen control list. */
   help: readonly ControlHelp[];
 }
+
+/**
+ * Why the fps bindings carry negative signs: the simulation's frame and the rendered picture are
+ * mirror images, so "toward the screen's right" is **not** the simulation's right.
+ *
+ * `@aegis/mode-fps` defines yaw 0 as facing `+Z` with the right vector at `+X`
+ * (`geometry.ts` `forwardFromLook` / `rightFromYaw`) — a left-handed frame, X right, Y up, Z
+ * forward. three.js is right-handed and its cameras look down their local `-Z`. `Matrix4.lookAt`
+ * builds the camera basis as `z = eye - target`, `x = cross(up, z)`; for `forward = (0,0,1)` and
+ * `up = (0,1,0)` that gives `z = (0,0,-1)` and `x = cross((0,1,0),(0,0,-1)) = (-1,0,0)`. The
+ * camera's screen-right is therefore world **−X**, the exact opposite of the simulation's right.
+ *
+ * That mirror cannot be removed by orienting the camera: `{right, up, -forward}` has determinant
+ * −1, so no rotation represents it. The renderer must either mirror the world it draws or mirror
+ * the human's screen-relative *intent* on the way in. It does the latter, here, because the sign
+ * belongs to the one place that translates hardware into logical input — and because the
+ * simulation's convention is pinned by `mode-fps/systems.test.ts` and every fps golden hash.
+ *
+ * Measured in a real browser before the fix (1280x720, landmark 6 units dead ahead of the eye,
+ * screen x 640 at rest): a +100px rightward mouse move produced yaw +14° and moved the landmark
+ * to screen x 757 — the landmark went right, so the camera turned **left**. `screen-input.test.ts`
+ * pins the corrected behaviour against that first-principles expectation rather than a recorded
+ * value.
+ *
+ * Vertical needs no sign: the same measurement showed a +60px downward move produced pitch −8.4°
+ * and moved the landmark from y 360 to y 291, i.e. up the screen — which is what looking down
+ * does. Pitch is a rotation about the camera's own right axis, and mirroring that axis mirrors
+ * the rotation with it, so the two negations cancel.
+ */
+export const SCREEN_HANDEDNESS =
+  'mode-fps is left-handed (yaw 0 -> +Z, right -> +X); three.js cameras look down -Z, so the ' +
+  "camera's screen-right is world -X. Screen-relative human input is negated on the way in.";
 
 /** The binding table for each mode. */
 export const BINDINGS: Readonly<Record<GameMode, ModeBindings>> = {
@@ -117,14 +157,21 @@ export const BINDINGS: Readonly<Record<GameMode, ModeBindings>> = {
       { code: 'ArrowUp', axis: 'Forward', value: 1 },
       { code: 'KeyS', axis: 'Forward', value: -1 },
       { code: 'ArrowDown', axis: 'Forward', value: -1 },
-      { code: 'KeyD', axis: 'Strafe', value: 1 },
-      { code: 'ArrowRight', axis: 'Strafe', value: 1 },
-      { code: 'KeyA', axis: 'Strafe', value: -1 },
-      { code: 'ArrowLeft', axis: 'Strafe', value: -1 },
+      // Strafe values look inverted and are not: `Strafe` is a *world* quantity (it multiplies
+      // `rightFromYaw`), while D means "move toward the right of my screen". Those are opposite
+      // directions — see SCREEN_HANDEDNESS above. Writing the sign into the table rather than
+      // into the collector keeps the script compiler correct for free: `heldStateFor` picks the
+      // key whose value matches the script's sign, so a script asking for `Strafe 1` presses A
+      // and still produces `Strafe 1`.
+      { code: 'KeyD', axis: 'Strafe', value: -1 },
+      { code: 'ArrowRight', axis: 'Strafe', value: -1 },
+      { code: 'KeyA', axis: 'Strafe', value: 1 },
+      { code: 'ArrowLeft', axis: 'Strafe', value: 1 },
     ],
     pointer: 'lock',
     primaryButtonAction: 'Fire',
     lookDegreesPerPixel: 0.14,
+    lookXSign: -1,
     help: [
       { keys: 'W / S', does: 'forward · back · axis Forward' },
       { keys: 'A / D', does: 'strafe · axis Strafe' },

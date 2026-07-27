@@ -195,7 +195,26 @@ describe('dev server', () => {
     const player = mirror.query({ has: [PlatformerController] }).one();
     expect(player).toBeDefined();
     expect(mirror.tick).toBe(body.tick);
+    // Without this the comparison below is vacuous: `hash` is optional on the wire, and
+    // `undefined === undefined` would read as "the snapshot round-trips losslessly".
+    expect(typeof body.hash).toBe('string');
     expect(mirror.hash()).toBe(body.hash);
+  });
+
+  it('omits the state hash from the per-frame channel and keeps it on /state', async () => {
+    // A cost guard, not a preference. Hashing a world walks every entity *and every resource*;
+    // measured on the PoC worlds it costs 11.3ms (fps), 5.3ms (platformer) and 1.9ms (iso)
+    // against 0.55ms to snapshot and 0.14ms to serialise. Computing it once per displayed frame
+    // capped the fps game at ~26 exchanges per second, for a field the page never reads.
+    now += 1;
+    const frameBody = await frame('platformer');
+    expect(frameBody.snapshot).toBeDefined();
+    expect(frameBody.hash).toBeUndefined();
+
+    const stateBody = (await (
+      await fetch(`${server.url}/api/platformer/state`)
+    ).json()) as FrameResponse;
+    expect(typeof stateBody.hash).toBe('string');
   });
 
   it('reports the simulation events emitted since the previous frame', async () => {

@@ -117,7 +117,9 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
     if (bindings.pointer !== 'lock') return;
     if (document.pointerLockElement !== canvas) return;
     const sensitivity = bindings.lookDegreesPerPixel ?? 0.14;
-    lookDx += event.movementX * sensitivity;
+    // `lookXSign` is the screen->world mirror, not a preference: see SCREEN_HANDEDNESS in
+    // bindings.ts. Without it, moving the mouse right turns the fps camera left on screen.
+    lookDx += event.movementX * sensitivity * (bindings.lookXSign ?? 1);
     lookDy -= event.movementY * sensitivity;
   };
 

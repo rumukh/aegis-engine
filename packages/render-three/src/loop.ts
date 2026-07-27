@@ -33,9 +33,14 @@ export interface FixedStepLoop {
   readonly steps: number;
   /**
    * Advance by `elapsedSeconds` of wall-clock, invoking `step` once per whole fixed tick.
+   *
+   * The callback receives the tick's index within this frame's batch and the batch size, so a
+   * caller can distribute a per-frame quantity (an accumulated mouse-look delta, say) across the
+   * ticks it actually covers instead of dumping it all on the first one.
+   *
    * Returns how many steps ran (never more than `maxStepsPerFrame`).
    */
-  advance(elapsedSeconds: number, step: () => void): number;
+  advance(elapsedSeconds: number, step: (index: number, count: number) => void): number;
   /** Drop any accumulated time — use after a pause so the loop does not catch up in a burst. */
   reset(): void;
 }
@@ -60,19 +65,23 @@ export function createFixedStepLoop(options: FixedStepLoopOptions): FixedStepLoo
     get steps() {
       return steps;
     },
-    advance(elapsedSeconds: number, step: () => void): number {
+    advance(elapsedSeconds: number, step: (index: number, count: number) => void): number {
       if (Number.isFinite(elapsedSeconds) && elapsedSeconds > 0) accumulator += elapsedSeconds;
-      let ran = 0;
-      while (accumulator >= dt && ran < maxSteps) {
+      // Size the batch before running it, with the identical predicate the drain below uses, so
+      // `count` cannot disagree with the number of `step` calls that follow.
+      let count = 0;
+      for (let remaining = accumulator; remaining >= dt && count < maxSteps; remaining -= dt) {
+        count++;
+      }
+      for (let index = 0; index < count; index++) {
         accumulator -= dt;
-        step();
-        ran++;
+        step(index, count);
         steps++;
       }
       // Frames longer than `maxSteps * dt` are dropped, not queued: better to lose a little
       // simulated time than to freeze the page catching up.
       if (accumulator >= dt) accumulator = 0;
-      return ran;
+      return count;
     },
     reset(): void {
       accumulator = 0;
