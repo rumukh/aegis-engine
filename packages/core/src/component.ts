@@ -16,19 +16,25 @@
  * ```
  * @packageDocumentation
  */
-import { assertFinite, deepClone, deepCloneSerialisable, NonFiniteValueError } from './clone.js';
+import {
+  assertSerialisable,
+  deepClone,
+  deepCloneSerialisable,
+  UnserialisableValueError,
+} from './clone.js';
 import { CoreDiagnosticCode } from './codes.js';
+import { explainUnserialisable } from './serialisable.js';
 import { DiagnosticError } from './diagnostics.js';
 
 /**
- * Build the structured rejection raised when a non-finite value is written into a component.
+ * Build the structured rejection raised when an unstorable value is written into a component.
  *
  * Rejecting here rather than at `snapshot()` is the whole point of the write boundary: the
  * error fires at the code that produced the `NaN`, not several ticks later at the hash.
  */
-export function nonFiniteAtWrite(
+export function unserialisableAtWrite(
   componentId: string,
-  err: NonFiniteValueError,
+  err: UnserialisableValueError,
   entity?: string,
 ): DiagnosticError {
   const where =
@@ -37,26 +43,26 @@ export function nonFiniteAtWrite(
       : `entities[${entity}].components.${componentId}${err.path === '' ? '' : `.${err.path}`}`;
   const field = err.path === '' ? '(the whole value)' : err.path;
   const who = entity === undefined ? 'no entity yet' : `entity ${entity}`;
+  const explained = explainUnserialisable(err.reason, err.detail);
   return new DiagnosticError([
     {
-      code: CoreDiagnosticCode.NonFiniteState,
+      code:
+        err.reason === 'non-finite'
+          ? CoreDiagnosticCode.NonFiniteState
+          : CoreDiagnosticCode.UnserialisableState,
       severity: 'error',
       message:
-        `Cannot write a non-finite number (${String(err.value)}) to ${where} — ` +
-        `component "${componentId}", field "${field}", ${who}. World state must serialise to ` +
-        `JSON (CHARTER principle 4), and JSON has no representation for NaN or ±Infinity — it ` +
-        `would be silently written out as null.`,
+        `Cannot write ${explained.what} to ${where} — ` +
+        `component "${componentId}", field "${field}", ${who}. ${explained.why}`,
       location: { path: where },
-      fix:
-        `Guard the computation that produced ${String(err.value)} — a divide-by-zero, a sqrt of ` +
-        `a negative, an uninitialised accumulator, or an out-of-domain angle. Clamp the input, ` +
-        `or use a sentinel the format can hold (null, or a finite bound).`,
+      fix: explained.fix,
       data: {
         entity: entity ?? null,
         component: componentId,
         field,
         path: where,
-        value: String(err.value),
+        reason: err.reason,
+        value: err.detail,
       },
     },
   ]);
@@ -147,10 +153,10 @@ export function defineComponent<T extends object>(def: ComponentDefinition<T>): 
       }
       // Check the *input* before handing it to a caller-supplied clone, so a lossy clone
       // cannot hide a non-finite value by flattening it to `null` on the way past.
-      assertFinite(merged);
+      assertSerialisable(merged);
       return custom(merged);
     } catch (err) {
-      if (err instanceof NonFiniteValueError) throw nonFiniteAtWrite(def.id, err);
+      if (err instanceof UnserialisableValueError) throw unserialisableAtWrite(def.id, err);
       throw err;
     }
   };

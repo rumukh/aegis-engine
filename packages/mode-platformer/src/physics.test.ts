@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { createSchedule, createSimulation, createWorld, Name, Transform } from '@aegis/core';
-import type { InputFrame, InputSource, System, World } from '@aegis/core';
+import type { Entity, InputFrame, InputSource, System, World } from '@aegis/core';
 import {
   BodyState,
   KinematicPlatform,
@@ -15,10 +15,12 @@ import {
   TileCollider,
   Velocity,
 } from './components.js';
+import { PlatformerCollision, buildCollisionGrid } from './level.js';
 import {
   PLATFORM_BOARDED,
   PLATFORMER_SYSTEM_LIST,
   PLAYER_JUMPED,
+  PLAYER_LANDED,
   platformAxisPos,
 } from './systems.js';
 
@@ -166,5 +168,74 @@ describe('carry by a kinematic platform', () => {
     expect(t.position.y).toBeCloseTo(4.0, 6); // stayed on the platform surface
     expect(world.events.count(PLATFORM_BOARDED)).toBe(1);
     expect(world.get(rider, BodyState)!.grounded).toBe(true);
+  });
+});
+
+describe('player.landed is an edge, not a level', () => {
+  /** A 4x4 map whose bottom row is solid ground: the tile at row 3 spans world y in [0, 1]. */
+  function groundWorld(seed: string): World {
+    const world = createWorld({ seed, recordEvents: true });
+    world.setResource(
+      PlatformerCollision,
+      buildCollisionGrid({
+        width: 4,
+        height: 4,
+        tileSize: 1,
+        legend: { '#': { solid: true } },
+        layers: [{ name: 'collision', data: ['....', '....', '....', '####'] }],
+      }),
+    );
+    return world;
+  }
+
+  /** Spawn a controller body at `y`, airborne. */
+  function spawnFaller(world: World, y: number): Entity {
+    return world.spawn(
+      Name({ value: 'hero' }),
+      Transform({ position: { x: 1.5, y, z: 0 } }),
+      Velocity({ dx: 0, dy: 0 }),
+      PlatformerController(),
+      BodyState({ grounded: false }),
+      TileCollider({ halfWidth: 0.4, halfHeight: 0.5, offsetX: 0, offsetY: 0 }),
+    );
+  }
+
+  it('a body that falls once and then rests emits exactly one landing', () => {
+    const world = groundWorld('landing-once');
+    const hero = spawnFaller(world, 3);
+
+    // Count the grounded ticks, so the assertion can state *how many* landings an emitter
+    // triggered by the grounded level — rather than by the airborne -> grounded edge — would have
+    // produced. Without this the "exactly 1" below could be read as a lucky coincidence.
+    let groundedTicks = 0;
+    const probe: System = {
+      name: 'test.probe',
+      phase: 'postUpdate',
+      run({ world: w }): void {
+        if (w.get(hero, BodyState)?.grounded === true) groundedTicks += 1;
+      },
+    };
+
+    const schedule = createSchedule().addAll([...PLATFORMER_SYSTEM_LIST, probe]);
+    createSimulation({ world, schedule, tickRate: 60 }).run(120);
+
+    expect(world.get(hero, BodyState)!.grounded).toBe(true);
+    expect(world.get(hero, Transform)!.position.y).toBeCloseTo(1.5, 6); // feet on the tile top
+    expect(groundedTicks).toBeGreaterThan(80); // it rested for most of the run…
+    expect(world.events.count(PLAYER_LANDED)).toBe(1); // …and still landed once
+  });
+
+  it('leaving the ground and coming down again lands a second time', () => {
+    const world = groundWorld('landing-twice');
+    const hero = spawnFaller(world, 3);
+
+    const schedule = createSchedule().addAll(PLATFORMER_SYSTEM_LIST);
+    createSimulation({ world, schedule, tickRate: 60, input: jumpAt(40) }).run(160);
+
+    // One landing from the initial fall, one from the jump — the positive control that stops
+    // "exactly 1" above from being satisfiable by an emitter that has been deleted entirely.
+    expect(world.events.count(PLAYER_JUMPED)).toBe(1);
+    expect(world.events.count(PLAYER_LANDED)).toBe(2);
+    expect(world.get(hero, BodyState)!.grounded).toBe(true);
   });
 });

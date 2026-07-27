@@ -11,6 +11,7 @@
  */
 import { CLEAR_TICK, SET_TICK } from './internal.js';
 import { EMPTY_INPUT_FRAME } from './input.js';
+import { suggestName } from './suggest.js';
 import type { ManagedEventBus, TickControlledWorld } from './internal.js';
 import type { InputFrame } from './input.js';
 import type { StateHash } from './hash.js';
@@ -97,6 +98,11 @@ export interface Schedule {
    * registering three of a mode's twelve systems), which is why it is reported as data rather
    * than thrown — but in a full game schedule every entry here is an ordering constraint that
    * silently did not happen.
+   *
+   * **This never throws**, including when {@link Schedule.resolved} would reject one of these
+   * entries as a near-miss typo. It used to share `resolved`'s single resolve call and so threw
+   * with it, which made the "reported as data" design unreachable in the one case a caller
+   * actually needs it: a schedule the guard has decided not to build.
    */
   unresolved(): readonly UnresolvedConstraint[];
 }
@@ -104,10 +110,17 @@ export interface Schedule {
 /** Create an empty schedule. */
 export function createSchedule(): Schedule {
   const systems: System[] = [];
-  let cache: { order: readonly System[]; unresolved: readonly UnresolvedConstraint[] } | null =
-    null;
+  let cache: {
+    order: readonly System[];
+    unresolved: readonly UnresolvedConstraint[];
+    nearMiss: string | null;
+  } | null = null;
 
-  function resolve(): { order: readonly System[]; unresolved: readonly UnresolvedConstraint[] } {
+  function resolve(): {
+    order: readonly System[];
+    unresolved: readonly UnresolvedConstraint[];
+    nearMiss: string | null;
+  } {
     if (cache === null) cache = resolveSystems(systems);
     return cache;
   }
@@ -124,7 +137,9 @@ export function createSchedule(): Schedule {
       return schedule;
     },
     resolved(): readonly System[] {
-      return resolve().order;
+      const r = resolve();
+      if (r.nearMiss !== null) throw new Error(r.nearMiss);
+      return r.order;
     },
     unresolved(): readonly UnresolvedConstraint[] {
       return resolve().unresolved;
@@ -136,15 +151,17 @@ export function createSchedule(): Schedule {
 /**
  * Deterministically order systems: group by the fixed phase order, then within each phase
  * topologically sort by `before`/`after`, breaking ties by insertion index (stable Kahn's).
- * Throws on a cyclic constraint and on a `before`/`after` entry that is a near-miss of a
- * registered name; other unresolvable entries are returned as data.
+ * Throws on a cyclic constraint; near-misses are collected as data and raised by
+ * {@link Schedule.resolved} only — see {@link Schedule.unresolved}.
  */
 function resolveSystems(systems: readonly System[]): {
   order: readonly System[];
   unresolved: readonly UnresolvedConstraint[];
+  nearMiss: string | null;
 } {
   const result: System[] = [];
   const unresolved: UnresolvedConstraint[] = [];
+  let nearMiss: string | null = null;
   const byName = new Map<string, number>();
   systems.forEach((s, i) => {
     if (byName.has(s.name)) {
@@ -157,8 +174,14 @@ function resolveSystems(systems: readonly System[]): {
   // satisfied while the system quietly degraded to insertion order. Core cannot tell a typo
   // from a legitimately-absent optional dependency in general — a unit test that registers
   // three of a mode's twelve systems has unresolvable constraints by construction — so only a
-  // *near-miss* of a registered name (within two edits) is treated as a mistake and reported.
-  // Everything unresolved is available as data via `Schedule.unresolved()`.
+  // *near-miss* of a registered name is treated as a mistake and reported.
+  //
+  // "Near" is the shared, length-scaled rule in `suggest.ts`, not a flat two edits: two edits
+  // is most of a short name, and this guard *throws*, so being loose here made legitimate
+  // schedules unbuildable. The message is recorded rather than thrown from inside the walk, so
+  // `unresolved()` can still answer — it used to share this call and therefore threw too,
+  // making the documented "reported as data" escape hatch unreachable in exactly the case it
+  // exists for.
   for (const system of systems) {
     for (const [kind, names] of [
       ['after', system.after ?? []],
@@ -167,13 +190,15 @@ function resolveSystems(systems: readonly System[]): {
       for (const name of names) {
         if (byName.has(name)) continue;
         unresolved.push({ system: system.name, kind, name });
-        const suggestion = nearestName(name, byName.keys());
+        if (nearMiss !== null) continue;
+        const suggestion = suggestName(name, byName.keys());
         if (suggestion === undefined) continue;
-        throw new Error(
+        nearMiss =
           `[aegis] Schedule: system "${system.name}" declares ${kind}: ["${name}"], but no ` +
-            `system by that name is registered. Did you mean "${suggestion}"? An unresolvable ` +
-            `constraint is silently ignored, so the ordering you asked for would not happen.`,
-        );
+          `system by that name is registered. Did you mean "${suggestion}"? An unresolvable ` +
+          `constraint is silently ignored, so the ordering you asked for would not happen. ` +
+          `If "${name}" really is an optional dependency that is legitimately absent, read ` +
+          `Schedule.unresolved() — it reports every such entry as data and does not throw.`;
       }
     }
   }
@@ -238,45 +263,13 @@ function resolveSystems(systems: readonly System[]): {
       throw new Error(`[aegis] Schedule: cyclic before/after constraint in phase "${phase}"`);
     }
   }
-  return { order: result, unresolved };
+  return { order: result, unresolved, nearMiss };
 }
 
 /**
  * Closest registered name to `target`, when it is close enough to be a typo rather than a
- * different system. Two edits is deliberately tight: a genuinely absent optional dependency
- * (`fps.gravity` in a schedule that has `fps.integrate`) must never be flagged.
+ * different system.
  */
-function nearestName(target: string, candidates: Iterable<string>): string | undefined {
-  let best: string | undefined;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const candidate of candidates) {
-    const d = editDistance(target, candidate);
-    if (d < bestDistance) {
-      bestDistance = d;
-      best = candidate;
-    }
-  }
-  const limit = 2;
-  return best !== undefined && bestDistance <= limit ? best : undefined;
-}
-
-/** Plain Levenshtein distance. */
-function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i];
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      row[j] = Math.min(
-        (row[j - 1] as number) + 1,
-        (prev[j] as number) + 1,
-        (prev[j - 1] as number) + cost,
-      );
-    }
-    prev = row;
-  }
-  return prev[b.length] as number;
-}
 
 /** A source of one {@link InputFrame} per tick (the harness's script, or a live adapter). */
 export interface InputSource {

@@ -114,3 +114,27 @@ describe('AABB resolution against tiles, from each direction', () => {
     expect(ry.cy).toBeCloseTo(3.5, 9);
   });
 });
+
+// `restingOn`'s `eps` is what separates "standing on a surface" from "falling past it", and it is
+// the caller's number — `platformer.integrate` passes 1e-4. Every other use of `restingOn` in this
+// file feeds it a body exactly on the surface, where any tolerance at all answers `true`, so the
+// size of the window was free to change by orders of magnitude unnoticed. These two cases straddle
+// one specific tolerance from both sides, which is the only shape that pins a threshold.
+describe('restingOn — the tolerance is a contract, not a hint', () => {
+  const boxes = [{ left: 0, right: 4, bottom: 0, top: 2 }];
+
+  it('a body within eps of the surface is resting on it', () => {
+    // Feet at 2 + 5e-5, i.e. half the tolerance above the surface.
+    expect(restingOn(boxes, 2, 2.5 + 5e-5, HALF_W, HALF_H, 1e-4)).toBe(true);
+  });
+
+  it('a body further than eps from the surface is not', () => {
+    // Feet at 2 + 5e-4, five times the tolerance: airborne, however slightly.
+    expect(restingOn(boxes, 2, 2.5 + 5e-4, HALF_W, HALF_H, 1e-4)).toBe(false);
+  });
+
+  it('needs horizontal overlap as well as vertical contact', () => {
+    // Directly above the surface's east end but past it: nothing underfoot.
+    expect(restingOn(boxes, 5, 2.5, HALF_W, HALF_H, 1e-4)).toBe(false);
+  });
+});

@@ -53,6 +53,19 @@ export const ContentCode = {
    * certainly keyed against another module's copy and is being silently ignored.
    */
   SchemaKeyMismatch: 'AEG-CONTENT-0016',
+  /**
+   * An authored value cannot be held by world state, so **instantiating this document would
+   * throw**: a non-finite number (`1e999` parses to `Infinity`, and `JSON.parse` accepts it), a
+   * cycle or runaway nesting, or a value that is not plain JSON.
+   *
+   * This exists because the three checks above it are shape checks, and shape is not the whole
+   * contract: a free-form `optional: { data: 'object' }` field, an array's elements and a
+   * scene's `resources` block are all *shapeless* by design, so nothing looked inside them.
+   * `aegis validate` reported a clean document and `aegis run` then died with
+   * `AEG-CORE-0001` — the worst shape a defect can take in an agent-first engine, because the
+   * tool that exists to catch the problem says the problem is not there.
+   */
+  UnserialisableValue: 'AEG-CONTENT-0017',
 } as const;
 
 /** A content diagnostic code value. */

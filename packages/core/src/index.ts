@@ -17,6 +17,8 @@ export * from './input.js';
 export * from './prng.js';
 export * from './diagnostics.js';
 export * from './codes.js';
+export * from './serialisable.js';
+export * from './suggest.js';
 export * from './serialize.js';
 export * from './hash.js';
 export * from './world.js';

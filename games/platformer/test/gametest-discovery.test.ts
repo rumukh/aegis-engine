@@ -21,7 +21,7 @@
  * time in the same suite. `packages/cli` owns proving that the runner runs them.
  */
 import { readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -94,5 +94,64 @@ describe('aegis test discovery covers every PoC game', () => {
     expect(empty, `games discovered but exporting no GameTest: ${JSON.stringify(counts)}`).toEqual(
       [],
     );
+  });
+});
+
+/** Every `*.gametest.ts` under a game workspace, as repo-relative paths. */
+function specSources(game: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+        walk(full);
+      } else if (entry.name.endsWith(`${CONVENTION}.ts`)) {
+        out.push(full);
+      }
+    }
+  };
+  walk(join('games', game));
+  return out.sort();
+}
+
+/**
+ * The gap this closes is `AGENTS.md` §9 #3: every game's `tsconfig.json` excludes `test/`, and
+ * `aegis test` globs *compiled* `dist` gametest modules, so a spec written in the wrong directory
+ * is invisible to the CLI — no error, no warning. The documented mitigation is that a human reads
+ * the scan count in the CLI summary. A number someone is supposed to notice is not a gate; these
+ * two checks are, and they fail with the offending path named.
+ *
+ * They are deliberately two separate claims. The first catches a spec parked where the build will
+ * not see it. The second catches a spec that *is* in the right place but produced no artefact —
+ * a stale or partial build, or an `exclude` that grew a new pattern.
+ */
+describe('a game spec cannot hide from the build', () => {
+  it('every *.gametest.ts lives under src/, where the build can see it', () => {
+    const stray = gameDirs()
+      .flatMap((g) => specSources(g))
+      .filter((p) => !p.split(sep).includes('src'));
+    expect(
+      stray,
+      `these specs are outside src/ and every games/*/tsconfig.json excludes such directories, ` +
+        `so they are compiled to nothing and \`aegis test\` will never find them: ${stray.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('every *.gametest.ts under src/ has a compiled counterpart in dist/', () => {
+    const missing: string[] = [];
+    for (const game of gameDirs()) {
+      for (const spec of specSources(game)) {
+        const compiled = spec
+          .replace(`${sep}src${sep}`, `${sep}dist${sep}`)
+          .replace(/\.ts$/, '.js');
+        if (!existsSync(compiled)) missing.push(`${spec} -> ${compiled}`);
+      }
+    }
+    expect(
+      missing,
+      `these specs exist in source but produced no dist artefact, so \`aegis test\` runs without ` +
+        `them: ${missing.join(', ')}`,
+    ).toEqual([]);
   });
 });

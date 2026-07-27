@@ -3,6 +3,10 @@ import { createEventBus } from './events.js';
 import { createWorld } from './world.js';
 import { defineComponent } from './component.js';
 import { CLEAR_TICK } from './internal.js';
+import { CoreDiagnosticCode } from './codes.js';
+import { DiagnosticError } from './diagnostics.js';
+import { canonicalStringify } from './serialize.js';
+import type { Diagnostic } from './diagnostics.js';
 import type { GameEvent } from './events.js';
 import type { ManagedEventBus } from './internal.js';
 
@@ -185,5 +189,68 @@ describe('event stream digest (M3)', () => {
     expect(w.events.history()).toHaveLength(0);
     expect(w.events.thisTick()).toHaveLength(0);
     expect(w.events.digest()).toBe(createWorld({ seed: 1, recordEvents: true }).events.digest());
+  });
+});
+
+describe('event bus — emit is a write boundary like any other', () => {
+  const V2 = defineComponent<{ v: number }>({ id: 'V2', defaults: () => ({ v: 0 }) });
+
+  /** The single diagnostic from a thrown DiagnosticError, or a failure. */
+  function diagnosticFrom(fn: () => unknown): Diagnostic {
+    try {
+      fn();
+    } catch (err) {
+      expect(err).toBeInstanceOf(DiagnosticError);
+      return (err as DiagnosticError).diagnostics[0] as Diagnostic;
+    }
+    throw new Error('expected the call to throw a DiagnosticError');
+  }
+
+  it('refuses a non-finite payload at emit, naming the event, tick and path', () => {
+    // `emit` was the only write boundary that skipped the check, and the asymmetry was the
+    // worst part: `world.hash()` succeeded (the event stream is not in the state hash) while
+    // `events.digest()` died later with a bare `Error` carrying no code, no event type and no
+    // path — "[aegis] canonicalStringify: non-finite number (NaN) is not serialisable".
+    const w = createWorld({ seed: 1, recordEvents: true });
+    const d = diagnosticFrom(() => w.events.emit('DamageDealt', { amount: 0 / 0 }));
+    expect(d.code).toBe(CoreDiagnosticCode.NonFiniteState);
+    expect(d.location?.path).toBe('events["DamageDealt"].data.amount');
+    expect(d.data?.['event']).toBe('DamageDealt');
+    expect(d.data?.['tick']).toBe(0);
+  });
+
+  it('the refusal is what keeps digest() alive — the negative control', () => {
+    // Without the guard this same world produces a digest that throws. Assert both halves:
+    // the bad payload never lands, and the digest of what did land still computes.
+    const w = createWorld({ seed: 1, recordEvents: true });
+    w.events.emit('Hit', { amount: 3 });
+    expect(() => w.events.emit('Hit', { amount: Infinity })).toThrow(DiagnosticError);
+    expect(w.events.count('Hit')).toBe(1); // the rejected emit left no trace
+    expect(() => w.events.digest()).not.toThrow();
+    // And the canonical encoder — the thing that used to blow up — really would have:
+    expect(() => canonicalStringify({ amount: Infinity })).toThrow(/non-finite/);
+  });
+
+  it('applies the same rule as a component write, not a looser one', () => {
+    const w = createWorld({ seed: 1, recordEvents: true });
+    for (const bad of [{ v: NaN }, { v: undefined }, { v: /x/ }, { v: (): number => 1 }]) {
+      expect(() => w.events.emit('E', bad)).toThrow(DiagnosticError);
+      expect(() => w.spawn(V2(bad as { v: number }))).toThrow(DiagnosticError);
+    }
+    // ...and accepts what a component write accepts, so the two cannot drift apart in the
+    // other direction either.
+    for (const good of [{ v: 0 }, { v: -0 }, { v: 1e308 }]) {
+      expect(() => w.events.emit('E', good)).not.toThrow();
+      expect(() => w.spawn(V2(good))).not.toThrow();
+    }
+  });
+
+  it('a cyclic payload is a diagnostic, not a stack overflow', () => {
+    const w = createWorld({ seed: 1, recordEvents: true });
+    const node: Record<string, unknown> = {};
+    node['self'] = node;
+    const d = diagnosticFrom(() => w.events.emit('Loop', node));
+    expect(d.code).toBe(CoreDiagnosticCode.UnserialisableState);
+    expect(d.data?.['reason']).toBe('too-deep');
   });
 });
