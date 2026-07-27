@@ -143,7 +143,14 @@ describe('compiling a script to browser input', () => {
       .map((segment) => segment.mouse?.dx ?? 0)
       .reduce((sum, dx) => sum + dx, 0);
     // Three degrees is 21.43 px; carrying the remainder keeps the total within a pixel.
-    expect(Math.abs(pixels - 3 / 0.14)).toBeLessThan(1);
+    expect(Math.abs(Math.abs(pixels) - 3 / 0.14)).toBeLessThan(1);
+    // And it must be a *leftward* cursor walk. `look 1` asks the simulation to turn yaw positive,
+    // which swings the view toward the mode's `+X` — and three.js puts `+X` on the screen's left
+    // (see SCREEN_HANDEDNESS in bindings.ts). A human producing that turn moves the mouse left,
+    // so a capture reproducing it must too. Asserting only the magnitude above would have let the
+    // whole screen-handedness question stay invisible here, which is how it stayed invisible for
+    // as long as it did.
+    expect(pixels).toBeLessThan(0);
   });
 
   it('covers every tick exactly once, contiguously', () => {

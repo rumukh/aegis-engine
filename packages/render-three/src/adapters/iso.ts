@@ -177,6 +177,12 @@ export class IsoAdapter extends BaseAdapter {
    * which keeps a click on empty background resolving to something rather than nothing.
    */
   override pick(ndcX: number, ndcY: number): PickedPoint | null {
+    // A raycast reads every object's `matrixWorld`, and `position.set` only marks it dirty. In a
+    // browser the renderer refreshes them once a frame so this happens to work; anywhere else —
+    // a test, a headless probe, or a click that lands between a `sync` and the next render — the
+    // ray would be cast against the previous frame's scene, or against objects still stacked at
+    // the origin. Clicks are rare; refreshing here costs nothing and removes the assumption.
+    this.scene.updateMatrixWorld(true);
     this.#raycaster.setFromCamera(new Vector2(ndcX, ndcY), this.camera);
     const hits = this.#raycaster.intersectObjects([this.#level, this.#entities], true);
     for (const hit of hits) {
