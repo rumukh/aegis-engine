@@ -341,16 +341,22 @@ export async function runGameTest(test: GameTest): Promise<GameTestResult> {
   const checked = auditOf(result);
   if (checked.assertions === 0) {
     // A green tick here would be the worst lie the harness can tell: the run completed, nothing
-    // was verified, and the report says the playthrough is proven.
+    // was verified, and the report says the playthrough is proven. The message states what the
+    // harness *observed* — no assertion recorded against this result — rather than asserting what
+    // the callback did: it cannot see the callback, and a message that describes the reader's
+    // code wrongly sends them to debug a file that is fine.
     return {
       name: test.name,
       passed: false,
       error: new GameAssertionError(
-        `Game test "${test.name}" ran ${test.ticks} ticks and executed ZERO assertions, so it ` +
-          `proves nothing and cannot fail.\n` +
-          `Its expect(result) callback returned without calling a single expectSim(...) assertion ` +
-          `or result.assertInvariant(...), and the run declared no live invariants.\n` +
-          `Add at least one real check — e.g. expectSim(result).eventEmitted('level.completed', 1).`,
+        `Game test "${test.name}" ran ${test.ticks} ticks and recorded ZERO assertions against ` +
+          `the SimResult it produced, so it proves nothing and cannot fail.\n` +
+          `Add at least one real check inside expect(result) — e.g. ` +
+          `expectSim(result).eventEmitted('level.completed', 1), or result.assertInvariant(...) — ` +
+          `or declare live invariants on the run.\n` +
+          `If your expectations DID run, check they were applied to the \`result\` argument this ` +
+          `test was given: assertions made against a different SimResult (one built inside ` +
+          `expect(), say) are recorded against that one and cannot vouch for this run.`,
       ),
       result,
       ticks: test.ticks,

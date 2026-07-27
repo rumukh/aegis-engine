@@ -13,15 +13,28 @@
  *    the callback did not throw, so an empty (or accidentally short-circuited) expectation read
  *    as a clean pass. Assertions are counted, and a test that ran none fails.
  *
- * Both are recorded against the {@link "./run".SimResult} they belong to, in `WeakMap`s, so no
- * public contract grows a field and nothing leaks between runs.
+ * Both are recorded **on the {@link "./run".SimResult} object itself**, under a registered
+ * symbol, so no public contract grows an enumerable field and nothing leaks between runs.
+ *
+ * ## Why not module state
+ * Both records lived in module-level `WeakMap`s until a second copy of this module —
+ * two physical installs, a `dist` tree imported by file URL as well as by specifier, a Windows
+ * path whose drive letter is cased differently — gave the process **two ledgers**. Assertions
+ * incremented one, {@link "./assert".runGameTest} read the other, and a test that asserted
+ * correctly was failed with *"executed ZERO assertions … its `expect(result)` callback returned
+ * without calling a single `expectSim(...)` assertion"*: a message that states something false
+ * about code that is fine, and sends its reader to debug the wrong file. Worse in the other
+ * direction, {@link unknownComponentRefs} returned `[]` for a result the *other* instance had
+ * registered, silently disarming the typo guard — the exact fail-open this module exists to
+ * prevent. State keyed by the result, and carried by the result, cannot be duplicated: there is
+ * only ever one result object. See `module-instances.test.ts`.
  * @packageDocumentation
  */
 import type { QueryDescriptor, World } from '@aegis/core';
 import { abs } from '@aegis/core';
 import type { ComponentRegistry } from '@aegis/content';
 
-// --- known component ids --------------------------------------------------------------------
+// --- cross-instance state ---------------------------------------------------------------------
 
 /** Everything the harness knows about which component ids a given run can resolve. */
 interface KnownComponents {
@@ -33,7 +46,66 @@ interface KnownComponents {
   inWorld?: ReadonlySet<string>;
 }
 
-const known = new WeakMap<object, KnownComponents>();
+/** Everything the harness records about one run, for reporting what it actually verified. */
+interface VerificationState {
+  /** Which component ids the run can resolve; absent for an object the harness did not produce. */
+  known?: KnownComponents;
+  /** Every assertion that executed against the run, in order. */
+  assertions: AssertionRecord[];
+}
+
+/**
+ * The property this module hangs {@link VerificationState} off a result under.
+ *
+ * `Symbol.for` (the process-wide registry) rather than a fresh `Symbol()`: a fresh symbol is
+ * per-module-instance and would reproduce exactly the split this design removes. The `/1` suffix
+ * is a shape version — a future incompatible record must pick a new key rather than silently
+ * misread this one.
+ */
+const VERIFICATION = Symbol.for('aegis.harness.verification/1');
+
+/**
+ * Fallback for a result that cannot carry a property (frozen or sealed — a hand-rolled test
+ * double, typically). Held on `globalThis` under a registered symbol so that even this path is
+ * shared by every copy of this module, rather than reintroducing the split it replaces.
+ */
+const FALLBACK = Symbol.for('aegis.harness.verification.fallback/1');
+
+type FallbackHost = { [FALLBACK]?: WeakMap<object, VerificationState> };
+
+function fallbackStore(): WeakMap<object, VerificationState> {
+  const host = globalThis as FallbackHost;
+  return (host[FALLBACK] ??= new WeakMap<object, VerificationState>());
+}
+
+/** The state carried by `result`, reading through any module instance that attached it. */
+function stateOf(result: object): VerificationState | undefined {
+  const carried = (result as { [VERIFICATION]?: VerificationState })[VERIFICATION];
+  if (carried && Array.isArray(carried.assertions)) return carried;
+  return fallbackStore().get(result);
+}
+
+/** The state carried by `result`, attaching a fresh one if this is the first record about it. */
+function ensureState(result: object): VerificationState {
+  const existing = stateOf(result);
+  if (existing) return existing;
+  const state: VerificationState = { assertions: [] };
+  try {
+    Object.defineProperty(result, VERIFICATION, {
+      value: state,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+  } catch {
+    // Non-extensible result: keep the record in the shared fallback rather than throwing from
+    // inside an assertion, which would report a harness problem as a gameplay failure.
+    fallbackStore().set(result, state);
+  }
+  return state;
+}
+
+// --- known component ids --------------------------------------------------------------------
 
 /** Record which component ids `result` can resolve. Called by the runner for every run. */
 export function registerKnownComponents(
@@ -41,7 +113,7 @@ export function registerKnownComponents(
   registry: ComponentRegistry,
   world: World,
 ): void {
-  known.set(result, { registered: new Set(registry.ids()), world });
+  ensureState(result).known = { registered: new Set(registry.ids()), world };
 }
 
 /** Component ids actually present on some entity in `world` (scans the snapshot once). */
@@ -116,7 +188,7 @@ export function unknownComponentRefs(
   result: object,
   query: QueryDescriptor,
 ): readonly UnknownComponentRef[] {
-  const entry = known.get(result);
+  const entry = stateOf(result)?.known;
   if (!entry) return [];
   const clauses: [UnknownComponentRef['clause'], QueryDescriptor['has']][] = [
     ['has', query.has],
@@ -142,7 +214,7 @@ export function unknownComponentRefs(
  * be resolved, what it probably meant, and why a silent no-op would have been worse.
  */
 export function explainUnknownRefs(result: object, misses: readonly UnknownComponentRef[]): string {
-  const entry = known.get(result);
+  const entry = stateOf(result)?.known;
   const lines = misses.map((m) => {
     const hint =
       m.suggestions.length > 0
@@ -174,16 +246,12 @@ export interface AssertionRecord {
   detail: string;
 }
 
-const ledger = new WeakMap<object, AssertionRecord[]>();
-
 /** Record that an assertion really executed against `result`. Called by every assertion. */
 export function recordAssertion(result: object, kind: string, detail: string): void {
-  const list = ledger.get(result);
-  if (list) list.push({ kind, detail });
-  else ledger.set(result, [{ kind, detail }]);
+  ensureState(result).assertions.push({ kind, detail });
 }
 
 /** Every assertion that executed against `result`, in order. */
 export function assertionsFor(result: object): readonly AssertionRecord[] {
-  return ledger.get(result) ?? [];
+  return stateOf(result)?.assertions ?? [];
 }
