@@ -1701,6 +1701,20 @@ golden.
 about behaviour, and the only thing separating a true one from a merely convincing one is a command
 you ran.
 
+**Row 7 is the one exception to the paragraph that opens this section, and says so rather than
+borrowing its authority.** It was not reproduced by a probe with a control; it is proved by
+construction, which for this defect is the stronger evidence and not the weaker. Resource-id
+checking is opt-in — `validateResources` returns immediately when no registry is supplied
+(`packages/content/src/load.ts:626`) — and **all three** callers in shipped code pass only a
+component registry: `packages/harness/src/run.ts:338`, `session.ts:121`, `world.ts:46`. The value is
+applied to the world regardless (`load.ts:781`). Both arms are already pinned by green tests —
+`load.test.ts:286` _"says nothing about resources when no registry is supplied"_ and `:291`
+_"refuses to instantiate a scene whose resource id is unknown"_ — so the behaviour is deliberate and
+tested, not an oversight. Enabling the check needs a `ModePlugin` contract addition and the three
+modes declaring their ids, deferred to v2 and written down at both ends (`load.ts:396`,
+`registry.ts:78`). An enumeration of every caller settles this where a single probe could not: a
+probe would only ever have told you about the one path it took.
+
 | #   | Rough edge                                                                                                                                                                                                                                                                                                                                                                                                                          | Work around it by…                                                                                                                                               |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **A scene's tilemap must be inlined into `resources`; the `*.tilemap.json` file next to it is not loaded.** `aegis scaffold game` writes both, and editing only the standalone file changes nothing about the run.                                                                                                                                                                                                                  | Editing the inline copy under `resources["platformer.tilemap"]` ([§2.3](#23-trap-the-tilemap-must-be-inline)).                                                   |
@@ -1709,6 +1723,7 @@ you ran.
 | 4   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                                                                                                                                                                               | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                                     |
 | 5   | **A scaffolded `*.gametest.mjs` names its plugin as a string**, so `runGameTest` cannot run it directly (`plugin.components is not a function`) — only the CLI resolves strings.                                                                                                                                                                                                                                                    | Substituting the plugin object before calling `runGameTest` ([§6.5](#65-mutation-check-your-own-test)).                                                          |
 | 6   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated — npm only links a `bin` whose target already exists.                                                                                                                                                                                                                                                                | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                                     |
+| 7   | **A typo in a scene's `resources` id is silent, and the value still reaches the world.** Resource-id checking is opt-in and no shipped caller opts in, so `"gravty"` validates clean, runs clean, and is stored under the misspelling — where the mode that wanted `"gravity"` never looks. Unlike row 2 there is not even a `markers` line, because nothing knows the id was meant to be anything.                                 | Dumping resources with `aegis inspect --view world` and reading back the id you actually got, not the one you typed.                                             |
 
 The reason this section exists at all — and the reason [§6](#6-writing-a-game-test-that-can-actually-fail)
 is written the way it is — is a defect that entered this codebase from `docs/architecture.md` §7,
