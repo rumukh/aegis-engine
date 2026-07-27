@@ -50,8 +50,13 @@ the digest is invariant to object key order.
 The lint rule bans more `Math.*` members than `@aegis/core/math` replaces. As of today core
 provides `sin`, `cos`, `tan`, `asin`, `acos`, `atan2`, `sqrt`, `abs`, `sign`, `floor`, `ceil`,
 `round`, `min`, `max`, `clamp`, `lerp`, `wrapAngle` and `approxEqual`, plus the vector and
-quaternion surfaces. It does **not** provide `exp`, `pow`, `log`, `log2`, `log10`, `cbrt`,
-`hypot` or the hyperbolics, all of which the lint rule forbids.
+quaternion surfaces. It does **not** provide `atan`, `exp`, `expm1`, `pow`, `log`, `log1p`,
+`log2`, `log10`, `cbrt`, `hypot`, `sinh`, `cosh` or `tanh`, all of which the lint rule forbids.
+(`Math.random` is banned too, but it is not a gap in this surface: the seeded PRNG replaces it.)
+This paragraph is enforced by `test/adr-math-surface.test.ts` — both lists are compared against
+the lint configuration and core's actual exports, because prose has no runner otherwise. `atan`
+in particular used to be missing from the gap list while being banned and unimplemented, so the
+paragraph read as if it were available.
 
 That is deliberate, not an oversight — but it does mean a mode that needs one of them has **no
 legal path today**. The rule stands: do not reach for `Math.pow`. Ask the core session to add a

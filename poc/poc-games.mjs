@@ -1,25 +1,25 @@
 // The composition root for playing the three proof-of-concept games in a browser.
 //
-// This file, not `src/`, is where the renderer meets the games. `@aegis/render-three` is *engine*:
-// `scripts/check-deps.mjs` forbids anything under `packages/` from importing anything under
-// `games/`, by package name or by relative path — "the engine must NEVER depend on a game". The
-// dev server is therefore game-agnostic (`startDevServer({ games })` takes a catalogue), and the
-// three PoCs are wired in here.
+// This file, not `packages/render-three/src/`, is where the renderer meets the games.
+// `@aegis/render-three` is *engine*: `scripts/check-deps.mjs` forbids anything under `packages/`
+// from importing anything under `games/`, by package name or by relative path — "the engine must
+// NEVER depend on a game". The dev server is therefore game-agnostic (`startDevServer({ games })`
+// takes a catalogue), and the three PoCs are wired in here.
+//
+// It used to live at `packages/render-three/poc-games.mjs`, where it imported all three
+// `@aegis/game-*` packages — a straight violation of that rule that the checker did not see,
+// because it scanned only `.ts` files under `src/` and `test/`. Both halves are fixed: the checker
+// now scans project-root `.mjs`, and this wiring lives in `poc/`, which is deliberately **not** a
+// workspace project. It may name both sides precisely because nothing can depend on it.
 //
 // The games are ordinary built workspace packages, imported by bare specifier. Nothing is
 // transpiled, stripped or resolved by hand.
-//
-// Note for the PM: this file is outside the package's compiled output and its `exports`/`files`,
-// so it is not part of the shipped artefact — but it does live under `packages/render-three/` and
-// resolves `@aegis/game-*` through workspace hoisting rather than a declared dependency (which
-// check-deps rightly rejects). The durable home for this wiring is a project that is *allowed* to
-// depend on both sides; see the handoff.
 import { join } from 'node:path';
 import { coyoteGapPlugin } from '@aegis/game-platformer';
 import { serverVaultPlugin } from '@aegis/game-iso';
 import { sectorBreachPlugin } from '@aegis/game-fps';
-import { BINDINGS } from './dist/bindings.js';
-import { findRepoRoot, loadInputScript, loadScene } from './dist/catalog.js';
+import { BINDINGS } from '../packages/render-three/dist/bindings.js';
+import { findRepoRoot, loadInputScript, loadScene } from '../packages/render-three/dist/catalog.js';
 
 /**
  * The three PoC games: id, presentation, the **composed** plugin, the scene it runs, the game's

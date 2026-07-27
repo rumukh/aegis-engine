@@ -22,6 +22,8 @@
     "pretest:watch": "npm run build",
     "test:watch": "vitest",
     "verify": "npm run build && npm run typecheck:tests && npm run test && npm run lint",
+    "play": "node poc/play.mjs",
+    "capture": "node poc/capture.mjs",
     "lint": "npm run lint:code && npm run lint:deps && npm run format:check",
     "lint:code": "eslint .",
     "lint:deps": "node scripts/check-deps.mjs",

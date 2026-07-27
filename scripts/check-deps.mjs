@@ -6,14 +6,24 @@
  * ("core must never depend on rendering"). Runs in `npm run lint` and CI, with
  * zero third-party dependencies so it can never be defeated by a proxy hiccup.
  *
- * Three layers of enforcement:
+ * Four layers of enforcement:
  *   1. package.json — declared `dependencies` must be a subset of the allow-list.
- *   2. source imports — no `.ts` file may import an `@aegis/*` package outside the
+ *   2. source imports — no scanned file may import an `@aegis/*` package outside the
  *      allow-list (catches an import that was never declared as a dependency).
  *   3. relative imports may not cross a workspace-project boundary. This is what keeps
  *      the engine from ever depending on a game: `games/*` may build on `packages/*`,
  *      but nothing under `packages/*` may reach into `games/*` — not by package name
  *      (rule 2) and not by climbing out with `../../../games/...` (rule 3).
+ *   4. the PoC composition root under `poc/` is scanned too. It is the one place allowed
+ *      to name both the engine and the games, and it is deliberately not a workspace
+ *      project, so nothing can depend on *it*.
+ *
+ * **What used to be invisible.** Rules 2 and 3 scanned `src/` and `test/`, and only files
+ * ending in `.ts`. `packages/render-three/poc-games.mjs` sat at a project root with an `.mjs`
+ * extension and imported all three `@aegis/game-*` packages — the exact thing rule 3's error
+ * message calls out as something the engine "must NEVER" do — and the checker reported a pass.
+ * The guard was pointed away from the only file in the repository that broke its headline rule.
+ * Scanned extensions and project-root files are now both explicit.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
@@ -24,8 +34,14 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** Workspace roots scanned for projects, in the order they are reported. */
 const WORKSPACE_ROOTS = ['packages', 'games'];
 
-/** Directories inside a project that are scanned for imports. */
+/** Directories inside a project that are scanned recursively for imports. */
 const SCANNED_DIRS = ['src', 'test'];
+
+/**
+ * Extensions scanned. `.mjs` is here because the file that violated the DAG was an `.mjs`
+ * composition root; restricting the scan to `.ts` was not a decision, it was an omission.
+ */
+const SCANNED_EXT = ['.ts', '.mts', '.cts', '.tsx', '.js', '.mjs', '.cjs'];
 
 /**
  * Allowed `@aegis/*` dependencies per package. Anything not listed is forbidden.
@@ -75,14 +91,26 @@ const ZERO_RUNTIME_DEP = new Set(['@aegis/core']);
 const errors = [];
 
 /** @param {string} dir */
-function tsFiles(dir) {
+function sourceFiles(dir) {
   /** @type {string[]} */
   const out = [];
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === 'dist') continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...tsFiles(full));
-    else if (entry.endsWith('.ts')) out.push(full);
+    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
+    else if (SCANNED_EXT.some((ext) => entry.endsWith(ext))) out.push(full);
+  }
+  return out;
+}
+
+/** Scannable files sitting directly in a project root, e.g. `packages/x/tool.mjs`. */
+function rootFiles(dir) {
+  /** @type {string[]} */
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) continue;
+    if (SCANNED_EXT.some((ext) => entry.endsWith(ext))) out.push(full);
   }
   return out;
 }
@@ -157,12 +185,12 @@ for (const project of projects) {
     }
   }
 
-  // 2 + 3. Import checks over the project's own TypeScript.
+  // 2 + 3. Import checks over the project's own source, including files at its root.
   /** @type {string[]} */
-  const files = [];
+  const files = rootFiles(project.dir);
   for (const scanned of SCANNED_DIRS) {
     try {
-      files.push(...tsFiles(join(project.dir, scanned)));
+      files.push(...sourceFiles(join(project.dir, scanned)));
     } catch {
       /* directory not present */
     }
@@ -200,6 +228,39 @@ for (const project of projects) {
       }
     }
   }
+}
+
+// 4. The PoC composition root. `poc/` is deliberately not a workspace project: it may name both
+// the engine and the games because nothing is able to depend on *it*. What it must not become is
+// a package — the moment it has a `package.json` it enters the dependency graph and the exemption
+// stops being structural.
+const pocDir = join(root, 'poc');
+const workspacePackageNames = new Set(Object.keys(ALLOWED));
+try {
+  if (statSync(join(pocDir, 'package.json')).isFile()) {
+    errors.push(
+      'poc/package.json exists — poc/ must NOT be a workspace project. It is allowed to import ' +
+        'both packages/* and games/* only because nothing can depend on it.',
+    );
+  }
+} catch {
+  /* correct: no package.json */
+}
+try {
+  for (const file of sourceFiles(pocDir)) {
+    const text = readFileSync(file, 'utf8');
+    for (const re of [importRe, requireRe]) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        if (!workspacePackageNames.has(m[1])) {
+          errors.push(`${rel(file)} imports "${m[1]}", which is not a workspace package`);
+        }
+      }
+    }
+  }
+} catch {
+  /* poc/ not present */
 }
 
 if (errors.length > 0) {

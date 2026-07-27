@@ -1,7 +1,7 @@
 /**
  * The dev-server entry point. Game-agnostic: it serves whatever catalogue it is handed.
  *
- * The three PoC games are wired up by `packages/render-three/poc-games.mjs`, which is the
+ * The three PoC games are wired up by `poc/poc-games.mjs`, which is the
  * composition root — the renderer is engine and may not depend on a game (see `./catalog.ts`).
  * @packageDocumentation
  */

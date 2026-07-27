@@ -6,7 +6,7 @@
  * or by relative path ("the engine must NEVER depend on a game"). So this module defines the
  * shape of a catalogue entry and knows how to read a scene document, and the **caller** supplies
  * the entries. Wiring the three PoC games is a composition root's job, not the renderer's; see
- * `packages/render-three/poc-games.mjs`.
+ * `poc/poc-games.mjs`.
  * @packageDocumentation
  */
 import { readFile } from 'node:fs/promises';
@@ -34,6 +34,10 @@ export interface GameAcceptance {
    * cannot drift into photographing a moment that never happened. It exists because a game can
    * win somewhere visually dull — Sector Breach's exit is a dead-end wall, so the frame worth
    * keeping is the firefight, not the doorway.
+   *
+   * Naming one is a claim that the run emits it. If it is named and never emitted, the capture
+   * **fails**; it does not quietly fall back to {@link GameAcceptance.winEvent}, because that
+   * would publish a screenshot of a moment nobody chose and say nothing about it.
    */
   photoEvent?: string;
 }

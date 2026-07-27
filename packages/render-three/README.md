@@ -12,7 +12,7 @@ pixels; this package is the one place pixels matter, and it must not compromise 
 ```
 npm install
 npm run build
-node packages/render-three/play.mjs
+node poc/play.mjs
 ```
 
 Then open <http://127.0.0.1:5173> and pick a game. Flags: `--port <n>`, `--host <iface>`.
@@ -28,7 +28,7 @@ Every game also takes `P` (pause/resume), `.` (single-step one tick while paused
 
 ## Screenshots
 
-`node packages/render-three/capture.mjs` plays all three games in a real browser with real key and
+`node poc/capture.mjs` plays all three games in a real browser with real key and
 mouse events and writes `screenshots/{platformer,iso,fps}.png`. It speaks the Chrome DevTools
 Protocol over Node's built-in `WebSocket`, so it needs no extra dependency — just Chrome or Edge.
 Add `--headed` to watch it happen.
@@ -120,7 +120,7 @@ they are not. Crude on purpose — legibility over beauty (CHARTER §5).
 | `dev-server.ts`, `pages.ts`, `protocol.ts` | the `node:http` server, its HTML, and the wire types                                |
 | `client/`                                  | the browser entry: render loop, input capture, HUD                                  |
 | `play.ts`, `capture.ts`                    | serve a catalogue, and screenshot a catalogue                                       |
-| `../poc-games.mjs`                         | **the composition root**: wires the three PoC games into a catalogue                |
+| `../../poc/poc-games.mjs`                  | **the composition root**: wires the three PoC games into a catalogue                |
 
 An adapter owns **no GPU state** — it builds a `THREE.Scene` and a `THREE.Camera` and nothing
 else — so it constructs and runs headlessly in Node, which is how the non-interference proof runs
@@ -139,7 +139,7 @@ packages/render-three/src/probe.ts reaches into games/ ("../../../games/iso/src/
 ```
 
 So nothing under `src/` knows a game exists. `startDevServer({ games })` takes a catalogue,
-`play(games)` serves one, `capture(games)` photographs one. `poc-games.mjs` is the composition
+`play(games)` serves one, `capture(games)` photographs one. `poc/poc-games.mjs` is the composition
 root: it imports the three built game packages by ordinary bare specifier and hands the catalogue
 over.
 

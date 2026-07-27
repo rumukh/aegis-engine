@@ -21,7 +21,7 @@
  *    same as declining to ship it, so the observation is now a gate: no win event, or a dead
  *    player, fails the capture.
  *
- * Usage: `node packages/render-three/capture.mjs [--out <dir>] [--headed]`.
+ * Usage: `node poc/capture.mjs [--out <dir>] [--headed]`.
  * @packageDocumentation
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -34,11 +34,11 @@ import { DiagnosticError } from '@aegis/core';
 import { parseInputScript } from '@aegis/harness';
 import type { InputScript } from '@aegis/harness';
 import { findRepoRoot } from './catalog.js';
-import type { GameDefinition } from './catalog.js';
+import type { GameAcceptance, GameDefinition } from './catalog.js';
 import { startDevServer } from './dev-server.js';
 import { compileDomInput } from './script-input.js';
 import type { DomInputPlan } from './script-input.js';
-import type { ControlCommand, ControlRequest, EventLog } from './protocol.js';
+import type { ControlCommand, ControlRequest, EventLine, EventLog } from './protocol.js';
 
 /** Where a Chromium-family browser might live on this machine. */
 const BROWSER_CANDIDATES = [
@@ -439,12 +439,25 @@ async function inspectRun(
     'globalThis.aegis.world.snapshot().entities' +
       '.filter((e) => e.components.Dead).map((e) => e.name ?? e.id)',
   );
+  return { ...judgeRun(log.events, dead, game.acceptance), dead };
+}
 
+/**
+ * Decide, from a finished run's own event log, whether it is shippable and which tick to keep.
+ *
+ * Split out of {@link inspectRun} so the rule can be exercised without launching a browser:
+ * above this line is I/O, in here is the judgement. A rule that can only be reached by starting
+ * Chrome is a rule nobody re-checks.
+ */
+export function judgeRun(
+  events: readonly EventLine[],
+  dead: readonly string[],
+  acceptance: GameAcceptance | undefined,
+): { won: boolean; photoTick?: number; failures: string[] } {
   const failures: string[] = [];
-  const acceptance = game.acceptance;
-  if (acceptance === undefined) return { won: false, dead, failures };
+  if (acceptance === undefined) return { won: false, failures };
 
-  const win = log.events.find((event) => event.type === acceptance.winEvent);
+  const win = events.find((event) => event.type === acceptance.winEvent);
   if (win === undefined) {
     failures.push(`"${acceptance.winEvent}" was never emitted — the playthrough did not complete`);
   }
@@ -452,13 +465,28 @@ async function inspectRun(
     failures.push(`the player entity "${acceptance.playerName}" ended the run dead`);
   }
 
-  // The frame to keep: the named photo event if the run produced one, else the win.
-  const photoName = acceptance.photoEvent ?? acceptance.winEvent;
-  const photo = log.events.find((event) => event.type === photoName) ?? win;
+  // The frame to keep. An absent `photoEvent` means "the win tick", which is a default. A *named*
+  // `photoEvent` that never fired is a defect rather than a preference: the catalogue asserts a
+  // specific moment is the one worth photographing, so quietly photographing a different one
+  // publishes a screenshot nobody chose. This used to fall back without a word — renaming Sector
+  // Breach's `photoEvent` moved its frame from tick 177 to tick 241 and still exited 0. It is also
+  // the same shape of mistake this package refuses everywhere else: `script-input.ts` makes an
+  // unmappable input a hard error rather than a silent drop.
+  let photo = win;
+  if (acceptance.photoEvent !== undefined) {
+    const named = events.find((event) => event.type === acceptance.photoEvent);
+    if (named === undefined) {
+      failures.push(
+        `"${acceptance.photoEvent}" was named as the frame to photograph but was never emitted` +
+          ` — the screenshot would silently be of "${acceptance.winEvent}" instead`,
+      );
+    } else {
+      photo = named;
+    }
+  }
   return {
     won: win !== undefined,
     ...(photo !== undefined ? { photoTick: photo.tick } : {}),
-    dead,
     failures,
   };
 }

@@ -17,8 +17,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
-    "play": "node play.mjs"
+    "build": "tsc -b"
   },
   "dependencies": {
     "@aegis/core": "*",
