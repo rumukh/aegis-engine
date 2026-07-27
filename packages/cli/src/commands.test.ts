@@ -335,7 +335,88 @@ describe('aegis record / replay', () => {
     const replay = await cli(['replay', 'run.replay.json'], dir);
     expect(replay.code).toBe(1);
     expect(replay.err).toContain('AEG-CLI-0007');
-    expect(replay.err).toContain('determinism');
+    expect(replay.err).toContain('final state hash');
+  });
+
+  /**
+   * F4: replay compared the **final hash alone**, and read `tickHashes` only once that comparison
+   * had already failed. So a recording whose entire per-tick timeline had been rewritten replayed
+   * with `match: yes` and exit 0 — and the timeline is precisely the half that catches a *timing*
+   * change, since two runs that end at rest in the same place share a final hash.
+   *
+   * Measured on a 120-tick platformer recording before the fix: of twelve single-field edits,
+   * four were rejected; zeroing every tick hash, truncating the list to 3 of 120, and corrupting
+   * one mid-run entry were all accepted.
+   */
+  describe('a recording that no longer describes its run', () => {
+    /** Record a run, apply `mutate` to the file, replay it, and return the CLI outcome. */
+    async function replayMutated(mutate: (doc: Record<string, unknown>) => void): Promise<Run> {
+      const dir = makeDir();
+      await cli(['record', 'level.scene.json', '--out', 'run.replay.json', '--ticks', '30'], dir);
+      const recPath = join(dir, 'run.replay.json');
+      const doc = JSON.parse(readFileSync(recPath, 'utf8')) as Record<string, unknown>;
+      mutate(doc);
+      writeFileSync(recPath, JSON.stringify(doc, null, 2), 'utf8');
+      return cli(['replay', 'run.replay.json'], dir);
+    }
+
+    // Negative control: an untouched recording must still replay clean, or every rejection below
+    // proves only that the check rejects everything.
+    it('accepts an untouched recording', async () => {
+      const r = await replayMutated(() => {});
+      expect(r.code).toBe(0);
+      expect(r.out).toMatch(/^verified\s+: yes$/m);
+      expect(r.out).not.toContain('does not match the recording');
+    });
+
+    it('rejects a timeline whose hashes were all rewritten, final hash intact', async () => {
+      const r = await replayMutated((doc) => {
+        doc.tickHashes = (doc.tickHashes as string[]).map(() => '0000000000000000');
+      });
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(/^match\s+: yes$/m); // the final state really does still match
+      expect(r.out).toMatch(/^verified\s+: no$/m);
+      expect(r.err).toContain('per-tick hash at tick 0');
+    });
+
+    it('rejects a timeline corrupted at a single mid-run tick', async () => {
+      const r = await replayMutated((doc) => {
+        (doc.tickHashes as string[])[15] = 'ffffffffffffffff';
+      });
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('per-tick hash at tick 15');
+    });
+
+    it('rejects a timeline shorter than the tick count it claims', async () => {
+      const r = await replayMutated((doc) => {
+        doc.tickHashes = (doc.tickHashes as string[]).slice(0, 3);
+      });
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('claims 30 ticks but pins 3 per-tick hashes');
+    });
+
+    // Omitting `tickHashes` is legal — the field is optional. What must not happen is a green
+    // result that reads identically to one where the timeline was checked and agreed.
+    it('accepts a recording with no timeline, but says it could not check one', async () => {
+      const r = await replayMutated((doc) => {
+        delete doc.tickHashes;
+      });
+      expect(r.code).toBe(0);
+      expect(r.out).toContain('not verified by this replay');
+      expect(r.out).toContain('per-tick hash timeline');
+    });
+
+    // An edit that genuinely changes nothing must NOT be called a mismatch — but it must not be
+    // invisible either. The hash is right; the statement that evaporated is reported.
+    it('reports an input statement the tick window swallows, without failing the replay', async () => {
+      const r = await replayMutated((doc) => {
+        doc.input = `${doc.input as string}\npress Fire @900`;
+      });
+      expect(r.code).toBe(0);
+      expect(r.out).toMatch(/^verified\s+: yes$/m);
+      expect(r.out).toContain('AEG-HARNESS-0009');
+      expect(r.out).toContain('press Fire @900');
+    });
   });
 });
 

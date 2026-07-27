@@ -72,86 +72,101 @@ const MATH_ALIAS_VIOLATION = `const M = Math;\nexport const probe = (): number =
 const MATH_COMPUTED_VIOLATION = `const k = 'sin';\nexport const probe = (): number => Math[k as 'sin'](1);\n`;
 const WALL_CLOCK_VIOLATION = `export const probe = (): number => new Date().getTime();\n`;
 
-describe('eslint.config.js — every guard-rail family still fires', () => {
-  it('the probe pipeline itself works (a clean file produces no rule violations)', async () => {
-    // Without this, every assertion below could pass for the wrong reason: if `lintAs` were
-    // silently linting nothing, the negative cases would all "pass" and the positive ones would
-    // fail loudly — but a future refactor could invert that. This pins the baseline.
-    const messages = await lintAs(
-      'packages/harness/src/zz-clean.ts',
-      `export const probe = (n: number): number => n + 1;\n`,
-    );
-    expect(messages).toEqual([]);
-  });
+/**
+ * Every case here runs a real ESLint pass, and the first pays a cold start (flat-config
+ * resolution plus the TypeScript parser). Measured on this repository that lands within a few
+ * seconds of Vitest's 30 s default, so the file failed roughly half the time — as a *timeout*,
+ * which reads like a broken guard rather than a slow one. The work is genuine; the budget was
+ * simply too tight.
+ */
+const LINT_TIMEOUT_MS = 180_000;
 
-  /**
-   * Absolute — no location scoping, no exemptions. `games/**` is listed first because it is the
-   * case whose absence would be least noticeable: a game pinning `hashEquals(result.hash)` reads
-   * exactly like a determinism regression test and can never fail.
-   */
-  it.each([
-    ['games/iso/src/zz-probe.ts'],
-    ['games/platformer/src/zz-probe.ts'],
-    ['packages/harness/src/zz-probe.ts'],
-    ['packages/mode-fps/src/zz-probe.ts'],
-    ['packages/cli/src/zz-probe.ts'],
-    ['packages/render-three/src/zz-probe.ts'],
-  ])('golden-hash ban fires in %s', async (path) => {
-    const messages = await lintAs(path, GOLDEN_HASH_VIOLATION);
-    expect(fired(messages, 'no-restricted-syntax', 'compares the run to itself')).toBe(true);
-  });
-
-  it.each([['packages/core/src/zz-probe.ts'], ['games/iso/src/zz-probe.ts']])(
-    'Math property ban fires in %s',
-    async (path) => {
-      const messages = await lintAs(path, MATH_PROPERTY_VIOLATION);
-      expect(fired(messages, 'no-restricted-properties', 'Math.sin')).toBe(true);
-    },
-  );
-
-  it.each([['packages/core/src/zz-probe.ts'], ['games/fps/src/zz-probe.ts']])(
-    'Math alias evasion ban fires in %s',
-    async (path) => {
-      const messages = await lintAs(path, MATH_ALIAS_VIOLATION);
-      expect(fired(messages, 'no-restricted-syntax', 'Aliasing or destructuring Math')).toBe(true);
-    },
-  );
-
-  it.each([['packages/core/src/zz-probe.ts'], ['games/fps/src/zz-probe.ts']])(
-    'Math computed-access evasion ban fires in %s',
-    async (path) => {
-      const messages = await lintAs(path, MATH_COMPUTED_VIOLATION);
-      expect(fired(messages, 'no-restricted-syntax', 'Computed access to Math')).toBe(true);
-    },
-  );
-
-  it.each([['packages/harness/src/zz-probe.ts'], ['games/platformer/src/zz-probe.ts']])(
-    'wall-clock Date ban fires in %s',
-    async (path) => {
-      const messages = await lintAs(path, WALL_CLOCK_VIOLATION);
-      expect(fired(messages, 'no-restricted-syntax', 'Wall-clock time breaks determinism')).toBe(
-        true,
+describe(
+  'eslint.config.js — every guard-rail family still fires',
+  () => {
+    it('the probe pipeline itself works (a clean file produces no rule violations)', async () => {
+      // Without this, every assertion below could pass for the wrong reason: if `lintAs` were
+      // silently linting nothing, the negative cases would all "pass" and the positive ones would
+      // fail loudly — but a future refactor could invert that. This pins the baseline.
+      const messages = await lintAs(
+        'packages/harness/src/zz-clean.ts',
+        `export const probe = (n: number): number => n + 1;\n`,
       );
-    },
-  );
+      expect(messages).toEqual([]);
+    });
 
-  /**
-   * The other direction. A resolution that hoists the determinism selectors into the general
-   * `**\/*.ts` block — the natural way to "make sure they apply everywhere" — keeps every positive
-   * case above green while breaking `render-three`, which legitimately runs on a wall clock, and
-   * `packages/cli`, which is a process rather than a simulation. Only these assertions catch it.
-   */
-  it.each([
-    ['packages/cli/src/zz-probe.ts', WALL_CLOCK_VIOLATION, 'Wall-clock time breaks determinism'],
-    [
-      'packages/render-three/src/zz-probe.ts',
-      WALL_CLOCK_VIOLATION,
-      'Wall-clock time breaks determinism',
-    ],
-    ['packages/cli/src/zz-probe.ts', MATH_ALIAS_VIOLATION, 'Aliasing or destructuring Math'],
-    ['packages/cli/src/zz-probe.ts', MATH_COMPUTED_VIOLATION, 'Computed access to Math'],
-  ])('determinism bans stay silent in %s', async (path, source, fragment) => {
-    const messages = await lintAs(path, source);
-    expect(fired(messages, 'no-restricted-syntax', fragment)).toBe(false);
-  });
-});
+    /**
+     * Absolute — no location scoping, no exemptions. `games/**` is listed first because it is the
+     * case whose absence would be least noticeable: a game pinning `hashEquals(result.hash)` reads
+     * exactly like a determinism regression test and can never fail.
+     */
+    it.each([
+      ['games/iso/src/zz-probe.ts'],
+      ['games/platformer/src/zz-probe.ts'],
+      ['packages/harness/src/zz-probe.ts'],
+      ['packages/mode-fps/src/zz-probe.ts'],
+      ['packages/cli/src/zz-probe.ts'],
+      ['packages/render-three/src/zz-probe.ts'],
+    ])('golden-hash ban fires in %s', async (path) => {
+      const messages = await lintAs(path, GOLDEN_HASH_VIOLATION);
+      expect(fired(messages, 'no-restricted-syntax', 'compares the run to itself')).toBe(true);
+    });
+
+    it.each([['packages/core/src/zz-probe.ts'], ['games/iso/src/zz-probe.ts']])(
+      'Math property ban fires in %s',
+      async (path) => {
+        const messages = await lintAs(path, MATH_PROPERTY_VIOLATION);
+        expect(fired(messages, 'no-restricted-properties', 'Math.sin')).toBe(true);
+      },
+    );
+
+    it.each([['packages/core/src/zz-probe.ts'], ['games/fps/src/zz-probe.ts']])(
+      'Math alias evasion ban fires in %s',
+      async (path) => {
+        const messages = await lintAs(path, MATH_ALIAS_VIOLATION);
+        expect(fired(messages, 'no-restricted-syntax', 'Aliasing or destructuring Math')).toBe(
+          true,
+        );
+      },
+    );
+
+    it.each([['packages/core/src/zz-probe.ts'], ['games/fps/src/zz-probe.ts']])(
+      'Math computed-access evasion ban fires in %s',
+      async (path) => {
+        const messages = await lintAs(path, MATH_COMPUTED_VIOLATION);
+        expect(fired(messages, 'no-restricted-syntax', 'Computed access to Math')).toBe(true);
+      },
+    );
+
+    it.each([['packages/harness/src/zz-probe.ts'], ['games/platformer/src/zz-probe.ts']])(
+      'wall-clock Date ban fires in %s',
+      async (path) => {
+        const messages = await lintAs(path, WALL_CLOCK_VIOLATION);
+        expect(fired(messages, 'no-restricted-syntax', 'Wall-clock time breaks determinism')).toBe(
+          true,
+        );
+      },
+    );
+
+    /**
+     * The other direction. A resolution that hoists the determinism selectors into the general
+     * `**\/*.ts` block — the natural way to "make sure they apply everywhere" — keeps every positive
+     * case above green while breaking `render-three`, which legitimately runs on a wall clock, and
+     * `packages/cli`, which is a process rather than a simulation. Only these assertions catch it.
+     */
+    it.each([
+      ['packages/cli/src/zz-probe.ts', WALL_CLOCK_VIOLATION, 'Wall-clock time breaks determinism'],
+      [
+        'packages/render-three/src/zz-probe.ts',
+        WALL_CLOCK_VIOLATION,
+        'Wall-clock time breaks determinism',
+      ],
+      ['packages/cli/src/zz-probe.ts', MATH_ALIAS_VIOLATION, 'Aliasing or destructuring Math'],
+      ['packages/cli/src/zz-probe.ts', MATH_COMPUTED_VIOLATION, 'Computed access to Math'],
+    ])('determinism bans stay silent in %s', async (path, source, fragment) => {
+      const messages = await lintAs(path, source);
+      expect(fired(messages, 'no-restricted-syntax', fragment)).toBe(false);
+    });
+  },
+  LINT_TIMEOUT_MS,
+);

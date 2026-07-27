@@ -50,6 +50,8 @@ interface KnownComponents {
 interface VerificationState {
   /** Which component ids the run can resolve; absent for an object the harness did not produce. */
   known?: KnownComponents;
+  /** Whether the run kept an event log at all; absent for an object the harness did not produce. */
+  eventsRecorded?: boolean;
   /** Every assertion that executed against the run, in order. */
   assertions: AssertionRecord[];
 }
@@ -135,8 +137,14 @@ function resolvableIds(entry: KnownComponents): ReadonlySet<string> {
   return new Set([...entry.registered, ...entry.inWorld]);
 }
 
-/** Case-insensitive / edit-distance-1 candidates for a mistyped id, cheapest first. */
-function nearMisses(unknownId: string, candidates: Iterable<string>): string[] {
+/**
+ * Case-insensitive / edit-distance-1 candidates for a mistyped name, sorted.
+ *
+ * Exported because the same question — "is this string a near miss for something that really is
+ * there?" — is the only way to tell a **typo** from a **legitimately absent** name, and that
+ * distinction is load-bearing for events as well as components.
+ */
+export function nearMisses(unknownId: string, candidates: Iterable<string>): string[] {
   const lower = unknownId.toLowerCase();
   const close: string[] = [];
   for (const id of candidates) {
@@ -254,4 +262,26 @@ export function recordAssertion(result: object, kind: string, detail: string): v
 /** Every assertion that executed against `result`, in order. */
 export function assertionsFor(result: object): readonly AssertionRecord[] {
   return stateOf(result)?.assertions ?? [];
+}
+
+// --- the event log ----------------------------------------------------------------------------
+
+/** Record whether `result`'s run kept an event log. Called by the runner for every run. */
+export function registerEventLog(result: object, recorded: boolean): void {
+  ensureState(result).eventsRecorded = recorded;
+}
+
+/**
+ * Whether this run is known to have kept **no** event log.
+ *
+ * `recordEvents: false` makes `events.history()` empty by construction, which turns every negative
+ * event assertion into a guaranteed pass: `eventNotEmitted('player.died')` on such a run reports
+ * success on a world where the player died on tick 3. Measured — `runGameTest` reported
+ * `passed: true, assertions: 2` for a test made entirely of two such assertions.
+ *
+ * `false` for a result the harness did not produce: nothing is known about it, and guessing that
+ * an unknown object has no log would reject assertions that are perfectly fine.
+ */
+export function eventLogDisabled(result: object): boolean {
+  return stateOf(result)?.eventsRecorded === false;
 }

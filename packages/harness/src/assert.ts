@@ -37,7 +37,9 @@ import {
 import type { CheckResult } from './report.js';
 import {
   assertionsFor,
+  eventLogDisabled,
   explainUnknownRefs,
+  nearMisses,
   recordAssertion,
   unknownComponentRefs,
 } from './verification.js';
@@ -60,6 +62,22 @@ export class UnknownComponentError extends GameAssertionError {
   constructor(message: string) {
     super(message);
     this.name = 'UnknownComponentError';
+  }
+}
+
+/**
+ * Thrown when an event assertion cannot mean what it says.
+ *
+ * Two cases, both of which used to pass silently: a **typo** in a negative assertion
+ * (`eventNotEmitted('player.jumpd')` on a run where `player.jumped` fired), and an assertion
+ * against a run that kept **no event log** at all (`recordEvents: false`). Extends
+ * {@link GameAssertionError} so it travels the runner-agnostic failure path, but is
+ * distinguishable: this is a *broken test*, not a failing game.
+ */
+export class UnknownEventError extends GameAssertionError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnknownEventError';
   }
 }
 
@@ -107,6 +125,11 @@ function ticksOf(events: EventReader, type: string): number[] {
     .map((e) => e.tick);
 }
 
+/** Every distinct event type in the log, sorted. */
+function emittedTypes(events: EventReader): string[] {
+  return [...new Set(events.history().map((e) => e.type))].sort();
+}
+
 /** Sample up to `limit` entities matching `query`, as a readable, comma-separated line. */
 function sampleMatches(result: SimResult, query: QueryDescriptor, limit = 8): string {
   // Deliberately the raw world query: the caller has already validated the refs and is building
@@ -152,6 +175,49 @@ export function expectSim(result: SimResult): GameplayAssertions {
     );
   };
 
+  /**
+   * Reject an event assertion the run cannot answer.
+   *
+   * `recordEvents: false` empties the log by construction, so **every** negative event assertion
+   * against such a run passes and no positive one can ever pass. Either way the assertion is
+   * describing the run options rather than the game.
+   */
+  const requireEventLog = (assertion: string, type: string): void => {
+    if (!eventLogDisabled(result)) return;
+    throw new UnknownEventError(
+      `${assertion}("${type}") on a run created with recordEvents: false.\n` +
+        `Its event log is empty by construction, so a negative assertion passes for every type ` +
+        `(including one that really fired) and a positive one can never pass. Neither outcome ` +
+        `says anything about the game.\n` +
+        `Drop recordEvents: false — it defaults to true — or assert on world state instead.`,
+    );
+  };
+
+  /**
+   * Reject a **negative** event assertion whose type is a near miss for one that really fired.
+   *
+   * The mirror of {@link requireResolvable}: an event type has no registry, so "absent" cannot be
+   * distinguished from "misspelled" by lookup — only by neighbourhood. `eventNotEmitted` on a
+   * genuinely absent type is the assertion's entire purpose and must keep passing; on a type one
+   * edit (or one case change) away from a type that fired 3× it is a typo, and it was silently
+   * reporting success on exactly the event it was written to forbid.
+   */
+  const rejectNearMiss = (assertion: string, type: string): void => {
+    const emitted = emittedTypes(result.events);
+    const suggestions = nearMisses(type, emitted);
+    if (suggestions.length === 0) return;
+    const counts = suggestions
+      .map((s) => `"${s}" (×${result.events.count(s)})`)
+      .join(suggestions.length === 2 ? ' or ' : ', ');
+    throw new UnknownEventError(
+      `${assertion}("${type}") would pass, but no event of that type exists in this run — and ` +
+        `${counts} does. That is a typo, not a proven absence.\n` +
+        `A negative assertion on a misspelled type passes on every world, including one where the ` +
+        `event it was written to forbid fired on every tick.\n` +
+        `Event types emitted by this run: ${emitted.length > 0 ? emitted.join(', ') : '(none)'}`,
+    );
+  };
+
   const assertions: GameplayAssertions = {
     entityExists(query: QueryDescriptor): GameplayAssertions {
       const opening = `Expected at least one entity matching ${describeQuery(query)}`;
@@ -187,6 +253,10 @@ export function expectSim(result: SimResult): GameplayAssertions {
     },
 
     eventEmitted(type: string, times?: number): GameplayAssertions {
+      requireEventLog('eventEmitted', type);
+      // `eventEmitted(type, 0)` is a negative assertion wearing a positive's clothes, and has the
+      // same typo hole.
+      if (times === 0) rejectNearMiss('eventEmitted', type);
       recordAssertion(
         result,
         'eventEmitted',
@@ -200,16 +270,24 @@ export function expectSim(result: SimResult): GameplayAssertions {
           actual > 0
             ? ` (on tick${actual === 1 ? '' : 's'} ${ticksOf(result.events, type).join(', ')})`
             : '';
+        const suggestions = actual === 0 ? nearMisses(type, emittedTypes(result.events)) : [];
+        const didYouMean =
+          suggestions.length > 0
+            ? `\nDid you mean ${suggestions.map((s) => `"${s}"`).join(' or ')}?`
+            : '';
         fail(
           `Expected ${want} "${type}" event${times === 1 ? '' : 's'}, but ${actual} ` +
-            `w${actual === 1 ? 'as' : 'ere'} emitted${at} during the ${result.tick}-tick run.\n` +
-            `Events that WERE emitted:\n${eventHistogram(result.events)}`,
+            `w${actual === 1 ? 'as' : 'ere'} emitted${at} during the ${result.tick}-tick run.` +
+            didYouMean +
+            `\nEvents that WERE emitted:\n${eventHistogram(result.events)}`,
         );
       }
       return assertions;
     },
 
     eventNotEmitted(type: string): GameplayAssertions {
+      requireEventLog('eventNotEmitted', type);
+      rejectNearMiss('eventNotEmitted', type);
       recordAssertion(result, 'eventNotEmitted', `"${type}" never emitted`);
       const ticks = ticksOf(result.events, type);
       if (ticks.length > 0) {

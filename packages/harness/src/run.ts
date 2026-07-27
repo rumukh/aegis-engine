@@ -54,6 +54,7 @@ import type { CheckResult } from './report.js';
 import {
   explainUnknownRefs,
   recordAssertion,
+  registerEventLog,
   registerKnownComponents,
   unknownComponentRefs,
 } from './verification.js';
@@ -528,6 +529,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
     },
   };
   registerKnownComponents(self, run.registry, world);
+  registerEventLog(self, run.recordEvents);
   for (const inv of run.invariants) {
     recordAssertion(self, 'invariant', `"${inv.name}" held live on all ${run.ticks} ticks`);
   }
@@ -583,9 +585,9 @@ function requirePlugin(plugin: ModePlugin): void {
       ? `A plugin *spec* string is resolved by the CLI — \`aegis test\`, \`--plugin ${plugin}\`, or ` +
         `{ "plugin": ${JSON.stringify(plugin)} } in an aegis.json beside the scene. The harness ` +
         `cannot resolve it itself: importing a concrete @aegis/mode-* would invert the package ` +
-        `graph (ADR-0006). To run this test in-process, substitute the plugin object, e.g.\n` +
-        `  import { platformerPlugin } from '@aegis/mode-platformer';\n` +
-        `  await runGameTest({ ...spec, options: { ...spec.options, plugin: platformerPlugin } });`
+        `graph (ADR-0006). To run this test in-process, import the plugin object yourself — a mode ` +
+        `package exports platformerPlugin / isoPlugin / fpsPlugin — and substitute it:\n` +
+        `  await runGameTest({ ...spec, options: { ...spec.options, plugin: myPlugin } });`
       : `Pass the ModePlugin object itself — the value a mode package exports (platformerPlugin, ` +
         `isoPlugin, fpsPlugin) or your game's composed plugin.`;
   throw new TypeError(
@@ -677,22 +679,111 @@ export async function replayRecording(
     seed: recording.seed,
     input: recording.input,
   });
-  if (result.hash !== recording.finalHash) {
-    const divergentTick = firstDivergentTick(recording.tickHashes, result.tickHashes);
-    const where =
-      divergentTick === undefined
-        ? 'the final hash differs'
-        : `first divergence at tick ${divergentTick}`;
+  const verified = verifyReplay(recording, result);
+  if (!verified.ok) {
     throw new Error(
-      `[aegis] replay determinism check FAILED: expected final hash ${recording.finalHash}, got ${result.hash} (${where}). ` +
-        `A recording must replay identically; this indicates non-determinism in a system.`,
+      `[aegis] replay verification FAILED for "${recording.scene}":\n` +
+        verified.problems.map((p) => `  - ${p}`).join('\n') +
+        `\nA recording must replay identically. Either a system is non-deterministic, or the ` +
+        `recording no longer describes the run it claims to.`,
     );
   }
   return result;
 }
 
-/** Find the first tick whose replay hash differs from the recorded one. */
-function firstDivergentTick(
+/** What a replay proved — and, as importantly, what it could not check. */
+export interface ReplayVerification {
+  /** Everything the recording pinned was reproduced. */
+  ok: boolean;
+  /** Whether the final state hash matched. */
+  finalHashMatched: boolean;
+  /** First tick whose replayed hash differs from the recorded one, when both are available. */
+  firstDivergentTick?: number;
+  /** Every discrepancy, in report order. Empty when `ok`. */
+  problems: readonly string[];
+  /**
+   * Things the recording did not pin, so the replay could not check them. Never a failure — but
+   * never silent either: "I verified the timeline" and "the file had no timeline to verify"
+   * produce the same green tick otherwise.
+   */
+  unverified: readonly string[];
+}
+
+/**
+ * Compare a replayed run against everything its {@link Recording} pinned.
+ *
+ * Replay used to compare the **final hash alone**, and consult `tickHashes` only to locate a
+ * divergence once that comparison had already failed. So a recording whose entire per-tick
+ * timeline had been zeroed, truncated to three of a hundred and twenty entries, or corrupted at
+ * one tick, replayed with `match: yes` and exit 0. Measured on a 120-tick platformer recording,
+ * before this function existed:
+ *
+ * ```
+ * finalHash rewritten                        rejected (exit 1)
+ * every tickHash zeroed (finalHash intact)   ACCEPTED (exit 0)
+ * tickHashes truncated to 3 of 120           ACCEPTED (exit 0)
+ * one mid-run tickHash corrupted             ACCEPTED (exit 0)
+ * ```
+ *
+ * The timeline is the half that catches a **timing** change — two runs that reach the same
+ * resting state by different routes share a final hash (`AGENTS.md` §6.4) — so leaving it
+ * unverified removed exactly the check a golden trajectory exists to provide.
+ */
+export function verifyReplay(recording: Recording, result: SimResult): ReplayVerification {
+  const problems: string[] = [];
+  const unverified: string[] = [];
+  const finalHashMatched = result.hash === recording.finalHash;
+  if (!finalHashMatched) {
+    problems.push(
+      `final state hash: recorded ${recording.finalHash}, replayed ${result.hash} after ${result.tick} ticks`,
+    );
+  }
+
+  const recorded = recording.tickHashes;
+  let divergentTick: number | undefined;
+  if (recorded === undefined || recorded.length === 0) {
+    unverified.push(
+      `the per-tick hash timeline (this recording pins none, so only its final state was checked — ` +
+        `a change in *when* things happen can leave the final hash identical)`,
+    );
+  } else {
+    if (recorded.length !== recording.ticks) {
+      problems.push(
+        `per-tick timeline length: the recording claims ${recording.ticks} ticks but pins ` +
+          `${recorded.length} per-tick hash${recorded.length === 1 ? '' : 'es'}`,
+      );
+    }
+    if (result.tickHashes.length === 0) {
+      unverified.push(
+        `the per-tick hash timeline (the replay captured none — it ran with captureTickHashes off)`,
+      );
+    } else {
+      divergentTick = firstDivergentTick(recorded, result.tickHashes);
+      if (divergentTick !== undefined) {
+        problems.push(
+          `per-tick hash at tick ${divergentTick}: recorded ${recorded[divergentTick]}, ` +
+            `replayed ${result.tickHashes[divergentTick]}`,
+        );
+      }
+    }
+  }
+
+  return {
+    ok: problems.length === 0,
+    finalHashMatched,
+    ...(divergentTick !== undefined ? { firstDivergentTick: divergentTick } : {}),
+    problems,
+    unverified,
+  };
+}
+
+/**
+ * Find the first tick whose replay hash differs from the recorded one.
+ *
+ * Exported because the CLI needs exactly this and had grown a private copy of it — a duplicated
+ * definition of "where did the two runs first disagree" is a slow way to end up with two answers.
+ */
+export function firstDivergentTick(
   recorded: readonly StateHash[] | undefined,
   actual: readonly StateHash[],
 ): number | undefined {

@@ -1,7 +1,12 @@
 /**
- * `aegis replay` — re-run a {@link Recording} and verify it reproduces the pinned state hash
- * (CHARTER principle 5). A mismatch is a determinism bug; the command reports the first divergent
- * tick (from the recorded per-tick hashes) and exits non-zero so CI/agents can catch regressions.
+ * `aegis replay` — re-run a {@link Recording} and verify it reproduces everything the file pins
+ * (CHARTER principle 5): the final state hash **and** the per-tick timeline. A mismatch is either
+ * a determinism bug or a recording that no longer describes the run it claims to; the command
+ * reports every discrepancy and exits non-zero so CI/agents catch it.
+ *
+ * Verification used to compare the final hash alone and read `tickHashes` only after that
+ * comparison had failed, so a recording whose whole timeline had been zeroed — or truncated to
+ * three of a hundred and twenty entries — replayed clean and exited 0.
  *
  * The plugin is taken from the recording's `plugin` key when present (see `aegis record`), so a
  * game's recording replays against the systems that produced it. `--plugin` overrides.
@@ -9,11 +14,10 @@
  */
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { parseRecording, runScene } from '@aegis/harness';
+import { parseRecording, runScene, verifyReplay } from '@aegis/harness';
 import type { RunOptions } from '@aegis/harness';
-import type { StateHash } from '@aegis/core';
 import { AegisCliError, CliCode, Exit } from '../errors.js';
-import { formatAscii, formatFields, formatFrame, json } from '../format.js';
+import { formatAscii, formatDiagnostics, formatFields, formatFrame, json } from '../format.js';
 import type { Command, CommandContext } from '../command.js';
 import { describePluginSource } from '../plugin.js';
 import { flagBool, readText, requirePositional, resolvePath } from './shared.js';
@@ -27,6 +31,7 @@ import {
 } from './sim.js';
 import { parseScene } from '@aegis/content';
 import { DiagnosticError } from '@aegis/core';
+import type { Diagnostic } from '@aegis/core';
 
 const USAGE = [
   'aegis replay <recording> [options]',
@@ -35,12 +40,13 @@ const USAGE = [
   '',
   "  --mode <mode>     platformer | iso | fps (default: the scene's mode).",
   '  --plugin <spec>   Override the plugin recorded in the file (<module>#<export>).',
-  '  --no-verify       Replay without failing on a hash mismatch (still reports it).',
+  '  --no-verify       Replay without failing on a mismatch (still reports it).',
   '  --frame           Also print the final semantic frame.',
   '  --ascii           Also print the final ASCII view.',
   '  --json            Emit the replay result as JSON.',
   '',
-  'Verification is ON by default. Exit codes: 0 = hash matched, 1 = mismatch (a determinism bug).',
+  'Verification is ON by default and covers the final state hash AND the recorded per-tick',
+  'timeline. Exit codes: 0 = everything the recording pinned was reproduced, 1 = it was not.',
   '',
   'Examples:',
   '  aegis replay run.replay.json',
@@ -66,23 +72,6 @@ function resolveScenePath(
       data: { sceneRef },
     },
   );
-}
-
-/**
- * First tick whose replayed hash differs from the recorded one, if any.
- *
- * The harness has an identical private helper (`harness/run.ts`); it is not exported, and the
- * harness is not ours to change. Flagged to the PM — once `firstDivergentTick` is exported this
- * copy should go.
- */
-function firstDivergentTick(
-  recorded: readonly StateHash[] | undefined,
-  actual: readonly StateHash[],
-): number | undefined {
-  if (!recorded) return undefined;
-  const n = Math.min(recorded.length, actual.length);
-  for (let t = 0; t < n; t++) if (recorded[t] !== actual[t]) return t;
-  return undefined;
 }
 
 /** The optional `plugin` spec `aegis record` writes alongside the frozen `Recording` fields. */
@@ -139,11 +128,18 @@ export const replayCommand: Command = {
       ticks: recording.ticks,
       seed: recording.seed,
     };
+    // A recording's script is the whole run, not a prefix of one, so a statement in it that has
+    // no effect means the file was edited after it was written. `aegis run` deliberately stays
+    // quiet about this (running a prefix of a playthrough is a first-class workflow); a replay
+    // has no such excuse.
+    const inputDiagnostics: Diagnostic[] = [];
+    options.onInputDiagnostics = (d) => inputDiagnostics.push(...d);
     if (recording.input.length > 0) options.input = recording.input;
     const result = await runScene(scene, options);
 
-    const matched = result.hash === recording.finalHash;
-    const divergentTick = firstDivergentTick(recording.tickHashes, result.tickHashes);
+    const verified = verifyReplay(recording, result);
+    const matched = verified.finalHashMatched;
+    const divergentTick = verified.firstDivergentTick;
     const verify = !(flagBool(args, 'no-verify') || args.flags['verify'] === 'false');
 
     if (flagBool(args, 'json')) {
@@ -167,6 +163,10 @@ export const replayCommand: Command = {
           expectedHash: recording.finalHash,
           actualHash: result.hash,
           match: matched,
+          verified: verified.ok,
+          problems: verified.problems,
+          unverified: verified.unverified,
+          ...(inputDiagnostics.length > 0 ? { inputDiagnostics } : {}),
           ...(divergentTick !== undefined ? { firstDivergentTick: divergentTick } : {}),
           ...(frame ? { frame } : {}),
           ...(ascii ? { ascii } : {}),
@@ -185,10 +185,28 @@ export const replayCommand: Command = {
           ['expected', recording.finalHash],
           ['actual', result.hash],
           ['match', matched ? 'yes' : 'no'],
+          ['verified', verified.ok ? 'yes' : 'no'],
         ]),
       ];
       const warning = markerReport(composition);
       if (warning !== undefined) blocks.push(warning);
+      if (verified.problems.length > 0) {
+        blocks.push(
+          [
+            'the replay does not match the recording:',
+            ...verified.problems.map((p) => `  - ${p}`),
+          ].join('\n'),
+        );
+      }
+      // Never let "checked and agreed" and "had nothing to check" print the same clean result.
+      if (verified.unverified.length > 0) {
+        blocks.push(
+          ['not verified by this replay:', ...verified.unverified.map((u) => `  - ${u}`)].join(
+            '\n',
+          ),
+        );
+      }
+      if (inputDiagnostics.length > 0) blocks.push(formatDiagnostics(inputDiagnostics));
       if (!matched && divergentTick !== undefined) {
         blocks.push(`first divergence at tick ${divergentTick}`);
       }
@@ -199,19 +217,22 @@ export const replayCommand: Command = {
       io.out(blocks.join('\n') + '\n');
     }
 
-    if (!matched && verify) {
+    if (!verified.ok && verify) {
       const where =
         divergentTick === undefined
           ? 'the final hash differs'
           : `first divergence at tick ${divergentTick}`;
       throw new AegisCliError(
         CliCode.ReplayMismatch,
-        `Replay determinism check FAILED: expected ${recording.finalHash}, got ${result.hash} (${where}).`,
+        `Replay verification FAILED (${verified.problems.length} discrepanc${verified.problems.length === 1 ? 'y' : 'ies'}): ` +
+          verified.problems.join('; ') +
+          (matched ? '.' : ` (${where}).`),
         {
-          fix: `A recording must replay identically. This run used plugin ${describePluginSource(resolved)} — check it is the same one that recorded the file, then look for non-determinism (wall-clock, Math.random, unstable iteration) in a system, or a changed scene/mode.`,
+          fix: `A recording must replay identically to what it pins. This run used plugin ${describePluginSource(resolved)} — check it is the same one that recorded the file, then look for non-determinism (wall-clock, Math.random, unstable iteration) in a system, a changed scene/mode, or a recording that was edited after it was written.`,
           data: {
             expectedHash: recording.finalHash,
             actualHash: result.hash,
+            problems: verified.problems,
             plugin: resolved.spec,
             pluginSource: resolved.source,
             ...(divergentTick !== undefined ? { firstDivergentTick: divergentTick } : {}),

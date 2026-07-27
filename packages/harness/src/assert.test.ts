@@ -21,6 +21,7 @@ import {
   GameAssertionError,
   runGameTest,
   UnknownComponentError,
+  UnknownEventError,
 } from './assert.js';
 import { runScene } from './run.js';
 import type { SimResult } from './run.js';
@@ -268,6 +269,111 @@ describe('expectSim — failure messages are actionable', () => {
     const msg = messageFrom(() => expectSim(result).holds('never true', () => false));
     expect(msg).not.toContain('threw');
     expect(() => expectSim(result).holds('always true', () => true)).not.toThrow();
+  });
+});
+
+/**
+ * The event half of the same defect the block above closes for components (the "event-type gap").
+ *
+ * An event type has no registry, so "this type was never emitted" cannot be told from "this type
+ * is misspelled" by lookup — and a negative assertion on a misspelled type passes on *every*
+ * world, including one where the event it forbids fired on every tick. Measured before the fix,
+ * on a run that emitted `player.jumped`:
+ *
+ * ```
+ * eventNotEmitted("player.jumpd")   [typo]        PASSED
+ * eventNotEmitted("PLAYER.JUMPED")  [wrong case]  PASSED
+ * eventEmitted("player.jumpd", 0)   [typo]        PASSED
+ * ```
+ */
+describe('event types: a typo is a loud error, absence is not', () => {
+  let result: SimResult;
+  beforeAll(async () => {
+    result = await runScene(level(), { plugin: fakeMode, ticks: 60, input: WINNING_INPUT });
+  });
+
+  it.each([
+    ['eventNotEmitted, one edit out', () => expectSim(result).eventNotEmitted('enemy.kiled')],
+    ['eventNotEmitted, wrong case', () => expectSim(result).eventNotEmitted('ENEMY.KILLED')],
+    ['eventEmitted(type, 0), one edit out', () => expectSim(result).eventEmitted('enemy.kiled', 0)],
+  ])('rejects a near miss: %s', (_label, assertion) => {
+    expect(assertion).toThrow(UnknownEventError);
+    expect(assertion).toThrow(/enemy\.killed/); // names what really fired
+  });
+
+  /**
+   * The negative control, and the reason this cannot simply reject anything absent: proving an
+   * event never happened is the assertion's entire purpose. `boss.defeated` is nowhere near any
+   * type this run emits, so it must still pass.
+   */
+  it('still passes for a type that is genuinely absent', () => {
+    expect(() => expectSim(result).eventNotEmitted('boss.defeated')).not.toThrow();
+    expect(() => expectSim(result).eventEmitted('boss.defeated', 0)).not.toThrow();
+  });
+
+  it('suggests the near miss on a failing positive assertion too', () => {
+    const msg = messageFrom(() => expectSim(result).eventEmitted('enemy.kiled', 1));
+    expect(msg).toContain('Did you mean "enemy.killed"?');
+  });
+
+  /**
+   * The other half: `recordEvents: false` empties the log by construction, so every negative
+   * event assertion passes and no positive one can. Measured before the fix, `runGameTest`
+   * reported `passed: true, assertions: 2` for a test made entirely of such assertions.
+   */
+  describe('a run that kept no event log', () => {
+    let blind: SimResult;
+    let dir: string;
+    let scenePath: string;
+    beforeAll(async () => {
+      dir = mkdtempSync(join(tmpdir(), 'aegis-harness-'));
+      scenePath = join(dir, 'blind.scene.json');
+      writeFileSync(scenePath, JSON.stringify(level()), 'utf8');
+      blind = await runScene(level(), {
+        plugin: fakeMode,
+        ticks: 60,
+        input: WINNING_INPUT,
+        recordEvents: false,
+      });
+    });
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+    it('has an empty log, as the precondition for everything below', () => {
+      expect(blind.events.history()).toEqual([]);
+      // …while the same run WITH the log records real events, so the emptiness is the option's
+      // doing and not a broken fixture.
+      expect(result.events.history().length).toBeGreaterThan(0);
+    });
+
+    it('refuses a negative event assertion instead of passing it', () => {
+      expect(() => expectSim(blind).eventNotEmitted('enemy.killed')).toThrow(UnknownEventError);
+      expect(() => expectSim(blind).eventNotEmitted('enemy.killed')).toThrow(/recordEvents: false/);
+    });
+
+    it('refuses a positive one too, rather than blaming the game', () => {
+      expect(() => expectSim(blind).eventEmitted('enemy.killed')).toThrow(UnknownEventError);
+    });
+
+    it('fails a game test built entirely from those assertions', async () => {
+      const outcome = await runGameTest(
+        defineGameTest({
+          name: 'blind negative assertions',
+          scene: scenePath,
+          options: { plugin: fakeMode, recordEvents: false },
+          ticks: 60,
+          input: WINNING_INPUT,
+          expect: (r) => void expectSim(r).eventNotEmitted('player.died'),
+        }),
+      );
+      expect(outcome.passed).toBe(false);
+      expect(outcome.error?.name).toBe('UnknownEventError');
+    });
+
+    // Negative control: with the log on (the default) the same assertions work normally.
+    it('accepts both once the log is on', () => {
+      expect(() => expectSim(result).eventEmitted('enemy.killed', 1)).not.toThrow();
+      expect(() => expectSim(result).eventNotEmitted('player.died')).not.toThrow();
+    });
   });
 });
 

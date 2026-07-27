@@ -516,7 +516,11 @@ describe('aegis scaffold produces a runnable game', () => {
     const standalone = await cli(['scaffold', 'tilemap', 'level2'], dir, realDeps);
     expect(standalone.code).toBe(0);
     expect(existsSync(join(dir, 'level2.tilemap.json'))).toBe(true);
-    const validated = await cli(['validate', 'demo/demo.scene.json', 'level2.tilemap.json'], dir, realDeps);
+    const validated = await cli(
+      ['validate', 'demo/demo.scene.json', 'level2.tilemap.json'],
+      dir,
+      realDeps,
+    );
     expect(validated.code).toBe(0);
     expect(validated.out).toContain('no problems found');
   });
@@ -569,6 +573,10 @@ describe('aegis scaffold produces a runnable game', () => {
    * at the project, so an in-process `import('@aegis/mode-platformer')` succeeds even from an OS
    * temp directory — the first draft of this test asserted the fallback and was handed a live
    * ModePlugin. Only a real `node` child in that directory resolves the way a user's shell does.
+   *
+   * Three child processes make it the slowest case in the file, and Vitest's 30 s default is a
+   * *wall-clock* budget on a machine also running the rest of the suite — so it needs an explicit
+   * one, or it fails as a timeout (which reads like a broken guard) rather than as a slow test.
    */
   it('runs from a directory outside the workspace, where no @aegis package resolves', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aegis-scaffold-'));
@@ -607,7 +615,7 @@ describe('aegis scaffold produces a runnable game', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 180_000);
 
   // Regression: scaffold wrote artifacts one at a time and threw on the FIRST clash, leaving a
   // half-written directory that could only be completed with --force.
