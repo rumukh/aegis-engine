@@ -210,6 +210,7 @@ export function boot(config: BootConfig): void {
   const syncSamples: number[] = [];
   const renderSamples: number[] = [];
   const hudSamples: number[] = [];
+  const exchangeSamples: number[] = [];
   /** Append to a bounded ring, dropping the oldest. Never allocates a new array. */
   const record = (into: number[], value: number): void => {
     into.push(value);
@@ -270,6 +271,7 @@ export function boot(config: BootConfig): void {
         input: collector.take(),
       });
       timings.exchange = performance.now() - started;
+      record(exchangeSamples, timings.exchange);
       timings.exchangeBytes = bytes;
       paused = response.paused;
       applySnapshot(response.snapshot);
@@ -359,6 +361,7 @@ export function boot(config: BootConfig): void {
       sync: [...syncSamples],
       render: [...renderSamples],
       hud: [...hudSamples],
+      exchange: [...exchangeSamples],
     }),
     resetTimings(): void {
       windowStart = performance.now();
@@ -372,6 +375,7 @@ export function boot(config: BootConfig): void {
         syncSamples,
         renderSamples,
         hudSamples,
+        exchangeSamples,
       ]) {
         list.length = 0;
       }

@@ -259,6 +259,7 @@ interface Samples {
   sync: number[];
   render: number[];
   hud: number[];
+  exchange: number[];
 }
 
 /** The `p`th percentile of `values`, or 0 for an empty list. */
@@ -404,7 +405,9 @@ describe('the frame budget, measured in a real browser', () => {
           ` · gap p95 ${percentile(samples.gaps, 95).toFixed(1)}ms [reporting only; control ` +
           `${controlGapP95.toFixed(1)}ms, bound ${FRAME_GAP_P95_REPORTING_MS}ms] · ` +
           `${timings.drawCalls} draws · ${timings.exchangeBytes}B · ` +
-          `exchange ${timings.exchange.toFixed(1)}ms · boot ${bootMs}ms + sample ${sampleMs}ms · ${timings.frames} frames, ` +
+          `exchange median ${percentile(samples.exchange, 50).toFixed(1)}ms p95 ` +
+          `${percentile(samples.exchange, 95).toFixed(1)}ms · boot ${bootMs}ms + sample ` +
+          `${sampleMs}ms · ${timings.frames} frames, ` +
           `${timings.snapshots} snapshots, ${timings.exchangeErrors} exchange errors, ` +
           `${samples.work.length} samples`,
       );
