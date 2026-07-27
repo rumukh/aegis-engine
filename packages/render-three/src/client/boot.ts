@@ -172,6 +172,11 @@ export function boot(config: BootConfig): void {
     adapter,
     tick: () => lastTick,
     project(x: number, y: number, z: number): { x: number; y: number } | null {
+      // Aim the camera at the mirror's current state before measuring against it. The frame loop
+      // does this once per animation frame; under load those frames are scarce, and a caller
+      // asking `where is that cell on screen?` must not be answered from a camera aimed at an
+      // older world. Measured: 7 of 14 scripted clicks projected to a different pixel without it.
+      if (mounted) adapter.sync(mirror);
       const ndc = new Vector3(x, y, z).project(adapter.camera);
       if (ndc.z > 1) return null;
       const rect = canvas.getBoundingClientRect();
