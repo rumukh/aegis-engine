@@ -110,6 +110,48 @@ describe('scheduler — unresolvable ordering constraints are not silent', () =>
     expect(s.resolved().map((x) => x.name)).toEqual(['early', 'later']);
     expect(s.unresolved()).toEqual([]);
   });
+
+  it('a short absent dependency is not a typo of a short registered one', () => {
+    // The guard's threshold used to be a flat two edits regardless of length, so `after: ['aim']`
+    // in a schedule containing `ai` — one edit, and two thirds of the shorter name — threw and
+    // the schedule could not be built at all. The shared, length-scaled rule in `suggest.ts`
+    // allows nothing below three characters.
+    const s = createSchedule();
+    s.add(recordingSystem('ai', [], 'update'));
+    s.add(recordingSystem('game.aim', [], 'update', { after: ['aim'] }));
+    expect(() => s.resolved()).not.toThrow();
+    expect(s.unresolved()).toEqual([{ system: 'game.aim', kind: 'after', name: 'aim' }]);
+  });
+
+  it('but a typo of a *long* name is still rejected — the rule got tighter, not toothless', () => {
+    // Negative control for the test above: if length-scaling had simply disabled the guard,
+    // this would pass too, and the defect the guard exists for would be back.
+    const s = createSchedule();
+    s.add(recordingSystem('platformer.integrate', [], 'physics'));
+    s.add(recordingSystem('platformer.forces', [], 'physics', { after: ['platformer.integrat'] }));
+    expect(() => s.resolved()).toThrow(/Did you mean "platformer\.integrate"/);
+  });
+
+  it('unresolved() answers even when resolved() refuses — the escape hatch is reachable', () => {
+    // The near-miss guard threw from inside the shared resolve step, so `unresolved()` threw
+    // with it. The documented "reported as data rather than thrown" design was therefore
+    // unreachable in the one situation a caller needs it: a schedule the guard will not build.
+    const s = createSchedule();
+    s.add(recordingSystem('content.health.death', [], 'postUpdate'));
+    s.add(recordingSystem('game.combat', [], 'postUpdate', { after: ['content.health.deth'] }));
+    expect(() => s.resolved()).toThrow();
+    expect(s.unresolved()).toEqual([
+      { system: 'game.combat', kind: 'after', name: 'content.health.deth' },
+    ]);
+    // And calling it in the other order must behave identically — the result is cached, so a
+    // one-shot throw would leave the cache holding a half-built answer.
+    const t = createSchedule();
+    t.add(recordingSystem('content.health.death', [], 'postUpdate'));
+    t.add(recordingSystem('game.combat', [], 'postUpdate', { after: ['content.health.deth'] }));
+    expect(t.unresolved().length).toBe(1);
+    expect(() => t.resolved()).toThrow();
+    expect(t.unresolved().length).toBe(1);
+  });
 });
 
 function s2log(): string[] {
