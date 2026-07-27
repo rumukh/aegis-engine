@@ -16,11 +16,13 @@
  * one; when there is not, it says exactly that — which is the point. An absent build should be a
  * one-line instruction, not a missing command.
  *
- * `node:process` is imported rather than taken from the global, because the repository's flat
- * ESLint config only grants Node globals to `scripts/**` and `*.config.*`.
+ * `node:process` and `node:url` are imported rather than taken from the global scope, because the
+ * repository's flat ESLint config only grants Node globals to `scripts/**` and `*.config.*` — so
+ * `process`, `URL` and friends are `no-undef` errors anywhere else. Explicit imports are the right
+ * shape for an ESM entry point regardless.
  */
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import { stderr, exit } from 'node:process';
 
 const entry = new URL('../dist/main.js', import.meta.url);
