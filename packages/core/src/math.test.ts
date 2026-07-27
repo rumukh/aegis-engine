@@ -151,16 +151,146 @@ describe('sin/cos domain enforcement (M1)', () => {
   });
 
   it('wrapAngle brings an out-of-domain accumulator back in', () => {
-    for (const x of [1e7, 1e9, 1e15, -1e12]) {
+    for (const x of [1e7, 1e9, 1e11, -1e11]) {
       const w = wrapAngle(x);
       expect(Math.abs(w)).toBeLessThanOrEqual(PI);
       expect(() => sin(w)).not.toThrow();
     }
     expect(wrapAngle(PI / 3)).toBeCloseTo(PI / 3, 12);
     expect(wrapAngle(TAU + 1)).toBeCloseTo(1, 12);
-    // Beyond 2^53 the sub-turn information is simply gone; refuse rather than fabricate.
     expect(() => wrapAngle(1e150)).toThrow(RangeError);
     expect(() => wrapAngle(NaN)).toThrow(RangeError);
+  });
+
+  it('wrapAngle refuses at exactly its stated limit, on both sides of it', () => {
+    // The doc and the error message have always said `|x| < 2^40`; the comparison said `<=`, so
+    // the boundary value itself was accepted. One-sided boundary tests miss that in either
+    // direction, so both sides are pinned.
+    const LIMIT = 1099511627776; // 2 ** 40
+    expect(() => wrapAngle(LIMIT)).toThrow(RangeError);
+    expect(() => wrapAngle(-LIMIT)).toThrow(RangeError);
+    expect(() => wrapAngle(nextBelow(LIMIT))).not.toThrow();
+    expect(() => wrapAngle(-nextBelow(LIMIT))).not.toThrow();
+  });
+
+  it('wrapAngle is accurate to its documented bound everywhere it accepts input', () => {
+    // The limit is not an intuition about "sub-turn information" — the old rationale, which
+    // measurement does not support in either direction — it is where the answer stops being
+    // usable. The error grows like |x|·2^-52, so pin it against a two-word reduction of τ.
+    const TAU_HI = 6.28318530717956;
+    const TAU_LO = TAU - TAU_HI;
+    const twoWord = (x: number): number => {
+      const n = Math.floor(x / TAU);
+      return x - n * TAU_HI - n * TAU_LO;
+    };
+    for (const mag of [1e6, 1e9, 1e11, 1.09e12]) {
+      const x = mag + 1;
+      const exact = twoWord(x);
+      const got = wrapAngle(x);
+      // Compare on the circle: the two forms may sit either side of the (-π, π] fold.
+      const delta = Math.min(Math.abs(got - exact), Math.abs(Math.abs(got - exact) - TAU));
+      expect(delta).toBeLessThan(2.5e-4);
+    }
+    // Negative control: the value the old 2^53 limit happily accepted is wrong by ~48°, which
+    // is exactly what the tightened domain exists to refuse.
+    const rogue = 9e15;
+    expect(() => wrapAngle(rogue)).toThrow(RangeError);
+    const wouldHaveBeen = rogue - Math.floor(rogue / TAU) * TAU;
+    expect(Math.abs(wouldHaveBeen - twoWord(rogue))).toBeGreaterThan(0.5);
+  });
+});
+
+/** The next double below `x` (x > 0). */
+function nextBelow(x: number): number {
+  const buf = new Float64Array(1);
+  const bits = new BigUint64Array(buf.buffer);
+  buf[0] = x;
+  bits[0] = (bits[0] as bigint) - 1n;
+  return buf[0] as number;
+}
+
+/**
+ * `sin` is **exactly** odd and `cos` **exactly** even — asserted where it used to fail.
+ *
+ * The property lived inside a 3000-iteration random sweep as `expect(sin(-b)).toBe(-sin(b))`,
+ * and it was green against an implementation that is not odd: `sin(3π/4)` and `-sin(-3π/4)`
+ * differed by 1 ulp. The reduction's tie rule was round-half-*up*, so `x/(π/2) = ±1.5` reduced
+ * through different quadrants depending on sign.
+ *
+ * A random sweep cannot reach that. The asymmetry lives *only* on exact half-quadrant
+ * boundaries — for any non-tie `u`, `floor(-u + 0.5) === -floor(u + 0.5)` identically — and
+ * `prng.range` never lands on one. Measured before the fix: 7 different seeds × 3000 draws, and
+ * 2,000,000 draws on the shipped seed, produced **zero** failures. So the original brief's
+ * "change the seed or the loop count and it goes red" does not hold; the test was not
+ * seed-fragile, it was *unreachable*, which is worse — no amount of re-seeding would ever have
+ * found it. The cases below are therefore enumerated, not sampled.
+ */
+describe('sin/cos symmetry — the exact ties a random sweep can never draw', () => {
+  /** Every `x` with `x/(π/2)` exactly at a half-integer: the only points that can differ. */
+  const HALF_QUADRANT_TIES = Array.from({ length: 33 }, (_, i) => (i - 16 + 0.5) * (PI / 2)).filter(
+    (x) => Math.abs(x) <= SIN_DOMAIN_MAX,
+  );
+
+  it('the tie set is real: these arguments genuinely land on the boundary', () => {
+    // Negative control for the enumeration itself. If floating-point rounding meant none of
+    // these actually hit a tie, every assertion below would pass for the wrong reason.
+    const ties = HALF_QUADRANT_TIES.filter((x) => {
+      const u = x / (PI / 2);
+      return u - Math.floor(u) === 0.5;
+    });
+    expect(ties.length).toBeGreaterThan(20);
+  });
+
+  it('the old round-half-up rule really is asymmetric at those arguments', () => {
+    // The negative control that matters: reproduce the *previous* reduction and show it fails
+    // the assertion below. Without this, "sin is odd" is a claim about a property that might
+    // never have been at risk.
+    const oldNearestInt = (x: number): number => Math.floor(x + 0.5);
+    const asymmetric = HALF_QUADRANT_TIES.filter(
+      (x) => oldNearestInt(-x / (PI / 2)) !== -oldNearestInt(x / (PI / 2)),
+    );
+    expect(asymmetric.length).toBeGreaterThan(20);
+    // And it produced a *different value*, not merely a different quadrant index: 3π/4 is the
+    // counter-example the audit found.
+    expect(oldNearestInt(1.5)).toBe(2);
+    expect(oldNearestInt(-1.5)).toBe(-1); // ≠ -2, so ±3π/4 reduce through different quadrants
+  });
+
+  it('sin(-x) === -sin(x) exactly, including at every tie', () => {
+    for (const x of HALF_QUADRANT_TIES) {
+      expect(sin(-x)).toBe(-sin(x));
+      expect(cos(-x)).toBe(cos(x));
+    }
+    // The two arguments named in the audit, spelled out so a regression report can quote them.
+    expect(sin((-3 * PI) / 4)).toBe(-sin((3 * PI) / 4));
+    expect(sin((-9 * PI) / 4)).toBe(-sin((9 * PI) / 4));
+  });
+
+  it('and everywhere else: a dense sweep plus the domain edges', () => {
+    for (let i = 0; i <= 4000; i++) {
+      const x = -SIN_DOMAIN_MAX + (i / 4000) * 2 * SIN_DOMAIN_MAX;
+      if (x === 0) continue; // signed zero is the one exception; it is pinned below
+      expect(sin(-x)).toBe(-sin(x));
+      expect(cos(-x)).toBe(cos(x));
+    }
+    expect(sin(-SIN_DOMAIN_MAX)).toBe(-sin(SIN_DOMAIN_MAX));
+  });
+
+  it('the one exception is signed zero, and it is stated rather than hidden', () => {
+    // `sin(-0)` is `+0`, not `-0`, so the oddness is exact under `===` but not under
+    // `Object.is`. That is unobservable in world state: every write boundary normalises -0 to
+    // 0 (clone.ts) and the canonical encoder does the same, by design, because the state hash
+    // cannot distinguish them.
+    expect(sin(-0)).toBe(0);
+    expect(sin(-0) === -sin(0)).toBe(true);
+    expect(Object.is(sin(-0), -sin(0))).toBe(false);
+  });
+
+  it('the tie rule no longer double-rounds the largest double below one half', () => {
+    // `Math.floor(x + 0.5)` returned 1 for 0.49999999999999994, because adding 0.5 rounds to
+    // exactly 1 in float64. `round` splits off the integer part instead and is exact.
+    expect(round(0.49999999999999994)).toBe(0);
+    expect(Math.floor(0.49999999999999994 + 0.5)).toBe(1); // the form that was in use
   });
 });
 
@@ -349,8 +479,6 @@ describe('deterministic scalar transcendentals — pinned golden values', () => 
       expect(abs(sin(a + b) - (sin(a) * cos(b) + cos(a) * sin(b)))).toBeLessThan(1e-9);
       expect(abs(cos(a + b) - (cos(a) * cos(b) - sin(a) * sin(b)))).toBeLessThan(1e-9);
       expect(abs(sin(2 * b) - 2 * sin(b) * cos(b))).toBeLessThan(1e-12);
-      expect(sin(-b)).toBe(-sin(b));
-      expect(cos(-b)).toBe(cos(b));
     }
 
     // 3. The quadrant table itself: sin(x + π/2) === cos(x) for every quadrant.
