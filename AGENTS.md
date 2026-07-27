@@ -7,11 +7,21 @@
 > [`docs/architecture.md`](./docs/architecture.md) for _how_ it is put together. This file is
 > the operating manual: the loop, end to end, with the traps marked.
 
-**Every command and every output block in this guide was executed against this repository**, at
-`main` = `ffa3f1a`. Where something does not work, it says so instead of showing what it ought to
-do. The list of known rough edges is [§9](#9-known-rough-edges) — read it before you trust a
-command. This repository moves fast: six rough edges listed here a few hours before writing had
-been fixed by the time it was finished. Re-measure rather than trust.
+**Every command and every output block in this guide is supposed to have been executed against this
+repository**, at `main` = `ffa3f1a`, and nearly all of them were. Two claims were not, and running
+them at `e0c1917` is how that was discovered: `holds` was said to report nothing but its label, and
+`aegis test` was said to glob `dist/*.gametest.{js,mjs,cjs}`. Neither had been true since `de6b7d9`
+and `b8759ba` respectively — **both ancestors of the revision named above.** The first appeared in
+three places: a row in [§9](#9-known-rough-edges), a row in
+[§6.7](#67-assertion-reference), and a transcript in §6.7 showing a failure message the harness no
+longer emits. All are corrected below against measured output.
+
+That is this document's own lesson about propagation channels, arriving unannounced in the document
+itself, and it is worth more than the corrections: **one claim, checked by reading rather than
+running, reproduced itself into three places and survived every reading of the file.** Where
+something does not work, this guide says so instead of showing what it ought to do — but "was
+executed" is a claim about a revision, not a property of prose. Re-measure rather than trust,
+including here.
 
 Transcripts beginning `$ node .tmp/…` came from throwaway probe scripts written to a scratch
 directory while this guide was being checked; they are not files in the repository. Where the
@@ -1446,26 +1456,40 @@ describe('My Game', () => {
 
 ### 6.7 Assertion reference
 
-| Assertion                         | Fails when                 | Failure message contains                           |
-| --------------------------------- | -------------------------- | -------------------------------------------------- |
-| `entityExists(query)`             | Nothing matches            | Every entity in the final world                    |
-| `entityCount(query, n)`           | Count ≠ `n`                | The matched entities, named                        |
-| `eventEmitted(type, times?)`      | Wrong count (or none)      | Ticks it fired on + the full event histogram       |
-| `eventNotEmitted(type)`           | It fired                   | Every tick it fired on                             |
-| `hashEquals(literal)`             | Final hash ≠ literal       | Both hashes                                        |
-| `holds(label, predicate)`         | Predicate returns false    | **Only the label** — put the numbers in the label  |
-| `assertInvariant(name, check)`    | Fails on any captured tick | The name and the failing tick                      |
-| `invariants: [...]` on `runScene` | Fails live, during the run | The name and the failing tick, thrown at that tick |
+| Assertion                         | Fails when                 | Failure message contains                                                     |
+| --------------------------------- | -------------------------- | ---------------------------------------------------------------------------- |
+| `entityExists(query)`             | Nothing matches            | Every entity in the final world                                              |
+| `entityCount(query, n)`           | Count ≠ `n`                | The matched entities, named                                                  |
+| `eventEmitted(type, times?)`      | Wrong count (or none)      | Ticks it fired on + the full event histogram                                 |
+| `eventNotEmitted(type)`           | It fired                   | Every tick it fired on                                                       |
+| `hashEquals(literal)`             | Final hash ≠ literal       | Both hashes                                                                  |
+| `holds(label, predicate)`         | Predicate is falsy         | Label, seed, tick + a world census; `actual`/`expected`/`detail` if returned |
+| `assertInvariant(name, check)`    | Fails on any captured tick | The name and the failing tick                                                |
+| `invariants: [...]` on `runScene` | Fails live, during the run | The name and the failing tick, thrown at that tick                           |
 
-`holds` is the escape hatch and it has the weakest message:
+`holds` is the escape hatch, and what it prints depends entirely on what your predicate returns.
+Return a bare boolean and you get the label, the run, and a census of the world it rejected:
 
 ```
-FAIL ledge hop: run right, clear the gap, land on the far ledge (120 ticks)
-     Expected "the per-tick hash timeline matches the golden trajectory (see GOLDEN_TRAJECTORY)" to hold on the final world (tick 120), but the predicate returned false.
+Expected "never true" to hold on the final world (seed "poc-fake", tick 60), but it did not.
+  world   : 3 entities: #0 "hero", #1 "critter", #2 "platform"
+Return { ok, actual, expected } from the predicate (instead of a bare boolean) to have the offending value printed here.
 ```
 
-That is the entire message. Write labels that carry the threshold —
-`'player finished right of the gap (x >= 13)'`, not `'player moved'`.
+Take that last line's advice — return `{ ok, actual, expected, detail }` — and the offending value
+appears instead of the census:
+
+```
+Expected "player reached x >= 500" to hold on the final world (seed "poc-fake", tick 60), but it did not.
+  expected: ">= 500"
+  actual  : 8
+  detail  : player ran out of runway
+```
+
+The difference between those two transcripts is one `return` statement, and it is the difference
+between knowing that something is wrong and knowing what. Write labels that carry the threshold as
+well — `'player finished right of the gap (x >= 13)'`, not `'player moved'` — because the label is
+the only part that survives into a summary line.
 
 `assertInvariant` and `at(tick)` both require `captureHistory: true`. Live `invariants` passed to
 `runScene` do not, and they fail _at_ the offending tick rather than after the run, which is what
@@ -1651,24 +1675,40 @@ expensive.
 
 ## 9. Known rough edges
 
-Verified on this revision. Each is a real limitation, not a caveat about how you are holding it.
-If you plan around them you will lose no time; if you assume they are fixed you will lose hours.
+Every row below was **re-measured behaviourally at `e0c1917`** — each defect reproduced by running a
+command, and each reproduction paired with a positive control showing the same probe returns the
+opposite answer when the defect is absent. Not one row was checked by reading the source. One row
+was deleted as a result, and another had its stated mechanism replaced.
 
-Six entries that stood here a few hours ago are gone, because they were fixed: the CLI could not
-load a game's plugin, there was no `aegis.json`, `aegis test` reached one game of three,
+The controls are not ceremony. One probe here first came back empty for _both_ arms, which reads
+exactly like a defect that no longer reproduces; the real cause was a malformed query exiting 1
+before it measured anything. **An instrument that produces nothing looks identical to an instrument
+reporting nothing wrong**, and only the arm you expect to fire tells the two apart.
+
+That is also why the words _"Verified on this revision"_ no longer head this section. Under them,
+**two clauses here were already false at the revision they named** — `holds` reporting only its
+label (fixed in `de6b7d9`) and `aegis test` globbing `dist/*.gametest.{js,mjs,cjs}` (never true
+since `b8759ba`; the string is in no CLI source file, only in documents). Both are ancestors of
+that revision. Both claims were plausible, both were inspected rather than run.
+
+Entries that stood here earlier are gone because they were genuinely fixed: the CLI could not load a
+game's plugin, there was no `aegis.json`, `aegis test` reached one game of three,
 `aegis scaffold game` produced something that did not run, unknown flags were ignored silently,
 `inspect --view world` dumped every resource in full, and nothing prevented a self-referential
-golden. **Re-measure before you trust any list like this one, including this one.**
+golden.
 
-| #   | Rough edge                                                                                                                                                                                                                                                                         | Work around it by…                                                                                                                           |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **A scene's tilemap must be inlined into `resources`; the `*.tilemap.json` file next to it is not loaded.** `aegis scaffold game` writes both, and editing only the standalone file changes nothing about the run.                                                                 | Editing the inline copy under `resources["platformer.tilemap"]` ([§2.3](#23-trap-the-tilemap-must-be-inline)).                               |
-| 2   | **A typo in `tags` is silent.** Ids in `components` must be registered; ids in `tags` are synthesised if unknown. `"Playre"` validates clean and `has:Player` returns `entities: 0 of 2` with no diagnostic. The `markers` line on a run output is the closest thing to a warning. | Reading the `markers` line, and dumping the world when a query returns nothing ([§2.5](#25-trap-tags-are-permissive-components-are-strict)). |
-| 3   | **A spec the build excludes is invisible to `aegis test`.** The CLI globs compiled `dist/*.gametest.{js,mjs,cjs}`; every `games/*/tsconfig.json` excludes `test/`. The scan count in the summary is now your check that nothing went dark.                                         | Putting the spec in `games/<name>/src/<name>.gametest.ts` ([§6.6](#66-the-template)) and reading the scan count.                             |
-| 4   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                              | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                 |
-| 5   | **`holds(label, predicate)` reports only its label.** Every other assertion names values; this one says "the predicate returned false" and nothing else — and it is where most game-specific assertions live.                                                                      | Writing labels that carry the threshold ([§6.7](#67-assertion-reference)).                                                                   |
-| 6   | **A scaffolded `*.gametest.mjs` names its plugin as a string**, so `runGameTest` cannot run it directly (`plugin.components is not a function`) — only the CLI resolves strings.                                                                                                   | Substituting the plugin object before calling `runGameTest` ([§6.5](#65-mutation-check-your-own-test)).                                      |
-| 7   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated — npm only links a `bin` whose target already exists.                                                                                                               | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                 |
+**Re-measure before you trust any list like this one, including this one.** A row here is a claim
+about behaviour, and the only thing separating a true one from a merely convincing one is a command
+you ran.
+
+| #   | Rough edge                                                                                                                                                                                                                                                                                                                                                                                                                          | Work around it by…                                                                                                                                               |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **A scene's tilemap must be inlined into `resources`; the `*.tilemap.json` file next to it is not loaded.** `aegis scaffold game` writes both, and editing only the standalone file changes nothing about the run.                                                                                                                                                                                                                  | Editing the inline copy under `resources["platformer.tilemap"]` ([§2.3](#23-trap-the-tilemap-must-be-inline)).                                                   |
+| 2   | **A typo in `tags` is silent.** Ids in `components` must be registered; ids in `tags` are synthesised if unknown. `"Playre"` validates clean — `no problems found`, exit 0, even under `--strict` — and `has:Player` returns `entities: 0 of 2` with no diagnostic. Only the `markers` line on a run or `inspect` names the unknown id, annotated with the reason nothing reads it.                                                 | Reading the `markers` line, and dumping the world when a query returns nothing ([§2.5](#25-trap-tags-are-permissive-components-are-strict)).                     |
+| 3   | **A spec the build excludes is invisible to `aegis test`** — but not because of where it lives. The CLI's default glob is `**/*.gametest.{js,mjs,cjs}` and is layout-agnostic: a hand-written `.mjs` dropped inside `test/` _is_ found. The real constraint is that a TypeScript spec must be **compiled**, and every `games/*/tsconfig.json` excludes `test`, so a `.ts` spec written there never becomes a file the glob can see. | Putting the spec somewhere the build compiles it — `games/<name>/src/<name>.gametest.ts` ([§6.6](#66-the-template)) — and reading the scan count in the summary. |
+| 4   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                                                                                                                                                                               | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                                     |
+| 5   | **A scaffolded `*.gametest.mjs` names its plugin as a string**, so `runGameTest` cannot run it directly (`plugin.components is not a function`) — only the CLI resolves strings.                                                                                                                                                                                                                                                    | Substituting the plugin object before calling `runGameTest` ([§6.5](#65-mutation-check-your-own-test)).                                                          |
+| 6   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated — npm only links a `bin` whose target already exists.                                                                                                                                                                                                                                                                | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                                     |
 
 The reason this section exists at all — and the reason [§6](#6-writing-a-game-test-that-can-actually-fail)
 is written the way it is — is a defect that entered this codebase from `docs/architecture.md` §7,
