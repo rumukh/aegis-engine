@@ -20,7 +20,7 @@
  * rather than shelling out to `aegis test`, which would re-run every playthrough for a second
  * time in the same suite. `packages/cli` owns proving that the runner runs them.
  */
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -115,30 +115,44 @@ function specSources(game: string): string[] {
   return out.sort();
 }
 
+/** The `include` each game's tsconfig declares, as authored. */
+function tsconfigInclude(game: string): string[] {
+  const raw = readFileSync(join('games', game, 'tsconfig.json'), 'utf8');
+  return (JSON.parse(raw) as { include?: string[] }).include ?? [];
+}
+
 /**
- * The gap this closes is `AGENTS.md` §9 #3: every game's `tsconfig.json` excludes `test/`, and
- * `aegis test` globs *compiled* `dist` gametest modules, so a spec written in the wrong directory
- * is invisible to the CLI — no error, no warning. The documented mitigation is that a human reads
- * the scan count in the CLI summary. A number someone is supposed to notice is not a gate; these
- * two checks are, and they fail with the offending path named.
+ * `AGENTS.md` §9 #3 is the hazard these checks close — but **its stated mechanism is wrong, and
+ * this comment used to repeat it.** The row says the CLI globs compiled `dist/*.gametest.js`, so a
+ * spec in the wrong *directory* is invisible. Measured instead at
+ * `packages/cli/src/commands/test.ts:36`, the default is three recursive patterns — a
+ * double-star prefix over `*.gametest.js`, `.mjs` and `.cjs`, rooted at the working directory —
+ * and that file's own header says discovery is "glob + shape based, never layout based".
+ * `dist/*.gametest.js` is merely what each game's own `aegis.json` *declares*; it is not what the
+ * CLI looks for. Verified behaviourally: a hand-written `.gametest.mjs` placed inside an excluded
+ * `test/` directory is found and run (`1 file(s) scanned, 1 test(s) found`).
  *
- * They are deliberately two separate claims. The first catches a spec parked where the build will
- * not see it. The second catches a spec that *is* in the right place but produced no artefact —
- * a stale or partial build, or an `exclude` that grew a new pattern.
+ * So the real precondition is **"the build compiles this file to JS"**, not "this file lives under
+ * `src/`". Compilation is the mechanism; location is only this repo's convention. That distinction
+ * decides which check below is load-bearing:
+ *
+ *  1. **`compiles to a dist artefact` — the mechanism check.** It holds for a spec in any
+ *     directory, and it is the one that actually catches a spec `aegis test` cannot see. A
+ *     TypeScript spec the build skips produces no `.js`, so the layout-agnostic glob finds
+ *     nothing to match.
+ *  2. **`lives under src/` — a convention check**, and narrower than the mechanism on purpose.
+ *     Deriving "will tsc compile this?" properly would mean re-implementing TypeScript's
+ *     include/exclude resolution here, which is a new place to be wrong *in the same direction as
+ *     the thing it checks*. The literal test is honest as long as it is labelled as convention.
+ *  3. **`src/ is every game's only compiled root` — the check that keeps #2 honest.** It asserts
+ *     the assumption #2 rests on, so if a game ever grows a second compiled root, this file says
+ *     which assumption broke instead of failing #2 on a perfectly good layout.
+ *
+ * The mitigation §9 #3 documents — read the scan count in the CLI summary — is what these replace.
+ * A number a human is supposed to notice is not a gate; a test that names the offending path is.
  */
 describe('a game spec cannot hide from the build', () => {
-  it('every *.gametest.ts lives under src/, where the build can see it', () => {
-    const stray = gameDirs()
-      .flatMap((g) => specSources(g))
-      .filter((p) => !p.split(sep).includes('src'));
-    expect(
-      stray,
-      `these specs are outside src/ and every games/*/tsconfig.json excludes such directories, ` +
-        `so they are compiled to nothing and \`aegis test\` will never find them: ${stray.join(', ')}`,
-    ).toEqual([]);
-  });
-
-  it('every *.gametest.ts under src/ has a compiled counterpart in dist/', () => {
+  it('compiles to a dist artefact — the mechanism `aegis test` actually depends on', () => {
     const missing: string[] = [];
     for (const game of gameDirs()) {
       for (const spec of specSources(game)) {
@@ -150,8 +164,32 @@ describe('a game spec cannot hide from the build', () => {
     }
     expect(
       missing,
-      `these specs exist in source but produced no dist artefact, so \`aegis test\` runs without ` +
-        `them: ${missing.join(', ')}`,
+      `these specs produced no compiled artefact, so the CLI's **/*.gametest.{js,mjs,cjs} glob ` +
+        `has nothing to match and \`aegis test\` runs without them: ${missing.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('follows the convention that a spec lives under src/ (narrower than the mechanism)', () => {
+    const stray = gameDirs()
+      .flatMap((g) => specSources(g))
+      .filter((p) => !p.split(sep).includes('src'));
+    expect(
+      stray,
+      `these specs sit outside src/. That is this repo's convention, not the CLI's rule — the ` +
+        `binding constraint is that the build compiles them, which the first check covers: ${stray.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('src/ really is every game\u2019s only compiled root, which is what makes that convention safe', () => {
+    const unexpected = gameDirs()
+      .map((g) => ({ game: g, include: tsconfigInclude(g) }))
+      .filter((e) => e.include.length !== 1 || e.include[0] !== 'src/**/*.ts')
+      .map((e) => `${e.game}: include=${JSON.stringify(e.include)}`);
+    expect(
+      unexpected,
+      `the convention check above assumes src/ is the only compiled root. These games declare ` +
+        `something else, so that assumption no longer holds and the check must be widened or ` +
+        `derived from tsconfig: ${unexpected.join(', ')}`,
     ).toEqual([]);
   });
 });
