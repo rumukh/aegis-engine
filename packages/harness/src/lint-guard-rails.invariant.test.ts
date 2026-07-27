@@ -64,16 +64,30 @@ const eslint = new ESLint({ cwd: REPO_ROOT });
  * slower CI runner. A timeout is indistinguishable from a broken guard, and it would blame
  * whichever unrelated commit happened to be in flight.
  *
- * The load now happens once in `beforeAll`, so every case below is billed only its own ~20 ms.
+ * The load now happens once in `beforeAll`, so every case below is billed only its own work.
+ * Measured across the suite with `vitest run --testTimeout=180000 --reporter=json`, this file's
+ * slowest case is now **139 ms idle / 232 ms** with the box at 100% CPU, and all 19 together sum
+ * to 476 ms / 734 ms. It was the slowest test in the repository by 4.5× over the next one; it is
+ * now outside the top twenty.
  *
- * The number is sized against the **cold** figure, not the warm one. On a freshly `npm ci`-ed
- * tree under full parallel load — the CI condition — the same load was measured at **67.5 s**,
- * about 4× the warm 16.6 s, because none of the module graph is in the OS file cache. 300 s is
- * ~4.4× that, which leaves a 2-core hosted runner room to be twice as slow again and still have
- * 2× margin. The point of a budget on a known-slow, known-bounded step is to fail only when it
- * has genuinely hung.
+ * The budget is for the hook, and it is sized against the **worst figure ever observed** for this
+ * quantity, not a typical one:
+ *
+ * ```
+ * ~13.5 s   solo, warm tree, box at 100% CPU
+ * ~16.6 s   solo, warm tree, idle
+ * ~67.5 s   freshly `npm ci`-ed tree (cold OS file cache) under parallel load
+ *  129 s    reported by the PM with three sibling sessions running full builds
+ * ```
+ *
+ * The spread is dominated by **cold I/O**, not CPU: saturating all sixteen cores barely moves it,
+ * while an uncached module graph quadruples it. A CI runner is the bad case on both axes — cold
+ * every time, and 2-4 cores against this box's 16 — so 600 s is ~4.6× the worst seen. That looks
+ * extravagant and is deliberate: a hook budget is a *hang* detector, its only cost is how long a
+ * genuine hang takes to surface, and the failure it must never produce is a timeout that an agent
+ * cannot tell apart from a real cross-OS determinism finding.
  */
-const CONFIG_LOAD_BUDGET_MS = 300_000;
+const CONFIG_LOAD_BUDGET_MS = 600_000;
 
 /**
  * Load the flat config once, and prove it is the real one.
@@ -135,9 +149,10 @@ const WALL_CLOCK_VIOLATION = `export const probe = (): number => new Date().getT
 /**
  * Per-case budget, for the residual after the one-time load in `beforeAll`.
  *
- * Each case is ~20 ms once the config is loaded, so the default 30 s would be ample here — but a
- * cold CI runner's *first* `lintText` was measured at 141 ms against ~8 ms warm, and the honest
- * budget for a step whose cost is dominated by first-use I/O is one that fails only on a hang.
+ * Measured worst case across the whole suite: 232 ms, with the box at 100% CPU. 60 s is ~258×
+ * that, so this fires only on a hang — which is the only thing a per-case budget on sub-second
+ * work can usefully detect. It is set here rather than left to the root default deliberately: the
+ * root number is sized for ordinary unit tests, and this file's cost profile is not theirs.
  */
 const LINT_TIMEOUT_MS = 60_000;
 
