@@ -33,6 +33,7 @@
  * @packageDocumentation
  */
 import type { ComponentType, Diagnostic } from '@aegis/core';
+import { explainUnserialisable, findUnserialisable, suggestName } from '@aegis/core';
 import { ContentCode, diagnostic } from './diagnostics.js';
 
 /** The JSON type of a value, as reported in diagnostics and declared in {@link ComponentSchema}. */
@@ -146,72 +147,14 @@ function json(value: unknown): string {
 }
 
 /**
- * Restricted Damerau-Levenshtein distance: an adjacent transposition counts as one edit, so
- * `nmae` -> `name` scores 1. Field and component names are short, so the matrix stays tiny.
- */
-function editDistance(a: string, b: string): number {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-  const rows: number[][] = [];
-  for (let i = 0; i <= a.length; i++) {
-    const row = new Array<number>(b.length + 1).fill(0);
-    row[0] = i;
-    rows.push(row);
-  }
-  const first = rows[0] as number[];
-  for (let j = 0; j <= b.length; j++) first[j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    const prev = rows[i - 1] as number[];
-    const cur = rows[i] as number[];
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      let best = (prev[j] as number) + 1; // deletion
-      const insertion = (cur[j - 1] as number) + 1;
-      if (insertion < best) best = insertion;
-      const substitution = (prev[j - 1] as number) + cost;
-      if (substitution < best) best = substitution;
-      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-        const transposition = ((rows[i - 2] as number[])[j - 2] as number) + 1;
-        if (transposition < best) best = transposition;
-      }
-      cur[j] = best;
-    }
-  }
-  return (rows[a.length] as number[])[b.length] as number;
-}
-
-/** How far apart two names may be before a suggestion is more confusing than helpful. */
-function tolerance(length: number): number {
-  if (length <= 2) return 0; // one-letter fields (x/y/z) would otherwise suggest each other
-  if (length <= 4) return 1;
-  if (length <= 8) return 2;
-  return 3;
-}
-
-/**
- * The closest of `candidates` to `name`, or `undefined` when nothing is close enough — the
- * shared "did you mean ...?" engine behind field, component and resource diagnostics.
+ * Restricted Damerau-Levenshtein distance and the length-scaled tolerance that decides whether
+ * a name is a typo of another live in `@aegis/core`'s `suggest.ts`, because the scheduler needs
+ * the identical rule for `before`/`after` entries and a second copy is how the two drifted:
+ * core's flat "within two edits" *threw* on `after: ['aim']` in a schedule containing `ai`.
  *
- * A case-only difference always wins. Ties break on the lexicographically smaller candidate,
- * so the suggestion is deterministic whatever order the candidates arrive in.
+ * Re-exported here so `suggestName` stays part of this package's public surface.
  */
-export function suggestName(name: string, candidates: Iterable<string>): string | undefined {
-  const sorted = [...candidates].sort();
-  const lower = name.toLowerCase();
-  for (const candidate of sorted) if (candidate.toLowerCase() === lower) return candidate;
-  let best: string | undefined;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const candidate of sorted) {
-    const longest = candidate.length > name.length ? candidate.length : name.length;
-    const distance = editDistance(lower, candidate.toLowerCase());
-    if (distance <= tolerance(longest) && distance < bestDistance) {
-      best = candidate;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
+export { suggestName };
 
 /** Where a component's data sits, for diagnostic locations. */
 export interface DataLocation {
@@ -484,11 +427,57 @@ function checkDeclaredKind(
 }
 
 /**
+ * Report every value inside `value` that the world's write boundary would reject, as
+ * {@link ContentCode.UnserialisableValue} diagnostics.
+ *
+ * The rule is not restated here: {@link findUnserialisable} is `@aegis/core`'s single
+ * statement of what world state may hold, and this is the *validation* presentation of the same
+ * traversal that `spawn`/`add`/`setResource` throw from. That is the whole point — a document
+ * that validates clean and then throws on load is the defect this closes, and a second,
+ * hand-maintained rule list here is how the two would come apart again.
+ *
+ * @param value - The authored value: a component's data, or one scene resource.
+ * @param jsonPath - JSON path of `value` in the document, prefixed onto each report.
+ * @param subject - Names the owner in the message, e.g. `Component "Trigger"`.
+ * @param file - Source file, when the document came from one.
+ * @param out - Diagnostics are appended here, in traversal order.
+ */
+export function reportUnserialisable(
+  value: unknown,
+  jsonPath: string,
+  subject: string,
+  file: string | undefined,
+  out: Diagnostic[],
+): void {
+  for (const problem of findUnserialisable(value)) {
+    const path = problem.path === '' ? jsonPath : `${jsonPath}.${problem.path}`;
+    const field = problem.path === '' ? '(the whole value)' : problem.path;
+    const explained = explainUnserialisable(problem.reason, problem.detail);
+    out.push(
+      diagnostic(
+        ContentCode.UnserialisableValue,
+        `${subject} field "${field}" is ${explained.what}, which the world cannot store, so ` +
+          `loading this document would fail. ${explained.why}`,
+        {
+          location: { file, path },
+          fix: explained.fix,
+          data: { field, path, reason: problem.reason, value: problem.detail },
+        },
+      ),
+    );
+  }
+}
+
+/**
  * Validate one component's authored data against the component's own shape.
  *
  * Top-level fields may be omitted — those merge from the defaults, which is the whole point of
  * authoring a partial — but every field that *is* authored must exist, must carry the right
  * JSON type, and, when it is an object, must be complete (see the module docs).
+ *
+ * Shape is checked first, then **storability**: the shape pass can only look at fields the
+ * defaults describe, and a free-form `optional: { data: 'object' }` field or an array's
+ * elements have no shape to check against, so they used to reach `world.add` unexamined.
  *
  * @param type - The registered component the data is authored for.
  * @param data - The authored value, exactly as it appears in the document.
@@ -516,7 +505,11 @@ export function validateComponentData(
     return diagnostics;
   }
   const shape = defaultShape(type);
-  if (shape === undefined) return diagnostics; // not object-shaped: nothing to check against
+  if (shape === undefined) {
+    // Not object-shaped: no field list to check against, but the data still has to be storable.
+    reportUnserialisable(data, where.path, `Component "${type.id}"`, where.file, diagnostics);
+    return diagnostics;
+  }
   const schema = componentSchema(type);
   const check: Check = {
     componentId: type.id,
@@ -546,5 +539,13 @@ export function validateComponentData(
       invalidEnum(check, key, jsonPath, allowed, value);
     }
   }
+
+  // Storability, after shape. A typed number field that holds `1e999` is already reported above
+  // as a type mismatch ("must be a finite number"), so drop any storability report landing on a
+  // path the shape pass already covered — one defect, one diagnostic.
+  const covered = new Set(diagnostics.map((d) => d.location?.path));
+  const storability: Diagnostic[] = [];
+  reportUnserialisable(data, where.path, `Component "${type.id}"`, where.file, storability);
+  diagnostics.push(...storability.filter((d) => !covered.has(d.location?.path)));
   return diagnostics;
 }
