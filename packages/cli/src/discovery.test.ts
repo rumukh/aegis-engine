@@ -610,11 +610,22 @@ describe('aegis scaffold produces a runnable game', () => {
    * temp directory — the first draft of this test asserted the fallback and was handed a live
    * ModePlugin. Only a real `node` child in that directory resolves the way a user's shell does.
    *
-   * Three child processes make it the slowest case in the file, and Vitest's 30 s default is a
-   * *wall-clock* budget on a machine also running the rest of the suite — so it needs an explicit
-   * one, or it fails as a timeout (which reads like a broken guard) rather than as a slow test.
+   * **Only the resolution needs a child.** Writing the files does not, and used to cost more than
+   * everything else here: measured, scaffolding via a `node` child was 3357 ms against 53 ms
+   * in-process — a 63× tax on identical output, paid for Node startup and the CLI's module graph.
+   * The artefact on disk is byte-identical either way, so the scaffold step is now an ordinary
+   * in-process call and only the two steps whose *whole point* is real Node resolution are spawned:
+   *
+   * ```
+   * child: node -e import(gametest)  (precondition)   1745 ms
+   * child: node cli test bare/*.gametest.mjs          4534 ms
+   * ```
+   *
+   * The two are deliberately **not** merged into one child either. The first import would populate
+   * that process's module registry, so the CLI's own discovery-and-import path would then be
+   * served from cache rather than exercised — which is precisely the path under test.
    */
-  it('runs from a directory outside the workspace, where no @aegis package resolves', () => {
+  it('runs from a directory outside the workspace, where no @aegis package resolves', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'aegis-scaffold-'));
     const cliMain = join(PACKAGE_ROOT, 'dist', 'main.js');
     expect(
@@ -622,11 +633,8 @@ describe('aegis scaffold produces a runnable game', () => {
       `${cliMain} is missing — run \`npm run build\` (\`npm run verify\` builds before it tests)`,
     ).toBe(true);
     try {
-      const scaffolded = spawnSync(process.execPath, [cliMain, 'scaffold', 'game', 'bare'], {
-        cwd: dir,
-        encoding: 'utf8',
-      });
-      expect(scaffolded.status).toBe(0);
+      const scaffolded = await cli(['scaffold', 'game', 'bare'], dir, realDeps);
+      expect(scaffolded.code).toBe(0);
 
       // Precondition: in a real Node process rooted here the mode package is genuinely
       // unreachable, so the string fallback — not the import — is what the run below exercises.
