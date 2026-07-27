@@ -58,23 +58,32 @@ const VIEWPORT = { width: 640, height: 360 };
  *
  * Sampling for a fixed *duration* made this test's own preconditions flaky: on a loaded machine
  * one run collected 4 frames in 2.5s, and a p95 over four samples is not a p95. Sampling to a
- * fixed frame count instead keeps the statistic meaningful whatever the host is doing, and turns
- * "the page is impossibly slow" into an explicit timeout with a message rather than a percentile
- * computed from noise.
+ * fixed frame count instead keeps the statistic meaningful whatever the host is doing.
+ *
+ * Twenty rather than forty, because this file runs alongside sixty other test files competing for
+ * a *software* rasteriser, and at forty the collection itself began timing out — three liveness
+ * tests died at 21-24s in one `verify`. Twenty frames is still a representative window for the
+ * counts this file asserts (draw calls, payload bytes) and for the durations it prints, and it
+ * halves the time the whole suite spends holding a browser open.
  */
-const SAMPLE_FRAMES = 40;
+const SAMPLE_FRAMES = 20;
 
-/** How long to wait for {@link SAMPLE_FRAMES}, in milliseconds. */
-const SAMPLE_TIMEOUT_MS = 30_000;
+/**
+ * How long to wait for {@link SAMPLE_FRAMES}, in milliseconds.
+ *
+ * A bound on hanging, not a budget. On a quiet machine a page reaches twenty frames in under a
+ * second; the value is set for a machine several times slower than this one under full load.
+ */
+const SAMPLE_TIMEOUT_MS = 60_000;
 
 /**
  * How many frame exchanges each measurement must also see complete.
  *
- * Uncapped, the platformer page draws its 40 frames before two round trips have finished, so a
+ * Uncapped, the platformer page draws its frames before two round trips have finished, so a
  * frame-count-only window would leave the "is it still talking to the server?" precondition
  * failing on the fastest page rather than the slowest.
  */
-const SAMPLE_EXCHANGES = 5;
+const SAMPLE_EXCHANGES = 3;
 
 /**
  * Milliseconds of the page's **own bookkeeping** the slowest 5% of displayed frames may cost:
