@@ -94,7 +94,12 @@ function installFakeDom(): FakeDom {
   const canvas = {
     addEventListener: add,
     removeEventListener: remove,
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: VIEWPORT.width, height: VIEWPORT.height }),
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      width: VIEWPORT.width,
+      height: VIEWPORT.height,
+    }),
     requestPointerLock: () => undefined,
     clientWidth: VIEWPORT.width,
     clientHeight: VIEWPORT.height,
@@ -213,7 +218,10 @@ describe('what the human sees when they move their hands', () => {
    * landmark moved is worthless if it never started in the middle of the screen, or if the mouse
    * event never reached the simulation.
    */
-  function nudge(movementX: number, movementY: number): {
+  function nudge(
+    movementX: number,
+    movementY: number,
+  ): {
     before: { x: number; y: number };
     after: { x: number; y: number };
     lookBefore: { yawDeg: number; pitchDeg: number };

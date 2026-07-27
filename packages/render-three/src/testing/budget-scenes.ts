@@ -151,7 +151,11 @@ export const PLATFORMER_BUDGET_SCENE: SceneFile = {
           name: 'collision',
           // Two ground rows plus a scattering of ledges: a level with something in it, at the
           // width the shipped one runs to.
-          data: rows(46, 12, (x, y) => y >= 10 || (y === 6 && x % 5 === 0) || (y === 3 && x % 7 === 0)),
+          data: rows(
+            46,
+            12,
+            (x, y) => y >= 10 || (y === 6 && x % 5 === 0) || (y === 3 && x % 7 === 0),
+          ),
         },
       ],
     },

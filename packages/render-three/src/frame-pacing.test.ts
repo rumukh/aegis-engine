@@ -141,7 +141,11 @@ describe('a slow picture must not make a slow game', () => {
 describe('one displayed frame of mouse motion belongs to every tick it covers', () => {
   it('spreads an accumulated look delta evenly across the batch instead of lurching', () => {
     const session = createLiveSession({ scene: FPS_SCENE, plugin: fpsPlugin });
-    const view = () => session.world.query({ has: [LookState] }).one().get(LookState);
+    const view = () =>
+      session.world
+        .query({ has: [LookState] })
+        .one()
+        .get(LookState);
 
     // One displayed frame's worth of mouse motion: 30 degrees of yaw, arriving as one packet.
     session.input.submit({ seq: 1, look: { dx: 30, dy: 0 } });
@@ -155,7 +159,11 @@ describe('one displayed frame of mouse motion belongs to every tick it covers', 
     // it again a tick at a time and check the camera is a tenth of the way round after one tick,
     // not all the way. Without that, dumping the lot on tick 0 would pass the line above.
     const fresh = createLiveSession({ scene: FPS_SCENE, plugin: fpsPlugin });
-    const freshLook = () => fresh.world.query({ has: [LookState] }).one().get(LookState);
+    const freshLook = () =>
+      fresh.world
+        .query({ has: [LookState] })
+        .one()
+        .get(LookState);
     fresh.input.submit({ seq: 1, look: { dx: 30, dy: 0 } });
     fresh.input.spreadLookOver(10);
     const samples: number[] = [];
@@ -172,7 +180,11 @@ describe('one displayed frame of mouse motion belongs to every tick it covers', 
     // `LiveSession.step` never spreads: the capture pauses the session and steps it explicitly,
     // one tick per input change, so a scripted playthrough must reach the same state as before.
     const session = createLiveSession({ scene: FPS_SCENE, plugin: fpsPlugin });
-    const look = () => session.world.query({ has: [LookState] }).one().get(LookState);
+    const look = () =>
+      session.world
+        .query({ has: [LookState] })
+        .one()
+        .get(LookState);
     session.input.submit({ seq: 1, look: { dx: 90, dy: 0 } });
     session.step();
     expect(look().yawDeg).toBeCloseTo(90, 6);

@@ -59,29 +59,33 @@ const SAMPLE_MS = 2500;
  * independent of hardware. Note what it excludes: the `/frame` round trip is not awaited by the
  * frame loop, so its latency is not part of this budget (it is reported, and the simulation's own
  * pacing is guarded in `frame-pacing.test.ts`).
+ *
+ * Watched red by syncing the adapter forty times per displayed frame: 15.80ms, and the failure
+ * message names the phase that spent it (`sync 14.00ms`) rather than restating the total.
  */
 const FRAME_WORK_BUDGET_MS = 8;
 
 /**
- * Draw calls one displayed frame may issue.
+ * Draw calls one displayed frame may issue — **reported and bounded loosely, not a real guard.**
  *
  * The fps adapter draws one box per floorplan cell — a column for a solid cell, a floor slab
  * *and* a ceiling slab for a walkable one — so its draw-call count scales linearly with level
- * area. At the shipped 11x21 that is about 340 after frustum culling, and the measurement above
- * puts submission at 1.40ms for 337 calls: **4.2µs each** on this machine.
+ * area. At the shipped 11x21 that is 337, and the measurement above puts submission at 1.40ms for
+ * those 337 calls: **4.2µs each** on this machine.
  *
- * The honest cost bound is therefore {@link FRAME_WORK_BUDGET_MS}, which measures that time
- * directly. This number exists to catch a change of *kind* rather than of degree — an extra
- * object per cell, a second pass over the level, a decoration on every tile — so it sits at
- * roughly twice the shipped-scale count: ordinary level growth does not trip it, a per-cell
- * multiplier does. Verified by mutation: three extra boxes per walkable cell takes it past 800.
+ * An earlier draft set this to 320 and justified it with a *guessed* 20-40µs per call, which
+ * would have made draw calls the dominant frame cost. Measured, the guess was wrong by an order
+ * of magnitude, and the guard it justified could not be made to fail: tripling the boxes drawn
+ * per walkable cell — a rebuilt page, not just a rebuilt test — still holds every budget in this
+ * file. A bound nobody can drive red is not a guard, so this one is deliberately loose and its
+ * job is only to catch an order-of-magnitude accident.
  *
- * An earlier draft set this to 320 on a guessed 20-40µs per call. That was measured and found
- * wrong by an order of magnitude, and the number moved rather than the reasoning being kept. If a
- * level ever does need to be much bigger, the fix is instancing — one `InstancedMesh` per visual
- * role would take the whole floorplan to about five calls — not a larger number here.
+ * The load-bearing budget is {@link FRAME_WORK_BUDGET_MS}, which measures the time these calls
+ * actually cost instead of counting them. If a level ever does need to be much bigger, the fix is
+ * instancing — one `InstancedMesh` per visual role would take the whole floorplan to about five
+ * calls — not a larger number here.
  */
-const DRAW_CALL_BUDGET = 700;
+const DRAW_CALL_BUDGET = 2000;
 
 /**
  * Bytes of JSON one displayed frame may carry.
@@ -89,9 +93,12 @@ const DRAW_CALL_BUDGET = 700;
  * The whole world crosses the wire every frame by design (the page holds a *different* world and
  * is structurally unable to write to the simulation's — see `protocol.ts`), and that design is
  * worth keeping. It is not worth keeping unmeasured: at 60fps, 24KB per frame is 1.4MB/s of JSON
- * to serialise, transfer, parse and garbage-collect. Measured today: platformer 10.0KB, iso
- * 2.6KB, fps 19.6KB — of which 17.5KB is the static extruded floorplan, re-sent every frame
- * because one door cell can change. That is the next thing to fix if this budget is ever hit.
+ * to serialise, transfer, parse and garbage-collect. Measured at shipped level scale: platformer
+ * 10.0KB, iso 2.6KB, fps 19.6KB — of which 17.5KB is the static extruded floorplan, re-sent every
+ * frame because one door cell can change. That is the next thing to fix if this budget is hit.
+ *
+ * Watched red by making `POST /frame` carry a second copy of the world state: 37,320 bytes
+ * against the 24,000 allowed.
  */
 const PAYLOAD_BUDGET_BYTES = 24_000;
 
@@ -303,8 +310,9 @@ describe('a stalled frame request must not freeze the game', () => {
       await sleep(300);
 
       const read = async (): Promise<Timings> =>
-        JSON.parse(await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())')) as
-          Timings;
+        JSON.parse(
+          await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
+        ) as Timings;
 
       const healthy = await read();
       // Precondition: the page is talking through the proxy at all. Without this, a page that
