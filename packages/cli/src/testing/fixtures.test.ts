@@ -32,7 +32,13 @@ import { spawnSync } from 'node:child_process';
 import type { SpawnSyncReturns } from 'node:child_process';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { makeFixtureDir, PACKAGE_ROOT, removeFixtureDir, sweepStaleFixtures } from './fixtures.js';
+import {
+  fixtureRoot,
+  makeFixtureDir,
+  PACKAGE_ROOT,
+  removeFixtureDir,
+  sweepStaleFixtures,
+} from './fixtures.js';
 
 /** The built module a *different worker* would load — the real code, not a re-implementation. */
 const FIXTURES_DIST = join(PACKAGE_ROOT, 'dist', 'testing', 'fixtures.js');
@@ -106,12 +112,12 @@ describe('a fixture sweep cannot reach another worker’s live directory', () =>
       'sweep-probe',
       `const m = await import(${JSON.stringify(`file:///${FIXTURES_DIST.replace(/\\/g, '/')}`)});
        const d = m.makeFixtureDir();
-       process.stdout.write(d.slice(m.PACKAGE_ROOT.length));
+       process.stdout.write(d.slice(m.fixtureRoot().length));
        m.removeFixtureDir(d);`,
     );
     expect(probe.status, probe.stderr).toBe(0);
 
-    const mine = a.slice(PACKAGE_ROOT.length);
+    const mine = a.slice(fixtureRoot().length);
     const theirs = probe.stdout.trim();
     // Both are `aegis-clitest-…`; what matters is that each carries its own worker's identity, so
     // neither falls inside the other's sweep prefix.
@@ -122,11 +128,31 @@ describe('a fixture sweep cannot reach another worker’s live directory', () =>
 
   it('leaves nothing of its own behind', () => {
     // Cheap guard on the guard: this file must not become a source of the orphans it is about.
-    const before = readdirSync(PACKAGE_ROOT).filter((e) => e.startsWith('aegis-clitest-'));
-    const dir = join(PACKAGE_ROOT, 'aegis-clitest-selfcheck');
+    const before = readdirSync(fixtureRoot()).filter((e) => e.startsWith('aegis-clitest-'));
+    const dir = join(fixtureRoot(), 'aegis-clitest-selfcheck');
     mkdirSync(dir, { recursive: true });
     removeFixtureDir(dir);
     expect(existsSync(dir)).toBe(false);
-    expect(readdirSync(PACKAGE_ROOT).filter((e) => e.startsWith('aegis-clitest-'))).toEqual(before);
+    expect(readdirSync(fixtureRoot()).filter((e) => e.startsWith('aegis-clitest-'))).toEqual(
+      before,
+    );
+  });
+
+  /**
+   * Where the scratch directories live is itself load-bearing, so it is asserted rather than left
+   * to a comment. Fixtures under `packages/` are walked by repo-scanning tests
+   * (`golden-hash.invariant.test.ts`, `gametest-discovery.test.ts`), which then race a directory
+   * that vanishes when its owning test finishes — a different race from the sweep, and one no
+   * naming scheme prevents. `node_modules` is outside every walker's search roots, git-ignored and
+   * unlinted.
+   */
+  it('creates fixtures inside node_modules, where no repository walker goes', () => {
+    const root = fixtureRoot().replace(/\\/g, '/');
+    expect(root).toContain('/node_modules/');
+    expect(root).not.toMatch(/\/packages\/[^/]+\/?$/);
+
+    const dir = makeFixtureDir();
+    created.push(dir);
+    expect(dir.replace(/\\/g, '/')).toContain('/node_modules/');
   });
 });

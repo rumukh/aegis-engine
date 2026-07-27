@@ -22,7 +22,7 @@
  * surfaces as a harness test failure. The message names the offending file so that is not
  * misleading.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -123,6 +123,58 @@ describe('golden hashes are pinned, repository-wide', () => {
             `hash can never fail, so these pin nothing:\n${report}\n` +
             `See docs/architecture.md §7 and the golden-hash rule in eslint.config.js.`,
     ).toEqual([]);
+  });
+
+  /**
+   * The walker must never descend into another package's transient scratch directories.
+   *
+   * `sourceFiles` recurses into every directory that is not `node_modules`, `dist` or `coverage`.
+   * While the CLI's test fixtures were created directly under `packages/cli`, this walk could
+   * `readdir` the parent, see a fixture directory, and `readdir` the child **after** its owning
+   * test had deleted it — killing a harness invariant test inside a CLI test's scratch space:
+   *
+   * ```
+   * Error: ENOENT: no such file or directory, scandir '…/packages/cli/aegis-clitest-02uq7a'
+   * ```
+   *
+   * A race cannot be watched fail on demand, so this control is **deterministic instead of
+   * timing-based**, and it carries its own positive half rather than relying on a stashed revert:
+   * the same probe file is planted in both locations, and the walk must find the one under
+   * `packages/` and miss the one under `node_modules/.aegis-clitest/`. Finding *neither* would
+   * satisfy a one-sided assertion while proving the walk had stopped working.
+   *
+   * This is the property that makes the fixture move structural: fixtures now live somewhere no
+   * walker rooted at `packages/`/`games/` can reach, so no future walker has to remember.
+   */
+  it('walks the source tree but not the scratch directories inside node_modules', () => {
+    const inTree = join(REPO_ROOT, 'packages', 'harness', 'src', 'zz-walker-probe.ts');
+    const scratch = join(REPO_ROOT, 'node_modules', '.aegis-clitest', 'zz-probe-dir');
+    const inScratch = join(scratch, 'zz-walker-probe.ts');
+    const body = 'export const zzWalkerProbe = 1;\n';
+    mkdirSync(scratch, { recursive: true });
+    writeFileSync(inTree, body, 'utf8');
+    writeFileSync(inScratch, body, 'utf8');
+    try {
+      const files = SEARCH_ROOTS.flatMap((root) => sourceFiles(join(REPO_ROOT, root)));
+      // Anti-vacuity, twice over: the walk must still be finding the tree at all, and it must be
+      // able to find a file of exactly this shape — or "it missed the scratch copy" means nothing.
+      expect(files.length).toBeGreaterThan(50);
+      expect(
+        files.filter((f) => f === inTree),
+        'the walk did not find a plain .ts file planted in packages/harness/src, so its failure ' +
+          'to find the scratch copy below proves nothing about where it refuses to go',
+      ).toEqual([inTree]);
+
+      expect(
+        files.filter((f) => f.includes('.aegis-clitest')),
+        'the repository walk descended into a live test fixture directory. Those are created and ' +
+          'deleted while other suites run, so this walk can ENOENT on a directory that vanished ' +
+          'between reading the parent and reading the child.',
+      ).toEqual([]);
+    } finally {
+      rmSync(inTree, { force: true });
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   it('detects the aliased bypass that the lint rule cannot see', () => {
