@@ -1,0 +1,32 @@
+# Line-ending rules. Kept minimal: every entry here is a fix for a measured failure, not a policy.
+#
+# ## Why `bin` targets must be LF in the working tree
+#
+# `npm ci` links a package's `bin` into `node_modules/.bin`, and as part of that it **rewrites the
+# target's shebang line to end with LF**. On a checkout with `core.autocrlf=true` — this project's
+# Windows workstations, and `windows-latest` runners by default — git has already smudged the file
+# to CRLF, so after the install line 1 ends LF and every other line ends CRLF.
+#
+# `.prettierrc.json` sets `"endOfLine": "auto"`, which infers a single expected ending per file. A
+# mixed file therefore fails `prettier --check`, and `npm run verify` exits 1 at the lint step —
+# **only on Windows**. Measured on a pristine detached checkout of `packages/cli/bin/aegis.mjs`:
+#
+#     before npm ci : 2046 bytes, 38 CRLF, 0 lone LF   prettier --check exit 0
+#     after  npm ci : 2045 bytes, 37 CRLF, 1 lone LF   prettier --check exit 1
+#     the lone LF is on line 1, "#!/usr/bin/env node"
+#
+# That would have split the CI matrix red on `windows-latest` and green on `ubuntu-latest` — the
+# most expensive shape of red this project can produce, because a cross-OS split is precisely what
+# the ubuntu leg exists to *detect*, so a spurious one is indistinguishable from a real determinism
+# finding in `@aegis/core`.
+#
+# Forcing LF in the working tree makes npm's rewrite a no-op, so the file stays uniform on every
+# platform. This is not specific to one shim: **any** bin target with a shebang hits it, which is
+# why the rule is written against the directory rather than the file, and why
+# `packages/cli/src/testing/bin-attributes.test.ts` asserts that every declared bin target in the
+# workspace resolves `eol=lf` — a new bin target added later gets a red here instead of a
+# Windows-only CI mystery months from now.
+*/bin/*.mjs eol=lf
+*/bin/*.js eol=lf
+*/bin/*.cjs eol=lf
+packages/*/bin/* eol=lf
