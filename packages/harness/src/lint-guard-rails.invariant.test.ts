@@ -71,21 +71,29 @@ const eslint = new ESLint({ cwd: REPO_ROOT });
  * now outside the top twenty.
  *
  * The budget is for the hook, and it is sized against the **worst figure ever observed** for this
- * quantity, not a typical one:
+ * quantity, not a typical one. Independent measurements, three parties, this box:
  *
  * ```
- * ~13.5 s   solo, warm tree, box at 100% CPU
- * ~16.6 s   solo, warm tree, idle
- * ~67.5 s   freshly `npm ci`-ed tree (cold OS file cache) under parallel load
- *  129 s    reported by the PM with three sibling sessions running full builds
+ * ~13.5 s   solo, warm tree, box at 100% CPU                              (here)
+ * ~16.6 s   solo, warm tree, idle                                         (here)
+ *  25.8 s   solo, in a gate worktree                                      (group A)
+ * ~67.5 s   freshly `npm ci`-ed tree (cold OS file cache), parallel load   (here)
+ *  67.9 s   whole-suite run, three concurrent sessions                    (PM)
+ *   129 s   whole-suite run, three concurrent sessions, worse             (PM)
  * ```
  *
- * The spread is dominated by **cold I/O**, not CPU: saturating all sixteen cores barely moves it,
- * while an uncached module graph quadruples it. A CI runner is the bad case on both axes — cold
- * every time, and 2-4 cores against this box's 16 — so 600 s is ~4.6× the worst seen. That looks
- * extravagant and is deliberate: a hook budget is a *hang* detector, its only cost is how long a
- * genuine hang takes to surface, and the failure it must never produce is a timeout that an agent
- * cannot tell apart from a real cross-OS determinism finding.
+ * The PM's ratio is the useful one: ~2.6× inflation from suite load over the same test run alone
+ * (67.9 vs 25.8), and up to ~5× at the extreme. Both of the large figures are the **file total**,
+ * which after this change is almost entirely this hook — the 19 cases contribute under a second —
+ * so they are readings of the budget below, not of any test case.
+ *
+ * The spread is dominated by **cold I/O**, not CPU: saturating all sixteen cores barely moves it
+ * (16.6 s → 13.5 s, within noise), while an uncached module graph quadruples it. A CI runner is
+ * the bad case on both axes — cold every time, and 2-4 cores against this box's 16 — so 600 s is
+ * ~4.6× the worst seen. That looks extravagant and is deliberate: a hook budget is a *hang*
+ * detector, its only cost is how long a genuine hang takes to surface, and the failure it must
+ * never produce is a timeout that an agent cannot tell apart from a real cross-OS determinism
+ * finding on the first CI run this project has ever had.
  */
 const CONFIG_LOAD_BUDGET_MS = 600_000;
 
