@@ -14,6 +14,22 @@ jobs:
         # cross-OS determinism: the state-hash tests must produce identical output on both.
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+
+    # The committed root .npmrc pins the corporate Azure Artifacts proxy, which is correct for
+    # local development (ENVIRONMENT.md) and unreachable from a GitHub-hosted runner. An env var
+    # outranks a project .npmrc in npm's config precedence, so this selects the public registry
+    # for every npm invocation in the job — including npm invoked from inside `npm run verify` —
+    # without splitting the gate into pieces.
+    #
+    # This alone is not enough, and the missing half is easy to get wrong: `npm ci` fetches
+    # tarballs from the lockfile's own `resolved` URLs, not from the configured registry. The
+    # committed lockfile therefore holds canonical `https://registry.npmjs.org/` URLs, which a
+    # runner fetches literally and which npm's default `replace-registry-host=npmjs` rewrites
+    # back to the proxy on a corporate machine. `test/lockfile-registry.test.ts` enforces both
+    # halves; `scripts/canonicalise-lockfile.mjs` repairs the lockfile after a local install.
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,8 +37,6 @@ jobs:
         with:
           node-version: '24'
 
-      # The committed root .npmrc pins the corporate proxy (ENVIRONMENT.md). Do not
-      # override the registry here.
       - name: Install
         run: npm ci
 

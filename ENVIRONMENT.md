@@ -3,25 +3,40 @@
 Operational facts about the machine this project is built on. **Read this before running any
 package or build command.** Violating these will waste a whole session.
 
-## Package registry — public npm is BLOCKED
+## Package registry — public npm is BLOCKED *from this machine*
 
-Corporate policy blocks `registry.npmjs.org`. All npm traffic must go through the corporate
-proxy:
+Corporate policy blocks `registry.npmjs.org` here. All npm traffic from this machine must go
+through the corporate proxy:
 
 ```
 https://packagefeedproxy.microsoft.io/npm/
 ```
 
-This is pinned in the repo root `.npmrc`, which is committed. **Do not remove it, do not
-override it, and do not add a registry line pointing at `registry.npmjs.org`** in any
-package-level `.npmrc`, lockfile, or CI config.
+This is pinned in the repo root `.npmrc`, which is committed. **Do not remove it and do not
+change it to `registry.npmjs.org`.** Normal `npm install` / `npm ci` work fine through it. If a
+package appears to hang or 403, it is a proxy issue — do not work around it by switching
+registries; report it to the PM.
 
-Verified working through the proxy: `typescript`, `vitest`, `three`. Normal
-`npm install` / `npm ci` work fine. If a package appears to hang or 403, it is a proxy
-issue — do not work around it by switching registries; report it to the PM.
+### The lockfile is the exception, and it is not optional
 
-Because resolved URLs in `package-lock.json` will point at the proxy host, that is expected
-and correct. Commit the lockfile as-is.
+`package-lock.json` holds canonical `https://registry.npmjs.org/` URLs, **not** proxy URLs.
+This is deliberate, and it is enforced by `test/lockfile-registry.test.ts`.
+
+`npm ci` fetches tarballs from the lockfile's own `resolved` URLs; the configured registry only
+selects where packument metadata comes from. Feed URLs (`*.pkgs.visualstudio.com`) are reachable
+only inside the corporate network, so a lockfile containing them cannot be installed on a
+GitHub-hosted runner — CI dies at the install step regardless of what registry the workflow sets.
+Canonical URLs work in both places: a runner fetches them literally, and behind the proxy npm's
+default `replace-registry-host=npmjs` rewrites exactly that origin to the configured registry.
+
+**`npm install` and `npm update` silently write feed URLs back into the lockfile.** Everything
+still works locally, so nothing tells you. After changing dependencies, run:
+
+```
+node scripts/canonicalise-lockfile.mjs --write
+```
+
+Omitting `--write` reports and exits non-zero, which is the form the gate uses.
 
 ## Toolchain
 

@@ -126,6 +126,11 @@ depends on whether you are debugging the game or the gate.
 Node 24 / npm 11, Windows, corporate npm proxy pinned in `.npmrc`. Read
 [`ENVIRONMENT.md`](./ENVIRONMENT.md) before touching dependencies.
 
+If you add or change a dependency, run `node scripts/canonicalise-lockfile.mjs --write` afterwards.
+`npm install` behind the proxy silently rewrites the lockfile's `resolved` URLs to internal hosts,
+which still works on this machine and cannot be installed anywhere else. The gate catches it, but
+only after you have wondered why.
+
 ```
 npm install
 npm run build

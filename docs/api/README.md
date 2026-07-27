@@ -33,4 +33,8 @@ npm i -D typedoc            # installs via the pinned proxy in .npmrc
 npx typedoc --entryPointStrategy packages packages/*
 ```
 
+Do not commit the resulting `package.json` / `package-lock.json` churn. If you do, run
+`node scripts/canonicalise-lockfile.mjs --write` first — an install behind the proxy writes
+internal `resolved` URLs that CI cannot fetch (ENVIRONMENT.md).
+
 Until then, the `src/` TSDoc is the contract of record, browsable directly or via editor hover.
