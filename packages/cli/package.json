@@ -8,7 +8,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "aegis": "./bin/aegis.mjs"
+    "aegis": "./dist/main.js"
   },
   "exports": {
     ".": {
@@ -17,7 +17,6 @@
     }
   },
   "files": [
-    "bin",
     "dist"
   ],
   "scripts": {
