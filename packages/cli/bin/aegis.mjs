@@ -7,7 +7,8 @@
  * failure on every clean clone: `npm ci` linked nothing (`dist` does not exist yet), `npm run
  * build` created the target too late, and `npx aegis` died with `could not determine executable to
  * run` — a message naming neither this package nor the build. The documented workaround was to run
- * `npm install` a second time (`AGENTS.md` §9 #7).
+ * `npm install` a second time (`AGENTS.md` §1.5, which now documents the single-install setup and
+ * keeps the old instruction only as history).
  *
  * That is a footgun on a workstation and a hazard in CI, where a hosted runner *is* a clean clone:
  * anything shelling out to `aegis` fails there in a way that reads as a registry or proxy fault.

@@ -1,5 +1,5 @@
 /**
- * The `aegis` bin must be linkable on a clean clone (`AGENTS.md` §9 #7).
+ * The `aegis` bin must be linkable on a clean clone (`AGENTS.md` §1.5).
  *
  * npm creates `node_modules/.bin/aegis` during install and **only links a `bin` whose target
  * already exists**. While `bin` pointed at `dist/main.js` — which a clean clone does not have —

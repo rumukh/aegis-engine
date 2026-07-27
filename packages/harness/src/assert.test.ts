@@ -236,7 +236,9 @@ describe('expectSim — failure messages are actionable', () => {
   });
 
   /**
-   * The failure mode `holds` actually has in the shipped games (`AGENTS.md` §9 #5): every PoC
+   * The failure mode `holds` actually has in the shipped games (`AGENTS.md` §6.7, the `holds`
+   * entry — this used to cite a §9 row claiming `holds` "reports only its label", which was
+   * measured false and removed): every PoC
    * predicate walks `.query(...).one().get(...)`, which **throws** the moment the entity it names
    * is gone. That escaped `holds` unwrapped, so the reader got
    * `[aegis] QueryResult.one: expected exactly 1 match, got 0` — no label, no seed, no tick, and

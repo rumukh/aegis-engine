@@ -144,14 +144,25 @@ only after you have wondered why.
 ```
 npm install
 npm run build
-npm install
 ```
 
-The second `npm install` is not a typo. `@aegis/cli` declares `bin: { aegis: "./dist/main.js" }`,
-and npm only creates the `node_modules/.bin/aegis` link when that file already exists — which it
-does not on a clean clone until after the first build. Until then, `npx aegis` fails with
-`could not determine executable to run`. If you would rather not run install twice, every
-example below works with `node packages/cli/dist/main.js …` substituted for `aegis`.
+One install, not two. `@aegis/cli` declares `bin: { aegis: "bin/aegis.mjs" }`, and that file is
+committed — so npm links `node_modules/.bin/aegis` during install, before anything is built. Run a
+command before the build and it tells you so:
+
+```
+$ npx aegis --help
+[aegis] this checkout has no build yet: …\packages\cli\dist\main.js does not exist.
+Run `npm run build` from the repository root (`npm run verify` builds before it tests).
+$ echo $LASTEXITCODE
+69
+```
+
+Earlier revisions pointed `bin` straight at `dist/main.js`, which npm could not link on a clean
+clone because the target did not exist yet; `npx aegis` then died with `could not determine
+executable to run`, a message naming neither this package nor the build, and the documented
+workaround was to run `npm install` a second time. If you are reading that instruction anywhere,
+it is stale.
 
 Verify the CLI is live:
 
@@ -1722,8 +1733,7 @@ probe would only ever have told you about the one path it took.
 | 3   | **A spec the build excludes is invisible to `aegis test`** — but not because of where it lives. The CLI's default glob is `**/*.gametest.{js,mjs,cjs}` and is layout-agnostic: a hand-written `.mjs` dropped inside `test/` _is_ found. The real constraint is that a TypeScript spec must be **compiled**, and every `games/*/tsconfig.json` excludes `test`, so a `.ts` spec written there never becomes a file the glob can see. | Putting the spec somewhere the build compiles it — `games/<name>/src/<name>.gametest.ts` ([§6.6](#66-the-template)) — and reading the scan count in the summary. |
 | 4   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                                                                                                                                                                               | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                                     |
 | 5   | **A scaffolded `*.gametest.mjs` names its plugin as a string**, so `runGameTest` cannot run it directly (`plugin.components is not a function`) — only the CLI resolves strings.                                                                                                                                                                                                                                                    | Substituting the plugin object before calling `runGameTest` ([§6.5](#65-mutation-check-your-own-test)).                                                          |
-| 6   | **The `aegis` bin is not linked on a clean clone** until `npm run build` has run and `npm install` is repeated — npm only links a `bin` whose target already exists.                                                                                                                                                                                                                                                                | `npm install && npm run build && npm install`, or invoking `node packages/cli/dist/main.js`.                                                                     |
-| 7   | **A typo in a scene's `resources` id is silent, and the value still reaches the world.** Resource-id checking is opt-in and no shipped caller opts in, so `"gravty"` validates clean, runs clean, and is stored under the misspelling — where the mode that wanted `"gravity"` never looks. Unlike row 2 there is not even a `markers` line, because nothing knows the id was meant to be anything.                                 | Dumping resources with `aegis inspect --view world` and reading back the id you actually got, not the one you typed.                                             |
+| 6   | **A typo in a scene's `resources` id is silent, and the value still reaches the world.** Resource-id checking is opt-in and no shipped caller opts in, so `"gravty"` validates clean, runs clean, and is stored under the misspelling — where the mode that wanted `"gravity"` never looks. Unlike row 2 there is not even a `markers` line, because nothing knows the id was meant to be anything.                                 | Dumping resources with `aegis inspect --view world` and reading back the id you actually got, not the one you typed.                                             |
 
 The reason this section exists at all — and the reason [§6](#6-writing-a-game-test-that-can-actually-fail)
 is written the way it is — is a defect that entered this codebase from `docs/architecture.md` §7,

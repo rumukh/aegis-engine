@@ -494,7 +494,8 @@ describe('aegis scaffold produces a runnable game', () => {
   );
 
   /**
-   * Regression (`AGENTS.md` §9 #1): `scaffold game` used to write a standalone `<name>.tilemap.json`
+   * Regression (`AGENTS.md` §9, "A scene's tilemap must be inlined"): `scaffold game` used to
+   * write a standalone `<name>.tilemap.json`
    * next to the scene. **Nothing loads it** — there is no scene → tilemap reference in the format —
    * so an author could edit it all afternoon and the run would be byte-identical. A decoy artefact
    * in the one command whose whole job is "start here" is worse than no artefact.
@@ -544,7 +545,8 @@ describe('aegis scaffold produces a runnable game', () => {
   });
 
   /**
-   * Regression (`AGENTS.md` §9 #6): the scaffolded test named its plugin as the string
+   * Regression (`AGENTS.md` §9, "names its plugin as a string"): the scaffolded test named its
+   * plugin as the string
    * `'platformer'`, which only the CLI resolves — so `runGameTest(spec)` on the emitted file died
    * with `TypeError: plugin.components is not a function`. The generated file now resolves the
    * mode package when it can reach one, so the artefact the scaffold advertises is runnable by the

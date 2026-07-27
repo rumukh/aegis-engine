@@ -263,7 +263,8 @@ describe('runScene — live invariants', () => {
  * discovered `*.gametest.mjs`, a scaffolded template, a JSON-ish literal. Those name their plugin
  * as a **spec string** because only the CLI can resolve one. Unguarded, the string reached
  * `plugin.components()` and produced `TypeError: plugin.components is not a function` — a message
- * that mentions neither plugins nor strings nor who resolves them (`AGENTS.md` §9 #6).
+ * that mentions neither plugins nor strings nor who resolves them
+ * (`AGENTS.md` §9, "names its plugin as a string").
  */
 describe('runScene — a plugin that is not a ModePlugin', () => {
   it('names the string and who can resolve it', async () => {
