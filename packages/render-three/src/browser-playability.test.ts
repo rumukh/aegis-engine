@@ -92,17 +92,25 @@ const SAMPLE_EXCHANGES = 5;
  * call). Asserting on it would produce exactly the coin-flip red that cannot attribute anything.
  * It is measured and printed instead.
  *
- * What remains — restore, sync, hud — is the page's own work and is the same on any GPU. 8ms is
- * half a 60Hz frame: a page spending more than half its budget on bookkeeping cannot hold 60fps
- * however fast the hardware. Measured at shipped level scale across several runs: platformer
- * 0.50ms, iso 0.40ms, fps 1.10ms on a quiet machine and 3.20ms on a loaded one. A 4ms bound was
- * tried first and rejected on that last number — a budget that goes red because the machine is
- * busy cannot attribute anything, which is the failure this whole file exists to avoid.
+ * What remains — restore, sync, hud — is the page's own work. **The tight bound on it lives in
+ * `frame-pacing.test.ts`**, which measures `restore + adapter.sync` at shipped level scale in
+ * Node with no browser, no compositor and no GPU, and holds it to a 2ms median. That is the
+ * machine-independent guard; this one is its counterpart in the real page, where a *page-loop*
+ * regression the Node test cannot see — the frame callback doing its work more than once, say —
+ * would show up.
+ *
+ * So the number here is deliberately loose: **25ms**. Measured p95 at shipped level scale is
+ * 0.30-1.10ms on a quiet machine, but this is a browser on a box shared with other agents, and a
+ * `verify` run where vitest itself reported 440s of setup produced **18.3ms for a phase that
+ * costs 0.5ms in Node**. A bound tight enough to be satisfying would go red for machine load,
+ * which is a red nobody can attribute — the exact failure mode this file exists to avoid. The
+ * mutation that proves it is still a guard produces 75ms, so a 25ms ceiling keeps three times the
+ * margin over the noise and still catches the regression class.
  *
  * Watched red by syncing the adapter forty times per displayed frame: 75.00ms, and the failure
  * message names the phase that spent it (`sync 74.80`) rather than restating the total.
  */
-const PAGE_WORK_P95_BUDGET_MS = 8;
+const PAGE_WORK_P95_BUDGET_MS = 25;
 
 /**
  * Milliseconds between animation frames that the slowest 5% take — the number a human actually
@@ -411,10 +419,17 @@ describe('the simulation must still be advancing when the human looks away', () 
       const before = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
       const started = Date.now();
       await evaluate<null>(cdp, 'globalThis.aegis.resetTimings(); null');
-      await until<number>(
+      // Wait on *exchanges*, not only on frames: this test's claim is about the exchange loop, and
+      // a window of 40 frames can contain a single round trip on a fast page or on a loaded box.
+      // Asserting that the tick moved over a window that contained one exchange is a coin flip;
+      // over a window that contained several it is the property.
+      await until<string>(
         cdp,
-        'globalThis.aegis.samples().work.length',
-        (count) => count >= SAMPLE_FRAMES,
+        'JSON.stringify([globalThis.aegis.samples().work.length, globalThis.aegis.timings().snapshots])',
+        (value) => {
+          const [frames, snapshots] = JSON.parse(value) as [number, number];
+          return frames >= SAMPLE_FRAMES && snapshots >= SAMPLE_EXCHANGES;
+        },
         SAMPLE_TIMEOUT_MS,
       );
       const after = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
@@ -422,7 +437,6 @@ describe('the simulation must still be advancing when the human looks away', () 
         await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
       ) as Timings;
       cdp.close();
-
       const seconds = (Date.now() - started) / 1000;
       report(
         `${game.id.padEnd(11)} ${after - before} ticks over ${seconds.toFixed(1)}s ` +

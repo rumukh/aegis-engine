@@ -226,7 +226,22 @@ export function boot(config: BootConfig): void {
   const collector = createInputCollector({
     canvas,
     bindings: BINDINGS[mode],
-    pick: (x, y) => adapter.pick(x, y),
+    pick: (x, y) => {
+      // Aim the camera at the mirror's current state before unprojecting through it — the same
+      // freshness `AegisDebugHandle.project` needs, in the opposite direction. `applySnapshot`
+      // runs in the exchange's continuation and updates the mirror *without* syncing, so between
+      // a snapshot arriving and the next animation frame the camera is one world behind. A click
+      // in that window is unprojected through a camera aimed at a world that no longer exists.
+      //
+      // Measured in a live page while the operative walked the map: over 60 samples the camera
+      // was identical before and after a forced sync (0.0000 world units), so this window is
+      // narrow and was never observed to bite — the iso camera follows an *integer* cell, so it
+      // only moves when the actor crosses a cell boundary. The hole is structural rather than
+      // observed, and it is closed here because the cost is one sync per click: `pick` is invoked
+      // only from the collector's mousedown handler, never on pointer movement.
+      if (mounted) adapter.sync(mirror);
+      return adapter.pick(x, y);
+    },
     onCommand: (command) => {
       void postJson(`${config.api}/control`, { command: COMMANDS[command] }).catch(() => undefined);
     },

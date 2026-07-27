@@ -20,8 +20,11 @@
  * @packageDocumentation
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { createWorld } from '@aegis/core';
 import { platformerPlugin } from '@aegis/mode-platformer';
+import { isoPlugin } from '@aegis/mode-iso';
 import { fpsPlugin, LookState } from '@aegis/mode-fps';
+import { createRenderAdapter } from './adapters/index.js';
 import { startDevServer } from './dev-server.js';
 import type { DevServer } from './dev-server.js';
 import { MAX_CATCHUP_SECONDS, maxStepsFor } from './loop.js';
@@ -29,6 +32,11 @@ import { createLiveSession } from './session.js';
 import { BINDINGS } from './bindings.js';
 import type { GameDefinition } from './catalog.js';
 import { FPS_SCENE, PLATFORMER_SCENE } from './testing/scenes.js';
+import {
+  FPS_BUDGET_SCENE,
+  ISO_BUDGET_SCENE,
+  PLATFORMER_BUDGET_SCENE,
+} from './testing/budget-scenes.js';
 
 /** Fixed ticks per second every PoC runs at. */
 const TICK_RATE = 60;
@@ -136,6 +144,98 @@ describe('a slow picture must not make a slow game', () => {
     expect(maxStepsFor(120)).toBeGreaterThanOrEqual(CLAMP_SECONDS * 120);
     expect(maxStepsFor(1)).toBeGreaterThanOrEqual(1);
   });
+});
+
+describe('one displayed frame of rendering work, without a browser', () => {
+  /**
+   * Milliseconds the *median* frame may spend rebuilding the mirror world and reconciling the
+   * scene graph — the two halves of a displayed frame that are pure computation.
+   *
+   * This is the machine-independent half of the frame budget, and it exists because the browser
+   * half is not. `browser-playability.test.ts` measures the same work in a real page, and on a
+   * shared machine that measurement has been observed at **18.3ms for a phase that costs 0.5ms**
+   * (a `verify` run where vitest itself reported 440s of setup). A bound tight enough to be
+   * useful there would be a bound on how busy the box is.
+   *
+   * Here there is no browser, no compositor and no GPU: `RenderAdapter` is deliberately free of
+   * GPU state and constructs in Node, which is what makes this possible at all. Measured medians
+   * at shipped level scale: platformer 0.22ms, iso 0.15ms, fps 0.51ms. 2ms is roughly four times
+   * the worst of those and an eighth of a 60Hz frame.
+   */
+  const FRAME_COST_MEDIAN_BUDGET_MS = 2;
+  /**
+   * And a much looser bound on the tail.
+   *
+   * The tail here is garbage collection, not computation: every iteration rebuilds a whole
+   * `World` from a snapshot and reconciles a few hundred meshes, and this loop does it as fast as
+   * the machine allows rather than once per animation frame. Measured p95: platformer 2.08ms, fps
+   * 7.02ms against medians of 0.22 and 0.51 — a dozen iterations paying for the rest. A real
+   * frame cadence amortises that, so pinning the p95 tightly here would pin an artefact of the
+   * loop. It is still worth a ceiling, because a *pathological* tail would be real.
+   *
+   * The allocation churn behind it is the same finding the payload budget records, and it has the
+   * same fix: the page rebuilds the entire world every frame because the whole world is what
+   * crosses the wire.
+   */
+  const FRAME_COST_P95_BUDGET_MS = 12;
+  /** Iterations per case. Enough that one descheduled sample cannot move the percentile. */
+  const ITERATIONS = 200;
+
+  const CASES = [
+    { mode: 'platformer', plugin: platformerPlugin, scene: PLATFORMER_BUDGET_SCENE },
+    { mode: 'iso', plugin: isoPlugin, scene: ISO_BUDGET_SCENE },
+    { mode: 'fps', plugin: fpsPlugin, scene: FPS_BUDGET_SCENE },
+  ] as const;
+
+  for (const testCase of CASES) {
+    it(`${testCase.mode}: restoring and reconciling a shipped-size level stays inside budget`, () => {
+      const session = createLiveSession({ scene: testCase.scene, plugin: testCase.plugin });
+      for (let i = 0; i < 60; i++) session.step();
+      const snapshot = session.snapshot();
+      const mirror = createWorld({ seed: 0 });
+      mirror.restore(snapshot);
+      const adapter = createRenderAdapter(testCase.mode);
+      adapter.mount(mirror);
+
+      // Warm up: the first pass allocates every mesh in the level, which is not a frame cost.
+      for (let i = 0; i < 40; i++) {
+        mirror.restore(snapshot);
+        adapter.sync(mirror);
+      }
+
+      const samples: number[] = [];
+      for (let i = 0; i < ITERATIONS; i++) {
+        const started = performance.now();
+        mirror.restore(snapshot);
+        adapter.sync(mirror);
+        samples.push(performance.now() - started);
+      }
+      // Read the scene before disposing it: `dispose` clears the scene, so an assertion about
+      // what was drawn has to happen while it is still there.
+      const drawn = adapter.scene.children.length;
+      adapter.dispose();
+
+      // Anti-vacuity: an empty snapshot, or an adapter that built nothing, would sail through the
+      // budget below while measuring nothing at all. Deliberately mode-agnostic — iso actors
+      // carry `GridPosition` and no `Transform`, so a check for one component would silently
+      // hold for the wrong reason on one of the three.
+      expect(samples).toHaveLength(ITERATIONS);
+      expect(snapshot.entities.length).toBeGreaterThan(0);
+      expect(mirror.snapshot().entities.length).toBe(snapshot.entities.length);
+      expect(drawn).toBeGreaterThan(0);
+
+      const sorted = [...samples].sort((a, b) => a - b);
+      const p95 = sorted[Math.floor(sorted.length * 0.95)] as number;
+      const median = sorted[Math.floor(sorted.length * 0.5)] as number;
+      // eslint-disable-next-line no-console
+      console.log(
+        `      ${testCase.mode.padEnd(11)} restore+sync median ${median.toFixed(3)}ms, ` +
+          `p95 ${p95.toFixed(3)}ms over ${ITERATIONS} frames`,
+      );
+      expect(median).toBeLessThanOrEqual(FRAME_COST_MEDIAN_BUDGET_MS);
+      expect(p95).toBeLessThanOrEqual(FRAME_COST_P95_BUDGET_MS);
+    });
+  }
 });
 
 describe('one displayed frame of mouse motion belongs to every tick it covers', () => {
