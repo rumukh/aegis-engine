@@ -162,6 +162,29 @@ function systemBusyRatio(
   return total > 0 ? busy / total : undefined;
 }
 
+/**
+ * Open a window over which the whole box's CPU busy share will be measured; call the result to
+ * close it.
+ *
+ * The closer answers `{ ratio, windowMs }` and deliberately never a bare number. `os.cpus()` is
+ * cumulative since boot, so a ratio is a quotient of two deltas and says nothing without the span
+ * they were taken over: two readings 3ms apart divide noise by noise and produce a number that
+ * reads exactly like a result. This repository has now needed that denominator three times --
+ * landing #24 added `of ~N due` to the lag sampler after `2 sample(s)` was read as reassurance,
+ * landing #26 added `ratioFromMs` after an anchor of unbounded staleness diluted a ratio to 0.40 in
+ * the one fork it exists to resolve, and this is the third. Twice it was fixed by writing a better
+ * comment; making the window length structurally inseparable from the ratio is the repair that does
+ * not depend on the next caller having read either.
+ *
+ * `ratio` is `undefined` rather than `0` when the counters did not advance -- an unknown that says
+ * so, because `0` means "the box was idle" and would invert the conclusion.
+ */
+export function startSystemLoadWindow(): () => { ratio: number | undefined; windowMs: number } {
+  const from = systemCpu();
+  const openedAt = Date.now();
+  return () => ({ ratio: systemBusyRatio(from, systemCpu()), windowMs: Date.now() - openedAt });
+}
+
 const lagHistory: LagSample[] = [];
 
 /**

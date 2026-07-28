@@ -50,6 +50,7 @@ import {
   openPage,
   sleep,
   startEventLoopLagMonitor,
+  startSystemLoadWindow,
   until,
   waitForPaint,
 } from './browser.js';
@@ -417,6 +418,37 @@ let server: DevServer;
 let browser: LaunchedBrowser;
 /** When the hook started, so the machine-load line has a window to report over. */
 let hookStartedAt = Date.now();
+/**
+ * How long to watch the box before starting anything of ours.
+ *
+ * Long enough that the cumulative counters move by more than their own granularity, short enough
+ * to be free against a 240s hook budget. This is the one window in the file whose value is a
+ * measurement rather than an assertion, so it is not sized against a threshold.
+ */
+const BASELINE_WINDOW_MS = 500;
+/**
+ * Box CPU over three windows, each adding exactly one thing of ours, so the 87% has an owner.
+ *
+ * Run 30386790932 measured `node 0% / box 87%` on `windows-latest` and resolved landing #26's fork
+ * in the "oversubscribed" branch. **That confirms the box is busy and says nothing about who is
+ * making it busy** -- and the sentence #26 retired was wrong in exactly that second half, so
+ * concluding "it must be our browser" here without measuring would repeat the retired defect one
+ * turn further in. These three readings are the difference between the two claims:
+ *
+ *   rest     nothing of ours running          <- a neighbour, if this is already high
+ *   boot     + dev server + Chrome (blank)    <- our process tree, drawing nothing
+ *   painting + a page actually rendering      <- our render loop's own demand
+ *
+ * Reported, never asserted on. A threshold here would be a bound inside a band on a machine whose
+ * band is unknown -- the error this file has now made three times -- and the question is
+ * attribution, not regression.
+ */
+let loadRest: { ratio: number | undefined; windowMs: number } = { ratio: undefined, windowMs: 0 };
+let loadBoot: { ratio: number | undefined; windowMs: number } = { ratio: undefined, windowMs: 0 };
+let loadPainting: { ratio: number | undefined; windowMs: number } = {
+  ratio: undefined,
+  windowMs: 0,
+};
 /** The environment's own frame pacing, measured once on a page that does nothing. */
 let controlGapP95 = Number.NaN;
 /** The raw control gaps, kept so the control test can assert the measurement happened. */
@@ -426,9 +458,26 @@ let controlTimerTicks = 0;
 /** The page's own account of whether anything was expected to be drawn to it. */
 let controlVisibility = 'unmeasured';
 
+/** One window's reading, with the span it covers, because a ratio alone is not a measurement. */
+function describeWindow(label: string, w: { ratio?: number; windowMs: number }): string {
+  const share = w.ratio === undefined ? 'unmeasured' : `${Math.round(w.ratio * 100)}%`;
+  return `${label} ${share} over ${w.windowMs}ms`;
+}
+
 beforeAll(async () => {
   startEventLoopLagMonitor();
   hookStartedAt = Date.now();
+
+  // Window 1 of 3: the runner with nothing of ours on it. Taken first, before the dev server, so
+  // that a high reading here is unambiguously a neighbour rather than something we started. This
+  // is the load-bearing one -- it is the only reading that can distinguish "this runner is busy
+  // before we do anything" from "we make it busy", and no run in this project's history has ever
+  // taken it.
+  const restWindow = startSystemLoadWindow();
+  await sleep(BASELINE_WINDOW_MS);
+  loadRest = restWindow();
+
+  const bootWindow = startSystemLoadWindow();
   server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
   // NOT `uncapFrameRate`. That option removes Chrome's frame-rate limit, and this harness ran with
   // it from landing #17 until it was measured. It was added alongside the four occlusion flags that
@@ -469,6 +518,7 @@ beforeAll(async () => {
   // side's change and it is kept -- my branch passed 9335 here, which is exactly the hazard it
   // removes.
   browser = await launchBrowser({ viewport: VIEWPORT });
+  loadBoot = bootWindow();
 
   await closeAllPages(browser.port);
   const cdp = await openPage(browser.port, 'about:blank', VIEWPORT);
@@ -487,12 +537,23 @@ beforeAll(async () => {
   // warm-up figure for this machine, in the log, on every run -- rather than only a colour. That is
   // the difference between this and raising a deadline: the number that was previously invisible on
   // success is now recorded on success, which is the only way the next person can check it.
+  const paintWindow = startSystemLoadWindow();
   const paint = await waitForPaint(cdp);
+  loadPainting = paintWindow();
   console.log(
     `[playability] browser ready to paint after ${paint.ms}ms ` +
       `(${paint.polls} poll(s); ${paint.frames} frames and ${paint.timerTicks} timer ticks in the ` +
       `final second). On a warm runner this is ~1000ms; on a cold windows-latest it has been ` +
       `measured at up to 63s. ${describeLoad(hookStartedAt)}`,
+  );
+  // Attribution, not regression: who is making the box busy. Reported so that a later red is
+  // readable, and deliberately unasserted -- see the three windows' docblock above.
+  console.log(
+    `[playability] box CPU by phase -- ${describeWindow('at rest (nothing of ours running)', loadRest)}; ` +
+      `${describeWindow('booting (dev server + chrome, blank page)', loadBoot)}; ` +
+      `${describeWindow('painting (a page rendering)', loadPainting)}. ` +
+      `A high reading at rest is a neighbour on the runner; a low one at rest with a high one ` +
+      `later is our own demand, and the two have opposite fixes.`,
   );
 
   // Measured here rather than inside a test so every report below can print it, including when
@@ -738,17 +799,69 @@ describe('every per-test budget must be able to contain the deadlines inside it'
     // it to the hook is the whole point of the guard being executable.
     const controlSampleMs = 3_000;
     const contained =
-      LAUNCH_TIMEOUT_MS + NAVIGATION_TIMEOUT_MS + PAINT_TIMEOUT_MS + controlSampleMs;
+      LAUNCH_TIMEOUT_MS +
+      NAVIGATION_TIMEOUT_MS +
+      PAINT_TIMEOUT_MS +
+      controlSampleMs +
+      BASELINE_WINDOW_MS;
     expect(contained).toBeLessThan(BUDGET_BEFORE_ALL_MS);
     // Anti-vacuity: if the constants were ever imported as `undefined`, `NaN < 240000` is false and
     // this would fail — but a zeroed set would pass while proving nothing, so the floor is stated.
     expect(LAUNCH_TIMEOUT_MS).toBeGreaterThan(0);
     expect(NAVIGATION_TIMEOUT_MS).toBeGreaterThan(0);
     expect(PAINT_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(BASELINE_WINDOW_MS).toBeGreaterThan(0);
     // And the margin is stated, not left implicit. 18% was measured to be inside this quantity's own
     // load band on this machine, so containment alone is not enough: a budget that clears its floor
     // by less than the floor's own variance is a coin flip with an assertion attached.
     expect(contained * 1.5).toBeLessThan(BUDGET_BEFORE_ALL_MS);
+  });
+});
+
+describe('the box-CPU attribution windows must be live, whatever they read', () => {
+  // The three ratios themselves are reported and never asserted -- a threshold on how busy an
+  // unknown machine is would be a bound inside a band, which this file has now retired four times.
+  // But "reported, not asserted" is one letter away from "not measured", and an instrument that
+  // silently produces nothing reads exactly like one reporting nothing wrong. That is this
+  // repository's oldest and most-repeated defect, so what is asserted here is that the instrument
+  // ran: real windows, defined answers, and three readings that are genuinely three.
+  it('measured three real windows and answered for each', () => {
+    report(
+      `${describeWindow('rest', loadRest)} | ${describeWindow('boot', loadBoot)} | ` +
+        `${describeWindow('painting', loadPainting)}`,
+    );
+
+    // A ratio over a zero-length window divides two zero deltas. Landing #26 measured `os.cpus()`
+    // at 736.5us, so a window shorter than a few milliseconds is noise wearing a result's clothing.
+    for (const [label, w] of [
+      ['rest', loadRest],
+      ['boot', loadBoot],
+      ['painting', loadPainting],
+    ] as const) {
+      expect(w.windowMs, `the ${label} window covered ${w.windowMs}ms`).toBeGreaterThan(0);
+    }
+    // The rest window must actually bracket the deliberate pause. If it did not, the reading is of
+    // some other span and the word "rest" in the log is a claim nothing supports.
+    expect(loadRest.windowMs).toBeGreaterThanOrEqual(BASELINE_WINDOW_MS);
+
+    // `undefined` is the honest answer when the counters did not advance, and it must not be
+    // mistaken for a finished measurement -- `0%` would read as "the box was idle", which is the
+    // inversion `systemBusyRatio` returns `undefined` to avoid.
+    expect(loadRest.ratio, 'the rest window produced no box-CPU reading').toBeDefined();
+    expect(loadBoot.ratio, 'the boot window produced no box-CPU reading').toBeDefined();
+    expect(loadPainting.ratio, 'the painting window produced no box-CPU reading').toBeDefined();
+
+    // Anti-tautology, and the arm most likely to fire on a real defect. Three ratios computed from
+    // three different pairs of cumulative snapshots cannot be bit-identical unless a snapshot is
+    // being reused -- i.e. unless one value has been plumbed to three names, which is exactly the
+    // shape landing #26's M8 control caught in `systemRatio`. Identity rather than a magnitude, so
+    // this cannot become the fifth bound inside a band.
+    const distinct = new Set([loadRest.ratio, loadBoot.ratio, loadPainting.ratio]);
+    expect(
+      distinct.size,
+      `all three windows reported the same ratio (${String(loadRest.ratio)}), which three ` +
+        `independent quotients of cumulative counters do not do -- one snapshot is being reused.`,
+    ).toBeGreaterThan(1);
   });
 });
 
