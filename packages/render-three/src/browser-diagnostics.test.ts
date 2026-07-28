@@ -33,7 +33,11 @@ import {
   NAVIGATION_TIMEOUT_MS,
   ROUND_TRIP_HISTORY,
   TRANSPORT_TIMEOUT_MS,
+  PAINT_FRAMES_FLOOR,
+  PAINT_TIMEOUT_MS,
   classifyEvent,
+  paintVerdict,
+  waitForPaint,
   closeAllPages,
   evaluate,
   launchBrowser,
@@ -521,6 +525,144 @@ describe('the CDP event classifier', () => {
       text: 'the page crashed',
     });
   });
+});
+
+describe('the paint precondition', () => {
+  // `waitForPaint` exists because `windows-latest` does not paint for the first ~10-60s of a job,
+  // and nine cases in `browser-playability.test.ts` assumed it did. Seven of them then failed at
+  // their budgets with nothing to say (run 30359389307).
+  //
+  // The decision it makes cannot be driven from a browser. Nothing makes Chrome composite on demand
+  // and nothing makes it stop; the state that matters -- alive, executing, not being drawn -- is
+  // reachable only by getting lucky with a runner, and a path nobody can exercise is a path nobody
+  // can trust. So it is extracted and driven directly, exactly as `classifyEvent` was above.
+  //
+  // The distinction the second counter buys is the entire diagnosis and it is what makes this more
+  // than a retry: zero frames with a live timer is a page that is running and not composited, which
+  // waiting fixes; zero frames with a dead timer is a page that is not executing, which waiting does
+  // not fix and which must not be reported as though it were the same fault. Frames alone cannot
+  // tell those apart -- which is why the original instrument, which counted only frames, produced a
+  // number that read as a verdict on the launch flags for two landings.
+  it('separates a page that is not drawn from a page that is not running', () => {
+    expect(paintVerdict(0, 187)).toBe('warming');
+    expect(paintVerdict(0, 0)).toBe('not-executing');
+    // The arm without which both of the above are satisfied by a function that never says
+    // 'painting': the healthy reading, taken from a real warm windows-latest cell (run 30362144330,
+    // cell O.6 -- 192 frames against ~187 timer ticks in the same 3s window).
+    expect(paintVerdict(192, 187)).toBe('painting');
+  });
+
+  it('puts its threshold where a stalled page cannot clear it, and states the boundary', () => {
+    // The floor is a real decision and it is asserted at the boundary rather than in the middle,
+    // because an off-by-one here is the difference between waiting for a warm-up and declaring one.
+    expect(paintVerdict(PAINT_FRAMES_FLOOR, 100)).toBe('painting');
+    expect(paintVerdict(PAINT_FRAMES_FLOOR - 1, 100)).toBe('warming');
+    // The cold readings that produced the defect: run 30362542986 polled 3 frames at 7.7s (not yet
+    // painting) and 82 at 9.7s (painting). Both must be classified as they were measured, or the
+    // threshold is tuned against nothing.
+    expect(paintVerdict(3, 187)).toBe('warming');
+    expect(paintVerdict(82, 187)).toBe('painting');
+    // A page that is not executing must never be reported as running-but-not-drawn on the strength
+    // of its frame count alone. Stated because 'warming' is the verdict that causes a wait, and
+    // waiting on a page that is not executing spends 90s on a fault waiting cannot repair.
+    expect(paintVerdict(PAINT_FRAMES_FLOOR - 1, 0)).toBe('not-executing');
+  });
+
+  it('names both counters when it gives up, against a real page and a real browser', async () => {
+    // The end-to-end arm. The two above prove the decision; this proves the loop reaches it, reads
+    // real counters from a real renderer, and produces a failure a person can act on -- the property
+    // that was missing when eight cases timed out saying only that a condition was not met.
+    //
+    // **The first version of this case forced the failure with a 0ms deadline and did not fail.**
+    // The loop sleeps a full second before its first poll, by which time this box is painting, and
+    // the paint check precedes the deadline check -- so it returned `{ms: 1036, frames: 25}` and the
+    // control went red. That reasoning was written into a comment as though it were a measurement.
+    // It is recorded because the repair is strictly better than the thing it replaces: instead of
+    // starving the loop of time, take away the page's ability to paint, which is what actually
+    // happens on a cold `windows-latest` and which exercises the branch that matters.
+    const browser = await launchBrowser();
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+      try {
+        // A page that runs and is never drawn -- the `windows-latest` cold state reproduced rather
+        // than simulated. `requestAnimationFrame` accepts the callback and never calls it; every
+        // other clock is untouched, so the timer keeps counting and the two counters disagree
+        // exactly as they did in run 30362144330 (0 frames against ~187 ticks).
+        await evaluate<null>(cdp, 'globalThis.requestAnimationFrame = () => 0; null');
+        await expect(waitForPaint(cdp, 2_000)).rejects.toThrow(
+          /never started painting: 0 animation frames in the last second/,
+        );
+        // The interpretation, not just the count. This is the branch that says waiting is the right
+        // response, and it is the one a reader of a CI log needs to be able to tell from the other.
+        // Calling `waitForPaint` a second time here is deliberate: it is what found that the first
+        // version could not be called twice at all.
+        await expect(waitForPaint(cdp, 2_000)).rejects.toThrow(
+          /timer fired \d+ times over the same period, so the page is executing and is not being composited/,
+        );
+        // And the page's own self-description, so a failure on a runner nobody can attach to still
+        // says what the page was.
+        await expect(waitForPaint(cdp, 2_000)).rejects.toThrow(/The page describes itself as/);
+      } finally {
+        cdp.close();
+      }
+    } finally {
+      browser.process.kill();
+    }
+  }, 120_000);
+
+  it('says the page is not executing when it is not, rather than blaming compositing', async () => {
+    // The other branch, end to end. It matters because the two faults have different fixes and only
+    // one of them is repaired by waiting: a page that is alive and undrawn warms up, a page that is
+    // not running never will. An instrument that reported both as "not painting" would send the next
+    // reader of a windows log looking at compositing for a fault that is not there -- which is the
+    // whole history of this file.
+    const browser = await launchBrowser();
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+      try {
+        await evaluate<null>(
+          cdp,
+          `globalThis.requestAnimationFrame = () => 0;
+           globalThis.setTimeout = () => 0;
+           null`,
+        );
+        await expect(waitForPaint(cdp, 2_000)).rejects.toThrow(
+          /timer did not fire either, so the page is not executing at all/,
+        );
+      } finally {
+        cdp.close();
+      }
+    } finally {
+      browser.process.kill();
+    }
+  }, 120_000);
+
+  it('returns promptly on a page that is painting, so the wait is not a delay', async () => {
+    // The positive arm, load-bearing in the same way the accepting arm of the test auditor is:
+    // without it every assertion above is satisfied by a `waitForPaint` that always throws, and the
+    // paint precondition would be a 90s tax on every healthy run rather than a deadline that costs
+    // nothing when the condition already holds.
+    const browser = await launchBrowser();
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+      try {
+        const paint = await waitForPaint(cdp);
+        expect(paint.frames).toBeGreaterThanOrEqual(PAINT_FRAMES_FLOOR);
+        expect(paint.ms).toBeLessThan(PAINT_TIMEOUT_MS);
+        // Printed rather than asserted at one poll: this box paints immediately, but a cold period
+        // here would be a finding about this machine rather than a flake, and the only way anyone
+        // learns of it is if the number is in the log on a pass.
+        console.log(
+          `[paint] ready after ${paint.ms}ms in ${paint.polls} poll(s): ` +
+            `${paint.frames} frames, ${paint.timerTicks} timer ticks`,
+        );
+      } finally {
+        cdp.close();
+      }
+    } finally {
+      browser.process.kill();
+    }
+  }, 120_000);
 });
 
 /**

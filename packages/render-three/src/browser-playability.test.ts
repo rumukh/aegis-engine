@@ -42,12 +42,14 @@ import {
   FOCUS_TIMEOUT_MS,
   LAUNCH_TIMEOUT_MS,
   NAVIGATION_TIMEOUT_MS,
+  PAINT_TIMEOUT_MS,
   closeAllPages,
   evaluate,
   launchBrowser,
   openPage,
   sleep,
   until,
+  waitForPaint,
 } from './browser.js';
 import type { CdpSession, LaunchedBrowser } from './browser.js';
 import {
@@ -151,8 +153,8 @@ const SAMPLE_EXCHANGES = 3;
  *
  * The same rule applies one level further out and `ci.yml` was corrected with it: the job timeout
  * must exceed the sum of the test budgets it contains, or a mute *job* timeout simply replaces the
- * mute test timeout. Worst case for this file is 3 x 150 + 3 x 150 + 2 x 240 + 180 (`beforeAll`)
- * = 1560s = 26 minutes, still inside the 45-minute job timeout with the 1.5x margin asserted below.
+ * mute test timeout. Worst case for this file is 3 x 150 + 3 x 150 + 2 x 240 + 240 (`beforeAll`)
+ * = 1620s = 27 minutes, still inside the 45-minute job timeout with the 1.5x margin asserted below.
  *
  * None of this costs anything when the page is healthy: `until` returns the moment its condition
  * holds. A deadline is not a delay. This file's own measured cost is 72.7s for all nine cases.
@@ -167,6 +169,27 @@ const BUDGET_LIVENESS_MS = 150_000;
 
 /** Budget for a freeze case: launch 30 + nav 30 + focus 10 + boot 60 + four transitions at 20 = 210s. */
 const BUDGET_FREEZE_MS = 240_000;
+
+/**
+ * Budget for this file's `beforeAll`, stated once because two guards below audit it.
+ *
+ * It was three copies of `180_000` — the literal in force, plus one in each guard that checks it.
+ * That is the shared-mutable-index defect the cross-reference guard exists to prevent, sitting
+ * inside the instruments whose whole job is to notice when a number stops being true: raise the
+ * real budget and both audits keep passing against the old value, reporting containment they are no
+ * longer measuring. One source, read by everything.
+ *
+ * 240s, not 180s. The hook's floor grew by the paint precondition:
+ *
+ *     launch 30 + navigate 30 + PAINT_TIMEOUT_MS 90 + control sample 3 = 153s
+ *
+ * inside 180s that is 27s of margin — 18%, which is inside the band this quantity has been measured
+ * to swing across on a contended machine, so it is a bound that fails on someone else's commit.
+ * 240s gives 1.57x, above the 1.5x margin this file demands of `ci.yml` for the same reason. The
+ * job-timeout arithmetic below moves with it, and the job timeout has the headroom: worst case rises
+ * 1560s -> 1620s = 27 minutes against 45.
+ */
+const BUDGET_BEFORE_ALL_MS = 240_000;
 
 /**
  * Milliseconds of the page's **own bookkeeping** the slowest 5% of displayed frames may cost:
@@ -402,8 +425,14 @@ beforeAll(async () => {
   // That is also the mechanism behind run 30347429388's eight windows failures. `windows-latest`
   // has 2 vCPUs and a software rasteriser; scale a 0.7s no-op round trip by that and it crosses
   // `TRANSPORT_TIMEOUT_MS`, which is exactly what the log says -- `no reply to Runtime.evaluate
-  // (id 10) after 30000ms` -- while the blank control in the same run reported a healthy 2866fps,
-  // because a blank page has no render loop to starve anything with.
+  // (id 10) after 30000ms`.
+  //
+  // **The rest of that sentence used to read "while the blank control in the same run reported a
+  // healthy 2866fps, because a blank page has no render loop to starve anything with". That is
+  // refuted.** A blank page on a cold `windows-latest` reports 0fps with a perfectly healthy timer,
+  // whatever flags it was launched with, and the control's own reading depended on how far into the
+  // job it happened to run. See `PAINT_TIMEOUT_MS`, and the paint wait below which is why this hook
+  // no longer takes that on faith.
   //
   // Capped, every page holds the display cadence (median gap 31.3ms) and the simulation runs at
   // 160 ticks / 3s = 53Hz against its 60Hz nominal. That is a page a person could play.
@@ -414,12 +443,35 @@ beforeAll(async () => {
   // removes.
   browser = await launchBrowser({ viewport: VIEWPORT });
 
+  await closeAllPages(browser.port);
+  const cdp = await openPage(browser.port, 'about:blank', VIEWPORT);
+
+  // ## Verify the precondition every case below silently assumed
+  //
+  // Nine cases here measure frames. All nine took "the browser can paint" on faith, and on
+  // `windows-latest` that assumption is false for the first ~10-60s of a job -- so seven of them
+  // failed at their budgets with nothing to say, while the two that do not count frames passed.
+  //
+  // The cause is NOT the launch flags. That was believed for two landings and refuted by a control
+  // that held the flags fixed and varied only position: the same flags read 0 frames at 45s and 189
+  // frames at 82s in one job, with the page's own timer at ~187 in both. See `PAINT_TIMEOUT_MS`.
+  //
+  // So this waits for the condition and prints what it measured. A pass leaves evidence -- the true
+  // warm-up figure for this machine, in the log, on every run -- rather than only a colour. That is
+  // the difference between this and raising a deadline: the number that was previously invisible on
+  // success is now recorded on success, which is the only way the next person can check it.
+  const paint = await waitForPaint(cdp);
+  console.log(
+    `[playability] browser ready to paint after ${paint.ms}ms ` +
+      `(${paint.polls} poll(s); ${paint.frames} frames and ${paint.timerTicks} timer ticks in the ` +
+      `final second). On a warm runner this is ~1000ms; on a cold windows-latest it has been ` +
+      `measured at up to 63s.`,
+  );
+
   // Measured here rather than inside a test so every report below can print it, including when
   // the suite is run with a `-t` filter that would skip the control test itself. A number that
   // silently becomes NaN because a test did not run is the same shape of defect this file exists
   // to prevent, one level down.
-  await closeAllPages(browser.port);
-  const cdp = await openPage(browser.port, 'about:blank', VIEWPORT);
   await evaluate<null>(
     cdp,
     `globalThis.__gaps = [];
@@ -450,14 +502,13 @@ beforeAll(async () => {
   );
   controlGapP95 = percentile(controlGaps, 95);
   cdp.close();
-  // 180s, not 90s. This hook starts a dev server, launches Chrome and then deliberately sleeps
-  // 3000ms to sample a control frame rate, so its floor is fixed cost plus browser start-up. On
-  // `windows-latest` it was measured hitting 90s and timing out — and a hook that times out does
-  // not fail this file, it makes vitest report all nine cases as *skipped*, which reads as green.
-  // That is how a leg with zero browser coverage was reported passing (run 30324264768).
-  // windows-latest measured 5.6x slower than ubuntu-latest on the same commit, so the budget is
-  // sized for a machine slower still rather than for the one that happened to be fast enough.
-}, 180_000);
+  // The budget is `BUDGET_BEFORE_ALL_MS`, stated once at the top of this file with its arithmetic
+  // and read by the two guards that audit it. It was raised 90s -> 180s when `windows-latest` was
+  // measured hitting 90s here, and 180s -> 240s when this hook stopped assuming the browser can
+  // paint and started verifying it. A hook that times out does not fail this file: vitest reports
+  // all nine cases as *skipped*, and skipped reads as green — which is how a windows leg with zero
+  // browser coverage was reported passing in 3m36s (run 30324264768).
+}, BUDGET_BEFORE_ALL_MS);
 
 afterAll(async () => {
   browser?.process.kill();
@@ -594,9 +645,8 @@ describe('every per-test budget must be able to contain the deadlines inside it'
     const jobMs = Number(match[1]) * 60_000;
 
     // Worst case for this file: three of each sample-based case, two freeze cases, plus the hook.
-    const beforeAllMs = 180_000;
     const worstCaseMs =
-      3 * BUDGET_SAMPLE_MS + 3 * BUDGET_LIVENESS_MS + 2 * BUDGET_FREEZE_MS + beforeAllMs;
+      3 * BUDGET_SAMPLE_MS + 3 * BUDGET_LIVENESS_MS + 2 * BUDGET_FREEZE_MS + BUDGET_BEFORE_ALL_MS;
     report(
       `ci.yml timeout ${jobMs / 60_000}min vs this file's worst case ${Math.round(worstCaseMs / 60_000)}min`,
     );
@@ -645,14 +695,25 @@ describe('every per-test budget must be able to contain the deadlines inside it'
     // It fails in the worst available way: a hook that times out does not fail its file, vitest
     // reports the file's cases as *skipped*, and skipped reads as green. Run 30324264768 reported a
     // windows leg passing in 3m36s with `9 tests | 9 skipped` for exactly this reason.
-    const hookMs = 180_000;
+    //
+    // `PAINT_TIMEOUT_MS` is in this sum because the hook now *verifies* that the browser can paint
+    // rather than assuming it. That deadline is the largest term here, and a term that large added
+    // to a budget nobody recomputed is precisely how `LAUNCH_TIMEOUT_MS` came to sit outside the
+    // arithmetic it belonged in (landing #18). Adding it to the guard in the same commit that adds
+    // it to the hook is the whole point of the guard being executable.
     const controlSampleMs = 3_000;
-    const contained = LAUNCH_TIMEOUT_MS + NAVIGATION_TIMEOUT_MS + controlSampleMs;
-    expect(contained).toBeLessThan(hookMs);
-    // Anti-vacuity: if the constants were ever imported as `undefined`, `NaN < 180000` is false and
-    // this would fail — but a zeroed pair would pass while proving nothing, so the floor is stated.
+    const contained =
+      LAUNCH_TIMEOUT_MS + NAVIGATION_TIMEOUT_MS + PAINT_TIMEOUT_MS + controlSampleMs;
+    expect(contained).toBeLessThan(BUDGET_BEFORE_ALL_MS);
+    // Anti-vacuity: if the constants were ever imported as `undefined`, `NaN < 240000` is false and
+    // this would fail — but a zeroed set would pass while proving nothing, so the floor is stated.
     expect(LAUNCH_TIMEOUT_MS).toBeGreaterThan(0);
     expect(NAVIGATION_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(PAINT_TIMEOUT_MS).toBeGreaterThan(0);
+    // And the margin is stated, not left implicit. 18% was measured to be inside this quantity's own
+    // load band on this machine, so containment alone is not enough: a budget that clears its floor
+    // by less than the floor's own variance is a coin flip with an assertion attached.
+    expect(contained * 1.5).toBeLessThan(BUDGET_BEFORE_ALL_MS);
   });
 });
 

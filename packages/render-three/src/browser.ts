@@ -489,6 +489,148 @@ export const FOCUS_TIMEOUT_MS = 10_000;
  */
 export const LAUNCH_TIMEOUT_MS = 30_000;
 
+/**
+ * How long to wait for a freshly launched browser to become capable of painting, in milliseconds.
+ *
+ * ## This exists because the flags were never the cause, and three probes were needed to see it
+ *
+ * `windows-latest` was believed to need launch flags to paint at all. Landing #17 measured a blank
+ * page going from 0fps to 3861fps when seven flags were added at once and credited four of them;
+ * landing #20 removed the other three on that credit. Both readings were confounded, and the
+ * confounder was **measurement order**.
+ *
+ * The control that settled it held the flags fixed and varied only position (CI run 30362144330,
+ * `windows-latest`, occlusion flags only in both blocks):
+ *
+ *     O.2   0 frames @44.9s        FV.1  0   @60.0s        O.6   192 @82.5s
+ *     O.3   0 frames @48.7s        FV.2  117 @63.7s        O.7   193 @86.7s
+ *     O.4   0 frames @52.4s        FV.3  143 @68.4s        O.8   186
+ *     O.5   0 frames @56.2s        FV.4  167 @73.9s        O.9   187
+ *
+ * The trailing block has the **same flags** as the leading one and reads 189 where it read 0.
+ * Meanwhile the page's timer fired ~187 times and the 3s window took 3000ms of wall clock in every
+ * cell: the page runs perfectly and is simply not drawn. `ubuntu-latest` painted from its first
+ * launch at 10.7s in the same run and has never had a cold period.
+ *
+ * A follow-up (run 30362542986) asked the only question that determines the fix -- does a page that
+ * is not painting start painting if you *wait*:
+ *
+ *     poll @7.7s    3 frames in a 2s window     <- not painting
+ *     poll @9.7s   82 frames in a 2s window     <- painting
+ *     a fresh browser @13.7s: 187 frames/3s; another @18.0s: 194 frames/3s
+ *
+ * Yes, and once the runner is warm every subsequent browser paints from launch.
+ *
+ * **What governs the cold period is NOT established.** Across four probe runs `windows-latest`
+ * warmed at ~10s twice and ~40-60s twice. Whether that is elapsed time, cumulative browser work, or
+ * a consequence of a failed first launch is unknown and is recorded as unknown. This deadline does
+ * not depend on knowing: it measures the condition directly and waits for it, which is the same
+ * move that replaced guessing at navigation with asserting arrival.
+ *
+ * 90s is ~1.4x the longest cold period observed (63s) and sits inside the hook budget that contains
+ * it. It costs nothing on a warm runner or on Linux -- {@link waitForPaint} returns on its first
+ * poll -- and is only ever spent when the alternative is nine cases failing mute.
+ */
+export const PAINT_TIMEOUT_MS = 90_000;
+
+/** Frames a one-second window must show before the browser counts as painting. */
+export const PAINT_FRAMES_FLOOR = 10;
+
+/**
+ * What a pair of counters says about a page: being drawn, running but not drawn, or not running.
+ *
+ * Separated from the waiting loop and exported so it can be driven over every shape directly. No
+ * browser produces "alive but never composited" on demand, and a decision path that can only be
+ * exercised by getting lucky with a CI runner is one nobody can trust -- the same reason
+ * {@link classifyEvent} was extracted in landing #15.
+ *
+ * The distinction the two counters buy is the whole diagnosis, and it is why frames alone will not
+ * do. Zero frames with a healthy timer is a page that is alive and not composited, which waiting
+ * fixes. Zero frames with a dead timer is a page that is not executing, which waiting does not fix
+ * and which must not be reported as though it were the same thing.
+ */
+export type PaintVerdict = 'painting' | 'warming' | 'not-executing';
+
+export function paintVerdict(frames: number, timerTicks: number): PaintVerdict {
+  if (frames >= PAINT_FRAMES_FLOOR) return 'painting';
+  if (timerTicks > 0) return 'warming';
+  return 'not-executing';
+}
+
+/**
+ * Wait until `cdp`'s page actually paints, and return how long that took.
+ *
+ * Installs two independent clocks -- `requestAnimationFrame`, which stops when compositing stops,
+ * and `setTimeout`, which does not -- and polls both. Throws a message naming both counters and the
+ * verdict, so a failure says which of the two failure modes happened rather than only that a
+ * condition was not met.
+ *
+ * Deliberately NOT inside `launchBrowser` or `openPage`. `poc/capture.mjs` and the diagnostics
+ * suite launch browsers whose cases do not depend on compositing at all, and making every caller
+ * pay a paint wait for one caller's precondition is the mistake landing #18 avoided when it put the
+ * focus wait in the test rather than in `openPage`.
+ */
+export async function waitForPaint(
+  cdp: CdpSession,
+  timeoutMs = PAINT_TIMEOUT_MS,
+): Promise<{ ms: number; frames: number; timerTicks: number; polls: number }> {
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  // Idempotent by construction, and that is not tidiness. The first version declared its callbacks
+  // with `const` at the top level of the evaluate, so a *second* call against the same page died
+  // with `SyntaxError: Identifier 'paintStep' has already been declared` -- a message about nothing
+  // that matters, in place of the measurement. Found by the control below on its second assertion.
+  // Any caller that retries, or that waits once for a blank page and again after navigating, would
+  // have hit it. The counters are reset on every call; the two chains are installed once, because a
+  // second chain would double the frame count and quietly halve the threshold.
+  await evaluate<null>(
+    cdp,
+    `(() => {
+       globalThis.__paintFrames = 0;
+       globalThis.__paintTicks = 0;
+       if (globalThis.__paintInstalled === true) return null;
+       globalThis.__paintInstalled = true;
+       const step = () => {
+         globalThis.__paintFrames += 1;
+         globalThis.requestAnimationFrame(step);
+       };
+       globalThis.requestAnimationFrame(step);
+       const timer = () => {
+         globalThis.__paintTicks += 1;
+         globalThis.setTimeout(timer, 16);
+       };
+       globalThis.setTimeout(timer, 16);
+       return null;
+     })()`,
+  );
+  let polls = 0;
+  let lastFrames = 0;
+  for (;;) {
+    await sleep(1000);
+    polls += 1;
+    const total = await evaluate<number>(cdp, 'globalThis.__paintFrames');
+    const timerTicks = await evaluate<number>(cdp, 'globalThis.__paintTicks');
+    // Frames drawn in THIS window, not since installation. A page that painted briefly and stopped
+    // must not be able to satisfy this out of a total it accumulated a minute ago.
+    const inWindow = total - lastFrames;
+    lastFrames = total;
+    if (paintVerdict(inWindow, timerTicks) === 'painting') {
+      return { ms: Date.now() - started, frames: inWindow, timerTicks, polls };
+    }
+    if (Date.now() > deadline) {
+      const because =
+        paintVerdict(inWindow, timerTicks) === 'warming'
+          ? `its timer fired ${timerTicks} times over the same period, so the page is executing and is not being composited`
+          : `its timer did not fire either, so the page is not executing at all -- waiting will not fix that and the cause is not compositing`;
+      throw new Error(
+        `[aegis:render-three] the browser never started painting: ${inWindow} animation frames in ` +
+          `the last second, after ${timeoutMs}ms and ${polls} polls, and ${because}. ` +
+          `The page describes itself as:\n${await describePage(cdp)}`,
+      );
+    }
+  }
+}
+
 /** Poll `expression` until `accept` returns true, or throw on timeout. */
 export async function until<T>(
   cdp: CdpSession,
@@ -609,26 +751,41 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--disable-extensions',
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
-    // A headless window that Chrome believes nobody can see is a window Chrome stops drawing --
-    // and when compositing stops, `requestAnimationFrame` stops with it. The page stays alive,
-    // timers keep firing, nothing throws; there are simply no frames.
+    // These four remove Chrome's background/occlusion throttles. **They are NOT what makes
+    // `windows-latest` paint, and believing they were cost two landings and four CI runs.**
     //
-    // Measured on windows-latest, run 30335228246, by this file's own anti-vacuity control:
+    // The original evidence was a blank-page control going 0fps -> 3861fps on run 30335228246 when
+    // seven flags were added at once, credited to these four. That reading was confounded: nothing
+    // isolated a subset, and the variable that actually moved was **when in the job the measurement
+    // was taken**. The control that settled it (run 30362144330) held the flags fixed and varied
+    // only position -- blocks of these four alone, then two more flags, then these four again:
     //
-    //     control (blank page): 0 fps, median gap 0.0ms, p95 0.0ms
+    //     leading block, these flags only:   0, 0, 0, 0 frames/3s   at 45-56s into the job
+    //     trailing block, THE SAME FLAGS:  192, 193, 186, 187, 189  at 82s+
     //
-    // Zero callbacks in a three-second window on a page doing nothing, while ubuntu-latest passed
-    // the same commit. `CalculateNativeWinOcclusion` is Windows-only, which is the shape of the
-    // split; the other three cover the neighbouring throttles that produce the same symptom, so
-    // that a still-zero reading rules out the whole family rather than one member of it.
+    // The page's own `setTimeout` fired ~187 times and the window took 3000ms of wall clock in every
+    // cell, so the page runs perfectly throughout and is simply not drawn for the first stretch of a
+    // windows job. `ubuntu-latest` painted from its first launch in the same run and has never shown
+    // a cold period. Waiting is what fixes it -- see {@link waitForPaint}, which is the actual repair
+    // and which verifies the condition instead of assuming any of this.
     //
-    // Unconditional rather than platform-gated on purpose: a branch only one CI leg ever executes
-    // is a branch nobody can debug from a local machine, and none of these can *reduce* the frame
-    // rate anywhere -- they only remove throttling.
+    // They are kept because none of them can *reduce* a frame rate -- they only remove throttling --
+    // and because a warm-up that is merely shortened is still worth having. What is removed is the
+    // claim that they are load-bearing. Unconditional rather than platform-gated on purpose: a
+    // branch only one CI leg ever executes is a branch nobody can debug from a local machine.
     '--disable-features=CalculateNativeWinOcclusion',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
     '--disable-background-timer-throttling',
+    // Dead option -- nothing in the repository passes `uncapFrameRate`, and it must stay that way.
+    // Landing #20 removed it from the one caller after measuring a 60x dilation of a no-op CDP round
+    // trip. Probe 1 (run 30361185588) then isolated which pair does the damage: `--disable-frame-
+    // rate-limit` together with `--run-all-compositor-stages-before-draw` produced an unbounded rAF
+    // spin -- 41 892 frames in a nominal 3s window that took 7.5s of wall clock -- starving the
+    // transport until one round trip took **19 002ms**, against a 30s transport deadline. That is
+    // run 30340124068's eight mute timeouts reproduced in isolation, and it is the one real finding
+    // of the three flag probes. Kept rather than deleted so the measurement stays attached to the
+    // thing it is about; `browser-playability.test.ts` pins that no call here re-enables it.
     ...(options.uncapFrameRate === true
       ? [
           '--disable-frame-rate-limit',
