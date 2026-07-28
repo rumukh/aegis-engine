@@ -23,7 +23,7 @@
  * suite was measuring the wrong loop.
  * @packageDocumentation
  */
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -928,6 +928,26 @@ describe('the simulation must still be advancing when the human looks away', () 
  * in the console. That is indistinguishable from a frozen game, and it is the only way the guard
  * can latch. Serving the page *through* the proxy means its relative `/api/...` calls go through
  * it too, so this reproduces the failure exactly rather than approximating it.
+ *
+ * **It streams.** It used to forward every request with `fetch()` and `await upstream.text()`,
+ * which buffered each body end to end before answering. Only `/frame` is ever intercepted, but
+ * "serve the page through the proxy" means *everything* goes through it: the HTML, thirty-odd
+ * `@aegis` ES modules, and a 1.2 MB `three.module.js` — all buffered, all decoded to strings, all
+ * on the single event loop that is simultaneously hosting the dev server and driving CDP.
+ *
+ * That was not a tidiness problem. `windows-latest` run 30377421271 failed both cases in this
+ * describe with the page's own resource timings reporting modules arriving at 41 546, 54 727,
+ * 62 417 and 66 669 ms — a queue draining monotonically under starvation, past the 60s boot wait.
+ * The same run logged four `500 Internal Server Error`s from this proxy, and the mechanism is the
+ * other half of the same choice: `fetch` applies a 10s **connect** timeout by default, so a
+ * starved loopback connect fails the whole forward. `http.request` applies no such deadline and
+ * copies no bodies, so a slow box makes this proxy slow rather than making it fail.
+ *
+ * The 500 path also names its cause now. It read `.catch(() => { ...writeHead(500); end(); })`,
+ * with the error bound to nothing — the identical defect `d77b07a` had just repaired one layer
+ * down in `dev-server.ts`, sitting in the component that produced that run's most specific
+ * evidence. An error handler is the one path nobody exercises, so a handler that destroys its
+ * input looks exactly like a handler that works.
  */
 function stallingProxy(target: string): {
   server: Server;
@@ -936,50 +956,76 @@ function stallingProxy(target: string): {
   rejectNext(count: number): void;
   stalled(): number;
   rejected(): number;
+  failures(): readonly string[];
 } {
   let stall = false;
   let rejectsLeft = 0;
   let stalledCount = 0;
   let rejectedCount = 0;
+  const failed: string[] = [];
   const held: ServerResponse[] = [];
+  const upstream = new URL(target);
+
+  /** Report a forwarding failure to stderr *and* to the test, rather than answering an empty 500. */
+  const fail = (error: unknown, request: IncomingMessage, response: ServerResponse): void => {
+    const detail =
+      error instanceof Error ? `${error.name}: ${error.message}` : `non-Error: ${String(error)}`;
+    const line = `${request.method ?? '(no method)'} ${request.url ?? '(no url)'} -> ${detail}`;
+    failed.push(line);
+    console.error(`[freeze test proxy] ${line}`);
+    if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' });
+    response.end(detail);
+  };
 
   const proxy = createServer((request: IncomingMessage, response: ServerResponse) => {
-    void (async () => {
-      const isFrame = (request.url ?? '').endsWith('/frame');
-      if (stall && isFrame) {
-        stall = false;
-        stalledCount++;
-        // Held open and never answered: exactly the shape that latches the guard.
-        held.push(response);
-        return;
-      }
-      if (rejectsLeft > 0 && isFrame) {
-        rejectsLeft--;
-        rejectedCount++;
-        // A settled *failure*, which is the other half of the guard's contract: `.finally` must
-        // clear `inFlight` on the error path too, or one bad response freezes the game for good.
-        response.writeHead(503, { 'content-type': 'application/json' });
-        response.end('{"error":"injected"}');
-        return;
-      }
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(chunk as Buffer);
-      const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
-      const upstream = await fetch(`${target}${request.url ?? '/'}`, {
-        method: request.method ?? 'GET',
-        headers: { 'content-type': request.headers['content-type'] ?? 'application/json' },
-        ...(body !== undefined && request.method === 'POST' ? { body } : {}),
-      });
-      const text = await upstream.text();
-      response.writeHead(upstream.status, {
-        'content-type': upstream.headers.get('content-type') ?? 'text/plain',
-        'cache-control': 'no-store',
-      });
-      response.end(text);
-    })().catch(() => {
-      if (!response.headersSent) response.writeHead(500);
-      response.end();
+    const isFrame = (request.url ?? '').endsWith('/frame');
+    if (stall && isFrame) {
+      stall = false;
+      stalledCount++;
+      // Held open and never answered: exactly the shape that latches the guard.
+      held.push(response);
+      return;
+    }
+    if (rejectsLeft > 0 && isFrame) {
+      rejectsLeft--;
+      rejectedCount++;
+      // A settled *failure*, which is the other half of the guard's contract: `.finally` must
+      // clear `inFlight` on the error path too, or one bad response freezes the game for good.
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end('{"error":"injected"}');
+      return;
+    }
+
+    // Everything else is forwarded verbatim, header for header and byte for byte, without ever
+    // holding a whole body in memory. Upstream's own `cache-control: no-store` and `content-type`
+    // travel with it, so the page sees what the dev server actually said.
+    const forwarded = httpRequest({
+      host: upstream.hostname,
+      port: upstream.port,
+      method: request.method ?? 'GET',
+      path: request.url ?? '/',
+      headers: { ...request.headers, host: upstream.host },
     });
+
+    // The page's exchange carries a 2s AbortController, so a client that walks away mid-request is
+    // ordinary traffic here, not a fault. Reporting it as one would fill the log with noise on
+    // exactly the loaded machine where the real failures need to be legible.
+    let clientGone = false;
+    response.on('close', () => {
+      if (!response.writableEnded) {
+        clientGone = true;
+        forwarded.destroy();
+      }
+    });
+    forwarded.on('error', (error: unknown) => {
+      if (!clientGone) fail(error, request, response);
+    });
+    forwarded.on('response', (answer: IncomingMessage) => {
+      response.writeHead(answer.statusCode ?? 502, answer.headers);
+      answer.pipe(response);
+    });
+    request.on('error', () => forwarded.destroy());
+    request.pipe(forwarded);
   });
 
   const url = new Promise<string>((done) => {
@@ -1005,7 +1051,23 @@ function stallingProxy(target: string): {
     rejected(): number {
       return rejectedCount;
     },
+    failures(): readonly string[] {
+      return failed;
+    },
   };
+}
+
+/**
+ * Render whatever the proxy failed to forward, for a failure message that has to explain itself.
+ *
+ * Silence here is itself a finding: it says the page's own boot or exchange loop is the subject,
+ * and that the transport underneath it did what it was asked.
+ */
+function describeProxyFailures(proxy: { failures(): readonly string[] }): string {
+  const failures = proxy.failures();
+  return failures.length === 0
+    ? ' · proxy forwarded everything it was asked to'
+    : ` · proxy failed ${failures.length} request(s): ${failures.slice(0, 5).join(' | ')}`;
 }
 
 /**
@@ -1135,9 +1197,11 @@ describe('a stalled frame request must not freeze the game', () => {
         expect(proxy.stalled()).toBe(1);
         cdp.close();
       } catch (error) {
-        // A failure here must say which transition never arrived, not just that a wait expired.
+        // A failure here must say which transition never arrived, not just that a wait expired —
+        // and, since this proxy is what serves the page, whether it was the proxy that broke.
         report(
-          `freeze/stall FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
+          `freeze/stall FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}` +
+            describeProxyFailures(proxy),
         );
         throw error;
       } finally {
@@ -1220,7 +1284,8 @@ describe('a stalled frame request must not freeze the game', () => {
         cdp.close();
       } catch (error) {
         report(
-          `freeze/reject FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
+          `freeze/reject FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}` +
+            describeProxyFailures(proxy),
         );
         throw error;
       } finally {

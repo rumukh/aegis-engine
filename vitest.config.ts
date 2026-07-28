@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vitest/config';
+import { defaultExclude, defineConfig } from 'vitest/config';
 
 /** Absolute path to a package's TypeScript source entry point. */
 const src = (path: string): string => fileURLToPath(new URL(`./packages/${path}`, import.meta.url));
@@ -33,27 +33,113 @@ const aegisSourceAliases = [
   { find: /^@aegis\/cli$/, replacement: src('cli/src/index.ts') },
 ];
 
+/**
+ * Test files that launch a real Chromium, and must therefore run with the machine to themselves.
+ *
+ * This is the fix for the only failure this repository's CI has ever produced repeatedly. Every
+ * red `windows-latest` leg for thirteen consecutive pushes to `main` failed in exactly one file,
+ * `browser-playability.test.ts`, while `ubuntu-latest` ran the identical 72 files and 1020 tests
+ * green. Run 30377421271 is the representative measurement:
+ *
+ *      leg                suite      browser-playability.test.ts   result
+ *      ubuntu-latest      147.7s     47.7s, 16/16                  green
+ *      windows-latest     729.5s     607.3s, 9/16                  red
+ *
+ * Not one of the seven failures was a statement about the product. Two were CDP requests that
+ * never came back; three were the file's own ratio of failed to successful page exchanges; two
+ * were boot waits expiring with the page's resource timings showing ES modules arriving at 41 546,
+ * 54 727, 62 417 and 66 669 ms — a queue draining monotonically. And the file's own CPU sampler
+ * named the cause in the log, in the first failure, before anyone read the code:
+ *
+ *      "this process held a CPU only 0% of the window — it was NOT SCHEDULED, so the box is
+ *       oversubscribed by something outside this process."
+ *
+ * *Outside this process* was the rest of this suite. Vitest's default pool schedules one worker
+ * per available core and had ~70 other files to place, so on a 4-vCPU runner the worker hosting
+ * the dev server and driving CDP was competing with the whole workspace **and** with the Chromium
+ * and SwiftShader processes it had just spawned. Chrome's renderer is not a vitest worker; the
+ * pool cannot account for it, so a browser test is oversubscribed by construction wherever cores
+ * are scarce. Ubuntu survived it because its runners are faster, which is why this reproduces on
+ * one leg only and never on a 16-core development box.
+ *
+ * `groupOrder` makes the ordering explicit instead: everything else runs as group 0, then these
+ * files run alone as group 1, one at a time. That trades a few minutes of wall clock for the only
+ * condition under which a wall-clock measurement means anything. A frame-budget assertion on a
+ * box that is not scheduling the process is not a slow test — it is an instrument reporting on
+ * something other than its subject, and no threshold can repair that.
+ *
+ * Keep this list in step with reality: `browser-project-membership.test.ts` fails if any test file
+ * calls `launchBrowser(` and is not named here.
+ */
+const BROWSER_TEST_FILES = [
+  'packages/render-three/src/browser-playability.test.ts',
+  'packages/render-three/src/browser-diagnostics.test.ts',
+];
+
+/**
+ * The whole workspace is the gate (docs/working-agreement.md §3): every package *and* every
+ * PoC game under `games`. The games are what CHARTER §4.3 means by "all three PoCs complete
+ * their scripted playthrough headlessly in CI, and assert on gameplay outcomes", so their
+ * tests are discovered here — not by a per-game vitest config, and not through a shim
+ * parked inside a `packages/mode-<x>` directory.
+ *
+ * The root `test/` entry covers checks whose subject is the *repository*, not any one
+ * package: today, that every code template in `AGENTS.md` is still a verbatim quote of a file
+ * this gate runs. Those belong to whoever owns the root documents — the PM — and putting them
+ * in a package would hand the guard to an owner who does not own the thing guarded. Adding
+ * the glob is what keeps that directory from being an un-gated tree at the repo root, which
+ * is the reason a scaffolded `ledge-hop/` was deliberately not committed.
+ */
+const WORKSPACE_TESTS = [
+  'packages/*/src/**/*.{test,spec}.ts',
+  'packages/*/test/**/*.{test,spec}.ts',
+  'games/*/src/**/*.{test,spec}.ts',
+  'games/*/test/**/*.{test,spec}.ts',
+  'test/**/*.{test,spec}.ts',
+];
+
 export default defineConfig({
   resolve: { alias: aegisSourceAliases },
   test: {
-    // The whole workspace is the gate (docs/working-agreement.md §3): every package *and* every
-    // PoC game under `games`. The games are what CHARTER §4.3 means by "all three PoCs complete
-    // their scripted playthrough headlessly in CI, and assert on gameplay outcomes", so their
-    // tests are discovered here — not by a per-game vitest config, and not through a shim
-    // parked inside a `packages/mode-<x>` directory.
-    //
-    // The root `test/` entry covers checks whose subject is the *repository*, not any one
-    // package: today, that every code template in `AGENTS.md` is still a verbatim quote of a file
-    // this gate runs. Those belong to whoever owns the root documents — the PM — and putting them
-    // in a package would hand the guard to an owner who does not own the thing guarded. Adding
-    // the glob is what keeps that directory from being an un-gated tree at the repo root, which
-    // is the reason a scaffolded `ledge-hop/` was deliberately not committed.
-    include: [
-      'packages/*/src/**/*.{test,spec}.ts',
-      'packages/*/test/**/*.{test,spec}.ts',
-      'games/*/src/**/*.{test,spec}.ts',
-      'games/*/test/**/*.{test,spec}.ts',
-      'test/**/*.{test,spec}.ts',
+    // Both projects below inherit everything in this block via `extends: true`, including the
+    // `@aegis/*` source aliases above. The two `include` lists partition `WORKSPACE_TESTS`, so
+    // the corpus the auditor counts is unchanged by the split — `scripts/audit-test-report.mjs`
+    // floors it at 60 files and 900 tests precisely so a partition that silently loses a slice
+    // cannot read as green.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'suite',
+          include: WORKSPACE_TESTS,
+          // Replacing `exclude` replaces vitest's default, so the defaults come along explicitly.
+          exclude: [...defaultExclude, ...BROWSER_TEST_FILES],
+          sequence: { groupOrder: 0 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'browser',
+          include: BROWSER_TEST_FILES,
+          // Runs after group 0 has finished, and one file at a time within itself: two files that
+          // each launch Chrome are as bad a pairing as either is with the rest of the suite.
+          //
+          // `singleFork` rather than the more obvious `fileParallelism: false`, which vitest lists
+          // in `NonProjectOptions` — it is settable only at root level, where it would serialize
+          // the whole suite. Set on a project it type-errors, and had it been accepted it would
+          // have been worse than useless: measured on the first green run of this split, the two
+          // browser files were correctly separated from the other 70 and then ran 20–80s and
+          // 29–46s, overlapping each other for seventeen seconds. Half a fix that reports as a
+          // whole one is the failure mode this repository is most careful about, so the setting
+          // that does the work is pinned by `test/browser-project-membership.test.ts`.
+          sequence: { groupOrder: 1 },
+          poolOptions: {
+            forks: { singleFork: true },
+            threads: { singleThread: true },
+          },
+        },
+      },
     ],
     // Vitest's 5s default is wrong for this project. A determinism proof legitimately runs the
     // same scripted playthrough two or three times end to end — the fps PoC is three 600-tick
