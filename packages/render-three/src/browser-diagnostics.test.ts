@@ -17,9 +17,19 @@
  * is the same defect in a new place, and it would be invisible precisely when it matters — on a
  * machine none of us can attach a debugger to.
  */
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
 import { describe, expect, it } from 'vitest';
 
-import { closeAllPages, evaluate, launchBrowser, openPage, until } from './browser.js';
+import {
+  classifyEvent,
+  closeAllPages,
+  evaluate,
+  launchBrowser,
+  openPage,
+  until,
+} from './browser.js';
 
 describe('a browser timeout explains itself', () => {
   it('names the page-side error when the page threw', async () => {
@@ -62,4 +72,125 @@ describe('a browser timeout explains itself', () => {
       browser.process.kill();
     }
   }, 60_000);
+
+  // Both cases above open `about:blank` and inject their error *after* the CDP domains are
+  // enabled, so between them they prove only that the collector works for errors that happen
+  // after `openPage` returns. The failure they were written for happens during page *load* --
+  // and `openPage` navigates the target at creation time, via `/json/new?<url>`, before the
+  // WebSocket exists and before `Log.enable` is sent. Whether Chrome replays what it buffered
+  // is a fact about Chrome, not a fact about this code, and it is the difference between "no
+  // error" meaning "nothing went wrong" and "nothing was listening".
+  //
+  // Measured, one variable and two states: with the URL supplied at creation the 404 below IS
+  // reported, and it is also reported when the page is opened blank and navigated afterwards.
+  // Pinned here so that a future change to `openPage`'s ordering -- or a Chrome that stops
+  // replaying -- reddens, instead of quietly restoring a mute timeout.
+  it('names a module that failed to load, though the page never threw', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/') {
+        response.writeHead(200, { 'content-type': 'text/html' });
+        response.end('<!doctype html><script type="module" src="/absent.js"></script><body>x');
+        return;
+      }
+      response.writeHead(404, { 'content-type': 'text/plain' });
+      response.end('not found');
+    });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+    const address = server.address() as AddressInfo;
+    const browser = await launchBrowser({ port: 9349 });
+    try {
+      const cdp = await openPage(browser.port, `http://127.0.0.1:${address.port}/`);
+      // Precondition, not politeness. The assertion below is about what the collector RECORDED,
+      // so the 404 has to have happened before the wait times out -- otherwise a slow machine
+      // makes this test measure the clock instead of the collector, which is the load-fragile
+      // green this repository treats as worse than a red. Waiting on the page's own load state
+      // is structural: CDP delivers events and command replies over one ordered socket, so a
+      // `readyState === 'complete'` reply cannot overtake a `Log.entryAdded` emitted before it.
+      const settled = await until<string>(
+        cdp,
+        'document.readyState',
+        (s) => s === 'complete',
+        60_000,
+      );
+      expect(settled, 'the page must have finished loading before this measures anything').toBe(
+        'complete',
+      );
+      const failure = await until(cdp, 'globalThis.neverDefined === true', (v) => v === true, 2_000)
+        .then(() => undefined)
+        .catch((error: unknown) => (error as Error).message);
+
+      expect(failure, 'the wait must have timed out at all').toBeDefined();
+      // A page whose module 404s throws nothing. Without this the timeout would say only that the
+      // condition never came true, which is the least useful true statement available.
+      expect(failure).toContain('404');
+      expect(failure).not.toContain('The page reported no error');
+      cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
+      browser.process.kill();
+      server.close();
+    }
+    // 120s: this case launches a browser (measured at 13s under full-suite load), waits for a
+    // real page load, and only then spends its 2s timeout. 60s was enough on an idle machine,
+    // which is precisely the property that makes a budget useless.
+  }, 120_000);
+
+  it('makes the page state itself state, so a mute timeout still carries measurements', async () => {
+    const browser = await launchBrowser({ port: 9350 });
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+      // Same precondition as the 404 case: `readyState: complete` is one of the values asserted
+      // below, so the page must actually have reached it rather than been caught mid-load.
+      await until<string>(cdp, 'document.readyState', (s) => s === 'complete', 60_000);
+      const failure =
+        (await until(cdp, 'globalThis.neverDefined === true', (v) => v === true, 2_000)
+          .then(() => undefined)
+          .catch((error: unknown) => (error as Error).message)) ?? '';
+
+      // Each of these is a fact that distinguishes one cause of a silent failure from another:
+      // where the page actually is, whether it finished loading, whether the app object exists,
+      // and whether a WebGL context can be created at all. On `about:blank` the expected answers
+      // are known, which is what makes this a control rather than a transcript.
+      expect(failure).toContain('href: about:blank');
+      expect(failure).toContain('readyState: complete');
+      expect(failure).toContain('aegis: undefined');
+      expect(failure).toMatch(/webgl2: (true|false)/);
+      cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
+      browser.process.kill();
+    }
+    // 120s, for the same reason as the case above: browser launch plus a real page load sits in
+    // front of the 2s wait this case is actually about.
+  }, 120_000);
+});
+
+describe('the CDP event classifier', () => {
+  // A browser cannot be made to emit a warning-level Log entry on demand, so the warning path --
+  // the one that matters, because Chrome reports "software WebGL has been deprecated" at warning
+  // level and then hands back a null context -- is driven directly. Filtering warnings out was the
+  // previous behaviour, and it is indistinguishable from a healthy page at the point of failure.
+  const entry = (level: string, text: string) => ({ entry: { level, text } });
+
+  it('keeps errors and warnings apart instead of discarding the warnings', () => {
+    expect(classifyEvent('Log.entryAdded', entry('error', 'boom'))).toEqual({
+      level: 'error',
+      text: 'browser log: boom',
+    });
+    expect(classifyEvent('Log.entryAdded', entry('warning', 'software WebGL'))).toEqual({
+      level: 'warning',
+      text: 'browser warning: software WebGL',
+    });
+  });
+
+  it('still drops the levels that are genuinely noise, or the timeout becomes a transcript', () => {
+    expect(classifyEvent('Log.entryAdded', entry('info', 'chatter'))).toBeUndefined();
+    expect(classifyEvent('Log.entryAdded', entry('verbose', 'chatter'))).toBeUndefined();
+    // The arm that keeps the two above honest: a classifier that returned undefined for
+    // everything would satisfy them both.
+    expect(classifyEvent('Inspector.targetCrashed', undefined)).toEqual({
+      level: 'error',
+      text: 'the page crashed',
+    });
+  });
 });

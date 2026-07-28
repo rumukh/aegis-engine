@@ -50,6 +50,7 @@ export class CdpSession {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, { ok: (value: unknown) => void; fail: (e: Error) => void }>();
   readonly #diagnostics: string[] = [];
+  readonly #warnings: string[] = [];
   #nextId = 1;
 
   private constructor(socket: WebSocket) {
@@ -93,12 +94,23 @@ export class CdpSession {
     return this.#diagnostics;
   }
 
+  /**
+   * Page-side *warnings*, in arrival order. Kept separate and surfaced only when a timeout has no
+   * errors to report, because the failure that motivated this is a warning: Chrome emits
+   * "Automatic fallback to software WebGL has been deprecated" at `warning` level and then hands
+   * back a null context, so a page can fail to start with nothing at `error` level at all.
+   */
+  get warnings(): readonly string[] {
+    return this.#warnings;
+  }
+
   #record(method: string, params: Record<string, unknown> | undefined): void {
-    const text = describeFailureEvent(method, params);
-    if (text === undefined) return;
+    const event = classifyEvent(method, params);
+    if (event === undefined) return;
     // Bounded: a page in a render loop can throw once per frame, and a thousand copies of one
     // message is not more informative than the first few.
-    if (this.#diagnostics.length < 20) this.#diagnostics.push(text);
+    const into = event.level === 'error' ? this.#diagnostics : this.#warnings;
+    if (into.length < 20) into.push(event.text);
   }
 
   /** Send a CDP command and await its result. */
@@ -117,30 +129,92 @@ export class CdpSession {
 }
 
 /**
- * Render the CDP events that mean "the page is broken", and ignore the rest.
+ * Render the CDP events that mean "the page is broken or complaining", and ignore the rest.
  *
- * Deliberately narrow. The point is to explain a timeout, and a transcript of every network and
- * lifecycle event would bury the one line that matters in the noise it arrived with.
+ * Deliberately narrow at `error` level: the point is to explain a timeout, and a transcript of
+ * every network and lifecycle event would bury the one line that matters. Warnings are classified
+ * too but kept in their own bucket, because they are usually noise — except when there is nothing
+ * else, which is the case this exists for.
  */
-function describeFailureEvent(
+export function classifyEvent(
   method: string,
   params: Record<string, unknown> | undefined,
-): string | undefined {
+): { level: 'error' | 'warning'; text: string } | undefined {
   if (params === undefined)
-    return method === 'Inspector.targetCrashed' ? 'the page crashed' : undefined;
+    return method === 'Inspector.targetCrashed'
+      ? { level: 'error', text: 'the page crashed' }
+      : undefined;
   if (method === 'Runtime.exceptionThrown') {
     const details = params['exceptionDetails'] as
       { text?: string; exception?: { description?: string } } | undefined;
     const described = details?.exception?.description ?? details?.text;
-    return described === undefined ? undefined : `uncaught in page: ${described}`;
+    return described === undefined
+      ? undefined
+      : { level: 'error', text: `uncaught in page: ${described}` };
   }
   if (method === 'Log.entryAdded') {
     const entry = params['entry'] as { level?: string; text?: string } | undefined;
-    if (entry?.level !== 'error' || entry.text === undefined) return undefined;
-    return `browser log: ${entry.text}`;
+    if (entry?.text === undefined) return undefined;
+    if (entry.level === 'error') return { level: 'error', text: `browser log: ${entry.text}` };
+    if (entry.level === 'warning')
+      return { level: 'warning', text: `browser warning: ${entry.text}` };
+    return undefined;
   }
-  if (method === 'Inspector.targetCrashed') return 'the page crashed';
+  if (method === 'Inspector.targetCrashed') return { level: 'error', text: 'the page crashed' };
   return undefined;
+}
+
+/**
+ * Ask the page to describe itself, for use when a wait has timed out.
+ *
+ * A timeout with no page-side error is the least informative failure this harness can produce, and
+ * it is the one `windows-latest` produces: run 30328777305 failed eight cases with
+ * "the page reported no error" at a 60s deadline, three times the boot time the same tests measure
+ * on this machine, which refutes slow-boot as the cause. Every remaining explanation -- the page
+ * never navigated, its modules never arrived, WebGL is unavailable so the renderer never
+ * constructed, the app booted but never reached the awaited state -- is a *different fact about
+ * the page*, and none of them can be distinguished from a message that only says what was awaited.
+ *
+ * So this reports the facts rather than guessing between them. It is deliberately one round trip
+ * that answers all of the above at once, because the machine that exhibits the fault is a CI
+ * runner with a ~25 minute turnaround and iterating one hypothesis per run is not affordable.
+ */
+export async function describePage(cdp: CdpSession): Promise<string> {
+  const probe = `(() => {
+    const out = {};
+    const attempt = (name, f) => { try { out[name] = f(); } catch (e) { out[name] = 'threw: ' + e; } };
+    attempt('href', () => String(location.href));
+    attempt('readyState', () => document.readyState);
+    attempt('title', () => document.title);
+    attempt('bodyChars', () => (document.body ? document.body.innerHTML.length : -1));
+    attempt('canvases', () => document.querySelectorAll('canvas').length);
+    attempt('aegis', () => typeof globalThis.aegis);
+    attempt('scripts', () =>
+      Array.from(document.querySelectorAll('script')).map((s) => (s.src || 'inline') + ' [' + (s.type || 'classic') + ']'));
+    attempt('webgl2', () => !!document.createElement('canvas').getContext('webgl2'));
+    attempt('webgl', () => !!document.createElement('canvas').getContext('webgl'));
+    attempt('resources', () =>
+      performance.getEntriesByType('resource').map((r) => {
+        const leaf = String(r.name).split('/').pop();
+        return leaf + ' ' + Math.round(r.duration) + 'ms' + (r.transferSize === 0 ? ' transfer=0' : '');
+      }));
+    return JSON.stringify(out);
+  })()`;
+  try {
+    const raw = await evaluate<string>(cdp, probe);
+    const state = JSON.parse(raw) as Record<string, unknown>;
+    return Object.entries(state)
+      .map(
+        ([key, value]) =>
+          `    ${key}: ${Array.isArray(value) ? JSON.stringify(value) : String(value)}`,
+      )
+      .join('\n');
+  } catch (error) {
+    // The probe failing is itself a finding, and a far stronger one than a timeout: it means the
+    // page could not run a trivial expression. Reported rather than swallowed, because an empty
+    // diagnostic that reads as "nothing to say" is the exact defect this function exists to close.
+    return `    (the page could not describe itself: ${String(error)})`;
+  }
 }
 
 /** Virtual key codes for every key the binding tables can name. */
@@ -251,15 +325,24 @@ export async function until<T>(
     const value = await evaluate<T>(cdp, expression);
     if (accept(value)) return value;
     if (Date.now() > deadline) {
-      // The two failures a mute timeout cannot tell apart: a page that died, and a page that is
-      // alive and simply never satisfied the condition. They have completely different causes and
-      // completely different fixes, so the message states which one happened.
+      // The failures a mute timeout cannot tell apart: a page that died, a page that is alive and
+      // never satisfied the condition, a page that never navigated, and a page whose renderer
+      // could not be created. They have completely different causes and completely different
+      // fixes, so the message states which one happened rather than only what was awaited.
       const seen = cdp.diagnostics;
-      const why =
-        seen.length === 0
-          ? 'The page reported no error, so it was still running and the condition never became true.'
-          : `The page reported:\n  ${seen.join('\n  ')}`;
-      throw new Error(`timed out waiting for ${expression} after ${timeoutMs}ms. ${why}`);
+      const warned = cdp.warnings;
+      const parts: string[] = [];
+      if (seen.length > 0) parts.push(`The page reported:\n  ${seen.join('\n  ')}`);
+      else parts.push('The page reported no error.');
+      // Only when there are no errors: a warning is noise beside a real exception, and the sole
+      // reason it is here is that Chrome reports "software WebGL has been deprecated" at warning
+      // level and then returns a null context, which presents as a page that fails silently.
+      if (seen.length === 0 && warned.length > 0)
+        parts.push(`It did warn:\n  ${warned.join('\n  ')}`);
+      parts.push(`The page describes itself as:\n${await describePage(cdp)}`);
+      throw new Error(
+        `timed out waiting for ${expression} after ${timeoutMs}ms. ${parts.join(' ')}`,
+      );
     }
     await sleep(40);
   }
