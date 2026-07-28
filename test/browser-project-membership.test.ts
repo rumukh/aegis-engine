@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 /**
  * Every test file that launches a browser must be in the root config's `BROWSER_TEST_FILES`.
@@ -41,23 +42,65 @@ const SELF = relative(REPO_ROOT, fileURLToPath(import.meta.url)).replaceAll('\\'
 /** The directories the root config globs for tests, minus the browser files' own home. */
 const TEST_ROOTS = ['packages', 'games', 'test'];
 
-/** Directories that are build output or dependencies, and so are not anybody's source. */
-const NOT_SOURCE = new Set(['node_modules', 'dist', '.git']);
+/**
+ * Every `*.test.ts` / `*.spec.ts` under the test roots, taken from git rather than from a recursive
+ * `readdirSync`.
+ *
+ * The walk this replaces recursed into whatever happened to be on disk, and other tests put things
+ * there. `packages/harness/src/module-instances.test.ts` copies the built harness into
+ * `packages/harness/.tmp/harness-copy-<random>/` and deletes it in `afterAll`, so a walker that
+ * enumerates the parent and then reads the child loses the race and dies mid-run, taking every case
+ * in this file with it.
+ *
+ * **This is the fifth sighting of that defect class here, and the first four are why the repair is
+ * not a skip list.** `packages/cli`'s fixture directories took down `golden-hash.invariant.test.ts`
+ * twice, and both repairs were "add the new directory to the skip list" — which is why there was a
+ * second one. A skip list enumerates the scratch directories somebody has already lost a gate to;
+ * it says nothing about the one a test invents next week. The first version of this file shipped
+ * `NOT_SOURCE = {node_modules, dist, .git}` and would have been the sixth.
+ *
+ * `--cached --others --exclude-standard` is tracked files plus untracked files git is not ignoring.
+ * Scratch directories are ignored (`.gitignore:8` is `.tmp/`), so they leave the corpus by the
+ * repository's own declaration rather than by a list maintained here, and no future one can
+ * reintroduce the race. `--others` is load-bearing: a browser test written but not yet committed is
+ * exactly the moment this guard is supposed to speak, and dropping it would turn the file into
+ * something that reddens *after* you commit the violation.
+ */
+function testFiles(): string[] {
+  const listed = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return listed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        /\.(test|spec)\.ts$/.test(line) && TEST_ROOTS.some((dir) => line.startsWith(`${dir}/`)),
+    )
+    .sort();
+}
 
-/** Every `*.test.ts` / `*.spec.ts` under a root, as repo-relative POSIX paths. */
-function testFilesUnder(root: string): string[] {
-  const found: string[] = [];
-  const walk = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (NOT_SOURCE.has(entry.name)) continue;
-      const full = join(directory, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (/\.(test|spec)\.ts$/.test(entry.name))
-        found.push(relative(REPO_ROOT, full).replaceAll('\\', '/'));
-    }
-  };
-  walk(join(REPO_ROOT, root));
-  return found;
+/**
+ * Read a corpus file, treating "it is gone" as "it is not repository source".
+ *
+ * The corpus is a snapshot of a mutable working tree and the reads happen after it. A file that
+ * vanished in between is another test's untracked probe, and a probe that no longer exists has no
+ * `launchBrowser(` call to be missing from the config. What stops this hiding a corpus that
+ * collapsed is the floor in the anti-vacuity arm, which counts the enumeration rather than what
+ * survived the read.
+ *
+ * Only ENOENT, because "this file is gone" is safe to ignore and "I could not read this file" is
+ * not.
+ */
+function readOrSkip(path: string): string {
+  try {
+    return readFileSync(join(REPO_ROOT, path), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw error;
+  }
 }
 
 /**
@@ -85,10 +128,10 @@ describe('the browser tests are isolated from the rest of the suite', () => {
     '\n',
   );
   const declared = declaredBrowserTestFiles(configSource);
-  const everyTestFile = TEST_ROOTS.flatMap(testFilesUnder);
+  const everyTestFile = testFiles();
   const launchesABrowser = everyTestFile
     .filter((path) => path !== SELF)
-    .filter((path) => readFileSync(join(REPO_ROOT, path), 'utf8').includes('launchBrowser('))
+    .filter((path) => readOrSkip(path).includes('launchBrowser('))
     .sort();
 
   it('found a corpus to check (anti-vacuity)', () => {
@@ -121,6 +164,50 @@ describe('the browser tests are isolated from the rest of the suite', () => {
     const notABrowserTest = join(REPO_ROOT, 'test', 'vitest-timeouts.test.ts');
     expect(readFileSync(notABrowserTest, 'utf8')).not.toContain('launchBrowser(');
     expect(launchesABrowser.length).toBeLessThan(everyTestFile.length);
+  });
+
+  /**
+   * The corpus must not contain another test's scratch directory — planted, not reasoned.
+   *
+   * The `--exclude-standard` claim is a claim about git's behaviour on this tree, and the two
+   * repairs that preceded this one both *looked* correct. So this plants a file that matches the
+   * corpus filter in every respect except that it sits under an ignored directory, and requires the
+   * enumeration not to return it. `packages/harness/.tmp/` is the real directory that broke the
+   * previous walker, which is the point: the probe is where the damage came from.
+   *
+   * Both arms are needed and only one is obvious. A corpus that returned nothing at all would pass
+   * "does not contain the probe" trivially, so the same enumeration must be shown to contain a real
+   * file at the same instant — `SELF`, which is tracked, under `test/`, and matches the same filter.
+   *
+   * The probe is invisible to every other guard in the repository for the same reason it must be
+   * invisible to this one: `.tmp/` is ignored, and all of those corpora now come from git. That is
+   * what keeps this plant from being the bidirectional race that landing #19 had to make ENOENT
+   * tolerance for.
+   */
+  const PROBE_DIR = join(REPO_ROOT, 'packages', 'harness', '.tmp', 'zz-browser-guard-probe');
+  const PROBE = 'packages/harness/.tmp/zz-browser-guard-probe/zz-planted.test.ts';
+  afterAll(() => rmSync(PROBE_DIR, { recursive: true, force: true }));
+
+  it('excludes scratch directories by git\u2019s declaration, not by a list kept here', () => {
+    mkdirSync(PROBE_DIR, { recursive: true });
+    // Contains the marker too, so if it ever were enumerated it would also be misclassified as a
+    // browser spec — the failure is loud in both arms rather than only in the count.
+    writeFileSync(join(PROBE_DIR, 'zz-planted.test.ts'), 'launchBrowser(\n', 'utf8');
+
+    const corpus = testFiles();
+    expect(
+      corpus.filter((path) => path === PROBE),
+      'the corpus enumerated a file under packages/harness/.tmp/, which module-instances.test.ts ' +
+        'creates and deletes while this file runs. That is the ENOENT race that has now taken a ' +
+        'gate down four times. Do not add .tmp to a skip list — take the corpus from ' +
+        '`git ls-files --cached --others --exclude-standard`, which honours .gitignore.',
+    ).toEqual([]);
+
+    // The other direction: the enumeration above was live and non-empty at that same moment.
+    expect(
+      corpus,
+      'the corpus omitted this very file, so its omission of the probe proves nothing',
+    ).toContain(SELF);
   });
 
   it('gives the browser project a pass of its own, in a group of its own', () => {
