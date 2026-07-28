@@ -33,6 +33,8 @@ import { Health } from '@aegis/content';
 import { parseInputScript } from '@aegis/harness';
 import {
   AttackOrder,
+  Attacker,
+  Blocking,
   Controlled,
   GridPosition,
   IsoActor,
@@ -282,5 +284,119 @@ describe('click-to-attack driven by a compiled input script', () => {
     expect(world.has(actor, MoveOrder)).toBe(false); // dropped, never a silent half-move
     const gp = world.getOrThrow(actor, GridPosition);
     expect({ x: gp.cellX, y: gp.cellY }).toEqual({ x: 1, y: 1 });
+  });
+});
+
+/**
+ * An unreachable click must not cost the player the order they already had.
+ *
+ * `intakeSystem` used to cancel the current order and install the new one unconditionally, and
+ * `iso.pathfind` then discovered a phase later that the destination was unreachable and dropped
+ * it — so a misclick on a sealed door left the actor with **no order and no movement**, reported
+ * only by a `path.blocked` event no player can see. The shipped Server Vault playthrough cleared
+ * that by two ticks: delay its switch click by ten and the operative stalls one cell short of the
+ * objective for the remaining 600+ ticks, emits neither death nor completion, and the run still
+ * exits 0.
+ *
+ * Each case is a pair. "The actor kept its order" is satisfied just as well by an intake that
+ * ignores every click, so each refusal is followed by the same geometry with the obstruction
+ * removed; that positive control is what gives the refusal its meaning.
+ */
+describe('an unsatisfiable click is refused, not swapped in', () => {
+  /** A 5x5 room whose right column is sealed off by a full wall column at x = 2. */
+  const SEALED: IsoGridConfig = {
+    width: 5,
+    height: 5,
+    tileSize: 1,
+    walls: ['#####', '#.#.#', '#.#.#', '#.#.#', '#####'],
+  };
+
+  /** The same room with the wall cell at (2,3) knocked out, joining the two halves. */
+  const JOINED: IsoGridConfig = {
+    width: 5,
+    height: 5,
+    tileSize: 1,
+    walls: ['#####', '#.#.#', '#.#.#', '#...#', '#####'],
+  };
+
+  it('keeps the in-flight order when the new target is unreachable', () => {
+    const world = makeWorld(SEALED);
+    const actor = spawnOperative(world, 1, 1);
+    // Walk down the left column to (1,3); at t2, mid-walk, click the sealed right column.
+    const { source } = compiled('click 1,3 @0\nclick 3,1 @2', 8);
+
+    run(world, source, 120);
+
+    // The refusal is reported…
+    expect(world.events.count(PATH_BLOCKED)).toBe(1);
+    // …the second click never became an order…
+    expect(world.events.count(MOVE_ORDERED)).toBe(1);
+    // …and the first one was carried out to completion regardless.
+    const gp = world.getOrThrow(actor, GridPosition);
+    expect({ x: gp.cellX, y: gp.cellY }).toEqual({ x: 1, y: 3 });
+  });
+
+  it('positive control: the same click retargets once that cell is reachable', () => {
+    const world = makeWorld(JOINED);
+    const actor = spawnOperative(world, 1, 1);
+    const { source } = compiled('click 1,3 @0\nclick 3,1 @2', 8);
+
+    run(world, source, 300);
+
+    expect(world.events.contains(PATH_BLOCKED)).toBe(false);
+    expect(world.events.count(MOVE_ORDERED)).toBe(2);
+    // The second click wins — a reachable retarget must still replace the order.
+    const gp = world.getOrThrow(actor, GridPosition);
+    expect({ x: gp.cellX, y: gp.cellY }).toEqual({ x: 3, y: 1 });
+  });
+
+  it('keeps the in-flight order when an unreachable enemy is clicked', () => {
+    const world = makeWorld(SEALED);
+    const actor = spawnOperative(world, 1, 1);
+    // The shipped operative carries a weapon; without one the pathfinder ignores attack orders
+    // outright and there is no reachability question to ask.
+    world.add(actor, Attacker, { rangeCells: 3, damage: 10, cooldownTicks: 30 });
+    world.spawn(
+      GridPosition({ cellX: 3, cellY: 1 }),
+      IsoActor({ speed: 4 }),
+      Health({ current: 20, max: 20 }),
+      Name({ value: 'sealed-in guard' }),
+    );
+    const { source } = compiled('click 1,3 @0\nclick 3,1 @2', 8);
+
+    run(world, source, 120);
+
+    expect(world.events.count(PATH_BLOCKED)).toBe(1);
+    expect(world.events.contains(ATTACK_ORDERED)).toBe(false);
+    expect(world.has(actor, AttackOrder)).toBe(false);
+    const gp = world.getOrThrow(actor, GridPosition);
+    expect({ x: gp.cellX, y: gp.cellY }).toEqual({ x: 1, y: 3 });
+  });
+
+  it('an order sealed off *after* it was issued is still dropped, not preserved', () => {
+    // The deliberate asymmetry, pinned so nobody "fixes" it into symmetry later. Refusing a
+    // replacement protects an order that still works; it says nothing about an order whose
+    // destination genuinely stopped existing. A door that slams across the only remaining route
+    // leaves nothing to fall back to, so stopping — and saying so — is the honest outcome.
+    const world = makeWorld(openGrid(3, 3));
+    const actor = spawnOperative(world, 1, 0);
+    const { source } = compiled('click 1,2 @0', 4);
+
+    const sim = createSimulation({
+      world,
+      schedule: createSchedule().addAll(isoSystems()),
+      tickRate: TICK_RATE,
+      input: source,
+    });
+    sim.step(); // issued and resolved against an open grid
+    expect(world.has(actor, MoveOrder)).toBe(true);
+    expect(world.events.count(MOVE_ORDERED)).toBe(1);
+
+    // Now seal every route to the goal: row 1 becomes impassable.
+    for (const x of [0, 1, 2]) world.spawn(GridPosition({ cellX: x, cellY: 1 }), Blocking());
+    for (let t = 1; t < 20; t++) sim.step();
+
+    expect(world.events.count(PATH_BLOCKED)).toBe(1);
+    expect(world.has(actor, MoveOrder)).toBe(false);
   });
 });

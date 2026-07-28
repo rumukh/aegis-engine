@@ -79,6 +79,31 @@ function cellOf(world: World, entity: Entity): Cell {
  * Pointer intake: translate a primary click into a {@link MoveOrder} (empty ground) or an
  * {@link AttackOrder} (a cell occupied by another living, damageable actor). One order kind at
  * a time — issuing one clears the other so a re-click cleanly retargets.
+ *
+ * ## An order that cannot be carried out is refused, not swapped in
+ *
+ * This used to cancel the actor's current order and install the new one unconditionally, leaving
+ * {@link pathfindSystem} to discover a tick later that the destination was unreachable and drop
+ * it. The net effect of clicking a sealed door while walking somewhere else was that **the player
+ * lost the move they already had and got nothing in return** — no movement, no order, and the only
+ * trace a `path.blocked` event no player can see. The shipped playthrough cleared that by two
+ * ticks; past it the operative stalls one cell from the objective, emitting no death and no
+ * completion, and exits cleanly. That is indistinguishable from "I clicked and the game ignored
+ * me", and it became reachable in a real session the moment picking was fixed, because a player
+ * can now click the vault door.
+ *
+ * So the reachability test happens **here**, before any state is destroyed: an unsatisfiable order
+ * is refused with {@link PATH_BLOCKED} and the actor keeps whatever it was already doing. The
+ * alternative — cancel, report, and require every caller to notice the report and re-issue — is
+ * the shape that only works while everybody checks, and a contract that requires the caller to
+ * check will eventually meet a caller that does not.
+ *
+ * **This is deliberately not symmetric with the mid-flight case.** An order that was satisfiable
+ * when issued and is later sealed off by a closing door is still dropped by {@link pathfindSystem}
+ * — there is nothing to fall back to, the destination is genuinely gone, and stopping is the
+ * honest outcome. The rule is about *replacement*: never discard a working order for one that
+ * cannot work. Both paths report `path.blocked`, because in both the requested destination has no
+ * route; what differs is whether the actor had something to keep.
  */
 export const intakeSystem: System = {
   name: 'iso.intake',
@@ -104,6 +129,11 @@ export const intakeSystem: System = {
       }
     }
 
+    if (!orderIsSatisfiable(world, actor, target, victim)) {
+      world.events.emit(PATH_BLOCKED, { entity: actor, target: { ...target }, tick });
+      return;
+    }
+
     if (victim !== undefined) {
       world.remove(actor, MoveOrder);
       world.add(actor, AttackOrder, { target: victim, path: [], resolved: false });
@@ -115,6 +145,32 @@ export const intakeSystem: System = {
     }
   },
 };
+
+/**
+ * Whether an order issued this tick could actually be carried out, asked against the *current*
+ * grid — the same question, and the same two functions, {@link pathfindSystem} would ask a phase
+ * later. Answering it before the actor's existing order is destroyed is the whole point.
+ *
+ * Returns `true` in the two cases where this system cannot answer, so it never invents a refusal:
+ * with no baked nav grid there is nothing to path over and `pathfindSystem` reports that loudly on
+ * the same tick, and an actor with no {@link Attacker} has its attack orders ignored by the
+ * pathfinder's `[AttackOrder, GridPosition, Attacker]` query regardless of what this returns.
+ */
+function orderIsSatisfiable(
+  world: World,
+  actor: Entity,
+  target: Cell,
+  victim: Entity | undefined,
+): boolean {
+  const nav = world.getResource(NavGrid);
+  if (nav === undefined || nav.width === 0) return true;
+  const blocked = blockedPredicate(world, nav);
+  const start = cellOf(world, actor);
+  if (victim === undefined) return findPath(nav, blocked, start, target) !== null;
+  const weapon = world.get(actor, Attacker);
+  if (weapon === undefined) return true;
+  return findAttackPath(nav, blocked, start, cellOf(world, victim), weapon.rangeCells) !== null;
+}
 
 /** Tick every weapon's cooldown down toward ready. Runs before combat so a shot fired this run cools next tick. */
 export const cooldownSystem: System = {

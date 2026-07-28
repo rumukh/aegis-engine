@@ -358,8 +358,32 @@ export const GOLDEN_HASH = 'cb0f07007ad8608a';
  * cannot see them. (Measured: moving the last click from t340 to t420 changes when the operative
  * walks the whole back half of the level and leaves `GOLDEN_HASH` *byte-identical*.) Digesting
  * every tick's hash makes any changed trajectory go red.
+ *
+ * ## Re-pinned once, from `2c6881a477e2d268`, and this is why
+ *
+ * `iso.intake` stopped cancelling the actor's current order to install one the pathfinder would
+ * drop a tick later; an unsatisfiable click is now refused outright and the actor keeps what it
+ * was already doing. This script clicks the vault exit at **t300 while the door is still sealed**,
+ * precisely to exercise that failure, so the run's shape necessarily changed:
+ *
+ * | beat | before | after |
+ * | ---- | ------ | ----- |
+ * | `move.ordered` | t40, 102, 232, **300**, 308, 340 | t40, 102, 232, 308, 340 |
+ * | `path.blocked` | t300 (emitted by `iso.pathfind`, after the order was installed) | t300 (emitted by `iso.intake`, before anything was destroyed) |
+ * | `switch.activated` / `door.opened` | t330 | **t322** |
+ * | `mission.completed` | t505 | t505 |
+ *
+ * The refused click no longer becomes an order, so the operative never stops mid-route to (9,1)
+ * and reaches the switch eight ticks sooner. Everything downstream of the door opening is
+ * unchanged, which is why the mission still completes on t505 and why **{@link GOLDEN_HASH} did
+ * not move at all** — the resting state is identical to the byte. That is this constant earning
+ * its keep for the second time: a real behavioural change that the final-state hash cannot see,
+ * caught here.
+ *
+ * Re-derived from built output *after* the change (`node poc/…`-style probe over `dist`), not
+ * recomputed from the old value or carried across the edit.
  */
-export const GOLDEN_TRAJECTORY = '2c6881a477e2d268';
+export const GOLDEN_TRAJECTORY = 'faab0cbc899d293c';
 
 /**
  * Digest a run's per-tick hash timeline into one comparable value, using core's frozen
