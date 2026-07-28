@@ -44,15 +44,19 @@ import {
   NAVIGATION_TIMEOUT_MS,
   PAINT_TIMEOUT_MS,
   closeAllPages,
+  describeWitness,
   evaluate,
   launchBrowser,
   maxLagSince,
   openPage,
   sleep,
   startEventLoopLagMonitor,
+  startExternalLagWitness,
   startSystemLoadWindow,
+  stopExternalLagWitness,
   until,
   waitForPaint,
+  witnessSince,
 } from './browser.js';
 import type { CdpSession, LaunchedBrowser } from './browser.js';
 import {
@@ -466,6 +470,11 @@ function describeWindow(label: string, w: { ratio?: number; windowMs: number }):
 
 beforeAll(async () => {
   startEventLoopLagMonitor();
+  // Started here rather than left to `CdpSession.connect()` so that the sibling's timeline covers
+  // this file's WHOLE run, including the rest window below and every gap between cases. A witness
+  // that begins at the first CDP connect can only speak about what happened after it; the quantity
+  // wanted in `afterAll` is a property of the run.
+  startExternalLagWitness();
   hookStartedAt = Date.now();
 
   // Window 1 of 3: the runner with nothing of ours on it. Taken first, before the dev server, so
@@ -607,6 +616,18 @@ afterAll(async () => {
   // A green run that records what the machine was doing is the only thing that turns a bound into
   // a measurement instead of a guess that has not been caught yet.
   console.log(`[playability] over this file's whole run: ${describeLoad(hookStartedAt)}`);
+  // The one measurement no field of `describeLoad` can produce, because every one of them is taken
+  // inside this process. `cpuRatio: 0%` has been printed on four windows runs and is equally true
+  // of a process the OS would not schedule and of a process sitting in a blocking call — and those
+  // have opposite levers. A sibling Node process on the same box, timestamping its own readings,
+  // is the only instrument that separates them.
+  console.log(
+    `[playability] external witness: ${describeWitness(
+      maxLagSince(hookStartedAt).maxMs,
+      witnessSince(hookStartedAt),
+    )}`,
+  );
+  stopExternalLagWitness();
   browser?.process.kill();
   await server?.close();
 });

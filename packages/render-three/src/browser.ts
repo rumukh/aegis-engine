@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { cpus, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
+import type { Socket } from 'node:net';
 
 /** Where a Chromium-family browser might live on this machine. */
 const BROWSER_CANDIDATES = [
@@ -370,6 +371,299 @@ export function maxLagSince(sinceMs: number): {
 }
 
 /**
+ * How often the external witness takes a lag reading, in ms.
+ *
+ * Deliberately the same cadence as {@link LAG_SAMPLE_INTERVAL_MS} so the two lag figures are the
+ * same quantity measured in two processes, and the ratio between them means something.
+ */
+export const WITNESS_SAMPLE_INTERVAL_MS = 50;
+
+/**
+ * How often the witness *emits* what it has sampled, in ms.
+ *
+ * Not the same as the sample interval, and the difference is load-bearing. The witness writes to a
+ * pipe the parent only drains when the parent's loop is running — which is precisely what a stall
+ * stops. A full pipe blocks the writer, so a witness that emitted every sample would start
+ * reporting *its own* blocked writes as lag and would corroborate whatever the parent said. At one
+ * line of ~40 bytes per 250ms that is ~160 B/s against a typical 64 KiB pipe buffer, i.e. over six
+ * minutes of stall absorbed before the writer can block. Each line carries its own max, so raising
+ * this costs resolution of *when*, never of *how much*.
+ */
+export const WITNESS_EMIT_INTERVAL_MS = 250;
+
+/**
+ * How many times worse the parent's lag must be than the witness's before the disparity is called.
+ *
+ * A **ratio**, not a millisecond bound, and that is the whole design. Three landings in a row here
+ * shipped an absolute threshold that turned out to be a bound inside its own quantity's band; a
+ * dimensionless comparison of two processes on the same box at the same moment cancels the machine
+ * out. Run 30390018561 measured 23ms (linux, green) against 74823ms (windows, red) for the same
+ * quantity under the same demand, so the gap this has to resolve is three orders wide and 10x is
+ * nowhere near either edge of it.
+ */
+export const WITNESS_DISPARITY_RATIO = 10;
+
+/**
+ * At or below this ratio the two processes are described as starved together.
+ *
+ * Deliberately far from {@link WITNESS_DISPARITY_RATIO} so the band between them is a stated
+ * "neither" rather than a coin flip on a boundary — the same shape as
+ * {@link SYSTEM_SATURATED_RATIO} against {@link SYSTEM_QUIET_RATIO}.
+ */
+export const WITNESS_SHARED_RATIO = 2;
+
+/**
+ * Below this much parent lag there is nothing to attribute, and saying so is the honest answer.
+ *
+ * Found by running the instrument rather than by reasoning about it. Wired into
+ * `browser-playability.test.ts`'s `afterAll`, the first local run printed *"comparable to this
+ * process. The box could not schedule the sibling either, so this is machine-wide starvation"* for
+ * a parent that had lagged **23ms** — because the ratio branches ask only which process was worse
+ * and never whether either was bad. A ratio is scale-free by design, which is exactly why it cannot
+ * be allowed to answer on its own: 37ms against 23ms is the same ratio as 74823ms against 46000ms
+ * and the opposite finding. A passing log claiming machine-wide starvation is worse than a silent
+ * one, because it manufactures a fault to attribute.
+ *
+ * The floor is stated against the measured gap, not against an imagined machine: healthy readings
+ * on this box and on the green `ubuntu-latest` leg are **23-37ms**, and run 30390018561's windows
+ * leg is **74823ms**. Three orders separate them and 1000ms sits in neither's neighbourhood — the
+ * same argument that justifies {@link WITNESS_DISPARITY_RATIO}, and the same one that retired three
+ * absolute deadlines here for sitting inside their own quantity's band.
+ */
+export const WITNESS_QUIET_LAG_MS = 1_000;
+
+/** One emitted witness bucket: the worst lag inside it, how many readings it covers, and CPU. */
+interface WitnessBucket {
+  at: number;
+  lateBy: number;
+  ticks: number;
+  cpuMicros: number;
+}
+
+const witnessHistory: WitnessBucket[] = [];
+let witnessChild: ChildProcess | undefined;
+let witnessFailure: string | undefined;
+
+/**
+ * The program the witness runs. Inline rather than a file on disk, deliberately.
+ *
+ * A sibling `.mjs` would have to survive the TypeScript build into `dist/`, be found from both the
+ * source and the built tree, and be copied by whatever packages this — three ways for the
+ * instrument to be silently absent, and an absent instrument reports exactly what a healthy one
+ * does. `-e` has none of those failure modes.
+ *
+ * It timestamps every reading **itself**. That is the property the whole measurement rests on: the
+ * parent may not read this pipe for a minute, but the numbers in it are still about the moments
+ * they describe, so the parent's own starvation can delay the witness's testimony and cannot
+ * corrupt it.
+ */
+const WITNESS_PROGRAM =
+  `const IV=${WITNESS_SAMPLE_INTERVAL_MS},EM=${WITNESS_EMIT_INTERVAL_MS};` +
+  `let due=Date.now()+IV,worst=0,n=0,last=Date.now();` +
+  // If the parent dies its end of the pipe closes; exit rather than linger as an orphan.
+  `process.stdout.on('error',()=>process.exit(0));` +
+  `const t=setInterval(()=>{const now=Date.now();const late=now-due;if(late>worst)worst=late;n++;` +
+  `due=now+IV;if(now-last>=EM){const c=process.cpuUsage();` +
+  `process.stdout.write('w '+now+' '+worst+' '+n+' '+(c.user+c.system)+'\\n');` +
+  `worst=0;n=0;last=now;}},IV);t.unref?.();` +
+  // A hard lifetime so a witness can never outlive a run that crashed before it could be stopped.
+  `setTimeout(()=>process.exit(0),1800000);`;
+
+/**
+ * Start a second Node process whose only job is to report how starved *it* is.
+ *
+ * **This exists because `cpuRatio: 0%` is consistent with two opposite causes and nothing in this
+ * package could tell them apart.** "This process held a CPU 0% of the window" is equally true of a
+ * process the OS refused to schedule and of a process sitting inside a blocking syscall — a
+ * synchronous read, a lock, a socket wait. Those have opposite fixes: the first is answered by
+ * reducing demand on the box, the second by removing the blocking call, and every attempt so far
+ * at the first has failed on `windows-latest` while `ubuntu-latest` passes at a similar box load
+ * (run 30390018561: 88% busy / 23ms lag against 100% busy / 74823ms lag).
+ *
+ * A sibling process resolves it, and nothing else in this package can. If the witness keeps time
+ * while this process does not, the box **could** schedule work and this process was blocked. If the
+ * witness starves too, the machine genuinely could not run anything and the demand is the lever.
+ *
+ * Cost, measured rather than asserted to be small: the child is a `setInterval` at 50ms that does
+ * arithmetic and writes ~160 B/s. It reports its own CPU share so that claim is checkable in every
+ * log rather than taken on trust — if the witness is ever seen consuming real CPU, it has become
+ * part of the load it exists to measure and this comment is wrong.
+ *
+ * Idempotent, and silent on failure except that {@link witnessSince} then answers
+ * `undefined` — never zero, which would read as "the sibling was never starved" and is the exact
+ * empty-instrument-reads-as-a-clean-one shape this file keeps catching.
+ *
+ * **It cannot keep this process alive.** Both the child process handle and its stdout pipe are
+ * `unref`'d; see the comment on those two lines for the measurement that showed one of them is
+ * not enough. This matters because `CdpSession.connect()` starts the witness for EVERY consumer
+ * of this module — `poc/capture.mjs` and the dev server included — and only one of them has ever
+ * called {@link stopExternalLagWitness}.
+ */
+export function startExternalLagWitness(): void {
+  if (witnessChild !== undefined) return;
+  try {
+    const child = spawn(process.execPath, ['-e', WITNESS_PROGRAM], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+    witnessChild = child;
+    // BOTH unrefs are load-bearing, and this was found by running it rather than by reading it.
+    // `child.unref()` unrefs the *process* handle only; the `'pipe'` stdout is a SEPARATE
+    // referenced libuv handle in this process, so with the second line missing the parent cannot
+    // exit while the witness lives. Measured: `node poc/capture.mjs` wrote all three PNGs in 15s
+    // and was then still alive 2h17m later, because `CdpSession.connect()` starts the witness and
+    // only `browser-playability.test.ts`'s afterAll ever stopped it. A diagnostic that changes
+    // whether the program terminates is not passive, whatever its CPU cost.
+    //
+    // Pinned by "does not hold the process open" below, which spawns a child that starts the
+    // witness and does nothing else, and requires it to exit on its own.
+    child.unref();
+    // `child.stdout` is declared `Readable`, but a `'pipe'` stdio is a net.Socket at runtime and
+    // that is the type carrying unref(). Narrowed down the hierarchy rather than widened with a
+    // structural cast, so the claim being made here is checkable: this is a socket.
+    (child.stdout as Socket | null)?.unref();
+    child.on('error', (e: Error) => {
+      witnessFailure = e.message;
+    });
+    let carry = '';
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      carry += chunk;
+      const lines = carry.split('\n');
+      carry = lines.pop() ?? '';
+      for (const line of lines) {
+        const parts = line.split(' ');
+        if (parts.length !== 5 || parts[0] !== 'w') continue;
+        const [at, lateBy, ticks, cpuMicros] = parts.slice(1).map(Number);
+        if ([at, lateBy, ticks, cpuMicros].some((n) => !Number.isFinite(n))) continue;
+        witnessHistory.push({
+          at: at as number,
+          lateBy: lateBy as number,
+          ticks: ticks as number,
+          cpuMicros: cpuMicros as number,
+        });
+        if (witnessHistory.length > LAG_HISTORY) witnessHistory.shift();
+      }
+    });
+  } catch (e) {
+    witnessFailure = e instanceof Error ? e.message : String(e);
+  }
+}
+
+/** Stop the witness. Safe to call when it was never started. */
+export function stopExternalLagWitness(): void {
+  witnessChild?.kill();
+  witnessChild = undefined;
+  witnessHistory.length = 0;
+}
+
+/**
+ * What the witness observed at or after `sinceMs`, or `undefined` if there is nothing to report.
+ *
+ * `undefined` covers "never started", "failed to spawn" and "produced nothing yet", and all three
+ * are deliberately indistinguishable *to the caller* from each other but sharply distinguishable
+ * from a measurement. A zero here would claim the sibling ran perfectly, which is the opposite of
+ * what "no data" means.
+ *
+ * Anchoring mirrors {@link maxLagSince}: buckets whose timestamp falls at or after `sinceMs` are in
+ * the window, and the CPU share is taken from the latest bucket at or before it. A bucket
+ * straddling `sinceMs` is included whole, so the window can over-report by at most one
+ * {@link WITNESS_EMIT_INTERVAL_MS}.
+ */
+export function witnessSince(sinceMs: number):
+  | {
+      maxMs: number;
+      ticks: number;
+      expected: number;
+      buckets: number;
+      cpuRatio?: number;
+    }
+  | undefined {
+  if (witnessHistory.length === 0) return undefined;
+  let maxMs = 0;
+  let ticks = 0;
+  let buckets = 0;
+  let anchor: WitnessBucket | undefined;
+  let last: WitnessBucket | undefined;
+  for (const bucket of witnessHistory) {
+    if (bucket.at < sinceMs) {
+      anchor = bucket;
+      continue;
+    }
+    buckets += 1;
+    ticks += bucket.ticks;
+    if (bucket.lateBy > maxMs) maxMs = bucket.lateBy;
+    anchor ??= bucket;
+    last = bucket;
+  }
+  if (buckets === 0) return undefined;
+  const now = Date.now();
+  const expected = Math.max(0, Math.round((now - sinceMs) / WITNESS_SAMPLE_INTERVAL_MS));
+  const spanMs = last !== undefined && anchor !== undefined ? last.at - anchor.at : 0;
+  const cpuRatio =
+    spanMs > 0 && last !== undefined && anchor !== undefined
+      ? (last.cpuMicros - anchor.cpuMicros) / 1000 / spanMs
+      : undefined;
+  return { maxMs, ticks, expected, buckets, cpuRatio };
+}
+
+/**
+ * Say whether this process was blocked or the whole machine was, from the two lags together.
+ *
+ * Neither number alone can answer. `parentMaxMs` on its own is the figure that has been read as
+ * "the runner is oversubscribed" for four CI verdicts without anything measuring another process,
+ * and the witness on its own says nothing about the process that actually stalled.
+ */
+export function describeWitness(
+  parentMaxMs: number,
+  witness: ReturnType<typeof witnessSince>,
+): string {
+  if (witness === undefined) {
+    const why =
+      witnessFailure === undefined
+        ? ''
+        : ` (it failed to start: ${witnessFailure}, which is why there is nothing to compare)`;
+    return (
+      'No external witness reported over this window, so BLOCKED and NOT SCHEDULED cannot be told ' +
+      `apart here${why} — this is an absence of evidence, not evidence the box was healthy`
+    );
+  }
+  const { maxMs, ticks, expected, buckets } = witness;
+  const cpu =
+    witness.cpuRatio === undefined
+      ? ''
+      : `, itself using ${Math.round(witness.cpuRatio * 100)}% CPU`;
+  const band = `a sibling Node process on the same box lagged ${maxMs}ms over ${ticks} of ~${expected} reading(s) in ${buckets} report(s)${cpu}`;
+  // Asked BEFORE the ratio, because a ratio is scale-free and therefore cannot tell a healthy box
+  // from a starved one. Both processes keeping near-perfect time is the shared branch's arithmetic
+  // and the opposite of its conclusion.
+  if (parentMaxMs < WITNESS_QUIET_LAG_MS) {
+    return (
+      `${band} — and this process lagged only ${parentMaxMs}ms, under the ${WITNESS_QUIET_LAG_MS}ms ` +
+      `floor, so NEITHER process was starved over this window and there is nothing to attribute`
+    );
+  }
+  const ratio = parentMaxMs / Math.max(maxMs, 1);
+  if (ratio >= WITNESS_DISPARITY_RATIO) {
+    return (
+      `${band} — ${Math.round(ratio)}x less than this process. THE BOX COULD SCHEDULE WORK, so ` +
+      `this process was BLOCKED rather than starved of CPU: look for a synchronous call, a lock or ` +
+      `an I/O wait on this side, not for a neighbour to blame`
+    );
+  }
+  if (ratio <= WITNESS_SHARED_RATIO) {
+    return (
+      `${band} — comparable to this process. The box could not schedule the sibling either, so ` +
+      `this is machine-wide starvation and the lever is the demand on the box`
+    );
+  }
+  return (
+    `${band} — between ${WITNESS_SHARED_RATIO}x and ${WITNESS_DISPARITY_RATIO}x less than this ` +
+    `process, so neither BLOCKED nor machine-wide starvation is established for this window`
+  );
+}
+
+/**
  * Whether a deadline fired when it was asked to, or long after — or fired on time over a loop that
  * had nevertheless stopped.
  *
@@ -598,6 +892,10 @@ export class CdpSession {
     // figure is only ever read by a transport timeout, and a process with no CDP session cannot
     // have one. Idempotent, so every subsequent session shares the one sampler.
     startEventLoopLagMonitor();
+    // Same reasoning, and the same place, for the sibling process: it answers the question the lag
+    // figure alone cannot -- whether the box could schedule anything at all while this process
+    // could not. Starting it anywhere earlier would spawn a Node process for every importer.
+    startExternalLagWitness();
     return new Promise((ok, fail) => {
       const socket = new WebSocket(url);
       socket.addEventListener('open', () => ok(new CdpSession(socket)));
@@ -726,14 +1024,15 @@ export class CdpSession {
           timeoutMs,
           maxLagSince(startedAt),
         );
+        const witness = describeWitness(maxLagSince(startedAt).maxMs, witnessSince(startedAt));
         fail(
           new Error(
             `[cdp] no reply to ${method} (id ${id}) after ${Date.now() - startedAt}ms, so every ` +
               `deadline waiting on this reply was unreachable and would have expired mutely. ` +
-              `${deadline.text} Transport health: ${this.describeTransport()}. Read the three ` +
-              `shapes apart rather than pooling them: a cliff (healthy band, then nothing) is a ` +
-              `wedge; a climb is starvation; and no completed commands at all means the session ` +
-              `never worked, which no amount of extra deadline will fix.`,
+              `${deadline.text} ${witness}. Transport health: ${this.describeTransport()}. Read ` +
+              `the three shapes apart rather than pooling them: a cliff (healthy band, then ` +
+              `nothing) is a wedge; a climb is starvation; and no completed commands at all means ` +
+              `the session never worked, which no amount of extra deadline will fix.`,
           ),
         );
       }, timeoutMs);

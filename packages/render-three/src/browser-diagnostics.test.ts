@@ -18,6 +18,8 @@
  * machine none of us can attach a debugger to.
  */
 import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { cpus } from 'node:os';
@@ -40,14 +42,22 @@ import {
   SYSTEM_QUIET_RATIO,
   SYSTEM_SATURATED_RATIO,
   TRANSPORT_TIMEOUT_MS,
+  WITNESS_DISPARITY_RATIO,
+  WITNESS_EMIT_INTERVAL_MS,
+  WITNESS_QUIET_LAG_MS,
+  WITNESS_SHARED_RATIO,
   PAINT_FRAMES_FLOOR,
   PAINT_TIMEOUT_MS,
   classifyEvent,
   describeDeadline,
+  describeWitness,
   maxLagSince,
   paintVerdict,
   startEventLoopLagMonitor,
+  startExternalLagWitness,
+  stopExternalLagWitness,
   waitForPaint,
+  witnessSince,
   closeAllPages,
   evaluate,
   launchBrowser,
@@ -717,6 +727,13 @@ describe('a transport deadline says which side of the socket stopped', () => {
 
   const idle = (ms: number): Promise<void> => new Promise((ok) => setTimeout(ok, ms));
 
+  /**
+   * A witness reading with everything except `maxMs` fixed, so the threshold arms below vary
+   * exactly one quantity. Spelled out rather than reused from a real run, because a fixture taken
+   * from the implementation shares its ancestry with the thing it is checking.
+   */
+  const BAND = { ticks: 200, expected: 600, buckets: 8, cpuRatio: 0.01 };
+
   it('calls a deadline that fired when it was asked to a browser that did not answer', () => {
     const verdict = describeDeadline(30_000, 30_000, { maxMs: 3, samples: 400, expected: 400 });
     expect(verdict.verdict).toBe('on-time');
@@ -898,6 +915,235 @@ describe('a transport deadline says which side of the socket stopped', () => {
     expect(
       describeDeadline(77_467, 30_000, { maxMs: 54_512, samples: 5, expected: 1_549 }).verdict,
     ).toBe('late');
+  });
+
+  it('tells a BLOCKED process apart from a box that could not schedule anything', async () => {
+    // The fork `cpuRatio` could not resolve, and the one this whole CI investigation has turned on.
+    // `0% CPU` is equally true of a process the OS refused to run and of a process sitting inside a
+    // blocking syscall, and those have OPPOSITE fixes: reduce the demand on the box, or remove the
+    // blocking call. Runs 30377421271, 30381542084 and 30390018561 all reported `0% -- NOT
+    // SCHEDULED` and none of them could say which, because nothing in this process can observe
+    // another one. A sibling Node process on the same box can, and nothing else can.
+    startExternalLagWitness();
+    // The parent's own sampler, without which `maxLagSince` answers over zero samples. The first
+    // draft omitted this and the anti-vacuity arm below caught it: `parent.samples` was 0, so the
+    // disparity ratio would have been computed from a parent that had measured nothing. An arm
+    // asserting the instrument ran is not a formality here — it is the whole difference between
+    // "the parent stalled and the witness did not" and "the parent was never watched".
+    startEventLoopLagMonitor();
+    // Long enough for several emit intervals to land, so both windows below have buckets.
+    await idle(WITNESS_EMIT_INTERVAL_MS * 5);
+
+    const blockedFrom = Date.now();
+    await idle(100);
+    // THE ISOLATING ARM: this process stops dead while the box stays free. That is precisely the
+    // shape being diagnosed, reproduced rather than simulated -- the witness is a real second
+    // process, scheduled by the real OS, and it either keeps time or it does not.
+    block(2_000);
+    await idle(WITNESS_EMIT_INTERVAL_MS * 4);
+
+    const parent = maxLagSince(blockedFrom);
+    const witness = witnessSince(blockedFrom);
+
+    // Anti-vacuity, and it is not a formality: a witness that failed to spawn reports `undefined`,
+    // and every assertion below would otherwise be vacuously satisfiable by a missing instrument.
+    expect(witness).toBeDefined();
+    expect(witness?.buckets ?? 0).toBeGreaterThan(0);
+    expect(witness?.ticks ?? 0).toBeGreaterThan(0);
+    expect(parent.samples).toBeGreaterThan(0);
+
+    // The parent really did stall. Without this the disparity below could be produced by a healthy
+    // parent rather than by a healthy witness. Stated against WITNESS_QUIET_LAG_MS rather than a
+    // literal 1000, because that constant is the floor `describeWitness` answers first: if the
+    // parent did not clear it, the verdict below is "neither was starved" and this case would be
+    // asserting a disparity the function never reached.
+    expect(parent.maxMs).toBeGreaterThanOrEqual(WITNESS_QUIET_LAG_MS);
+
+    // And the witness did not, by a wide margin. Asserted as a RATIO, never as a millisecond bound:
+    // three landings here shipped an absolute threshold that turned out to sit inside its own
+    // quantity's band, and a comparison of two processes on one box at one moment cancels the
+    // machine out. Run 30390018561's gap was 23ms against 74823ms, so this is nowhere near an edge.
+    expect(parent.maxMs).toBeGreaterThan((witness?.maxMs ?? 0) * WITNESS_DISPARITY_RATIO);
+
+    // The verdict says so in words, and says the actionable half: look at THIS side.
+    const text = describeWitness(parent.maxMs, witness);
+    expect(text).toMatch(/THE BOX COULD SCHEDULE WORK/);
+    expect(text).toMatch(/BLOCKED rather than starved of CPU/);
+
+    // The witness reports its own CPU share so the claim that it costs nothing is checkable in
+    // every log rather than taken on trust. A witness burning real CPU has become part of the load
+    // it exists to measure.
+    expect(witness?.cpuRatio).toBeDefined();
+    expect(witness?.cpuRatio ?? 1).toBeLessThan(0.25);
+
+    // Printed, not merely asserted. A pass that prints nothing leaves the disparity unknown to
+    // everyone reading the log, which is how three deadlines in this file came to sit inside their
+    // own quantity's band for four landings.
+    console.log(
+      `[witness] parent lagged ${parent.maxMs}ms over ${parent.samples} of ~${parent.expected} ` +
+        `sample(s) while a sibling process on the same box lagged ${witness?.maxMs}ms over ` +
+        `${witness?.ticks} of ~${witness?.expected} reading(s), using ` +
+        `${Math.round((witness?.cpuRatio ?? 0) * 100)}% CPU — ratio ` +
+        `${Math.round(parent.maxMs / Math.max(witness?.maxMs ?? 1, 1))}x`,
+    );
+
+    stopExternalLagWitness();
+  }, 30_000);
+
+  it('says nothing at all when there is no witness, rather than reporting a healthy zero', () => {
+    // The empty-instrument shape, in the one place it would invert the conclusion. A witness that
+    // never spawned has observed no lag; rendering that as `0ms` would read as "the sibling kept
+    // perfect time", i.e. as the strongest possible evidence for BLOCKED -- manufactured out of the
+    // instrument's own absence. This repository has hit that shape six times and this is the first
+    // instrument where the missing reading and the healthy reading are the same number.
+    stopExternalLagWitness();
+    expect(witnessSince(Date.now() - 60_000)).toBeUndefined();
+
+    const text = describeWitness(74_823, undefined);
+    expect(text).toMatch(/No external witness reported/);
+    expect(text).toMatch(/absence of evidence, not evidence the box was healthy/);
+    // It must not reach either verdict on no data.
+    expect(text).not.toMatch(/THE BOX COULD SCHEDULE WORK/);
+    expect(text).not.toMatch(/comparable to this process/);
+  });
+
+  it('calls machine-wide starvation when the sibling starved too, and neither in between', () => {
+    // Without this arm `describeWitness` could be a function that says BLOCKED whenever it is
+    // handed any data at all, which would satisfy the isolating case above while deleting the
+    // distinction it exists to draw. Both verdicts must be reachable from one instrument, and the
+    // band between them must be a stated "neither" rather than a coin flip on a boundary.
+    // NOTE the fragment. The "neither established" prose contains the words "machine-wide
+    // starvation" inside `nor machine-wide starvation is established`, so a substring assertion on
+    // that phrase is red or green for reasons unrelated to the verdict — the same defect that made
+    // `not.toContain('due')` match `come due` in landing #24. Each branch is pinned on wording only
+    // it has.
+    const shared = describeWitness(10_000, {
+      maxMs: 9_000,
+      ticks: 40,
+      expected: 600,
+      buckets: 3,
+      cpuRatio: 0.01,
+    });
+    expect(shared).toMatch(/comparable to this process/);
+    expect(shared).toMatch(/the lever is the demand on the box/);
+    expect(shared).not.toMatch(/THE BOX COULD SCHEDULE WORK/);
+
+    const neither = describeWitness(10_000, {
+      maxMs: 2_000,
+      ticks: 200,
+      expected: 600,
+      buckets: 8,
+      cpuRatio: 0.01,
+    });
+    expect(neither).toMatch(/neither BLOCKED nor machine-wide starvation is established/);
+
+    // Both thresholds are driven from both sides, because a boundary nobody tests is a boundary
+    // that gets written with the wrong comparison and stays that way. `>=` for the disparity, `<=`
+    // for the shared verdict: exactly on either threshold, the verdict is reached.
+    //
+    // The witness lag here is 1000ms rather than 100ms so that every parent value below clears
+    // WITNESS_QUIET_LAG_MS. At the original scale the shared probe's parent was 200ms, which the
+    // quiet floor now answers first — the boundary arm would have gone green while measuring the
+    // floor instead of the ratio, and green for the wrong reason is the failure this file exists
+    // to catch.
+    const W = 1_000;
+    expect(describeWitness(WITNESS_DISPARITY_RATIO * W, { ...BAND, maxMs: W })).toMatch(
+      /THE BOX COULD SCHEDULE WORK/,
+    );
+    expect(describeWitness(WITNESS_DISPARITY_RATIO * W - W, { ...BAND, maxMs: W })).not.toMatch(
+      /THE BOX COULD SCHEDULE WORK/,
+    );
+    expect(describeWitness(WITNESS_SHARED_RATIO * W, { ...BAND, maxMs: W })).toMatch(
+      /comparable to this process/,
+    );
+    expect(describeWitness(WITNESS_SHARED_RATIO * W + W, { ...BAND, maxMs: W })).not.toMatch(
+      /comparable to this process/,
+    );
+
+    // THE QUIET FLOOR, both sides. Found by running the instrument rather than by writing it: wired
+    // into the playability spec, it announced "machine-wide starvation" over a run whose parent had
+    // lagged 23ms, because 37ms against 23ms is arithmetically the shared branch. A ratio is
+    // scale-free by construction, so it cannot be allowed to answer alone.
+    const quiet = describeWitness(WITNESS_QUIET_LAG_MS - 1, { ...BAND, maxMs: 20 });
+    expect(quiet).toMatch(/NEITHER process was starved/);
+    expect(quiet).not.toMatch(/THE BOX COULD SCHEDULE WORK/);
+    expect(quiet).not.toMatch(/comparable to this process/);
+    // One millisecond the other side of it, the same shape reaches a verdict — so the floor is what
+    // decided, and not some other property of these arguments.
+    expect(describeWitness(WITNESS_QUIET_LAG_MS, { ...BAND, maxMs: 20 })).toMatch(
+      /THE BOX COULD SCHEDULE WORK/,
+    );
+  });
+
+  it('does not hold this process open — the witness must not outlive its parent', async () => {
+    // FOUND BY THE GATE, NOT BY A TEST. `node poc/capture.mjs` wrote all three PNGs in 15 seconds
+    // and then sat alive for 2 hours 17 minutes. It had not hung doing work; it hung at exit.
+    //
+    // `child.unref()` unrefs the child's PROCESS handle. A `stdio: 'pipe'` stream is a SEPARATE
+    // referenced libuv handle in the parent, so a fully unref'd child still holds its parent's
+    // event loop open through the pipe. `CdpSession.connect()` starts the witness for EVERY
+    // consumer of this module — the capture and the dev server included — while exactly one caller
+    // (`browser-playability.test.ts`'s afterAll) ever calls stopExternalLagWitness(). A diagnostic
+    // that changes whether the program terminates is not passive, whatever its CPU cost.
+    //
+    // `npm run verify` passed at 73 files / 1038 tests with the defect present, because vitest tears
+    // its workers down. eslint and tsc cannot see process lifetime. Nothing in the gate could see
+    // this except the one instrument that runs a program to completion.
+    stopExternalLagWitness();
+
+    const tally = (xs: readonly string[]): Map<string, number> => {
+      const t = new Map<string, number>();
+      for (const x of xs) t.set(x, (t.get(x) ?? 0) + 1);
+      return t;
+    };
+    const addedBy = (fn: () => void): Map<string, number> => {
+      const before = tally(process.getActiveResourcesInfo());
+      fn();
+      const after = tally(process.getActiveResourcesInfo());
+      const added = new Map<string, number>();
+      for (const [k, v] of after) {
+        const d = v - (before.get(k) ?? 0);
+        if (d > 0) added.set(k, d);
+      }
+      return added;
+    };
+
+    // `getActiveResourcesInfo()` lists only resources that are KEEPING THE EVENT LOOP ALIVE, which
+    // is the property itself rather than a proxy for it.
+    const startedAt = Date.now();
+    const added = addedBy(() => startExternalLagWitness());
+    expect([...added.keys()]).not.toContain('PipeWrap');
+    expect([...added.keys()]).not.toContain('ChildProcess');
+
+    // ANTI-VACUITY 1 — the witness must genuinely have started. A `startExternalLagWitness()` that
+    // silently did nothing adds no handles either, and would satisfy every assertion above while
+    // measuring an absence. Testimony arriving is the marker that it ran.
+    await new Promise((resolve) => setTimeout(resolve, WITNESS_EMIT_INTERVAL_MS * 5));
+    expect(witnessSince(startedAt)).toBeDefined();
+
+    // ANTI-VACUITY 2 — the instrument must be able to SEE a referenced pipe on this platform.
+    // Without this arm, `getActiveResourcesInfo()` returning nothing useful reads exactly like a
+    // clean result. Measured: with the unref removed, the witness itself adds `PipeWrap: 1`.
+    //
+    // It has to be a DIFFERENTIAL through the same helper the real claim uses. Written first as
+    // `tally(...).get('PipeWrap') > 0`, it passed even with the control child given no pipe at
+    // all — vitest holds pipes of its own, so that form asserted "this process has a pipe
+    // somewhere" and was satisfied by resources nothing here created. A control that cannot fail
+    // is not a control, and the mutation harness is the only reason that was noticed.
+    let control: ChildProcess | undefined;
+    try {
+      const controlAdded = addedBy(() => {
+        control = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        control.unref(); // process handle only — deliberately leaving the pipe referenced
+      });
+      expect([...controlAdded.keys()]).toContain('PipeWrap');
+    } finally {
+      control?.kill();
+    }
+
+    stopExternalLagWitness();
   });
 
   it('reports the sampler\u2019s own miss rate, because 2 of 600 is not "a small sample"', () => {
