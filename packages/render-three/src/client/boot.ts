@@ -234,12 +234,21 @@ export function boot(config: BootConfig): void {
       // a snapshot arriving and the next animation frame the camera is one world behind. A click
       // in that window is unprojected through a camera aimed at a world that no longer exists.
       //
-      // Measured in a live page while the operative walked the map: over 60 samples the camera
-      // was identical before and after a forced sync (0.0000 world units), so this window is
-      // narrow and was never observed to bite — the iso camera follows an *integer* cell, so it
-      // only moves when the actor crosses a cell boundary. The hole is structural rather than
-      // observed, and it is closed here because the cost is one sync per click: `pick` is invoked
-      // only from the collector's mousedown handler, never on pointer movement.
+      // Measured, by forcing the condition rather than sampling for it (see
+      // iso-pick.test.ts). The iso camera follows an *integer* cell, so it does not drift -- it
+      // jumps a whole world unit when the actor crosses a boundary, and it does that on only 2
+      // of 240 ticks in the test vault. On the ticks it does NOT move, a stale camera is exactly
+      // the fresh one. On the ticks it does, a camera one tick behind resolved 357 of 361 screen
+      // points to a DIFFERENT cell, displaced by up to 3 cells.
+      //
+      // An earlier note here said this window was "never observed to bite", on the strength of 60
+      // live samples that found 0.0000 world units of camera displacement. Those samples were
+      // right and the conclusion was wrong: at 2 moving ticks in 240 a 60-sample sweep expects to
+      // miss the condition, so it measured how rare the window is and not what happens inside it.
+      // Sampling an outcome cannot establish its absence.
+      //
+      // The cost of closing it is one sync per click: `pick` is invoked only from the
+      // collector's mousedown handler, never on pointer movement.
       if (mounted) adapter.sync(mirror);
       return adapter.pick(x, y);
     },

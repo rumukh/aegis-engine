@@ -28,6 +28,8 @@
  * projecting a world point through that camera produces.
  * @packageDocumentation
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import type { Mesh, Object3D } from 'three';
@@ -142,5 +144,113 @@ describe('clicking what you can see, in isometry', () => {
     expect(top).toBeGreaterThan(0.2);
 
     adapter.dispose();
+  });
+});
+
+describe('a click must be unprojected through the camera the current world implies', () => {
+  it('a camera one tick behind the world resolves a click to a different cell', () => {
+    // A PREMISE for the sync inside boot's pick callback: if a one-tick-stale camera could never
+    // change the answer, that sync would be dead weight and ought to be deleted.
+    //
+    // `applySnapshot` updates the mirror world in the exchange's continuation and does not sync
+    // the adapter; the frame loop syncs once per animation frame. A click landing between the two
+    // is therefore unprojected through a camera aimed at the previous world. Live frame gaps here
+    // measured 16-34ms, which at 60Hz is one to two ticks — one is the case used below.
+    //
+    // It is measured by FORCING the condition rather than sampling for it. The iso camera follows
+    // an integer cell, so it does not drift: it jumps a whole world unit when the actor crosses a
+    // boundary, on 2 of 240 ticks in this scene. An earlier 60-sample sweep of a live page found
+    // 0.0000 units of displacement and concluded the window never bit. At that rate a 60-sample
+    // sweep expects to miss it, so what it measured was how rare the window is, not what happens
+    // inside it — and a sample cannot establish an absence.
+    const world = buildTestWorld(ISO_SCENE, isoPlugin);
+    const fresh = createIsoAdapter({ aspect: 16 / 9 });
+    const stale = createIsoAdapter({ aspect: 16 / 9 });
+    fresh.mount(world);
+    stale.mount(world);
+    fresh.sync(world);
+    stale.sync(world);
+
+    // Move the operative one cell — the smallest change that can move a cell-following camera.
+    const operative = world
+      .query({ has: [GridPosition, Controlled] })
+      .one()
+      .get(GridPosition);
+    const from = { x: operative.cellX, y: operative.cellY };
+    operative.cellY += 1;
+    // `fresh` is the frame that happened; `stale` deliberately does not sync, and is the camera a
+    // click in that window would be unprojected through.
+    fresh.sync(world);
+
+    const moved = fresh.camera.position.distanceTo(stale.camera.position);
+    expect(
+      moved,
+      'the camera must move, or the sweep below compares a camera with itself',
+    ).toBeGreaterThan(0);
+
+    let differing = 0;
+    let compared = 0;
+    let worst = 0;
+    for (let px = -0.9; px <= 0.9001; px += 0.1) {
+      for (let py = -0.9; py <= 0.9001; py += 0.1) {
+        const a = fresh.pick(px, py);
+        const b = stale.pick(px, py);
+        if (a === null || b === null) continue;
+        compared++;
+        if (a.x !== b.x || a.y !== b.y) {
+          differing++;
+          worst = Math.max(worst, Math.abs(a.x - b.x) + Math.abs(a.y - b.y));
+        }
+      }
+    }
+    fresh.dispose();
+    stale.dispose();
+    console.log(
+      '      pick staleness: operative (' +
+        String(from.x) +
+        ',' +
+        String(from.y) +
+        ') -> (' +
+        String(operative.cellX) +
+        ',' +
+        String(operative.cellY) +
+        '), camera moved ' +
+        moved.toFixed(3) +
+        ' world units in one tick; ' +
+        String(differing) +
+        '/' +
+        String(compared) +
+        ' screen points resolve to a different cell, worst ' +
+        String(worst) +
+        ' cells',
+    );
+
+    // Anti-vacuity: a sweep that compared nothing would satisfy any claim made about it.
+    expect(compared).toBeGreaterThan(100);
+    // The premise. One differing point would justify the sync; the measured figure is that
+    // essentially the whole screen moves, because the camera jumps a whole cell rather than
+    // drifting. That is why the symptom is "I clicked there and he walked somewhere else"
+    // rather than "the click was a little off".
+    expect(differing).toBeGreaterThan(compared / 2);
+    expect(worst).toBeGreaterThanOrEqual(1);
+  });
+
+  it('boot syncs the adapter before unprojecting a click through it', () => {
+    // The premise above says a stale camera gives a different answer. This says the production
+    // path does not use one. Source order, because "which camera was this ray cast through" is
+    // not observable from outside — the same technique projection-freshness.test.ts applies to
+    // the opposite direction (world point -> pixel).
+    const boot = readFileSync(fileURLToPath(new URL('../client/boot.ts', import.meta.url)), 'utf8');
+    const start = boot.indexOf('pick: (x, y) =>');
+    // Bounded at the next collector option, so a sync belonging to a LATER handler (`project`
+    // has one too) cannot be mistaken for this one and turn a removal green.
+    const callback = boot.slice(start, boot.indexOf('onCommand:', start));
+    const sync = callback.indexOf('adapter.sync(mirror)');
+    const pick = callback.indexOf('adapter.pick(x, y)');
+    expect(sync, "boot's pick callback must sync the adapter").toBeGreaterThanOrEqual(0);
+    expect(pick, "boot's pick callback must call adapter.pick").toBeGreaterThan(0);
+    expect(sync, 'the sync must precede the pick, or it aims at the wrong world').toBeLessThan(
+      pick,
+    );
   });
 });
