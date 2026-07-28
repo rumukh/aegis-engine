@@ -397,6 +397,26 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--disable-extensions',
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
+    // A headless window that Chrome believes nobody can see is a window Chrome stops drawing --
+    // and when compositing stops, `requestAnimationFrame` stops with it. The page stays alive,
+    // timers keep firing, nothing throws; there are simply no frames.
+    //
+    // Measured on windows-latest, run 30335228246, by this file's own anti-vacuity control:
+    //
+    //     control (blank page): 0 fps, median gap 0.0ms, p95 0.0ms
+    //
+    // Zero callbacks in a three-second window on a page doing nothing, while ubuntu-latest passed
+    // the same commit. `CalculateNativeWinOcclusion` is Windows-only, which is the shape of the
+    // split; the other three cover the neighbouring throttles that produce the same symptom, so
+    // that a still-zero reading rules out the whole family rather than one member of it.
+    //
+    // Unconditional rather than platform-gated on purpose: a branch only one CI leg ever executes
+    // is a branch nobody can debug from a local machine, and none of these can *reduce* the frame
+    // rate anywhere -- they only remove throttling.
+    '--disable-features=CalculateNativeWinOcclusion',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-background-timer-throttling',
     ...(options.uncapFrameRate === true
       ? [
           '--disable-frame-rate-limit',

@@ -281,6 +281,10 @@ let browser: LaunchedBrowser;
 let controlGapP95 = Number.NaN;
 /** The raw control gaps, kept so the control test can assert the measurement happened. */
 let controlGaps: number[] = [];
+/** Timer callbacks over the same window, on a clock that does not depend on compositing. */
+let controlTimerTicks = 0;
+/** The page's own account of whether anything was expected to be drawn to it. */
+let controlVisibility = 'unmeasured';
 
 beforeAll(async () => {
   server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
@@ -296,6 +300,7 @@ beforeAll(async () => {
     cdp,
     `globalThis.__gaps = [];
      globalThis.__last = 0;
+     globalThis.__timerTicks = 0;
      const tick = () => {
        const now = performance.now();
        if (globalThis.__last !== 0) globalThis.__gaps.push(now - globalThis.__last);
@@ -303,12 +308,22 @@ beforeAll(async () => {
        globalThis.requestAnimationFrame(tick);
      };
      globalThis.requestAnimationFrame(tick);
+     // A second clock, on a mechanism that does NOT depend on compositing. Zero frames alone
+     // cannot distinguish "the page is dead" from "the page is alive and not being drawn"; these
+     // two counters together can, and the difference is the whole diagnosis.
+     const timer = () => { globalThis.__timerTicks += 1; globalThis.setTimeout(timer, 16); };
+     globalThis.setTimeout(timer, 16);
      null`,
   );
   await sleep(3000);
   controlGaps = JSON.parse(
     await evaluate<string>(cdp, 'JSON.stringify(globalThis.__gaps)'),
   ) as number[];
+  controlTimerTicks = await evaluate<number>(cdp, 'globalThis.__timerTicks');
+  controlVisibility = await evaluate<string>(
+    cdp,
+    `document.visibilityState + '/hidden=' + document.hidden + '/focus=' + document.hasFocus()`,
+  );
   controlGapP95 = percentile(controlGaps, 95);
   cdp.close();
   // 180s, not 90s. This hook starts a dev server, launches Chrome and then deliberately sleeps
@@ -375,9 +390,25 @@ describe('the frame budget, measured in a real browser', () => {
     // available even when this test is filtered out.
     report(
       `control (blank page): ${(controlGaps.length / 3).toFixed(0)} fps, ` +
-        `median gap ${percentile(controlGaps, 50).toFixed(1)}ms, p95 ${controlGapP95.toFixed(1)}ms`,
+        `median gap ${percentile(controlGaps, 50).toFixed(1)}ms, p95 ${controlGapP95.toFixed(1)}ms, ` +
+        `timer ticks ${controlTimerTicks} over the same 3s, page ${controlVisibility}`,
     );
-    expect(controlGaps.length).toBeGreaterThan(10);
+    // Zero frames is the reading that cost run 30335228246 nine cases, and on its own it is
+    // ambiguous. The timer count disambiguates it, so this failure explains itself in one line
+    // rather than in another 25-minute round trip:
+    //
+    //   0 frames, ~180 timer ticks  -> the page is alive and Chrome is not drawing it
+    //   0 frames, 0 timer ticks     -> the page is not running at all; look upstream of pacing
+    expect(
+      controlGaps.length,
+      `a blank page produced ${controlGaps.length} animation frames in 3s while its timer ` +
+        `fired ${controlTimerTicks} times (page ${controlVisibility}). A frame budget measured ` +
+        `here would be a budget on a browser that never drew.`,
+    ).toBeGreaterThan(10);
+    // The timer arm is asserted too, so that "both are zero" cannot be read as a pacing problem.
+    // Without this, a page that had stopped executing entirely would be diagnosed as an occluded
+    // window -- the wrong repair, applied confidently.
+    expect(controlTimerTicks).toBeGreaterThan(10);
     // The measurements below are only meaningful if the host is not itself the limit. Capped,
     // this machine gives a blank page 30fps and a p95 gap of 60ms — a budget measured under that
     // would be a budget on Chrome's virtual display. Uncapped it is ~500fps and ~11ms.
