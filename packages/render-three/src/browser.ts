@@ -569,6 +569,17 @@ export function stopExternalLagWitness(): void {
  * the window, and the CPU share is taken from the latest bucket at or before it. A bucket
  * straddling `sinceMs` is included whole, so the window can over-report by at most one
  * {@link WITNESS_EMIT_INTERVAL_MS}.
+ *
+ * `newestAgeMs` exists because the two halves of this result have **different provenance and the
+ * difference is invisible without it**. `expected` is derived from the wall window — how many
+ * readings the sibling owed between `sinceMs` and now — while `maxMs`, `ticks` and `buckets` come
+ * only from reports this process has actually *received* on the child's stdout. A blocked event
+ * loop runs no `'data'` handler, so everything the sibling wrote during a stall is still sitting
+ * unread in the pipe, and the testimony is truncated **by the very event it is being asked to
+ * describe**. The truncation is not neutral: it removes exactly the late readings and biases the
+ * answer toward "the sibling kept time", which is the premise of the BLOCKED verdict. So the age of
+ * the freshest reading is reported, and {@link describeWitness} refuses to attribute when it does
+ * not reach into the period under examination.
  */
 export function witnessSince(sinceMs: number):
   | {
@@ -576,6 +587,7 @@ export function witnessSince(sinceMs: number):
       ticks: number;
       expected: number;
       buckets: number;
+      newestAgeMs: number;
       cpuRatio?: number;
     }
   | undefined {
@@ -596,15 +608,16 @@ export function witnessSince(sinceMs: number):
     anchor ??= bucket;
     last = bucket;
   }
-  if (buckets === 0) return undefined;
+  if (buckets === 0 || last === undefined) return undefined;
   const now = Date.now();
   const expected = Math.max(0, Math.round((now - sinceMs) / WITNESS_SAMPLE_INTERVAL_MS));
-  const spanMs = last !== undefined && anchor !== undefined ? last.at - anchor.at : 0;
+  const newestAgeMs = Math.max(0, now - last.at);
+  const spanMs = anchor !== undefined ? last.at - anchor.at : 0;
   const cpuRatio =
-    spanMs > 0 && last !== undefined && anchor !== undefined
+    spanMs > 0 && anchor !== undefined
       ? (last.cpuMicros - anchor.cpuMicros) / 1000 / spanMs
       : undefined;
-  return { maxMs, ticks, expected, buckets, cpuRatio };
+  return { maxMs, ticks, expected, buckets, newestAgeMs, cpuRatio };
 }
 
 /**
@@ -628,7 +641,7 @@ export function describeWitness(
       `apart here${why} — this is an absence of evidence, not evidence the box was healthy`
     );
   }
-  const { maxMs, ticks, expected, buckets } = witness;
+  const { maxMs, ticks, expected, buckets, newestAgeMs } = witness;
   const cpu =
     witness.cpuRatio === undefined
       ? ''
@@ -643,12 +656,39 @@ export function describeWitness(
       `floor, so NEITHER process was starved over this window and there is nothing to attribute`
     );
   }
-  const ratio = parentMaxMs / Math.max(maxMs, 1);
-  if (ratio >= WITNESS_DISPARITY_RATIO) {
+  // Asked before any comparison, because a comparison over testimony that stops short of the stall
+  // is not a weak measurement, it is a measurement of a different window. See {@link witnessSince}:
+  // reports arrive on the child's stdout, a blocked loop reads no stdout, so the readings covering
+  // the stall are still unread at the moment a verdict computed inside the timers phase is built.
+  // The truncation removes precisely the late readings, which is what makes the sibling look
+  // punctual and this process look BLOCKED — the instrument censored by its own subject.
+  //
+  // The predicate compares two MEASURED quantities rather than testing an invented constant: if the
+  // freshest reading is older than the stall it is meant to describe, it cannot describe it. This
+  // repository has retired four absolute thresholds for sitting inside their own band, and a
+  // coverage threshold in milliseconds would have been the fifth.
+  if (newestAgeMs >= parentMaxMs) {
     return (
-      `${band} — ${Math.round(ratio)}x less than this process. THE BOX COULD SCHEDULE WORK, so ` +
-      `this process was BLOCKED rather than starved of CPU: look for a synchronous call, a lock or ` +
-      `an I/O wait on this side, not for a neighbour to blame`
+      `${band} — but its freshest reading is ${newestAgeMs}ms old while this process lagged ` +
+      `${parentMaxMs}ms, so the testimony STOPS SHORT OF THE STALL it would have to describe and ` +
+      `NO ATTRIBUTION IS POSSIBLE from this window. A blocked event loop reads no stdout, so ` +
+      `whatever the sibling wrote during the stall is still unread here; the gap is the instrument ` +
+      `being censored by the very event it measures, not evidence the sibling kept time`
+    );
+  }
+  const ratio = parentMaxMs / Math.max(maxMs, 1);
+  if (maxMs < WITNESS_QUIET_LAG_MS) {
+    if (ratio >= WITNESS_DISPARITY_RATIO) {
+      return (
+        `${band} — ${Math.round(ratio)}x less than this process, and under the ` +
+        `${WITNESS_QUIET_LAG_MS}ms floor in absolute terms. THE BOX COULD SCHEDULE WORK, so this ` +
+        `process was BLOCKED rather than starved of CPU: look for a synchronous call, a lock or an ` +
+        `I/O wait on this side, not for a neighbour to blame`
+      );
+    }
+    return (
+      `${band} — under the ${WITNESS_QUIET_LAG_MS}ms floor, but only ${Math.round(ratio)}x less ` +
+      `than this process, so neither BLOCKED nor machine-wide starvation is established here`
     );
   }
   if (ratio <= WITNESS_SHARED_RATIO) {
@@ -657,9 +697,17 @@ export function describeWitness(
       `this is machine-wide starvation and the lever is the demand on the box`
     );
   }
+  // The sibling is over the floor on its own absolute figure, which is machine-wide starvation
+  // whatever the ratio says. The disparity is deliberately NOT reported as BLOCKED on top: two
+  // lags, both real, cannot separate "this process was ALSO blocked" from "this process was
+  // starved worse" — and the previous code said BLOCKED here, over a sibling that had itself
+  // lagged 13806ms, which is a sentence that contradicts its own evidence.
   return (
-    `${band} — between ${WITNESS_SHARED_RATIO}x and ${WITNESS_DISPARITY_RATIO}x less than this ` +
-    `process, so neither BLOCKED nor machine-wide starvation is established for this window`
+    `${band} — itself over the ${WITNESS_QUIET_LAG_MS}ms floor, so the box could not schedule a ` +
+    `process whose only job is to keep time: MACHINE-WIDE STARVATION IS ESTABLISHED on that ` +
+    `absolute figure alone. This process lagged ${Math.round(ratio)}x more, and that disparity ` +
+    `does NOT add BLOCKED on top of it: two starved processes cannot say which of them was also ` +
+    `blocked`
   );
 }
 
@@ -1018,23 +1066,42 @@ export class CdpSession {
     return new Promise<T>((ok, fail) => {
       const startedAt = Date.now();
       const timer = setTimeout(() => {
+        // Synchronous, and deliberately so: removing the pending entry here is what decides the
+        // COMMAND'S outcome, and it must not move. A reply arriving in this iteration's poll phase
+        // then finds no entry and is discarded as unmatched, exactly as before this deferral.
         this.#pending.delete(id);
-        const deadline = describeDeadline(
-          Date.now() - startedAt,
-          timeoutMs,
-          maxLagSince(startedAt),
-        );
-        const witness = describeWitness(maxLagSince(startedAt).maxMs, witnessSince(startedAt));
-        fail(
-          new Error(
-            `[cdp] no reply to ${method} (id ${id}) after ${Date.now() - startedAt}ms, so every ` +
-              `deadline waiting on this reply was unreachable and would have expired mutely. ` +
-              `${deadline.text} ${witness}. Transport health: ${this.describeTransport()}. Read ` +
-              `the three shapes apart rather than pooling them: a cliff (healthy band, then ` +
-              `nothing) is a wedge; a climb is starvation; and no completed commands at all means ` +
-              `the session never worked, which no amount of extra deadline will fix.`,
-          ),
-        );
+        const firedAt = Date.now();
+        // Everything below is DIAGNOSIS, and it is deferred by one libuv iteration for a measured
+        // reason. libuv runs the timers phase BEFORE the poll phase, so at this instant every byte
+        // the external witness wrote while this process was blocked is still unread in its pipe —
+        // see {@link witnessSince}. A verdict computed here is computed over testimony truncated by
+        // the very stall it is describing. Both regimes of that truncation were measured on this
+        // box, with the deferral removed and restored, over a 4000ms block against a 1500ms
+        // deadline:
+        //   - window opened before the stall: the history survives but stops short of it, biasing
+        //     toward "the sibling kept time", which is the premise of the BLOCKED verdict (the
+        //     drain case measures 1623ms of testimony sitting unread);
+        //   - window opened at the stall, as here: NOT ONE report is read, `witnessSince` returns
+        //     undefined, and the message degrades to "No external witness reported over this
+        //     window" — no attribution at all, from a sibling that reported 15 times.
+        // `setImmediate` runs in the CHECK phase, after this iteration's poll phase has drained the
+        // pipe, so the comparison is made over complete evidence. Not unref'd: an unref'd immediate
+        // could be reaped before it runs and leave this promise permanently unsettled.
+        setImmediate(() => {
+          const lag = maxLagSince(startedAt);
+          const deadline = describeDeadline(firedAt - startedAt, timeoutMs, lag);
+          const witness = describeWitness(lag.maxMs, witnessSince(startedAt));
+          fail(
+            new Error(
+              `[cdp] no reply to ${method} (id ${id}) after ${firedAt - startedAt}ms, so every ` +
+                `deadline waiting on this reply was unreachable and would have expired mutely. ` +
+                `${deadline.text} ${witness}. Transport health: ${this.describeTransport()}. Read ` +
+                `the three shapes apart rather than pooling them: a cliff (healthy band, then ` +
+                `nothing) is a wedge; a climb is starvation; and no completed commands at all ` +
+                `means the session never worked, which no amount of extra deadline will fix.`,
+            ),
+          );
+        });
       }, timeoutMs);
       // Unref so a pending command can never by itself hold the process open; the rejection above
       // is what callers see, and a stray timer outliving the run would be its own defect.

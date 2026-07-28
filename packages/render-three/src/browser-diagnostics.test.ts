@@ -732,7 +732,7 @@ describe('a transport deadline says which side of the socket stopped', () => {
    * exactly one quantity. Spelled out rather than reused from a real run, because a fixture taken
    * from the implementation shares its ancestry with the thing it is checking.
    */
-  const BAND = { ticks: 200, expected: 600, buckets: 8, cpuRatio: 0.01 };
+  const BAND = { ticks: 200, expected: 600, buckets: 8, newestAgeMs: 0, cpuRatio: 0.01 };
 
   it('calls a deadline that fired when it was asked to a browser that did not answer', () => {
     const verdict = describeDeadline(30_000, 30_000, { maxMs: 3, samples: 400, expected: 400 });
@@ -965,6 +965,13 @@ describe('a transport deadline says which side of the socket stopped', () => {
     // machine out. Run 30390018561's gap was 23ms against 74823ms, so this is nowhere near an edge.
     expect(parent.maxMs).toBeGreaterThan((witness?.maxMs ?? 0) * WITNESS_DISPARITY_RATIO);
 
+    // AND the testimony actually reaches into the stall. Without this the disparity below is not
+    // evidence the sibling kept time — it is evidence the parent stopped listening, which is the
+    // censored-testimony defect. Asserted as a PRECONDITION here rather than left to the classifier,
+    // because a case that silently drifted into the coverage branch would go red on the wording
+    // assertions below and read as a regression in the disparity logic.
+    expect(witness?.newestAgeMs ?? Infinity).toBeLessThan(parent.maxMs);
+
     // The verdict says so in words, and says the actionable half: look at THIS side.
     const text = describeWitness(parent.maxMs, witness);
     expect(text).toMatch(/THE BOX COULD SCHEDULE WORK/);
@@ -1022,41 +1029,63 @@ describe('a transport deadline says which side of the socket stopped', () => {
       ticks: 40,
       expected: 600,
       buckets: 3,
+      newestAgeMs: 0,
       cpuRatio: 0.01,
     });
     expect(shared).toMatch(/comparable to this process/);
     expect(shared).toMatch(/the lever is the demand on the box/);
     expect(shared).not.toMatch(/THE BOX COULD SCHEDULE WORK/);
 
-    const neither = describeWitness(10_000, {
-      maxMs: 2_000,
-      ticks: 200,
-      expected: 600,
-      buckets: 8,
-      cpuRatio: 0.01,
-    });
+    // RETARGETED. At its original arguments (parent 10000, sibling 2000) this probe now reaches the
+    // branch below, because a sibling lagging 2000ms is itself over the quiet floor and that is
+    // machine-wide starvation whatever the ratio says. Re-aimed at the band it was written to
+    // measure — a sibling comfortably UNDER the floor, at a ratio between the two thresholds — with
+    // the parent exactly on the floor so it still clears it.
+    const neither = describeWitness(WITNESS_QUIET_LAG_MS, { ...BAND, maxMs: 200 });
     expect(neither).toMatch(/neither BLOCKED nor machine-wide starvation is established/);
+    expect(neither).not.toMatch(/THE BOX COULD SCHEDULE WORK/);
+
+    // The branch that reads the sibling's ABSOLUTE figure rather than the ratio. This is the arm
+    // the old classifier got wrong: run 30396379326 printed "THE BOX COULD SCHEDULE WORK, so this
+    // process was BLOCKED" over a sibling that had itself lagged 13806ms — a sentence contradicted
+    // by the number in the same line. A box that cannot schedule a process whose only job is to
+    // read a clock is starved, and the disparity on top of that cannot say which of two starved
+    // processes was ALSO blocked.
+    const bothStarved = describeWitness(10_000, { ...BAND, maxMs: 2_000 });
+    expect(bothStarved).toMatch(/MACHINE-WIDE STARVATION IS ESTABLISHED/);
+    expect(bothStarved).toMatch(/cannot say which of them was also blocked/);
+    expect(bothStarved).not.toMatch(/THE BOX COULD SCHEDULE WORK/);
 
     // Both thresholds are driven from both sides, because a boundary nobody tests is a boundary
     // that gets written with the wrong comparison and stays that way. `>=` for the disparity, `<=`
     // for the shared verdict: exactly on either threshold, the verdict is reached.
     //
-    // The witness lag here is 1000ms rather than 100ms so that every parent value below clears
-    // WITNESS_QUIET_LAG_MS. At the original scale the shared probe's parent was 200ms, which the
-    // quiet floor now answers first — the boundary arm would have gone green while measuring the
-    // floor instead of the ratio, and green for the wrong reason is the failure this file exists
-    // to catch.
-    const W = 1_000;
-    expect(describeWitness(WITNESS_DISPARITY_RATIO * W, { ...BAND, maxMs: W })).toMatch(
+    // TWO sibling values, not one, and both DERIVED from WITNESS_QUIET_LAG_MS rather than written
+    // as literals. The disparity arms need a sibling UNDER the floor (or the absolute branch
+    // pre-empts the ratio); the shared arms need one ON OR OVER it (or the ratio never reaches that
+    // branch at all). A single value cannot satisfy both, which is exactly why the previous single
+    // `W = 1_000` stopped exercising half of these arms the moment a branch was added upstream.
+    //
+    // This is the SECOND time these arms have been retargeted by an upstream branch, so the
+    // preconditions are now asserted rather than reasoned: an arm that cannot fire is not a
+    // control, and nothing else in this file would notice if a constant change made them silently
+    // unreachable again.
+    const D = WITNESS_QUIET_LAG_MS / 5;
+    const S = WITNESS_QUIET_LAG_MS;
+    expect(D).toBeLessThan(WITNESS_QUIET_LAG_MS);
+    expect(WITNESS_DISPARITY_RATIO * D - D).toBeGreaterThanOrEqual(WITNESS_QUIET_LAG_MS);
+    expect(S).toBeGreaterThanOrEqual(WITNESS_QUIET_LAG_MS);
+
+    expect(describeWitness(WITNESS_DISPARITY_RATIO * D, { ...BAND, maxMs: D })).toMatch(
       /THE BOX COULD SCHEDULE WORK/,
     );
-    expect(describeWitness(WITNESS_DISPARITY_RATIO * W - W, { ...BAND, maxMs: W })).not.toMatch(
+    expect(describeWitness(WITNESS_DISPARITY_RATIO * D - D, { ...BAND, maxMs: D })).not.toMatch(
       /THE BOX COULD SCHEDULE WORK/,
     );
-    expect(describeWitness(WITNESS_SHARED_RATIO * W, { ...BAND, maxMs: W })).toMatch(
+    expect(describeWitness(WITNESS_SHARED_RATIO * S, { ...BAND, maxMs: S })).toMatch(
       /comparable to this process/,
     );
-    expect(describeWitness(WITNESS_SHARED_RATIO * W + W, { ...BAND, maxMs: W })).not.toMatch(
+    expect(describeWitness(WITNESS_SHARED_RATIO * S + S, { ...BAND, maxMs: S })).not.toMatch(
       /comparable to this process/,
     );
 
@@ -1074,6 +1103,92 @@ describe('a transport deadline says which side of the socket stopped', () => {
       /THE BOX COULD SCHEDULE WORK/,
     );
   });
+
+  it('refuses to attribute when the testimony stops short of the stall it would describe', () => {
+    // THE CENSORED-TESTIMONY DEFECT, as a classifier arm. `expected` is derived from the wall
+    // window; `maxMs`, `ticks` and `buckets` come only from reports this process has RECEIVED on
+    // the child's stdout. A blocked event loop runs no 'data' handler, so a verdict built while the
+    // loop is still catching up is built over testimony truncated by the very stall it describes —
+    // and the truncation is not neutral. It removes exactly the late readings, which is what makes
+    // the sibling look punctual and the parent look BLOCKED. Run 30396379326's per-command BLOCKED
+    // verdict is that artifact.
+    //
+    // The predicate is a comparison of two MEASURED quantities — the age of the freshest reading
+    // against the length of the stall — and not a millisecond constant. Four absolute thresholds
+    // have been retired in this package for sitting inside their own band; this would have been the
+    // fifth, and it is the one field where an unlucky value inverts the conclusion rather than
+    // merely loosening it.
+    const censored = describeWitness(30_000, { ...BAND, maxMs: 20, newestAgeMs: 30_000 });
+    expect(censored).toMatch(/NO ATTRIBUTION IS POSSIBLE/);
+    expect(censored).toMatch(/STOPS SHORT OF THE STALL/);
+    // The whole point: these are exactly the arguments that used to produce BLOCKED, on the
+    // strength of a sibling whose punctuality had not in fact been observed over the stall.
+    expect(censored).not.toMatch(/THE BOX COULD SCHEDULE WORK/);
+    expect(censored).not.toMatch(/MACHINE-WIDE STARVATION IS ESTABLISHED/);
+
+    // One millisecond the other side of it, the SAME shape reaches the verdict again — so the
+    // coverage check is what decided, and not some other property of these arguments. Without this
+    // arm the branch above would be satisfied by a function that had stopped attributing at all.
+    expect(describeWitness(30_000, { ...BAND, maxMs: 20, newestAgeMs: 29_999 })).toMatch(
+      /THE BOX COULD SCHEDULE WORK/,
+    );
+  });
+
+  it('drains the sibling reports a blocked loop could not read before it judges them', async () => {
+    // The MECHANISM behind the branch above, measured rather than argued. libuv runs the timers
+    // phase BEFORE the poll phase, so a deadline that fires at the end of a stall builds its
+    // message while every byte the witness wrote during that stall is still unread in the pipe.
+    // `send()`'s message construction is therefore deferred to setImmediate — the CHECK phase,
+    // after this iteration's poll phase has drained it.
+    //
+    // This is a direct reading of the quantity underneath the fix, not a sample of its outcome:
+    // the age of the freshest received reading, at the two moments a verdict could be built.
+    startExternalLagWitness();
+    startEventLoopLagMonitor();
+    await idle(WITNESS_EMIT_INTERVAL_MS * 5);
+
+    const from = Date.now();
+    await idle(WITNESS_EMIT_INTERVAL_MS * 2);
+    // Anti-vacuity: a witness that failed to spawn reports `undefined`, and both readings below
+    // would then be vacuously "equal" at nothing.
+    expect(witnessSince(from)).toBeDefined();
+
+    const measured = await new Promise<{ atTimer: number; atImmediate: number }>((done) => {
+      setTimeout(() => {
+        // The stall itself. Reproduced, not simulated: the child keeps writing throughout and this
+        // process cannot read a byte of it.
+        block(1_500);
+        const atTimer = witnessSince(from)?.newestAgeMs ?? Number.NaN;
+        // The timers phase is where the old verdict was built. The check phase is where it is built
+        // now, and the poll phase in between is the entire difference.
+        setImmediate(() => done({ atTimer, atImmediate: witnessSince(from)?.newestAgeMs ?? NaN }));
+      }, 10);
+    });
+
+    expect(Number.isNaN(measured.atTimer)).toBe(false);
+    expect(Number.isNaN(measured.atImmediate)).toBe(false);
+
+    // STRUCTURAL, not a band: no report can have been read during the block, so the freshest
+    // reading's timestamp is necessarily at or before the block started, and its age at the end of
+    // the block is therefore at least the block's length. A machine 100x slower satisfies this;
+    // one 100x faster does too.
+    expect(measured.atTimer).toBeGreaterThanOrEqual(1_500);
+    // And one poll phase later the pipe has been drained, so the freshest reading is fresh again.
+    expect(measured.atImmediate).toBeLessThan(measured.atTimer);
+    // The child emits every WITNESS_EMIT_INTERVAL_MS, so after a drain the newest reading is at
+    // most one emit interval old plus scheduling slop. 4x is the headroom convention this file
+    // already uses for a quantity whose floor is structural and whose ceiling is not.
+    expect(measured.atImmediate).toBeLessThan(WITNESS_EMIT_INTERVAL_MS * 4);
+
+    console.log(
+      `[witness] freshest reading was ${measured.atTimer}ms old in the timers phase at the end of ` +
+        `a 1500ms block, and ${measured.atImmediate}ms old one poll phase later — the pipe had ` +
+        `${measured.atTimer - measured.atImmediate}ms of testimony in it that a verdict built in ` +
+        `the timers phase could not see`,
+    );
+
+    stopExternalLagWitness();
+  }, 30_000);
 
   it('does not hold this process open — the witness must not outlive its parent', async () => {
     // FOUND BY THE GATE, NOT BY A TEST. `node poc/capture.mjs` wrote all three PNGs in 15 seconds
@@ -1420,6 +1535,34 @@ describe('a transport deadline says which side of the socket stopped', () => {
       await expect(answerable).rejects.toThrow(/fired \d+ms LATE/);
       await expect(answerable).rejects.toThrow(/was not running/);
       await expect(answerable).rejects.not.toThrow(/did not answer/);
+
+      // THE DEFERRAL, controlled at its call site rather than only at its mechanism.
+      //
+      // The witness clause in this message is built by `send()`'s timeout callback. libuv runs the
+      // timers phase BEFORE the poll phase, so a callback that runs synchronously there reads a
+      // witness history missing every report the child wrote during the 4000ms block. `send()`
+      // therefore defers to `setImmediate`, one phase later, after poll has drained the pipe.
+      //
+      // WHAT THE CENSORSHIP ACTUALLY LOOKS LIKE HERE WAS MEASURED, NOT REASONED. The first version
+      // of this arm asserted the message does not say its testimony `STOPS SHORT OF THE STALL`, on
+      // the reasoning that the freshest reading would be ~4000ms old against a ~4000ms stall. Run
+      // with the `setImmediate` removed, that arm stayed GREEN — because the window opens at
+      // `startedAt` and the block begins immediately, so the parent reads NOT ONE report inside it.
+      // `witnessSince` returns `undefined` rather than a stale history, and `describeWitness` takes
+      // its first branch, never the coverage branch. Censorship here is total, not partial:
+      //
+      //   deferred    "a sibling Node process on the same box lagged 18ms over 66 of ~80
+      //                reading(s) in 15 report(s) ... THE BOX COULD SCHEDULE WORK"
+      //   synchronous "No external witness reported over this window, so BLOCKED and NOT SCHEDULED
+      //                cannot be told apart here"
+      //
+      // So the arm asserts the regime this case really produces: testimony survived at all. Both
+      // lines below were watched red with the deferral removed. The `STOPS SHORT` pin was dropped
+      // rather than kept, because it was measured unable to fail here; the partial-truncation
+      // regime is covered by the drain case above (1500ms block: freshest reading 1640ms old in the
+      // timers phase, 17ms one poll later) and by the coverage-branch case that names it directly.
+      await expect(answerable).rejects.toThrow(/a sibling Node process on the same box lagged/);
+      await expect(answerable).rejects.not.toThrow(/No external witness reported/);
 
       // The session survives it, and the very next command succeeds — which is the strongest form
       // of "the browser was never the problem" available: the far side was healthy throughout.
