@@ -86,8 +86,45 @@ interface Violation {
   why: string;
 }
 
+/**
+ * `readFileSync`, for a file that came out of `sourceFiles()` rather than out of a constant.
+ *
+ * The corpus is a snapshot of a mutable working tree and the read happens after it. A file that has
+ * vanished in between is not repository source: it is another test's untracked probe. Measured, in
+ * both directions — this file plants `zz-walker-probe.ts` inside `packages/harness/src/`, which
+ * `test/agents-guide-crossrefs.test.ts`'s corpus covers, and that file plants
+ * `zz-crossrefs-probe.ts` in the same directory, which *this* corpus covers. (`__alias-probe.ts`
+ * below is **not** a third: it is a path handed to `ts.createSourceFile` and never written, which
+ * was worth checking rather than counting from the variable name.) The second direction is what
+ * took this file down mid-gate:
+ *
+ *     Error: ENOENT: no such file or directory, open
+ *       '...\packages\harness\src\zz-crossrefs-probe.ts'
+ *
+ * Neither probe can move. Each is untracked deliberately, to pin that `--others` keeps uncommitted
+ * source in scope, and a probe planted where the guard does not look proves nothing. So this is not
+ * the skip-list repair that failed twice before, nor the "plant in your own tree" rule — that rule
+ * would have to forbid this file's own probes, which are in its own tree and are the point.
+ *
+ * Skipping a vanished file is not a weakening: a file that does not exist has no `hashEquals` call
+ * to violate anything. What stops it hiding a corpus that collapsed is the floor asserted against
+ * the enumeration, which counts what `sourceFiles()` returned rather than what survived the read.
+ *
+ * Narrow on purpose: only ENOENT is skipped, because "this file is gone" is safe to ignore and
+ * "I could not read this file" is not.
+ */
+function readCorpusFile(file: string): string | undefined {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
 function violationsIn(file: string): Violation[] {
-  const text = readFileSync(file, 'utf8');
+  const text = readCorpusFile(file);
+  if (text === undefined) return [];
   if (!text.includes('hashEquals')) return [];
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
 
@@ -218,6 +255,36 @@ describe('golden hashes are pinned, repository-wide', () => {
       rmSync(inTree, { force: true });
       rmSync(scratch, { recursive: true, force: true });
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('survives a corpus file that another suite deletes mid-run, and only that', () => {
+    // The tolerance in `readCorpusFile` is a swallow, and a swallow has to be shown to be narrow or
+    // it is indistinguishable from `catch {}`. Two arms, one variable.
+    //
+    // Deterministic rather than timing-based: the race cannot be watched on demand, so the quantity
+    // underneath it is driven directly instead of sampling the outcome.
+    const vanished = join(REPO_ROOT, 'packages', 'harness', 'src', 'zz-vanished-probe.ts');
+    expect(violationsIn(vanished)).toEqual([]);
+
+    // …and a read that fails for any other reason must still throw, or this would hide a corpus
+    // that had become unreadable rather than one that had shrunk. A directory reads as EISDIR.
+    expect(() => violationsIn(join(REPO_ROOT, 'packages'))).toThrow(/EISDIR/);
+
+    // Anti-vacuity for the first arm: a file that *is* there and *does* violate must still be
+    // reported, or "returns []" above would be satisfied by a function that always returns [].
+    const present = join(REPO_ROOT, 'packages', 'harness', 'src', 'zz-present-probe.ts');
+    writeFileSync(
+      present,
+      'declare const r: { hash: string };\n' +
+        'declare const e: { hashEquals(h: string): void };\n' +
+        'e.hashEquals(r.hash);\n',
+      'utf8',
+    );
+    try {
+      expect(violationsIn(present).length).toBeGreaterThan(0);
+    } finally {
+      rmSync(present, { force: true });
     }
   });
 

@@ -43,6 +43,37 @@ const root = join(import.meta.dirname, '..');
 /** Working-tree files are CRLF here; every pattern below is written against `\n`. */
 const read = (p: string): string => readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 
+/**
+ * `read`, for a file that came out of a corpus rather than out of a constant.
+ *
+ * `sourceFiles()` is a snapshot of a mutable working tree and the read happens after it. A file
+ * that has vanished in between is not repository source: it is another test's untracked probe.
+ * This is measured, not hypothetical, and it runs in **both** directions —
+ * `packages/harness/src/golden-hash.invariant.test.ts` plants `zz-walker-probe.ts` inside
+ * `packages/`, which this corpus covers, and this file plants `zz-crossrefs-probe.ts` inside
+ * `packages/harness/src/`, which its corpus covers. Neither can
+ * stop: each probe is untracked *on purpose*, to pin that `--others` keeps uncommitted source in
+ * scope, and a probe planted somewhere the guard does not look would prove nothing.
+ *
+ * So the collision cannot be removed by moving the probes, only by accepting that the snapshot can
+ * age. Skipping a vanished file is not a weakening — a file that does not exist contains no
+ * citation. What stops this from hiding a corpus that collapsed to nothing is the floor in
+ * 'the corpus reaches real source…', which is asserted against the enumeration and not against
+ * what survived the read.
+ *
+ * The tolerance is deliberately narrow. Only ENOENT is skipped; any other read error still throws,
+ * because "I could not read this file" and "this file is not there any more" are different facts
+ * and only the second one is safe to ignore.
+ */
+function readCorpusFile(p: string): string | undefined {
+  try {
+    return read(p);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
 const guide = read(join(root, 'AGENTS.md'));
 
 const SOURCE_ROOTS = ['packages', 'games', 'test', 'scripts', 'poc'];
@@ -127,7 +158,8 @@ const CITATION = /`?AGENTS\.md`?[^\n§]{0,40}§\s*(\d+(?:\.\d+)*)/g;
 function citations(): Citation[] {
   const found: Citation[] = [];
   for (const file of sourceFiles()) {
-    const text = read(file);
+    const text = readCorpusFile(file);
+    if (text === undefined) continue;
     const lines = text.split('\n');
     lines.forEach((line, i) => {
       for (const m of line.matchAll(CITATION)) {
@@ -235,6 +267,29 @@ describe('the guard can actually fail', () => {
       'names its plugin as a string',
     );
     expect(quotedFragment(' makes the general argument')).toBeUndefined();
+  });
+
+  it('survives a corpus file that another suite deletes mid-run, and only that', () => {
+    // Same argument as `packages/harness/src/golden-hash.invariant.test.ts`'s copy of this case,
+    // and it is deliberately not shared code: each guard owns its own corpus reader, so each has
+    // to show its own swallow is narrow. Two arms plus an anti-vacuity arm, driven directly
+    // because a race cannot be watched fail on demand.
+    const vanished = join(root, 'packages', 'harness', 'src', 'zz-vanished-probe.ts');
+    expect(readCorpusFile(vanished)).toBeUndefined();
+
+    // Any other read failure must still throw, or an unreadable corpus would look like an empty
+    // one — which is this repository's most-repeated defect, not a thing to install on purpose.
+    expect(() => readCorpusFile(join(root, 'packages'))).toThrow(/EISDIR/);
+
+    // And a file that is there must still be read, or `toBeUndefined()` above would be satisfied
+    // by a reader that returns undefined for everything.
+    const present = join(root, 'test', 'zz-present-probe.ts');
+    writeFileSync(present, 'export const zzPresentProbe = 1;\n', 'utf8');
+    try {
+      expect(readCorpusFile(present)).toContain('zzPresentProbe');
+    } finally {
+      rmSync(present, { force: true });
+    }
   });
 
   it('the corpus reaches real source, skips node_modules, and skips ignored scratch', () => {
