@@ -326,6 +326,42 @@ describe('the browser phase is omitted on a hosted windows runner, and only ther
     expect(SOLO_SKIP_REASON).toMatch(/74823ms/);
   });
 
+  it('does not re-assert the demand parity that landing #34 withdrew', () => {
+    // THE RETIRED CLAIM. This string said "with identical page demand on both", and the ADR said
+    // "the demand is the same on both legs". Both rested on the three phase windows agreeing
+    // across the legs -- and all three of those windows close on `about:blank`, before the first
+    // navigation to a `/play/*` page. So they establish parity for a blank page and say nothing
+    // about the page whose cost is the entire question. Measured separately by the
+    // `rumukh-fix-ci-workflows` session: blank paces at 60fps on ubuntu and 64fps on windows,
+    // while the fps game page runs its sim at 65.0 and 7.0 ticks/s.
+    //
+    // WHY AN ASSERTION RATHER THAN JUST A FIXED STRING. This repository has measured that a wrong
+    // claim removed from one place reappears from another -- one line in a design doc reached six
+    // channels, and one sentence in AGENTS.md reproduced itself into three. A correction with no
+    // detector is a correction with a half-life. The deletion is the thing under test, in the same
+    // shape as `BROWSER_MARKER`'s: the proof that a class is closed is that putting it back fails.
+    expect(SOLO_SKIP_REASON).not.toContain('identical page demand');
+    expect(SOLO_SKIP_REASON).not.toMatch(/demand is the same/i);
+    // And the withdrawal is stated rather than merely absent -- a reader who finds no demand claim
+    // cannot tell "measured equal, not worth saying" from "never measured".
+    expect(SOLO_SKIP_REASON).toMatch(/OPEN/);
+    expect(SOLO_SKIP_REASON).toContain('about:blank');
+
+    // Anti-vacuity. Every assertion above is satisfied by the empty string, which is exactly the
+    // shape that has produced six false negatives in this project: an instrument returning
+    // nothing reads identical to an instrument reporting nothing wrong.
+    expect(SOLO_SKIP_REASON.length).toBeGreaterThan(200);
+    // ...and the negative arms really can fire: the same checks against the string as it stood
+    // before this landing must fail, or they are pinning nothing.
+    const retired =
+      'a hosted windows-latest runner cannot schedule this process alongside a ' +
+      'software-rasterising Chrome: ... at 88% and 100% box load respectively, with identical ' +
+      'page demand on both. See docs/adr/0010-browser-specs-do-not-run-on-hosted-windows.md — ' +
+      'this is an exclusion, not a pass';
+    expect(retired).toContain('identical page demand');
+    expect(retired).not.toMatch(/OPEN/);
+  });
+
   it('recognises a hosted runner from the environment, and a workstation from its absence', () => {
     // Injected rather than mutated: `process.env.CI` is read by other machinery in the same
     // worker, and a test that sets it would be measuring its own side effect.

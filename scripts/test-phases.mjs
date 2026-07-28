@@ -155,11 +155,19 @@ export function browserSpecs(root, read, paths) {
  *
  * The full evidence chain, the nine refuted levers and the gap this leaves are in
  * `docs/adr/0010-browser-specs-do-not-run-on-hosted-windows.md`. The one-line version, from both
- * legs of run 30390018561 — same tree, same instrument, same job: the demand is identical (all
- * three phase windows agree to a few points, the page paints on the first poll on both, both are
- * 2-vCPU 8 GiB), and the consequence is not. ubuntu's event loop lags **23ms** at 88% box load;
- * the same loop lags **74823ms** at 100%. A factor of ~3250 across twelve points of load is not a
- * CPU-scarcity shape, which is why nine attempts to reduce demand all failed to move it.
+ * legs of run 30390018561 — same tree, same instrument, same job: **the consequence differs by a
+ * factor of ~3250.** ubuntu's event loop lags **23ms** at 88% box load; the same loop lags
+ * **74823ms** at 100%. That is not a CPU-scarcity shape, which is why nine attempts to reduce
+ * demand all failed to move it.
+ *
+ * THIS STRING USED TO CLAIM MORE THAN THAT, and the removal is the point of landing #34. It said
+ * "with identical page demand on both", resting on the three phase windows agreeing across the
+ * legs — but all three windows close on `about:blank`, before the first navigation to a `/play/*`
+ * page, so they establish parity for a blank page and nothing about the page whose cost is the
+ * whole question. The `rumukh-fix-ci-workflows` session then measured the two separately and found
+ * them to disagree: blank paces at 60fps on ubuntu and 64fps on windows, while the fps game page
+ * runs its sim at 65.0 and 7.0 ticks/s. The exclusion never needed the demand claim — it rests on
+ * the consequence, which is measured — so the claim is dropped rather than defended.
  *
  * Exported so the message is stated once and printed where it is acted on, rather than being a
  * comment nobody sees in a log.
@@ -167,7 +175,10 @@ export function browserSpecs(root, read, paths) {
 export const SOLO_SKIP_REASON =
   'a hosted windows-latest runner cannot schedule this process alongside a software-rasterising ' +
   'Chrome: the same tree measures a 23ms worst event-loop lag on ubuntu-latest and 74823ms on ' +
-  'windows-latest, at 88% and 100% box load respectively, with identical page demand on both. ' +
+  'windows-latest, at 88% and 100% box load respectively. Whether the two legs put the same ' +
+  'demand on the box is OPEN and deliberately not claimed here: the three phase windows that ' +
+  'agree across the legs all close on about:blank, and no instrument in this repository has yet ' +
+  'read which rasteriser answered on either leg. ' +
   'See docs/adr/0010-browser-specs-do-not-run-on-hosted-windows.md — this is an exclusion, not a ' +
   'pass: no hosted job exercises a real browser on Windows, and the landing gate on a Windows ' +
   'workstation is what covers it';

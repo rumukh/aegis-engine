@@ -29,7 +29,7 @@ browser exist_ separates "a neighbour is loading the runner" from "our own Chrom
 | -------------------------------------------- | --------------------------- | ------------------------------ |
 | box CPU at rest (nothing of ours running)    | 1% over 500 ms              | 6% over 502 ms                 |
 | box CPU booting (dev server + chrome, blank) | 94% over 329 ms             | 93% over 782 ms                |
-| box CPU painting (a blank page rendering)    | 23% over 1005 ms            | 24% over 1007 ms               |
+| box CPU painting (`about:blank` compositing) | 23% over 1005 ms            | 24% over 1007 ms               |
 | box CPU over the whole run                   | 88%                         | 100%                           |
 | this process's CPU share                     | 4%                          | 0%                             |
 | **worst event-loop lag**                     | **23 ms**, 739 of ~745      | **74 823 ms**, 1284 of ~16 830 |
@@ -39,15 +39,47 @@ browser exist_ separates "a neighbour is loading the runner" from "our own Chrom
 Read the rows in order, because the conclusion is in the gap between the last two and not in any
 one of them:
 
-- **The demand is the same on both legs.** All three phase windows agree to within a few points.
-  The page paints on the first poll on both. The runners are the same 2-vCPU, 8 GiB class.
 - **The load is ours.** At rest the box is 1–6% busy; it goes to ~93% the moment we start a dev
   server and a Chrome. So "a neighbour on the runner" is refuted by measurement, not withdrawn.
 - **The consequence is not the same.** ubuntu's event loop lags **23 ms** at 88% box load; the same
   loop, doing the same work, lags **74 823 ms** at 100%. That is a factor of about 3250 across
   twelve points of load. No plausible band closes a gap that size, so **CPU scarcity is not the
-  mechanism.** The Windows scheduler simply does not give a single-threaded Node process a share
-  against ~40–60 runnable Chrome threads; Linux's autogrouping does.
+  mechanism.** The most likely remaining candidate is that the Windows scheduler does not give a
+  single-threaded Node process a share against ~40–60 runnable Chrome threads where Linux's
+  autogrouping does — but see the correction below before treating that as settled.
+
+### Correction (landing #34): this ADR claimed demand parity its instrument could not reach
+
+The three rows above were, until landing #34, followed by a third bullet reading _"**The demand is
+the same on both legs.** All three phase windows agree to within a few points."_ **That claim is
+withdrawn.** It is not that the windows disagree — they agree exactly as reported. It is that
+**all three of them close on `about:blank`**, before the first navigation to a `/play/*` page. The
+"painting" row was even labelled _"a page rendering"_ and documented in the source as _"our render
+loop's own demand"_, which is what made the promotion from blank-page parity to game-page parity
+feel like reading a table rather than making an inference.
+
+The session on `rumukh-fix-ci-workflows` instrumented the two quantities separately and found them
+to disagree. Attributed to it, not re-measured here:
+
+| quantity          | `ubuntu-latest` | `windows-latest` |
+| ----------------- | --------------- | ---------------- |
+| blank page pacing | 60 fps          | 64 fps           |
+| fps game sim rate | 65.0 ticks/s    | 7.0 ticks/s      |
+| free memory       | —               | 5.3 GB of 8.0 GB |
+
+**Parity at blank and a 9× gap under load are both true**, and only the first is what this ADR's
+windows ever saw. The free-memory figure independently re-refutes paging, which matters because a
+process waiting on the pager also reads 0% CPU — the one fork this file's `cpuRatio` / `systemRatio`
+instruments cannot separate.
+
+**The decision below does not depend on the withdrawn claim** and is unchanged: it rests on the
+_consequence_ — a 3250× lag asymmetry — which was measured on the real run and is not in question.
+What changes is that "the two legs place the same demand on the box" is now an **open question**
+rather than a premise, and one specific, cheap measurement would settle it: nothing in this
+repository has ever asked a real WebGL context for its unmasked renderer string, on **either** leg.
+`--use-angle=swiftshader` is a request Chrome may decline, and the Windows fallback is WARP. If the
+legs are not running the same rasteriser then they were never comparable under load, and the
+scheduler explanation above is doing work that a demand difference would explain more simply.
 
 ## What was tried, and what each attempt refuted
 
@@ -110,6 +142,16 @@ gate would reach `main`. That is a real gap and it is not dressed up as anything
 acceleration so the page is not software-rasterised. Either removes the mechanism rather than
 working around it. If one becomes available, delete `soloEnabled`'s `win32` branch and its guard
 arms — the rest of the split is unaffected.
+
+**The one measurement that should be taken first, and has never been taken.** Ask a real WebGL
+context for `WEBGL_debug_renderer_info`'s unmasked renderer string, on **both** legs, and print it
+unconditionally. It costs one line and it discriminates between two explanations that call for
+opposite work: if both legs report SwiftShader, the demand really is comparable and the scheduler
+account above survives; if Windows reports WARP, the legs were never running the same rasteriser
+and every load comparison in this document is between two different programs. Print it on the green
+leg too — a suspect string seen only where the failure is cannot be distinguished from the normal
+state of a leg nobody instrumented, which is the mistake that cost the `rumukh-fix-ci-workflows`
+session two CI rounds and is recorded here so the next person does not repeat it.
 
 **What must not be done.** Do not "fix" this by raising a deadline until the leg goes green. The
 deadline instrument has already measured itself firing 47 seconds late; a bound raised to cover a

@@ -441,11 +441,30 @@ const BASELINE_WINDOW_MS = 500;
  *
  *   rest     nothing of ours running          <- a neighbour, if this is already high
  *   boot     + dev server + Chrome (blank)    <- our process tree, drawing nothing
- *   painting + a page actually rendering      <- our render loop's own demand
+ *   painting + `about:blank` painting         <- Chrome's compositor, drawing nothing of ours
+ *
+ * WHAT THE THIRD WINDOW DOES NOT REACH, stated because it was overclaimed for four landings. The
+ * page open at that point is `about:blank` (see `openPage` below): there is no three.js scene, no
+ * WebGL context and no render loop of ours in it. This docblock used to label that row "our render
+ * loop's own demand", `describeWindow` used to print it as "a page rendering", and
+ * `docs/adr/0010-...` promoted the two legs' agreement on it to "the demand is the same on both
+ * legs" -- a claim about the *game* page resting on a window that never opened one. All three
+ * windows close before the first navigation to `/play/*`, so **no window in this file has ever
+ * observed the demand of the page whose cost is the entire question.**
+ *
+ * The correction was forced by a measurement from the session on `rumukh-fix-ci-workflows`, which
+ * instrumented the two quantities separately and found them to disagree: a blank page paces at
+ * 60fps on `ubuntu-latest` and 64fps on `windows-latest` -- parity, which is what these three
+ * windows see and why they read as agreement -- while the fps game page runs its sim at 65.0
+ * ticks/s on ubuntu and 7.0 ticks/s on windows. Parity at blank and a 9x gap at load are both
+ * true, and only the first is in scope here.
  *
  * Reported, never asserted on. A threshold here would be a bound inside a band on a machine whose
  * band is unknown -- the error this file has now made three times -- and the question is
- * attribution, not regression.
+ * attribution, not regression. Widening these windows to cover a `/play/*` page would answer a
+ * real question; it is deliberately not done here, because the honest repair for a claim that
+ * outran its instrument is to shrink the claim first and let the next person decide whether to
+ * build the bigger instrument.
  */
 let loadRest: { ratio: number | undefined; windowMs: number } = { ratio: undefined, windowMs: 0 };
 let loadBoot: { ratio: number | undefined; windowMs: number } = { ratio: undefined, windowMs: 0 };
@@ -556,13 +575,17 @@ beforeAll(async () => {
       `measured at up to 63s. ${describeLoad(hookStartedAt)}`,
   );
   // Attribution, not regression: who is making the box busy. Reported so that a later red is
-  // readable, and deliberately unasserted -- see the three windows' docblock above.
+  // readable, and deliberately unasserted -- see the three windows' docblock above. The third
+  // label names `about:blank` because that is the page it watched; calling it "a page rendering"
+  // is what let it be read as our render loop's demand for four landings.
   console.log(
     `[playability] box CPU by phase -- ${describeWindow('at rest (nothing of ours running)', loadRest)}; ` +
       `${describeWindow('booting (dev server + chrome, blank page)', loadBoot)}; ` +
-      `${describeWindow('painting (a page rendering)', loadPainting)}. ` +
+      `${describeWindow('painting (about:blank compositing -- NOT a /play/* page)', loadPainting)}. ` +
       `A high reading at rest is a neighbour on the runner; a low one at rest with a high one ` +
-      `later is our own demand, and the two have opposite fixes.`,
+      `later is our own demand, and the two have opposite fixes. None of the three covers a ` +
+      `three.js page: all close before the first navigation, so agreement here is agreement ` +
+      `about a blank page only.`,
   );
 
   // Measured here rather than inside a test so every report below can print it, including when
