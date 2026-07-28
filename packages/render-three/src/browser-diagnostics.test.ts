@@ -17,12 +17,20 @@
  * is the same defect in a new place, and it would be invisible precisely when it matters — on a
  * machine none of us can attach a debugger to.
  */
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_UNTIL_TIMEOUT_MS,
+  FOCUS_TIMEOUT_MS,
+  LAUNCH_TIMEOUT_MS,
+  NAVIGATION_TIMEOUT_MS,
+  TRANSPORT_TIMEOUT_MS,
   classifyEvent,
   closeAllPages,
   evaluate,
@@ -33,7 +41,7 @@ import {
 
 describe('a browser timeout explains itself', () => {
   it('names the page-side error when the page threw', async () => {
-    const browser = await launchBrowser({ port: 9347 });
+    const browser = await launchBrowser();
     try {
       const cdp = await openPage(browser.port, 'about:blank');
       // An uncaught asynchronous throw: it reaches CDP as `Runtime.exceptionThrown` and does not
@@ -51,10 +59,10 @@ describe('a browser timeout explains itself', () => {
       await closeAllPages(browser.port);
       browser.process.kill();
     }
-  }, 60_000);
+  }, 120_000);
 
   it('says so explicitly when the page is healthy and the condition simply never came true', async () => {
-    const browser = await launchBrowser({ port: 9348 });
+    const browser = await launchBrowser();
     try {
       const cdp = await openPage(browser.port, 'about:blank');
       const failure = await until(cdp, 'globalThis.neverDefined === true', (v) => v === true, 2_000)
@@ -71,7 +79,7 @@ describe('a browser timeout explains itself', () => {
       await closeAllPages(browser.port);
       browser.process.kill();
     }
-  }, 60_000);
+  }, 120_000);
 
   // Both cases above open `about:blank` and inject their error *after* the CDP domains are
   // enabled, so between them they prove only that the collector works for errors that happen
@@ -99,7 +107,7 @@ describe('a browser timeout explains itself', () => {
     });
     await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
     const address = server.address() as AddressInfo;
-    const browser = await launchBrowser({ port: 9349 });
+    const browser = await launchBrowser();
     try {
       const cdp = await openPage(browser.port, `http://127.0.0.1:${address.port}/`);
       // Precondition, not politeness. The assertion below is about what the collector RECORDED,
@@ -138,7 +146,7 @@ describe('a browser timeout explains itself', () => {
   }, 120_000);
 
   it('makes the page state itself state, so a mute timeout still carries measurements', async () => {
-    const browser = await launchBrowser({ port: 9350 });
+    const browser = await launchBrowser();
     try {
       const cdp = await openPage(browser.port, 'about:blank');
       // Same precondition as the 404 case: `readyState: complete` is one of the values asserted
@@ -184,7 +192,7 @@ describe('openPage actually opens the page', () => {
     await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
     const address = server.address() as AddressInfo;
     const url = `http://127.0.0.1:${address.port}/`;
-    const browser = await launchBrowser({ port: 9353 });
+    const browser = await launchBrowser();
     try {
       const cdp = await openPage(browser.port, url);
       // `openPage`'s contract is that the navigation has *happened* by the time it returns, so
@@ -208,7 +216,7 @@ describe('openPage actually opens the page', () => {
   }, 120_000);
 
   it('still supports about:blank, which is what the control pages use', async () => {
-    const browser = await launchBrowser({ port: 9354 });
+    const browser = await launchBrowser();
     try {
       const cdp = await openPage(browser.port, 'about:blank');
       expect(await evaluate<string>(cdp, 'String(location.href)')).toBe('about:blank');
@@ -219,28 +227,114 @@ describe('openPage actually opens the page', () => {
     }
   }, 120_000);
 
+  /**
+   * A command that is accepted and never answered must fail as itself, not as somebody else's
+   * silence.
+   *
+   * `until()` bounds a *condition* and checks its deadline between polls, so it can only check it
+   * if each poll returns. Before this deadline existed, one unanswered `Runtime.evaluate` left
+   * `until` waiting forever, its own diagnostic unreachable, and the case died at vitest's per-test
+   * timeout with nothing printed. Eight cases failed exactly that way on `windows-latest` in run
+   * 30340124068, in a file whose blank-page control was passing at 3861 fps in the same run.
+   *
+   * The hang is produced through the real transport rather than by stubbing the socket: a
+   * `Runtime.evaluate` that awaits a promise nobody resolves is a command Chrome genuinely never
+   * answers, so this exercises the same path a real hang takes.
+   */
+  it('fails as a hung transport rather than as an anonymous timeout', async () => {
+    const browser = await launchBrowser();
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+
+      // The control comes first and shares the short deadline: if 3s rejected everything, the
+      // assertion below would pass while proving only that the timeout is indiscriminate.
+      const alive = await cdp.send<{ result: { value: number } }>(
+        'Runtime.evaluate',
+        { expression: '6 * 7', returnByValue: true },
+        3_000,
+      );
+      expect(alive.result.value).toBe(42);
+
+      const hung = cdp.send(
+        'Runtime.evaluate',
+        { expression: 'new Promise(() => {})', awaitPromise: true },
+        3_000,
+      );
+      await expect(hung).rejects.toThrow(/no reply to Runtime\.evaluate/);
+      // The message must name the *method* and report the elapsed time, because those are the two
+      // things a reader needs and the two things a mute budget timeout cannot supply. It must NOT
+      // assert which of "dead transport" or "starved browser" it is: this instrument cannot tell
+      // them apart, and an earlier draft claimed "hung transport, not a slow page" — which was
+      // measured wrong when a merely-starved `Page.navigate` exceeded the deadline on a loaded box
+      // and was reported as a hang. Asserted here so the over-claim cannot come back.
+      await expect(hung).rejects.toThrow(/does not distinguish a dead transport/);
+      await expect(hung).rejects.toThrow(/after \d+ms/);
+      await expect(hung).rejects.not.toThrow(/is a hung transport, not a slow page/);
+
+      // And the session is still usable afterwards — a deadline that poisoned the socket would
+      // turn one unanswered command into a cascade of unrelated failures.
+      const afterwards = await cdp.send<{ result: { value: number } }>(
+        'Runtime.evaluate',
+        { expression: '1 + 1', returnByValue: true },
+        3_000,
+      );
+      expect(afterwards.result.value).toBe(2);
+
+      cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
+      browser.process.kill();
+    }
+  }, 120_000);
   // The precondition `openPage` was relying on without ever stating, which is why breaking it cost
   // a gate rather than a line of output. Creating a target with `/json/new?<url>` activates the
   // tab; creating it blank and navigating does not, and an unfocused document is refused pointer
   // lock by Chrome with `WrongDocumentError`. Nothing said so, so `poc/capture.mjs` failed on fps
   // -- three PoCs deep, in a different package, with a message about mouse-look.
   //
-  // This case was intermittently red on `main`, and the reason is worth recording because the
-  // obvious diagnosis is wrong. It is not two browsers contending for one OS foreground: measured
-  // with four brought up concurrently, all four held focus at once. `Page.bringToFront` is
-  // acknowledged by the browser process while `document.hasFocus()` is answered by the renderer,
-  // and under load those moments are up to 213ms apart -- so the sample was early, not contended.
+  // This case was intermittently red, and the mechanism is not the obvious one. It is NOT two
+  // browsers contending for one OS foreground: measured with four brought up concurrently, all
+  // four held focus simultaneously. `Page.bringToFront` is acknowledged by the browser process
+  // while `document.hasFocus()` is answered by the renderer, and under load those moments are up
+  // to 213ms apart -- so the sample was early, not contended. Polling is what separates the two
+  // explanations: the loser of a contest stays false, and this converged on its own.
   //
-  // The fix therefore belongs in `openPage`, which now waits for focus to arrive rather than for
-  // the command to be accepted. This assertion is unchanged, and deliberately so: it was never
-  // wrong. It was the only thing reporting a race that `capture.ts` still runs (it clicks for
-  // pointer lock and waits 250ms -- a 37ms margin over that lag).
+  // So `openPage` now waits for focus to arrive rather than for the command to be accepted, and
+  // this assertion is unchanged because it was never wrong -- it was the only thing reporting the
+  // gap. Only one page in a browser can hold focus, so what `openPage` guarantees is that the page
+  // was focused when it returned, not forever: a caller that opens a second page moves focus to it
+  // and is not breaking a rule.
+  //
+  // It is NOT a live production hazard, which was checked rather than assumed -- in both
+  // directions. `client/input.ts` holds the only `requestPointerLock` in the repository, reached
+  // from `capture.ts` only after `waitForBoot`, measured on the real fps page at 860/1166/1002ms.
+  // That is ~800ms of margin over the 213ms lag, not the "37ms" an earlier version of this comment
+  // claimed -- that number compared the sleep *after* the click instead of the boot *before* it.
+  // The margin is incidental rather than designed, which is why the wait belongs in `openPage`
+  // even though nothing is broken today.
   it('hands back a focused page, which is what capabilities like pointer lock require', async () => {
-    const browser = await launchBrowser({ port: 9355 });
+    const browser = await launchBrowser();
     try {
       const cdp = await openPage(browser.port, 'about:blank');
-      expect(await evaluate<boolean>(cdp, 'document.hasFocus()')).toBe(true);
-      // Anti-vacuity for the assertion above: `hasFocus` on a page that was never rendered at all
+      // Awaited rather than sampled at the instant `openPage` returns, and the difference is a
+      // measured race rather than caution. `Page.bringToFront` is answered by the *browser*
+      // process; `document.hasFocus()` is the *renderer's* observation of the resulting focus
+      // event. Two processes, so the reply can precede the observation. This case was failing 1
+      // run in 2 on an unloaded workstation, on a tree that had not touched navigation — and it
+      // failed at HEAD too, so it was never attributable to whatever commit happened to be under
+      // it. Same shape as the `<title>` race one case above: a claim asserted at an instant that
+      // is not the instant it becomes true.
+      //
+      // Contention was the obvious explanation and it is wrong. Measured with a second browser
+      // window up: both browsers reported `hasFocus=true` simultaneously, so nothing is stealing
+      // anything. Polled from the moment `openPage` returned, focus was observed at 20ms alone and
+      // 101ms contended -- fast, and not instant, which is the entire defect.
+      //
+      // This does not weaken the claim. If `Page.bringToFront` is removed, focus never arrives and
+      // this times out; that red was watched. What it stops asserting is a coincidence of
+      // scheduling. 10s is a hang bound, ~100x the observed arrival, not a performance assertion.
+      await until<boolean>(cdp, 'document.hasFocus()', (v) => v === true, 10_000);
+      // Anti-vacuity for the wait above: `hasFocus` on a page that was never rendered at all
       // would be a fact about nothing. A visible document is the state in which focus is meaningful.
       expect(await evaluate<string>(cdp, 'document.visibilityState')).toBe('visible');
       cdp.close();
@@ -256,10 +350,14 @@ describe('openPage actually opens the page', () => {
   //
   // Asserted on every page rather than on the set: the failure being guarded is one page missing
   // focus, so a check that tolerated "most of them" would pass in the exact state that broke fps.
+  // Ports are OS-allocated, so this cannot collide with the sibling file that also launches
+  // browsers -- which is the trap the literals used to set.
   it('holds that guarantee when several browsers are coming up at once', async () => {
-    const ports = [9356, 9357, 9358];
-    const browsers = await Promise.all(ports.map((port) => launchBrowser({ port })));
+    const browsers = await Promise.all([launchBrowser(), launchBrowser(), launchBrowser()]);
     try {
+      // Distinct ports, asserted rather than assumed: if allocation ever handed out a duplicate,
+      // the focus result below would be about fewer browsers than it claims.
+      expect(new Set(browsers.map((browser) => browser.port)).size).toBe(3);
       const focused = await Promise.all(
         browsers.map(async (browser) => {
           const cdp = await openPage(browser.port, 'about:blank');
@@ -305,5 +403,93 @@ describe('the CDP event classifier', () => {
       level: 'error',
       text: 'the page crashed',
     });
+  });
+});
+
+/**
+ * Every case in this file launches a browser and opens a page before it does anything of its own,
+ * and both of those carry deadlines that live in another module. A vitest budget is the outermost
+ * deadline on the path: if it is smaller than the sum of the deadlines inside it, none of them can
+ * fire, the case dies at the budget, and it dies *mutely* — which is precisely the failure this
+ * whole file exists to make impossible.
+ *
+ * That is not hypothetical here. Two cases in this file were written with a 60s budget containing
+ * 30s (browser launch) + 30s (navigate reply) + 30s (navigation commit) = 90s of deadlines before
+ * their own waits were counted at all, and during this change set's gate both died at 60s having
+ * said nothing. The sibling guard in `browser-playability.test.ts` did not catch it because it
+ * audited only its own file, so the arithmetic was right in one place and absent in the other.
+ *
+ * The budgets are read out of this file's own source rather than mirrored into a table, for the
+ * reason stated on `DEFAULT_UNTIL_TIMEOUT_MS`: a copy is a shared mutable index with no instrument.
+ * Reading the source also closes the *class* rather than the two instances — a case added next
+ * month is audited without anyone remembering to add it here.
+ */
+describe('every budget in this file must contain the deadlines every case pays', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, 'browser-diagnostics.test.ts'), 'utf8').replace(
+    /\r\n/g,
+    '\n',
+  );
+
+  /** `launchBrowser` -> `openPage` (`Page.navigate` reply, the commit wait, then the focus wait). */
+  const FLOOR_MS =
+    LAUNCH_TIMEOUT_MS + TRANSPORT_TIMEOUT_MS + NAVIGATION_TIMEOUT_MS + FOCUS_TIMEOUT_MS;
+
+  const budgets = [...source.matchAll(/^ {2}\}, (\d[\d_]*)\);$/gm)].map((m) =>
+    Number(m[1]!.replace(/_/g, '')),
+  );
+  const launches = source.match(/launchBrowser\(/g)?.length ?? 0;
+  const opens = source.match(/openPage\(/g)?.length ?? 0;
+
+  it('has actually found the budgets, the launches and the page opens', () => {
+    // Anti-vacuity, and it is the whole reason the check below means anything: a regex that stopped
+    // matching would leave an empty list, and an empty list satisfies "every budget is big enough"
+    // while auditing nothing. This is the failure mode this repository has hit more often than any
+    // other, so the corpus is asserted before it is used.
+    expect(budgets.length).toBeGreaterThanOrEqual(8);
+    expect(launches).toBeGreaterThanOrEqual(8);
+    expect(opens).toBeGreaterThanOrEqual(8);
+    // And the premise the floor rests on: every budgeted case pays for at least one launch and one
+    // open. It is `>=` rather than `===` because these are counts of *source occurrences*, and one
+    // case deliberately launches three browsers to reproduce the concurrency that made the focus
+    // race visible — three `launchBrowser()` calls against a single `openPage` inside a `.map`.
+    //
+    // That case does not multiply the floor: its three launches run in `Promise.all`, so three hung
+    // launches expire together at `LAUNCH_TIMEOUT_MS` rather than in series. A case that launched
+    // three in *sequence* would need its own budget, which is why the relationship is stated here
+    // rather than left to be inferred from the counts.
+    expect(launches).toBeGreaterThanOrEqual(budgets.length);
+    expect(opens).toBeGreaterThanOrEqual(budgets.length);
+  });
+
+  it('gives every budgeted case room for the launch and the navigation it cannot avoid', () => {
+    for (const budget of budgets) {
+      expect(budget).toBeGreaterThan(FLOOR_MS);
+    }
+    // Printed, not merely asserted, so a reader can see how much room is actually left rather than
+    // learning only that some unstated inequality held.
+    // eslint-disable-next-line no-console
+    console.log(
+      `[budgets] floor ${FLOOR_MS}ms (launch ${LAUNCH_TIMEOUT_MS} + reply ${TRANSPORT_TIMEOUT_MS} + ` +
+        `commit ${NAVIGATION_TIMEOUT_MS} + focus ${FOCUS_TIMEOUT_MS}); budgets ${budgets.join(', ')}`,
+    );
+  });
+
+  it('the floor can actually fail — driven both ways with the numbers that produced the defect', () => {
+    // Without this arm the check above is satisfied by a predicate that returns true for anything.
+    // 60_000 is not an invented example: it is the budget both repaired cases really carried, and
+    // 92_000 is the sum they really contained.
+    const contains = (budget: number, floor: number): boolean => budget > floor;
+    expect(contains(120_000, FLOOR_MS)).toBe(true);
+    expect(contains(60_000, FLOOR_MS)).toBe(false);
+    expect(FLOOR_MS).toBeGreaterThan(60_000);
+  });
+
+  it('keeps the transport deadline below the condition deadline, so a hang is still named', () => {
+    // Ordering, not size. `until()` can only check its own deadline if each poll returns, so the
+    // transport deadline has to be the one that fires first; if it were the larger of the two, a
+    // hung command would once again outlive the condition wait and the failure would go back to
+    // being anonymous. This is the property the whole change set turns on, so it is pinned.
+    expect(TRANSPORT_TIMEOUT_MS).toBeLessThan(DEFAULT_UNTIL_TIMEOUT_MS);
   });
 });
