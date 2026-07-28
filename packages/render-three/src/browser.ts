@@ -607,11 +607,39 @@ export async function describePage(cdp: CdpSession): Promise<string> {
       Array.from(document.querySelectorAll('script')).map((s) => (s.src || 'inline') + ' [' + (s.type || 'classic') + ']'));
     attempt('webgl2', () => !!document.createElement('canvas').getContext('webgl2'));
     attempt('webgl', () => !!document.createElement('canvas').getContext('webgl'));
-    attempt('resources', () =>
-      performance.getEntriesByType('resource').map((r) => {
-        const leaf = String(r.name).split('/').pop();
-        return leaf + ' ' + Math.round(r.duration) + 'ms' + (r.transferSize === 0 ? ' transfer=0' : '');
-      }));
+    attempt('resources', () => {
+      const all = performance.getEntriesByType('resource');
+      // Four phases that have four different causes, so a slow load says which one it was:
+      // "stall" is everything before the request leaves Chrome - its six-connections-per-origin
+      // limit, and any main-thread delay in starting the fetch. "connect" is TCP setup. "ttfb" is
+      // the server thinking. "dl" is the bytes moving. A duration alone cannot tell these apart,
+      // and every explanation tried so far has been a guess about which of them it was.
+      const phase = (r) => ({
+        stall: Math.max(0, (r.requestStart || r.startTime) - r.startTime),
+        connect: Math.max(0, r.connectEnd - r.connectStart),
+        ttfb: Math.max(0, r.responseStart - (r.requestStart || r.startTime)),
+        dl: Math.max(0, r.responseEnd - r.responseStart),
+      });
+      const total = { stall: 0, connect: 0, ttfb: 0, dl: 0 };
+      for (const r of all) {
+        const p = phase(r);
+        total.stall += p.stall; total.connect += p.connect; total.ttfb += p.ttfb; total.dl += p.dl;
+      }
+      const round = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
+      return {
+        count: all.length,
+        totalsMs: round(total),
+        slowest: [...all]
+          .sort((a, b) => b.duration - a.duration)
+          .slice(0, 6)
+          .map((r) => {
+            const p = round(phase(r));
+            return String(r.name).split('/').pop() + ' ' + Math.round(r.duration) + 'ms ' +
+              '[stall ' + p.stall + ' connect ' + p.connect + ' ttfb ' + p.ttfb + ' dl ' + p.dl + ']' +
+              (r.transferSize === 0 ? ' transfer=0' : '');
+          }),
+      };
+    });
     return JSON.stringify(out);
   })()`;
   try {
@@ -619,8 +647,11 @@ export async function describePage(cdp: CdpSession): Promise<string> {
     const state = JSON.parse(raw) as Record<string, unknown>;
     return Object.entries(state)
       .map(
+        // Anything structured is JSON, not `String(value)`. An object rendered through `String`
+        // becomes "[object Object]", which reads as a field that was collected rather than one
+        // that was lost — the failure mode this whole function exists to avoid.
         ([key, value]) =>
-          `    ${key}: ${Array.isArray(value) ? JSON.stringify(value) : String(value)}`,
+          `    ${key}: ${typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}`,
       )
       .join('\n');
   } catch (error) {
@@ -973,8 +1004,8 @@ export interface LaunchedBrowser {
   /** The temporary profile directory. */
   profile: string;
   /**
-   * What happened when this process tried to put itself above the browser in the OS run queue.
-   * Reported rather than assumed — see {@link raiseOwnSchedulingPriority}.
+   * What this process and the browser ended up at in the OS run queue, both reported rather than
+   * assumed — see {@link normaliseSchedulingPriority}.
    */
   schedulingPriority: string;
 }
@@ -1016,8 +1047,8 @@ export interface LaunchOptions {
 }
 
 /**
- * Give this process a scheduling edge over the browser it is about to start, and say plainly
- * whether it got one.
+ * Put this process and the browser on the same footing as the leg that passes, and say plainly
+ * where each of them ended up.
  *
  * Measured on run 30385141986, both legs, same commit. `windows-latest` rasterised **faster** than
  * the green `ubuntu-latest` leg (render p95 2.1ms against 5.4ms) and painted 274 frames while this
@@ -1027,64 +1058,47 @@ export interface LaunchOptions {
  * and this process is also the web server** — which is why `boot`, the one phase that is purely
  * Node reading files and answering requests, ran 56.7s against ubuntu's 1.8s.
  *
- * **This is a secondary measure and the evidence says so.** Run 30386744222 raised this process to
- * ABOVE_NORMAL and reported `10 -> -7`; a probe of the same ordering shows the browser then sits at
- * NORMAL (MSDN: a child of an ABOVE_NORMAL parent defaults to NORMAL rather than inheriting). So
- * that run already had a full class of separation in the harness's favour, and it failed with six
- * cases instead of seven. **Priority was not the bottleneck.** The bottleneck was the dev server
- * re-reading every module from disk on every page load, which `vendorCache` in `dev-server.ts`
- * removes.
+ * **This function used to try to win, and that was a mistake made twice.** Run 30386744222 raised
+ * this process to ABOVE_NORMAL before the spawn, which on Windows leaves the child at NORMAL: a
+ * full class of separation in the harness's favour, and it still failed. Run 30388603381 then
+ * raised *after* the spawn, so the child inherited the runner's BELOW_NORMAL, and that was worse —
+ * fps render p95 went from 2.2ms to 27.2ms, because a starved renderer is not a faster one. Both
+ * arrangements were tried, both are recorded here, and neither helped.
  *
- * What survives is worth keeping anyway, because it costs nothing and removes a variable: the
- * runner hands this process out at BELOW_NORMAL (10) on windows and NORMAL (0) on ubuntu, which is
- * a real asymmetry between the two legs and one nobody had measured. Raising here after the spawn
- * leaves the browser at whatever it inherited and moves only this process, so a harness that must
- * stay responsive to *observe* is no longer the lowest-priority thing on the box.
+ * What is left is the part that was never a hypothesis but a measured asymmetry between the legs:
+ * **the windows runner hands job processes out at BELOW_NORMAL (10) and ubuntu at NORMAL (0)**. So
+ * both processes are put at NORMAL — the value the green leg has had all along — and the pair is
+ * reported on every leg. This is levelling, not tuning, and the report says which number each
+ * process started from so that "we set the priority" is never assumed on the strength of asking.
  *
- * Chrome is untouched on purpose. Lowering it would slow the very rendering this file measures, and
- * windows is already the faster of the two legs at rasterising; raising a process whose duty cycle
- * is a rounding error cannot cost the browser anything.
- *
- * **Call this after spawning the browser.** Windows fixes a child's priority class at creation, so
- * raising first pulls Chrome up too. That is why the call lives inside {@link launchBrowser}
- * immediately after `spawn` rather than anywhere a caller could sequence it.
- *
- * Returns a description rather than throwing, and reports the browser's priority beside its own so
- * that the *separation* is visible rather than the request. On Linux raising needs `CAP_SYS_NICE`
- * and this fails with EACCES — fine and expected, since that is the leg that never needed it, and a
- * browser test must not fail on the preparation.
+ * Setting priority can fail (on Linux, lowering needs no privilege but the values differ, and a
+ * process can exit between spawn and read). Every path returns a description rather than throwing:
+ * a browser test must not fail on the preparation, and a preparation that quietly did nothing must
+ * not read as one that worked.
  */
-export function raiseOwnSchedulingPriority(browserPid?: number): string {
-  const readBrowser = (): string => {
-    if (browserPid === undefined) return '';
+export function normaliseSchedulingPriority(browserPid?: number): string {
+  const read = (pid?: number): number | undefined => {
     try {
-      return `, browser at ${getPriority(browserPid)}`;
+      return pid === undefined ? getPriority() : getPriority(pid);
     } catch {
-      // The browser can exit between spawning and being read, and a failure to describe it must
-      // never be mistaken for a failure to separate from it.
-      return ', browser priority unreadable';
+      return undefined;
     }
   };
-  let before: number;
-  try {
-    before = getPriority();
-  } catch (error) {
-    return `scheduling priority: unreadable (${(error as Error).message})`;
-  }
-  try {
-    setPriority(constants.priority.PRIORITY_ABOVE_NORMAL);
-  } catch (error) {
-    return (
-      `scheduling priority: harness stays at ${before}${readBrowser()} — could not raise ` +
-      `(${(error as Error).message}). Expected on Linux without CAP_SYS_NICE.`
-    );
-  }
-  const after = getPriority();
-  const separated = after < before ? 'separated' : 'NOT separated';
-  return (
-    `scheduling priority: harness ${before} -> ${after}${readBrowser()} — ${separated} ` +
-    `(lower is more favoured; equal means this changed nothing)`
-  );
+  const set = (pid: number | undefined, label: string): string => {
+    const before = read(pid);
+    if (before === undefined) return `${label} unreadable`;
+    if (before === constants.priority.PRIORITY_NORMAL) return `${label} ${before}`;
+    try {
+      if (pid === undefined) setPriority(constants.priority.PRIORITY_NORMAL);
+      else setPriority(pid, constants.priority.PRIORITY_NORMAL);
+    } catch (error) {
+      return `${label} stays at ${before} (${(error as Error).message})`;
+    }
+    return `${label} ${before} -> ${read(pid) ?? '?'}`;
+  };
+  const harness = set(undefined, 'harness');
+  const browser = browserPid === undefined ? 'browser not started' : set(browserPid, 'browser');
+  return `scheduling priority: ${harness}, ${browser} (0 is NORMAL; ubuntu already starts here)`;
 }
 
 /** Launch a headless browser with the DevTools endpoint open. */
@@ -1190,13 +1204,12 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
   ];
   if (options.headed !== true) args.unshift('--headless=new');
   const child = spawn(executable, args, { stdio: 'ignore' });
-  // **After the spawn, and that ordering is the whole point.** On Windows a child inherits its
-  // parent's priority class at creation, so raising this process first raises Chrome with it and
-  // the relative standing -- the only thing that decides who gets a 2-core box -- does not move.
-  // That is not a hypothetical: run 30386744222 did exactly this, reported `10 -> -7`, and failed
-  // identically to the run before it. Chrome is left at whatever it inherited, which is what it has
-  // always had, so nothing about the browser changes; only this process moves.
-  const schedulingPriority = raiseOwnSchedulingPriority(child.pid);
+  // After the spawn, because on Windows a child takes its parent's priority class at creation and
+  // both processes need setting. The windows runner starts job processes at BELOW_NORMAL, so Chrome
+  // inherits BELOW_NORMAL too; ubuntu starts everything at NORMAL. This puts both back where the
+  // green leg has them rather than trying to order them -- see {@link normaliseSchedulingPriority}
+  // for the two orderings that were tried and measured not to help.
+  const schedulingPriority = normaliseSchedulingPriority(child.pid);
 
   // Discover the port Chrome actually bound. With `--remote-debugging-port=0` the number is not
   // known until Chrome has chosen it, and it publishes it in `DevToolsActivePort` (line 1 is the
