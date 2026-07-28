@@ -222,7 +222,29 @@ export async function until<T>(
   cdp: CdpSession,
   expression: string,
   accept: (value: T) => boolean,
-  timeoutMs = 20_000,
+  /**
+   * 60s, and the number has an argument behind it rather than a feeling.
+   *
+   * This was 20s, which is comfortable on any development machine and was measured to be
+   * *below the boot time of the slowest leg of our own CI matrix*. From run 30326965251,
+   * both legs of the same commit:
+   *
+   *   ubuntu-latest, printed by the tests themselves:  boot 2042ms / 3106ms / 3719ms
+   *   windows-latest, whole-suite ratio in that run:   662s vs 119s = 5.6x slower
+   *   predicted worst boot on windows:                 3719 x 5.6 = 20.8s  >  20s deadline
+   *
+   * And that is exactly what happened: every case that has to boot the application page failed
+   * on windows with this message, while the one case that does not boot anything — the blank-page
+   * control — passed. A deadline a healthy machine misses is not a deadline, it is a slow-machine
+   * detector, and it fails in the most expensive direction: it reddens on the machine you trust
+   * least and blames whatever commit happened to land.
+   *
+   * 60s is 2.9x the measured windows figure, so a machine three times slower than windows-latest
+   * still boots inside it, and it stays well under the 120s root `testTimeout` that catches a
+   * genuine hang. It costs nothing when the page boots — `until` returns as soon as the condition
+   * holds — and it is only ever spent when something is actually wrong.
+   */
+  timeoutMs = 60_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {

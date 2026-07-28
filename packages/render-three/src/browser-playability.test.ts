@@ -311,7 +311,14 @@ beforeAll(async () => {
   ) as number[];
   controlGapP95 = percentile(controlGaps, 95);
   cdp.close();
-}, 90_000);
+  // 180s, not 90s. This hook starts a dev server, launches Chrome and then deliberately sleeps
+  // 3000ms to sample a control frame rate, so its floor is fixed cost plus browser start-up. On
+  // `windows-latest` it was measured hitting 90s and timing out — and a hook that times out does
+  // not fail this file, it makes vitest report all nine cases as *skipped*, which reads as green.
+  // That is how a leg with zero browser coverage was reported passing (run 30324264768).
+  // windows-latest measured 5.6x slower than ubuntu-latest on the same commit, so the budget is
+  // sized for a machine slower still rather than for the one that happened to be fast enough.
+}, 180_000);
 
 afterAll(async () => {
   browser?.process.kill();
