@@ -1038,7 +1038,7 @@ export interface LaunchedBrowser {
   profile: string;
   /**
    * What this process and the browser ended up at in the OS run queue, both reported rather than
-   * assumed -- see {@link separateSchedulingPriority}.
+   * assumed -- see {@link liftSchedulingPriority}.
    */
   schedulingPriority: string;
 }
@@ -1080,42 +1080,55 @@ export interface LaunchOptions {
 }
 
 /**
- * Put this process above the browser in the OS run queue, and say plainly where each of them
- * ended up.
+ * Lift this process **and** the browser above the box's background work, and say plainly where
+ * each of them ended up.
  *
- * Measured on run 30385141986, both legs, same commit. `windows-latest` rasterised **faster** than
- * the green `ubuntu-latest` leg (render p95 2.1ms against 5.4ms) and painted 274 frames while this
- * harness captured 21 of them; its event loop lagged 28352ms inside a 34s window and it held a CPU
- * 0% of that window. Same GL implementation on both legs, same 2 cores, 5.2GB of 8.0GB free, and
- * antivirus exclusions confirmed applied. The browser was never the problem. **This process was,
- * and this process is also the web server.**
+ * This function used to do the opposite to the browser, and the reversal is worth recording
+ * because the evidence that justified the old arrangement was about a different phase of the run.
  *
- * Three arrangements have now been run on CI, and the failure count is the only honest scoreboard:
+ * The original finding stands as far as it goes. On run 30385141986, both legs, same commit,
+ * `windows-latest` rasterised **faster** than the green `ubuntu-latest` leg (render p95 2.1ms
+ * against 5.4ms) and painted 274 frames while this harness captured 21 of them. Frame *capture*
+ * was starved by the browser, and preferring the harness fixed that.
+ *
+ * Four arrangements have now been run on CI:
  *
  *     harness ABOVE_NORMAL, browser NORMAL        6 failures   (a1027ad, before the vendor cache)
  *     harness ABOVE_NORMAL, browser BELOW_NORMAL  4 failures   (e94d68a)
  *     harness NORMAL,       browser NORMAL        8 failures   (9ea2d63)
+ *     harness ABOVE_NORMAL, browser BELOW_NORMAL  0 then 3     (553f4f6, the *same* commit twice)
  *
- * The last two share a commit's worth of everything else and differ only here, so that pair is a
- * clean A/B: **separation is worth four failures.** The middle row was reached by accident — the
- * raise happened after the spawn, so Chrome inherited the runner's BELOW_NORMAL — and it was then
- * thrown away on the strength of `render p95` rising from 2.2ms to 27.2ms. That was the wrong
- * instrument: render p95 is reported, not asserted, and trading it for four passing cases is a
- * trade worth making. The levelling that replaced it is the 8-failure row.
+ * That last row is the one that matters, and it is why no row above it can be read as a clean
+ * A/B any more: one commit, re-run unchanged, went green and then red. The failure counts in
+ * rows 1-3 are drawn from a distribution wide enough to contain 0 and 3, so the four-failure
+ * gap they appear to measure is not established. They are kept because deleting them would hide
+ * that this scoreboard was over-read, which is the actual lesson.
  *
- * So both processes are now set explicitly rather than left to inheritance. The mechanism is not
- * mysterious: Chrome brings tens of runnable threads (renderer, compositor, network service, and a
- * SwiftShader rasteriser that will use every core it is given) against Node's one, and on a 2-core
- * box a round-robin at equal priority hands the box to whoever has more threads. The harness only
- * needs the CPU in short bursts — answer an HTTP request, read a CDP frame — so preferring it costs
- * the browser very little wall time and buys back the thing that was actually failing.
+ * What replaced the guessing is a phase split of the page's own resource timings on a failing
+ * leg. All three failures reported `bootStage: ABSENT`, so the module graph never finished
+ * loading and `boot()` never ran -- the browser is not slow at rendering here, it is slow at
+ * fetching and parsing. The four phases say where:
  *
- * Windows starts job processes at BELOW_NORMAL and ubuntu at NORMAL, which is why the numbers in
- * the report differ per leg and why it prints the value each process started from: a preparation
- * that quietly did nothing must not read as one that worked. Every path returns a description
- * rather than throwing, because a browser test must not fail on its own preparation.
+ *     platformer   ttfb 219ms total   ·   stall 308817  connect 57814  dl 287072
+ *
+ * `ttfb` is the only one of the four that measures the *server*: request written to first byte
+ * back. It is ~0. Every phase that is measured inside Chrome's own process is enormous, and
+ * `connect` -- a loopback TCP handshake, normally microseconds -- reads 3.5-13s per module. A
+ * server answering instantly while the client cannot get a connection open is not a starved
+ * server. It is a starved client, and this function was starving it deliberately.
+ *
+ * So both processes are now lifted together. Windows starts job processes at BELOW_NORMAL, which
+ * is also where the runner's own background work sits, so raising both puts the test above that
+ * work without handicapping either half of it against the other. Node's single-threaded burst of
+ * work (answer an HTTP request, read a CDP frame) does not meaningfully contend with Chrome's
+ * threads when neither is being held down.
+ *
+ * Ubuntu starts at NORMAL and refuses the raise without `CAP_SYS_NICE`, which is why the report
+ * prints the value each process started from and what it reached: a preparation that quietly did
+ * nothing must not read as one that worked. Every path returns a description rather than throwing,
+ * because a browser test must not fail on its own preparation.
  */
-export function separateSchedulingPriority(browserPid?: number): string {
+export function liftSchedulingPriority(browserPid?: number): string {
   const read = (pid?: number): number | undefined => {
     try {
       return pid === undefined ? getPriority() : getPriority(pid);
@@ -1139,8 +1152,8 @@ export function separateSchedulingPriority(browserPid?: number): string {
   const browser =
     browserPid === undefined
       ? 'browser not started'
-      : put(browserPid, constants.priority.PRIORITY_BELOW_NORMAL, 'browser');
-  return `scheduling priority: ${harness}, ${browser} (lower is more favoured; want harness below browser)`;
+      : put(browserPid, constants.priority.PRIORITY_ABOVE_NORMAL, 'browser');
+  return `scheduling priority: ${harness}, ${browser} (lower is more favoured; want both above the box's background work, and neither above the other)`;
 }
 
 /** Launch a headless browser with the DevTools endpoint open. */
@@ -1246,11 +1259,13 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
   ];
   if (options.headed !== true) args.unshift('--headless=new');
   const child = spawn(executable, args, { stdio: 'ignore' });
-  // After the spawn, because on Windows a child takes its parent's priority class at creation, so
-  // raising the harness first would silently drag Chrome up with it and erase the separation. The
+  // After the spawn, because on Windows a child takes its parent's priority class at creation.
+  // Both processes are now given the same class, but the ordering still matters: it is what makes
+  // the report a measurement of each process rather than an assumption about inheritance. The
   // windows runner starts job processes at BELOW_NORMAL; ubuntu starts everything at NORMAL. See
-  // {@link separateSchedulingPriority} for the three arrangements measured and their failure counts.
-  const schedulingPriority = separateSchedulingPriority(child.pid);
+  // {@link liftSchedulingPriority} for the arrangements measured and why the scoreboard was
+  // over-read.
+  const schedulingPriority = liftSchedulingPriority(child.pid);
 
   // Discover the port Chrome actually bound. With `--remote-debugging-port=0` the number is not
   // known until Chrome has chosen it, and it publishes it in `DevToolsActivePort` (line 1 is the
