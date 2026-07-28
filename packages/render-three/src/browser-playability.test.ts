@@ -863,7 +863,30 @@ describe('the box-CPU attribution windows must be live, whatever they read', () 
     }
     // The rest window must actually bracket the deliberate pause. If it did not, the reading is of
     // some other span and the word "rest" in the log is a claim nothing supports.
-    expect(loadRest.windowMs).toBeGreaterThanOrEqual(BASELINE_WINDOW_MS);
+    //
+    // Asserted as a FRACTION of the pause rather than at its nominal value, because the nominal
+    // value is a bound with zero headroom and it has already produced a false red: on the ubuntu
+    // leg of run 30406640138 this read `expected 499 to be greater than or equal to 500` on a run
+    // that was otherwise entirely healthy. Twenty-nine lines above, this same describe block warns
+    // that a bound inside a band "is a coin flip with an assertion attached" -- and then set one
+    // with no band at all.
+    //
+    // THE MECHANISM IS NOT ESTABLISHED, and this repair deliberately does not depend on knowing it.
+    // The tidy explanation is that `windowMs` is a `Date.now()` delta (the realtime clock) around a
+    // `setTimeout` (libuv's monotonic clock), so the two can disagree by a millisecond. A probe of
+    // 100 x `sleep(500)` on a win32 workstation REFUTED that here: 100 of 100 readings were >= 500,
+    // minimum exactly 500. The 499 happened on linux, which that probe cannot reach, so the story
+    // is unconfirmed rather than supported and is recorded as such.
+    //
+    // What is true regardless of the cause is that a 499ms window brackets a 500ms pause perfectly
+    // well: the claim this assertion exists to make is "the reading covers the pause", not "the
+    // reading is millisecond-exact". 0.9 keeps every arm that matters -- the control that removes
+    // the pause entirely measured 1ms, which is 0.2% of the pause and nowhere near this floor.
+    const restFloorMs = BASELINE_WINDOW_MS * 0.9;
+    expect(
+      loadRest.windowMs,
+      `the rest window covered ${loadRest.windowMs}ms, which does not bracket the ${BASELINE_WINDOW_MS}ms pause`,
+    ).toBeGreaterThanOrEqual(restFloorMs);
 
     // `undefined` is the honest answer when the counters did not advance, and it must not be
     // mistaken for a finished measurement -- `0%` would read as "the box was idle", which is the
