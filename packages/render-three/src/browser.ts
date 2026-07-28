@@ -14,7 +14,16 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { availableParallelism, freemem, loadavg, tmpdir, totalmem } from 'node:os';
+import {
+  availableParallelism,
+  constants,
+  freemem,
+  getPriority,
+  loadavg,
+  setPriority,
+  tmpdir,
+  totalmem,
+} from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
@@ -198,6 +207,11 @@ export function maxLagSince(sinceMs: number): {
  *
  * `loadavg` is 0,0,0 on Windows — reported as unavailable rather than as zero, because a fabricated
  * zero on the one platform this diagnostic exists for would be worse than an absence.
+ *
+ * Printed unconditionally by `browser-playability.test.ts`, not only beside a failure. That is a
+ * correction: for two CI rounds it printed on the red leg alone, which meant "windows has 2 cores"
+ * could not be read as unusual because nobody had ever recorded what the green leg had. A host
+ * number from the failing arm alone is an observation, not a comparison.
  */
 export function describeHost(): string {
   const total = totalmem();
@@ -996,6 +1010,58 @@ export interface LaunchOptions {
   uncapFrameRate?: boolean;
 }
 
+/**
+ * Give this process a scheduling edge over the browser it is about to start, and say plainly
+ * whether it got one.
+ *
+ * Measured on run 30385141986, both legs, same commit. `windows-latest` rasterised **faster** than
+ * the green `ubuntu-latest` leg (render p95 2.1ms against 5.4ms) and painted 274 frames while this
+ * harness captured 21 of them; its event loop lagged 28352ms inside a 34s window and it held a CPU
+ * 0% of that window. Same GL implementation on both legs, same 2 cores, 5.2GB of 8.0GB free, and
+ * antivirus exclusions confirmed applied. The browser was never the problem. **This process was,
+ * and this process is also the web server** — which is why `boot`, the one phase that is purely
+ * Node reading files and answering requests, ran 56.7s against ubuntu's 1.8s.
+ *
+ * The asymmetry to explain is why two hosts with equal cores share the CPU so differently. The
+ * candidate is that both schedulers are fair *per thread*, and Chrome brings tens of threads to
+ * Node's handful — but Linux additionally groups threads by session under `sched_autogroup`, so a
+ * many-threaded process cannot out-vote a small one in another group, while Windows has no
+ * equivalent and a round-robin among equals hands out CPU in proportion to thread count. That is
+ * the reasoning, and it is reasoning: what is *measured* is that the browser is fast, this process
+ * is starved, and everything else is equal.
+ *
+ * So this does not touch Chrome, deliberately. Lowering the browser would slow the very rendering
+ * this file measures and could move budgets; raising this process cannot, because its duty cycle
+ * is a rounding error — it wakes to answer an HTTP request or read a CDP frame and goes back to
+ * waiting. ABOVE_NORMAL rather than HIGH for the same reason: enough to stop being out-voted, not
+ * enough to make this process the thing that starves something else.
+ *
+ * Returns a description rather than throwing. On Linux lowering niceness needs `CAP_SYS_NICE` and
+ * this will fail with EPERM — which is fine and expected, because that is the leg that never
+ * needed it, and a browser test must not fail on the preparation. The string is reported on every
+ * leg so that "we raised priority" is never assumed on the strength of having asked.
+ */
+export function raiseOwnSchedulingPriority(): string {
+  let before: number;
+  try {
+    before = getPriority();
+  } catch (error) {
+    return `scheduling priority: unreadable (${(error as Error).message})`;
+  }
+  try {
+    setPriority(constants.priority.PRIORITY_ABOVE_NORMAL);
+  } catch (error) {
+    return (
+      `scheduling priority: ${before} unchanged — this process could not raise its own priority ` +
+      `(${(error as Error).message}). Expected on Linux without CAP_SYS_NICE.`
+    );
+  }
+  const after = getPriority();
+  return after === before
+    ? `scheduling priority: ${before}, unchanged despite being set (the OS declined silently)`
+    : `scheduling priority: ${before} -> ${after}`;
+}
+
 /** Launch a headless browser with the DevTools endpoint open. */
 export async function launchBrowser(options: LaunchOptions = {}): Promise<LaunchedBrowser> {
   const executable = findBrowser();
@@ -1013,26 +1079,38 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--disable-extensions',
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
-    // Work Chrome does that has nothing to do with rendering a local page. Kept, but read the
-    // correction: **the reasoning that added these was wrong, and the flags survive on a weaker
-    // claim than the one they were added under.**
+    // Work Chrome does that has nothing to do with rendering a local page. Kept — but read the
+    // correction, because **the reasoning that added these was wrong twice, and the flags survive
+    // on a much weaker claim than the one they were added under.**
     //
-    // They were added believing the failing `windows-latest` leg was blocked on I/O — startup
-    // fetches and disk caches, scanned by an antivirus the green leg does not have. Run 30383232019
-    // refuted it, using the host instrument added in the same commit. Free memory was 5.3GB of
-    // 8.0GB, so nothing was paging; and `browser-playability.test.ts`'s blank-page control measured
-    // **64fps / 15.9ms median gap on windows against 60fps / 16.7ms on ubuntu** — the failing host
-    // is *not slower*. The legs separate only once a page rasterises: the fps game ticked 65.0/s on
-    // ubuntu and 7.0/s on windows, from the same commit in the same run.
+    // They were added believing the failing `windows-latest` leg was blocked on I/O: startup
+    // fetches and disk caches, scanned by an antivirus the green leg does not have. Two runs
+    // refuted it, each using an instrument added in the same commit as the belief.
     //
-    // A 9x gap that appears only under GL load, on hosts indistinguishable while idle, is not a
-    // disk story. The measurement that can discriminate is the WebGL renderer string, which nothing
-    // here had ever taken; `browser-playability.test.ts` now reports it on both legs.
+    // Run 30385141986 measured both legs on the same commit. Same GL implementation on each —
+    // `ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)` — same 2
+    // cores, 5.3GB of 8.0GB free so nothing paging, and the Defender exclusion step reported
+    // success. Then the per-game numbers inverted the whole story:
     //
-    // What is still true, and is why they stay: none of these touch rendering, so none can move a
-    // number that file reports, and none can make a starved host worse. That is a reason to keep
-    // them, not evidence that they helped. `--disk-cache-size=1` is Chrome's documented way to say
-    // "effectively none": zero is read as "unset, use the default".
+    //              render p95      gap p95      boot
+    //     ubuntu    5.4 / 8.1ms   200 / 388ms   1.8 / 4.0s     <- green
+    //     windows   2.1 / 2.2ms    77 / 169ms   56.7 / 27.1s   <- red
+    //
+    // **Windows rasterises faster than the leg that passes.** It painted 274 frames while the
+    // harness managed 21 snapshots of them. Nothing is wrong with the browser, the GPU path or the
+    // host's throughput; what is starved is *this Node process*, whose event loop lagged 28352ms
+    // over a 34s window and which held a CPU 0% of it. And this Node process is also the web
+    // server, which is why `boot` — the only phase that is purely Node serving files — is the one
+    // number that is 30x off.
+    //
+    // So `--disk-cache-size=1` and `--disable-gpu-shader-disk-cache` are **gone**, not merely
+    // re-justified. They were the only two flags here that create work rather than remove it: with
+    // the HTTP cache disabled, every page load re-fetches ~35 ES modules and 1.2MB of three.js
+    // through the very process that cannot get scheduled. They were added to relieve a bottleneck
+    // that measurement then placed somewhere else, and they made that somewhere else worse.
+    //
+    // The rest stay on the only claim they can carry: they remove work that cannot move a number
+    // this file reports. That is a reason to keep them, not evidence that they ever helped.
     '--disable-background-networking',
     '--disable-component-update',
     '--disable-client-side-phishing-detection',
@@ -1041,8 +1119,6 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--no-pings',
     '--metrics-recording-only',
     '--mute-audio',
-    '--disable-gpu-shader-disk-cache',
-    '--disk-cache-size=1',
     // These four remove Chrome's background/occlusion throttles. **They are NOT what makes
     // `windows-latest` paint, and believing they were cost two landings and four CI runs.**
     //

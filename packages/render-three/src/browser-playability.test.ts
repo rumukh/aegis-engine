@@ -44,9 +44,11 @@ import {
   NAVIGATION_TIMEOUT_MS,
   PAINT_TIMEOUT_MS,
   closeAllPages,
+  describeHost,
   evaluate,
   launchBrowser,
   openPage,
+  raiseOwnSchedulingPriority,
   sleep,
   until,
   waitForPaint,
@@ -401,6 +403,9 @@ let controlTimerTicks = 0;
 /** The page's own account of whether anything was expected to be drawn to it. */
 let controlVisibility = 'unmeasured';
 
+/** Whether this process succeeded in raising its own scheduling priority, or was refused. */
+let priorityOutcome = 'unmeasured';
+
 /**
  * What GL implementation the page's WebGL context actually resolves to, as its own driver reports.
  *
@@ -425,6 +430,10 @@ let controlVisibility = 'unmeasured';
 let controlRenderer = 'unmeasured';
 
 beforeAll(async () => {
+  // Before the dev server, not after: this process is about to become both the file server and the
+  // CDP driver for a browser that will bring far more runnable threads than it does, and on the
+  // leg where that matters the cost lands on the very first page load.
+  priorityOutcome = raiseOwnSchedulingPriority();
   server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
   // NOT `uncapFrameRate`. That option removes Chrome's frame-rate limit, and this harness ran with
   // it from landing #17 until it was measured. It was added alongside the four occlusion flags that
@@ -771,6 +780,14 @@ describe('the frame budget, measured in a real browser', () => {
     // "this runner is slower" from "this runner rasterises through a different implementation", and
     // the blank-page control above cannot answer it because it never touches GL.
     report(`renderer: ${controlRenderer}`);
+    // Same reasoning, applied to the machine. `describeHost()` printed beside the wedge message for
+    // two CI rounds, which is to say it printed on the failing leg only — so "2 cores" sat there
+    // looking like a finding with nothing to compare it against.
+    report(describeHost());
+    // Whether this process actually got the scheduling edge it asked for, as opposed to having
+    // asked. On the leg that needs it this is the difference between a 1.8s boot and a 56.7s one;
+    // on the leg that does not, the OS is expected to refuse and the run must not care.
+    report(priorityOutcome);
     // Zero frames is the reading that cost run 30335228246 nine cases, and on its own it is
     // ambiguous. The timer count disambiguates it, so this failure explains itself in one line
     // rather than in another 25-minute round trip:
