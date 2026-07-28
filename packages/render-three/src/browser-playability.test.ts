@@ -272,7 +272,6 @@ function percentile(values: readonly number[], p: number): number {
 
 /** One line of measured evidence per game, so a pass says how much headroom it just spent. */
 function report(line: string): void {
-  // eslint-disable-next-line no-console
   console.log(`      ${line}`);
 }
 

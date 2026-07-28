@@ -8,3 +8,11 @@ coverage/
 .tmp/
 .cache/
 out/
+
+# Editor and merge leftovers. Also guarded by test/stray-artifacts.test.ts, because
+# .gitignore does not stop git add -f and does not notice an already-tracked file.
+*.bak
+*.orig
+*.rej
+*.swp
+*~
