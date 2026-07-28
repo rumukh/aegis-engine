@@ -972,6 +972,11 @@ export interface LaunchedBrowser {
   port: number;
   /** The temporary profile directory. */
   profile: string;
+  /**
+   * What happened when this process tried to put itself above the browser in the OS run queue.
+   * Reported rather than assumed — see {@link raiseOwnSchedulingPriority}.
+   */
+  schedulingPriority: string;
 }
 
 /** Options for {@link launchBrowser}. */
@@ -1022,26 +1027,44 @@ export interface LaunchOptions {
  * and this process is also the web server** — which is why `boot`, the one phase that is purely
  * Node reading files and answering requests, ran 56.7s against ubuntu's 1.8s.
  *
- * The asymmetry to explain is why two hosts with equal cores share the CPU so differently. The
- * candidate is that both schedulers are fair *per thread*, and Chrome brings tens of threads to
- * Node's handful — but Linux additionally groups threads by session under `sched_autogroup`, so a
- * many-threaded process cannot out-vote a small one in another group, while Windows has no
- * equivalent and a round-robin among equals hands out CPU in proportion to thread count. That is
- * the reasoning, and it is reasoning: what is *measured* is that the browser is fast, this process
- * is starved, and everything else is equal.
+ * **This is a secondary measure and the evidence says so.** Run 30386744222 raised this process to
+ * ABOVE_NORMAL and reported `10 -> -7`; a probe of the same ordering shows the browser then sits at
+ * NORMAL (MSDN: a child of an ABOVE_NORMAL parent defaults to NORMAL rather than inheriting). So
+ * that run already had a full class of separation in the harness's favour, and it failed with six
+ * cases instead of seven. **Priority was not the bottleneck.** The bottleneck was the dev server
+ * re-reading every module from disk on every page load, which `vendorCache` in `dev-server.ts`
+ * removes.
  *
- * So this does not touch Chrome, deliberately. Lowering the browser would slow the very rendering
- * this file measures and could move budgets; raising this process cannot, because its duty cycle
- * is a rounding error — it wakes to answer an HTTP request or read a CDP frame and goes back to
- * waiting. ABOVE_NORMAL rather than HIGH for the same reason: enough to stop being out-voted, not
- * enough to make this process the thing that starves something else.
+ * What survives is worth keeping anyway, because it costs nothing and removes a variable: the
+ * runner hands this process out at BELOW_NORMAL (10) on windows and NORMAL (0) on ubuntu, which is
+ * a real asymmetry between the two legs and one nobody had measured. Raising here after the spawn
+ * leaves the browser at whatever it inherited and moves only this process, so a harness that must
+ * stay responsive to *observe* is no longer the lowest-priority thing on the box.
  *
- * Returns a description rather than throwing. On Linux lowering niceness needs `CAP_SYS_NICE` and
- * this will fail with EPERM — which is fine and expected, because that is the leg that never
- * needed it, and a browser test must not fail on the preparation. The string is reported on every
- * leg so that "we raised priority" is never assumed on the strength of having asked.
+ * Chrome is untouched on purpose. Lowering it would slow the very rendering this file measures, and
+ * windows is already the faster of the two legs at rasterising; raising a process whose duty cycle
+ * is a rounding error cannot cost the browser anything.
+ *
+ * **Call this after spawning the browser.** Windows fixes a child's priority class at creation, so
+ * raising first pulls Chrome up too. That is why the call lives inside {@link launchBrowser}
+ * immediately after `spawn` rather than anywhere a caller could sequence it.
+ *
+ * Returns a description rather than throwing, and reports the browser's priority beside its own so
+ * that the *separation* is visible rather than the request. On Linux raising needs `CAP_SYS_NICE`
+ * and this fails with EACCES — fine and expected, since that is the leg that never needed it, and a
+ * browser test must not fail on the preparation.
  */
-export function raiseOwnSchedulingPriority(): string {
+export function raiseOwnSchedulingPriority(browserPid?: number): string {
+  const readBrowser = (): string => {
+    if (browserPid === undefined) return '';
+    try {
+      return `, browser at ${getPriority(browserPid)}`;
+    } catch {
+      // The browser can exit between spawning and being read, and a failure to describe it must
+      // never be mistaken for a failure to separate from it.
+      return ', browser priority unreadable';
+    }
+  };
   let before: number;
   try {
     before = getPriority();
@@ -1052,14 +1075,16 @@ export function raiseOwnSchedulingPriority(): string {
     setPriority(constants.priority.PRIORITY_ABOVE_NORMAL);
   } catch (error) {
     return (
-      `scheduling priority: ${before} unchanged — this process could not raise its own priority ` +
+      `scheduling priority: harness stays at ${before}${readBrowser()} — could not raise ` +
       `(${(error as Error).message}). Expected on Linux without CAP_SYS_NICE.`
     );
   }
   const after = getPriority();
-  return after === before
-    ? `scheduling priority: ${before}, unchanged despite being set (the OS declined silently)`
-    : `scheduling priority: ${before} -> ${after}`;
+  const separated = after < before ? 'separated' : 'NOT separated';
+  return (
+    `scheduling priority: harness ${before} -> ${after}${readBrowser()} — ${separated} ` +
+    `(lower is more favoured; equal means this changed nothing)`
+  );
 }
 
 /** Launch a headless browser with the DevTools endpoint open. */
@@ -1165,6 +1190,13 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
   ];
   if (options.headed !== true) args.unshift('--headless=new');
   const child = spawn(executable, args, { stdio: 'ignore' });
+  // **After the spawn, and that ordering is the whole point.** On Windows a child inherits its
+  // parent's priority class at creation, so raising this process first raises Chrome with it and
+  // the relative standing -- the only thing that decides who gets a 2-core box -- does not move.
+  // That is not a hypothetical: run 30386744222 did exactly this, reported `10 -> -7`, and failed
+  // identically to the run before it. Chrome is left at whatever it inherited, which is what it has
+  // always had, so nothing about the browser changes; only this process moves.
+  const schedulingPriority = raiseOwnSchedulingPriority(child.pid);
 
   // Discover the port Chrome actually bound. With `--remote-debugging-port=0` the number is not
   // known until Chrome has chosen it, and it publishes it in `DevToolsActivePort` (line 1 is the
@@ -1214,7 +1246,7 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     }
     await sleep(200);
   }
-  return { process: child, port, profile };
+  return { process: child, port, profile, schedulingPriority };
 }
 
 /** Open a new page target and attach a CDP session to it. */

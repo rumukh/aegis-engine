@@ -48,7 +48,6 @@ import {
   evaluate,
   launchBrowser,
   openPage,
-  raiseOwnSchedulingPriority,
   sleep,
   until,
   waitForPaint,
@@ -430,10 +429,6 @@ let priorityOutcome = 'unmeasured';
 let controlRenderer = 'unmeasured';
 
 beforeAll(async () => {
-  // Before the dev server, not after: this process is about to become both the file server and the
-  // CDP driver for a browser that will bring far more runnable threads than it does, and on the
-  // leg where that matters the cost lands on the very first page load.
-  priorityOutcome = raiseOwnSchedulingPriority();
   server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
   // NOT `uncapFrameRate`. That option removes Chrome's frame-rate limit, and this harness ran with
   // it from landing #17 until it was measured. It was added alongside the four occlusion flags that
@@ -474,6 +469,9 @@ beforeAll(async () => {
   // side's change and it is kept -- my branch passed 9335 here, which is exactly the hazard it
   // removes.
   browser = await launchBrowser({ viewport: VIEWPORT });
+  // Set by `launchBrowser` itself, after it has spawned Chrome — the ordering is load-bearing and
+  // is documented there. Read here only to report it.
+  priorityOutcome = browser.schedulingPriority;
 
   await closeAllPages(browser.port);
   const cdp = await openPage(browser.port, 'about:blank', VIEWPORT);

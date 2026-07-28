@@ -15,7 +15,7 @@
  * {@link GameDefinition.plugin}. It never renders anything either — that is the page's job.
  * @packageDocumentation
  */
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -83,6 +83,62 @@ const MIME: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',
   '.ts': 'text/plain; charset=utf-8',
 };
+
+/**
+ * Vendor modules held in memory, keyed by absolute path and revalidated against the file's mtime
+ * and size on every request.
+ *
+ * This exists because of a measurement, not a preference. `browser-playability.test.ts` opens a
+ * fresh page per case, and every page load pulled roughly 35 ES modules plus 1.2MB of
+ * `three.module.js` back through this server — the route below answered `cache-control: no-store`,
+ * so the browser was told never to keep any of it, and each file was re-read from disk through
+ * libuv's four-thread pool. Across the file that is on the order of 500 disk-backed requests to
+ * serve a handful of files that never change during a run.
+ *
+ * On a 16-core development box and on `ubuntu-latest` that is invisible. On `windows-latest` it was
+ * the whole failure. Run 30386744222, page resource timings from a single load:
+ *
+ *     boot.js 11ms   <- the first request, answered while nothing else was happening
+ *     three.module.js 11398ms, index.js 10766ms, bindings.js 10839ms, input.js 10842ms, ...
+ *
+ * The server is not slow — it answered the first request in 11ms — and the later requests do not
+ * degrade individually; they all *complete within 80ms of each other* ten seconds in, which is the
+ * signature of a queue draining rather than of slow bytes. Serving from memory takes the thread
+ * pool out of that path entirely, and the ETag lets the browser skip the body altogether on the
+ * second and later page loads.
+ *
+ * Freshness is preserved exactly, which is what makes this safe for a human running the dev server
+ * next to a rebuild: `statSync` is consulted on every request and any change in mtime or size
+ * refills the entry. What is removed is re-*reading* an unchanged file, not noticing a changed one.
+ */
+const vendorCache = new Map<
+  string,
+  { readonly mtimeMs: number; readonly size: number; readonly body: Buffer; readonly etag: string }
+>();
+
+/** Read a vendor file through {@link vendorCache}, or `undefined` if it cannot be stat'd. */
+function readVendorFile(
+  file: string,
+): { readonly body: Buffer; readonly etag: string } | undefined {
+  let stats;
+  try {
+    stats = statSync(file);
+  } catch {
+    return undefined;
+  }
+  const cached = vendorCache.get(file);
+  if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    return cached;
+  }
+  const entry = {
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    body: readFileSync(file),
+    etag: `"${stats.size.toString(16)}-${Math.round(stats.mtimeMs).toString(16)}"`,
+  };
+  vendorCache.set(file, entry);
+  return entry;
+}
 
 /** Per-game runtime state the server owns. */
 interface GameRuntime {
@@ -322,11 +378,26 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         sendJson(response, 404, { error: `no such module: ${path}` });
         return;
       }
-      response.writeHead(200, {
+      const entry = readVendorFile(file);
+      if (entry === undefined) {
+        sendJson(response, 404, { error: `no such module: ${path}` });
+        return;
+      }
+      // `no-cache` rather than `no-store`: the browser may keep the bytes but must revalidate, so a
+      // rebuild is still picked up on the next request while an unchanged file costs a bodiless
+      // 304 instead of a re-transfer.
+      const headers = {
         'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-        'cache-control': 'no-store',
-      });
-      createReadStream(file).pipe(response);
+        'cache-control': 'no-cache',
+        etag: entry.etag,
+      };
+      if (request.headers['if-none-match'] === entry.etag) {
+        response.writeHead(304, headers);
+        response.end();
+        return;
+      }
+      response.writeHead(200, { ...headers, 'content-length': entry.body.byteLength });
+      response.end(entry.body);
       return;
     }
 
