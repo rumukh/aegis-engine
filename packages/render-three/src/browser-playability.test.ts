@@ -24,7 +24,7 @@
  * @packageDocumentation
  */
 import { Agent, createServer, request as httpRequest } from 'node:http';
-import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import type { ClientRequest, IncomingMessage, Server, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -191,6 +191,19 @@ const BUDGET_FREEZE_MS = 240_000;
  * 1560s -> 1620s = 27 minutes against 45.
  */
 const BUDGET_BEFORE_ALL_MS = 240_000;
+
+/**
+ * How long a proxied forward may take before it is worth naming in the failure report.
+ *
+ * Reporting only, never asserted. Round 8 left one failure whose whole story was a single module:
+ * `hash.js 20474ms [stall 218 connect 0 ttfb 2 dl 20254]`, with the other 21 modules arriving in
+ * 217ms. The page's own timings can say the body was slow but not *why*, because from the page
+ * there is one pipe; from inside the proxy there are two, and only the split says whether the dev
+ * server stopped delivering or Chrome stopped reading. 5s is far above anything a healthy loopback
+ * forward costs (the same run's next-slowest was 218ms) and far below the 60s boot deadline, so it
+ * names outliers without printing traffic.
+ */
+const SLOW_FORWARD_MS = 5_000;
 
 /**
  * Milliseconds of the page's **own bookkeeping** the slowest 5% of displayed frames may cost:
@@ -1025,6 +1038,7 @@ function stallingProxy(target: string): {
   rejected(): number;
   failures(): readonly string[];
   retried(): readonly string[];
+  slow(): readonly string[];
 } {
   let stall = false;
   let rejectsLeft = 0;
@@ -1055,9 +1069,16 @@ function stallingProxy(target: string): {
    * not a forwarding failure, so `expectCleanForwarding` keeps its meaning; `retried()` exposes
    * the count so a run can report how often the race actually fired rather than leaving it
    * assumed either way.
+   *
+   * No `maxSockets`. The first version of this carried `maxSockets: 8`, which was a number I chose
+   * and never measured, on a loopback proxy in front of a test server — and this file's traffic is
+   * exactly the shape that a low cap punishes, because the page's exchange loop aborts a `/frame`
+   * request every 2s and each abort destroys a pooled socket that a queued module load is waiting
+   * behind. Node's default is unlimited; an invented cap needs a reason and this one had none.
    */
-  const agent = new Agent({ keepAlive: true, maxSockets: 8 });
+  const agent = new Agent({ keepAlive: true });
   const retried: string[] = [];
+  const slow: string[] = [];
 
   /** Report a forwarding failure to stderr *and* to the test, rather than answering an empty 500. */
   const fail = (error: unknown, request: IncomingMessage, response: ServerResponse): void => {
@@ -1107,6 +1128,25 @@ function stallingProxy(target: string): {
     // eligible to be retried. That is exactly the set this proxy carries for module loads.
     const replayable = request.method === undefined || /^(GET|HEAD)$/.test(request.method);
 
+    // Registered once, against whichever attempt is in flight. Registering it inside `send` left a
+    // retry with a stale listener still holding the dead request, and `response` only ever closes
+    // once -- so the live attempt could be missed entirely while a destroyed one was destroyed
+    // again.
+    let current: ClientRequest | undefined;
+    response.on('close', () => {
+      if (!response.writableEnded) {
+        clientGone = true;
+        current?.destroy();
+      }
+    });
+
+    // Which side of the pipe stalled, for a forward that takes visibly long. `dl 20254ms` against
+    // `ttfb 2ms` was the whole of round 8's remaining failure and the page-side numbers could not
+    // say whether the dev server had stopped delivering or Chrome had stopped reading. These two
+    // splits can: `headers` is this proxy waiting on the server, `body` is the pipe to Chrome.
+    const startedAt = Date.now();
+    let headersAt = 0;
+
     const send = (attemptsLeft: number): void => {
       const forwarded = httpRequest({
         agent,
@@ -1116,13 +1156,8 @@ function stallingProxy(target: string): {
         path: request.url ?? '/',
         headers: { ...clientHeaders, host: upstream.host },
       });
+      current = forwarded;
 
-      response.on('close', () => {
-        if (!response.writableEnded) {
-          clientGone = true;
-          forwarded.destroy();
-        }
-      });
       forwarded.on('error', (error: unknown) => {
         if (clientGone) return;
         // Only before the reply has started: once headers are out, the page has already seen a
@@ -1135,8 +1170,17 @@ function stallingProxy(target: string): {
         fail(error, request, response);
       });
       forwarded.on('response', (answer: IncomingMessage) => {
+        headersAt = Date.now();
         response.writeHead(answer.statusCode ?? 502, answer.headers);
         answer.pipe(response);
+        response.on('finish', () => {
+          const total = Date.now() - startedAt;
+          if (total < SLOW_FORWARD_MS) return;
+          slow.push(
+            `${request.url ?? '/'} ${total}ms ` +
+              `[headers ${headersAt - startedAt} body ${Date.now() - headersAt}]`,
+          );
+        });
       });
 
       if (replayable) {
@@ -1180,6 +1224,10 @@ function stallingProxy(target: string): {
     retried(): readonly string[] {
       return retried;
     },
+    /** Forwards slow enough to be worth naming, split by which side of the pipe was waiting. */
+    slow(): readonly string[] {
+      return slow;
+    },
   };
 }
 
@@ -1192,16 +1240,20 @@ function stallingProxy(target: string): {
 function describeProxyFailures(proxy: {
   failures(): readonly string[];
   retried(): readonly string[];
+  slow(): readonly string[];
 }): string {
   const failures = proxy.failures();
   // Recovered resets are reported alongside, never folded in. They are the pooled-socket race the
   // agent's docblock describes, and printing the count is the difference between knowing the retry
   // path is load-bearing and assuming it. A run that reports none has not exercised it.
   const retried = proxy.retried();
-  const replays = retried.length === 0 ? '' : ` (${retried.length} recovered by replay)`;
+  const slow = proxy.slow();
+  const extra =
+    (retried.length === 0 ? '' : ` (${retried.length} recovered by replay)`) +
+    (slow.length === 0 ? '' : ` · slow forwards: ${slow.slice(0, 5).join(' | ')}`);
   return failures.length === 0
-    ? ` · proxy forwarded everything it was asked to${replays}`
-    : ` · proxy failed ${failures.length} request(s)${replays}: ${failures.slice(0, 5).join(' | ')}`;
+    ? ` · proxy forwarded everything it was asked to${extra}`
+    : ` · proxy failed ${failures.length} request(s)${extra}: ${failures.slice(0, 5).join(' | ')}`;
 }
 
 /**
@@ -1350,7 +1402,10 @@ describe('a stalled frame request must not freeze the game', () => {
 
         // 4. And the world moved — a page that resumed fetching but never advanced would pass 3.
         const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-        report(`freeze/stall: ${log.join(' · ')} · tick ${tickBefore} -> ${tickAfter}`);
+        report(
+          `freeze/stall: ${log.join(' · ')} · tick ${tickBefore} -> ${tickAfter}` +
+            describeProxyFailures(proxy),
+        );
         expect(tickAfter).toBeGreaterThan(tickBefore);
         expect(proxy.stalled()).toBe(1);
         cdp.close();
@@ -1434,7 +1489,8 @@ describe('a stalled frame request must not freeze the game', () => {
         const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
         report(
           `freeze/reject: refused ${proxy.rejected()} · ${log.join(' · ')} · ` +
-            `tick ${tickBefore} -> ${tickAfter}`,
+            `tick ${tickBefore} -> ${tickAfter}` +
+            describeProxyFailures(proxy),
         );
         expect(proxy.rejected()).toBeGreaterThan(4);
         // Liveness, not just plumbing: the simulation is advancing again, which is what a human
