@@ -1024,6 +1024,7 @@ function stallingProxy(target: string): {
   stalled(): number;
   rejected(): number;
   failures(): readonly string[];
+  retried(): readonly string[];
 } {
   let stall = false;
   let rejectsLeft = 0;
@@ -1034,21 +1035,29 @@ function stallingProxy(target: string): {
   const upstream = new URL(target);
 
   /**
-   * A fresh socket per forward, which is not a default worth taking here.
+   * Keep-alive, plus a single retry of an idempotent request whose socket died before the reply
+   * started. The pool is a race — the dev server may be closing an idle connection at the same
+   * moment this proxy picks it up to send on, which surfaces as `read ECONNRESET` with nothing
+   * wrong at either end — and the first streaming rewrite paid for it: `windows-latest` lost
+   * exactly three module fetches that way (`mode-fps/dist/{systems,plugin,view}.js`), the page
+   * never booted, and the freeze test failed with *"(no transition observed)"*.
    *
-   * Node's global agent keeps connections alive, and a pooled socket is a race: the dev server may
-   * be closing an idle connection at the same moment this proxy picks it up to send on, which
-   * surfaces as `read ECONNRESET` with nothing wrong at either end. `fetch` hides that by retrying
-   * an idempotent request on a fresh socket; `http.request` does not, and the first CI run of the
-   * streaming rewrite paid for the difference — `windows-latest` lost exactly three module fetches
-   * that way (`mode-fps/dist/{systems,plugin,view}.js`), the page never booted, and the freeze test
-   * failed with *"(no transition observed)"*. It cost one round trip to see because the same run
-   * also printed the three resets by name, which is what the `failures()` accessor is for.
+   * The first repair was `keepAlive: false` + `connection: close`, which closes the race by never
+   * pooling anything. It works, and I never measured what it cost. Round 7 did, on the freeze path
+   * where this proxy is the only thing between Chrome and the server:
    *
-   * The idle window this closes is widest exactly where it matters: a starved event loop is what
-   * leaves a pooled socket sitting long enough for the server's keep-alive timeout to reach it.
+   *   12 requests, connect 16140ms total — three.module.js 6384ms, input.js 6615ms
+   *
+   * That is over a second of TCP handshake per request, on loopback, to avoid a race that fires
+   * rarely and is recoverable. `fetch` never had to make that trade because it retries an
+   * idempotent request on a fresh socket — which is what the docblock above already said it did,
+   * and what this now does instead of describing. A request that is retried and then succeeds is
+   * not a forwarding failure, so `expectCleanForwarding` keeps its meaning; `retried()` exposes
+   * the count so a run can report how often the race actually fired rather than leaving it
+   * assumed either way.
    */
-  const agent = new Agent({ keepAlive: false });
+  const agent = new Agent({ keepAlive: true, maxSockets: 8 });
+  const retried: string[] = [];
 
   /** Report a forwarding failure to stderr *and* to the test, rather than answering an empty 500. */
   const fail = (error: unknown, request: IncomingMessage, response: ServerResponse): void => {
@@ -1084,34 +1093,61 @@ function stallingProxy(target: string): {
     // holding a whole body in memory. Upstream's own cache-control, content-type and ETag travel
     // with it in both directions, so the page sees what the dev server actually said — including a
     // bodiless 304 when the page already holds an unchanged module.
-    const forwarded = httpRequest({
-      agent,
-      host: upstream.hostname,
-      port: upstream.port,
-      method: request.method ?? 'GET',
-      path: request.url ?? '/',
-      headers: { ...request.headers, host: upstream.host, connection: 'close' },
-    });
+    //
+    // `connection` is dropped rather than forwarded: it is hop-by-hop, so Chrome's value describes
+    // Chrome's socket to this proxy and says nothing about this proxy's socket to the server.
+    const { connection: _hopByHop, ...clientHeaders } = request.headers;
 
     // The page's exchange carries a 2s AbortController, so a client that walks away mid-request is
     // ordinary traffic here, not a fault. Reporting it as one would fill the log with noise on
     // exactly the loaded machine where the real failures need to be legible.
     let clientGone = false;
-    response.on('close', () => {
-      if (!response.writableEnded) {
-        clientGone = true;
-        forwarded.destroy();
+
+    // A body cannot be replayed once it has been piped, so only a request that has none is
+    // eligible to be retried. That is exactly the set this proxy carries for module loads.
+    const replayable = request.method === undefined || /^(GET|HEAD)$/.test(request.method);
+
+    const send = (attemptsLeft: number): void => {
+      const forwarded = httpRequest({
+        agent,
+        host: upstream.hostname,
+        port: upstream.port,
+        method: request.method ?? 'GET',
+        path: request.url ?? '/',
+        headers: { ...clientHeaders, host: upstream.host },
+      });
+
+      response.on('close', () => {
+        if (!response.writableEnded) {
+          clientGone = true;
+          forwarded.destroy();
+        }
+      });
+      forwarded.on('error', (error: unknown) => {
+        if (clientGone) return;
+        // Only before the reply has started: once headers are out, the page has already seen a
+        // status and a second attempt could not change it.
+        if (attemptsLeft > 0 && replayable && !response.headersSent) {
+          retried.push(`${request.method ?? 'GET'} ${request.url ?? '/'} -> ${String(error)}`);
+          send(attemptsLeft - 1);
+          return;
+        }
+        fail(error, request, response);
+      });
+      forwarded.on('response', (answer: IncomingMessage) => {
+        response.writeHead(answer.statusCode ?? 502, answer.headers);
+        answer.pipe(response);
+      });
+
+      if (replayable) {
+        forwarded.end();
+        return;
       }
-    });
-    forwarded.on('error', (error: unknown) => {
-      if (!clientGone) fail(error, request, response);
-    });
-    forwarded.on('response', (answer: IncomingMessage) => {
-      response.writeHead(answer.statusCode ?? 502, answer.headers);
-      answer.pipe(response);
-    });
-    request.on('error', () => forwarded.destroy());
-    request.pipe(forwarded);
+      request.on('error', () => forwarded.destroy());
+      request.pipe(forwarded);
+    };
+
+    send(1);
   });
 
   const url = new Promise<string>((done) => {
@@ -1140,6 +1176,10 @@ function stallingProxy(target: string): {
     failures(): readonly string[] {
       return failed;
     },
+    /** Forwards that hit a dead pooled socket and were replayed. Recovered, so not failures. */
+    retried(): readonly string[] {
+      return retried;
+    },
   };
 }
 
@@ -1149,11 +1189,19 @@ function stallingProxy(target: string): {
  * Silence here is itself a finding: it says the page's own boot or exchange loop is the subject,
  * and that the transport underneath it did what it was asked.
  */
-function describeProxyFailures(proxy: { failures(): readonly string[] }): string {
+function describeProxyFailures(proxy: {
+  failures(): readonly string[];
+  retried(): readonly string[];
+}): string {
   const failures = proxy.failures();
+  // Recovered resets are reported alongside, never folded in. They are the pooled-socket race the
+  // agent's docblock describes, and printing the count is the difference between knowing the retry
+  // path is load-bearing and assuming it. A run that reports none has not exercised it.
+  const retried = proxy.retried();
+  const replays = retried.length === 0 ? '' : ` (${retried.length} recovered by replay)`;
   return failures.length === 0
-    ? ' · proxy forwarded everything it was asked to'
-    : ` · proxy failed ${failures.length} request(s): ${failures.slice(0, 5).join(' | ')}`;
+    ? ` · proxy forwarded everything it was asked to${replays}`
+    : ` · proxy failed ${failures.length} request(s)${replays}: ${failures.slice(0, 5).join(' | ')}`;
 }
 
 /**

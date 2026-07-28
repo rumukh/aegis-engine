@@ -968,7 +968,30 @@ export async function until<T>(
   timeoutMs = DEFAULT_UNTIL_TIMEOUT_MS,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
+  const started = Date.now();
+  let polls = 0;
+  /**
+   * The poll interval, backing off 40ms -> 500ms rather than staying at 40ms.
+   *
+   * `evaluate` runs on the renderer's main thread — the same single thread that has to parse and
+   * execute the page's ES module graph. While this loop is waiting for boot it is therefore
+   * competing with the very work it is waiting for, and a fixed 40ms interval makes that
+   * competition worst exactly when the machine is slowest. Round 7 on `windows-latest` measured a
+   * module answered by the server in 1ms and then taking 28.7s to arrive:
+   *
+   *   platformer.js 36541ms [stall 7807 connect 219 ttfb 1 dl 28733]
+   *
+   * `ttfb 1` says the server was never the problem; `dl 28733` over loopback says the renderer was
+   * not running to read its own socket. A 60s wait at 40ms is ~1500 CDP round trips into that
+   * thread; the backoff makes it ~125, and the geometric ramp means anything that settles within
+   * the first ~1.3s still sees an essentially unchanged latency (40, 60, 90, 135, 202, 304, 456).
+   *
+   * The cost is bounded and stated: at most one extra 500ms of detection latency, against
+   * deadlines measured in tens of seconds.
+   */
+  let interval = 40;
   for (;;) {
+    polls++;
     const value = await evaluate<T>(cdp, expression);
     if (accept(value)) return value;
     if (Date.now() > deadline) {
@@ -986,12 +1009,16 @@ export async function until<T>(
       // level and then returns a null context, which presents as a page that fails silently.
       if (seen.length === 0 && warned.length > 0)
         parts.push(`It did warn:\n  ${warned.join('\n  ')}`);
+      // The poll count and the wall time together say whether this loop was itself being starved:
+      // polls far below what the interval schedule predicts means this process was not running.
+      parts.push(`It was polled ${polls} time(s) over ${Date.now() - started}ms.`);
       parts.push(`The page describes itself as:\n${await describePage(cdp)}`);
       throw new Error(
         `timed out waiting for ${expression} after ${timeoutMs}ms. ${parts.join(' ')}`,
       );
     }
-    await sleep(40);
+    await sleep(interval);
+    interval = Math.min(500, Math.round(interval * 1.5));
   }
 }
 
