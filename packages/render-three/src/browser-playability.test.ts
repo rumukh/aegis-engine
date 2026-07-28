@@ -23,7 +23,7 @@
  * suite was measuring the wrong loop.
  * @packageDocumentation
  */
-import { createServer, request as httpRequest } from 'node:http';
+import { Agent, createServer, request as httpRequest } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -966,6 +966,23 @@ function stallingProxy(target: string): {
   const held: ServerResponse[] = [];
   const upstream = new URL(target);
 
+  /**
+   * A fresh socket per forward, which is not a default worth taking here.
+   *
+   * Node's global agent keeps connections alive, and a pooled socket is a race: the dev server may
+   * be closing an idle connection at the same moment this proxy picks it up to send on, which
+   * surfaces as `read ECONNRESET` with nothing wrong at either end. `fetch` hides that by retrying
+   * an idempotent request on a fresh socket; `http.request` does not, and the first CI run of the
+   * streaming rewrite paid for the difference — `windows-latest` lost exactly three module fetches
+   * that way (`mode-fps/dist/{systems,plugin,view}.js`), the page never booted, and the freeze test
+   * failed with *"(no transition observed)"*. It cost one round trip to see because the same run
+   * also printed the three resets by name, which is what the `failures()` accessor is for.
+   *
+   * The idle window this closes is widest exactly where it matters: a starved event loop is what
+   * leaves a pooled socket sitting long enough for the server's keep-alive timeout to reach it.
+   */
+  const agent = new Agent({ keepAlive: false });
+
   /** Report a forwarding failure to stderr *and* to the test, rather than answering an empty 500. */
   const fail = (error: unknown, request: IncomingMessage, response: ServerResponse): void => {
     const detail =
@@ -1000,11 +1017,12 @@ function stallingProxy(target: string): {
     // holding a whole body in memory. Upstream's own `cache-control: no-store` and `content-type`
     // travel with it, so the page sees what the dev server actually said.
     const forwarded = httpRequest({
+      agent,
       host: upstream.hostname,
       port: upstream.port,
       method: request.method ?? 'GET',
       path: request.url ?? '/',
-      headers: { ...request.headers, host: upstream.host },
+      headers: { ...request.headers, host: upstream.host, connection: 'close' },
     });
 
     // The page's exchange carries a 2s AbortController, so a client that walks away mid-request is
@@ -1068,6 +1086,29 @@ function describeProxyFailures(proxy: { failures(): readonly string[] }): string
   return failures.length === 0
     ? ' · proxy forwarded everything it was asked to'
     : ` · proxy failed ${failures.length} request(s): ${failures.slice(0, 5).join(' | ')}`;
+}
+
+/**
+ * Refuse to proceed past a freeze test's boot if the proxy has already dropped a request.
+ *
+ * Called at the point where the page has booted and is exchanging, and *before* anything has been
+ * deliberately stalled or refused — so at this instant the proxy is a plain pipe and every failure
+ * in it is the pipe's own. Without this the two failure modes are indistinguishable in a green run:
+ * a proxy that silently loses a module still lets a page boot slowly enough to pass, and the test
+ * then reports on a page assembled from whatever happened to arrive.
+ *
+ * It exists because that is not hypothetical. The streaming rewrite of `stallingProxy` lost three
+ * `mode-fps` modules to keep-alive resets on its first CI run, and the only reason it was legible
+ * was that the failure path had just been taught to name them. On the success path nothing looked
+ * at `failures()` at all.
+ */
+function expectCleanForwarding(proxy: { failures(): readonly string[] }): void {
+  const failures = proxy.failures();
+  expect(
+    failures,
+    `the proxy dropped ${failures.length} request(s) before the test armed anything: ` +
+      failures.join(' | '),
+  ).toEqual([]);
 }
 
 /**
@@ -1149,6 +1190,7 @@ describe('a stalled frame request must not freeze the game', () => {
           FREEZE_TRANSITION_BUDGET_MS,
         );
         const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+        expectCleanForwarding(proxy);
 
         // 1. Arm the stall and wait for the proxy to actually swallow a request. This is in-process
         //    and exact — no assumption about how often the page talks.
@@ -1250,6 +1292,7 @@ describe('a stalled frame request must not freeze the game', () => {
           FREEZE_TRANSITION_BUDGET_MS,
         );
         const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+        expectCleanForwarding(proxy);
 
         // 1. Refuse a run of exchanges, then wait for the proxy to have actually refused them.
         proxy.rejectNext(25);

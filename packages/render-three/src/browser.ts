@@ -14,7 +14,7 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, freemem, loadavg, tmpdir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
@@ -179,6 +179,39 @@ export function maxLagSince(sinceMs: number): {
   const wallMs = last.at - first.at;
   const cpuMs = (last.cpuMicros - first.cpuMicros) / 1000;
   return { maxMs, samples, expected, cpuRatio: cpuMs / wallMs };
+}
+
+/**
+ * What the machine looked like at this instant: cores, free memory, and (where the OS has one) run
+ * queue length.
+ *
+ * `cpuRatio ~0` says this process was not scheduled and that the box is oversubscribed by something
+ * outside it. It does **not** say by what, and the two candidates have opposite repairs: a box out
+ * of CPU is a box to take work off, while a box out of memory is a box that is paging, where a
+ * process waiting on the pager also reads as 0% CPU and no amount of rescheduling helps.
+ *
+ * That fork cost a CI round trip to even pose. `windows-latest` reported 0% CPU across five
+ * failures in a file that had just been given the machine to itself — every other test file had
+ * finished, and the second browser file ran afterwards and passed 33 of 33. So "oversubscribed by
+ * something outside this process" was true and named nothing that was still running. Printing the
+ * host's own numbers beside the verdict is the cheapest way to stop that question needing a run.
+ *
+ * `loadavg` is 0,0,0 on Windows — reported as unavailable rather than as zero, because a fabricated
+ * zero on the one platform this diagnostic exists for would be worse than an absence.
+ */
+export function describeHost(): string {
+  const total = totalmem();
+  const free = freemem();
+  const gb = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)}GB`;
+  const [oneMinute] = loadavg();
+  const load =
+    oneMinute === undefined || oneMinute === 0
+      ? 'load average unavailable on this platform'
+      : `1-minute load ${oneMinute.toFixed(2)} over ${availableParallelism()} core(s)`;
+  return (
+    `Host: ${availableParallelism()} core(s), memory ${gb(free)} free of ${gb(total)} ` +
+    `(${Math.round((1 - free / total) * 100)}% used); ${load}`
+  );
 }
 
 /**
@@ -462,7 +495,8 @@ export class CdpSession {
           new Error(
             `[cdp] no reply to ${method} (id ${id}) after ${Date.now() - startedAt}ms, so every ` +
               `deadline waiting on this reply was unreachable and would have expired mutely. ` +
-              `${deadline.text} Transport health: ${this.describeTransport()}. Read the three ` +
+              `${deadline.text} ${describeHost()}. Transport health: ${this.describeTransport()}. ` +
+              `Read the three ` +
               `shapes apart rather than pooling them: a cliff (healthy band, then nothing) is a ` +
               `wedge; a climb is starvation; and no completed commands at all means the session ` +
               `never worked, which no amount of extra deadline will fix.`,
@@ -979,6 +1013,33 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--disable-extensions',
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
+    // Work Chrome does that has nothing to do with rendering a local page, and that this project
+    // has now paid for twice on `windows-latest`.
+    //
+    // The evidence is a shape, not a hunch. Run 30380984122 gave this file the machine entirely to
+    // itself — every other test file had finished, and the other browser file ran afterwards and
+    // passed 33 of 33 — and it still failed five cases with the CDP transport wedging for 25-40
+    // seconds at a stretch while this process held a CPU **0%** of the window. The round-trip band
+    // was healthy either side of each wedge (8/104/69/102/27/61/118/2/**28904**/165/12/348ms), so
+    // nothing was degrading: the process was repeatedly stopped dead and then resumed. A process
+    // that is not scheduled *and* not burning CPU is a process waiting on the OS, and Chrome's
+    // startup network fetches and disk caches are the work in this launch that waits on the OS.
+    //
+    // None of these touch rendering, so none of them can move a number this file reports. They are
+    // the standard headless-CI set (Puppeteer ships most of them by default) minus anything that
+    // changes how frames are produced, which is the line the four throttle flags below are also
+    // held to. `--disk-cache-size=1` is Chrome's documented way to say "effectively none": zero is
+    // read as "unset, use the default".
+    '--disable-background-networking',
+    '--disable-component-update',
+    '--disable-client-side-phishing-detection',
+    '--disable-domain-reliability',
+    '--disable-sync',
+    '--no-pings',
+    '--metrics-recording-only',
+    '--mute-audio',
+    '--disable-gpu-shader-disk-cache',
+    '--disk-cache-size=1',
     // These four remove Chrome's background/occlusion throttles. **They are NOT what makes
     // `windows-latest` paint, and believing they were cost two landings and four CI runs.**
     //

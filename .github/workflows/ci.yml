@@ -59,6 +59,39 @@ jobs:
         with:
           node-version: '24'
 
+      # Windows only, and it is not a performance tweak — it is removing a second program from the
+      # measurement.
+      #
+      # `packages/render-three/src/browser-playability.test.ts` drives a real Chromium over CDP and
+      # is the only file in this suite whose result depends on the host being responsive. On
+      # `windows-latest` it has failed by the transport wedging for 25-40 seconds at a time while
+      # the Node process held a CPU **0%** of the window — not scheduled, and not burning CPU
+      # either, which is what waiting on the OS looks like. Run 30380984122 showed it with the
+      # machine to itself: every other test file had finished, the second browser file ran after it
+      # and passed 33 of 33, and `ubuntu-latest` ran the identical corpus green with that file at
+      # 47.7s against 665.9s here.
+      #
+      # Defender scans every file Chrome writes, and each launch creates a fresh profile under
+      # TEMP. On the leg that has an antivirus this is the largest asymmetry with the leg that does
+      # not. Scoped to paths and processes rather than switching real-time protection off, so the
+      # runner keeps its protection for everything this job does not own.
+      #
+      # `continue-on-error` because this is an optimisation of the host, not a gate: if a future
+      # runner image withholds the privilege, the job must still run and report on the tests rather
+      # than fail on the preparation.
+      - name: Exclude this job's own files from Defender (windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+          Add-MpPreference -ExclusionPath "$env:RUNNER_TEMP"
+          Add-MpPreference -ExclusionPath "$env:TEMP"
+          Add-MpPreference -ExclusionProcess 'node.exe'
+          Add-MpPreference -ExclusionProcess 'chrome.exe'
+          Add-MpPreference -ExclusionProcess 'msedge.exe'
+          Write-Host 'Defender exclusions added for the workspace, TEMP, node and the browser.'
+
       - name: Install
         run: npm ci
 
