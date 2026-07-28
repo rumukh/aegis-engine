@@ -46,8 +46,10 @@ import {
   closeAllPages,
   evaluate,
   launchBrowser,
+  maxLagSince,
   openPage,
   sleep,
+  startEventLoopLagMonitor,
   until,
   waitForPaint,
 } from './browser.js';
@@ -390,8 +392,31 @@ function report(line: string): void {
   console.log(`      ${line}`);
 }
 
+/**
+ * What this process and this box were doing over a window, in one clause, for the success path.
+ *
+ * `systemRatio` is the load-bearing half. Every browser failure on `windows-latest` has reported
+ * this process holding a CPU **0%** of the window, which was written up in three landings as an
+ * oversubscribed runner — but `cpuRatio` measures only this process, so the box was never measured
+ * at all. Printing the box on green runs is what makes a later red attributable: with a baseline in
+ * the log, `node 0% / box 97%` and `node 0% / box 12%` are different findings with opposite next
+ * steps, and without one they are the same sentence.
+ */
+function describeLoad(sinceMs: number): string {
+  const lag = maxLagSince(sinceMs);
+  const share = (r?: number): string =>
+    r === undefined ? 'unmeasured' : `${Math.round(r * 100)}%`;
+  return (
+    `machine: this process held a CPU ${share(lag.cpuRatio)} of the window, every core together ` +
+    `was ${share(lag.systemRatio)} busy, worst event-loop lag ${lag.maxMs}ms over ${lag.samples} ` +
+    `sample(s) of ~${lag.expected} due.`
+  );
+}
+
 let server: DevServer;
 let browser: LaunchedBrowser;
+/** When the hook started, so the machine-load line has a window to report over. */
+let hookStartedAt = Date.now();
 /** The environment's own frame pacing, measured once on a page that does nothing. */
 let controlGapP95 = Number.NaN;
 /** The raw control gaps, kept so the control test can assert the measurement happened. */
@@ -402,6 +427,8 @@ let controlTimerTicks = 0;
 let controlVisibility = 'unmeasured';
 
 beforeAll(async () => {
+  startEventLoopLagMonitor();
+  hookStartedAt = Date.now();
   server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
   // NOT `uncapFrameRate`. That option removes Chrome's frame-rate limit, and this harness ran with
   // it from landing #17 until it was measured. It was added alongside the four occlusion flags that
@@ -465,7 +492,7 @@ beforeAll(async () => {
     `[playability] browser ready to paint after ${paint.ms}ms ` +
       `(${paint.polls} poll(s); ${paint.frames} frames and ${paint.timerTicks} timer ticks in the ` +
       `final second). On a warm runner this is ~1000ms; on a cold windows-latest it has been ` +
-      `measured at up to 63s.`,
+      `measured at up to 63s. ${describeLoad(hookStartedAt)}`,
   );
 
   // Measured here rather than inside a test so every report below can print it, including when
@@ -511,6 +538,14 @@ beforeAll(async () => {
 }, BUDGET_BEFORE_ALL_MS);
 
 afterAll(async () => {
+  // Printed unconditionally, including on a wholly green run. The reason is a defect this file has
+  // already produced twice: `TRANSPORT_TIMEOUT_MS` sat at 1.04x the worst round trip that had ever
+  // SUCCEEDED on `windows-latest` (28904ms against a 30000ms deadline, run 30380984122), and the
+  // boot deadline sat inside its own band for four landings. Both survived because these numbers
+  // were printed only on failure, so a pass left no evidence anyone could check a bound against.
+  // A green run that records what the machine was doing is the only thing that turns a bound into
+  // a measurement instead of a guess that has not been caught yet.
+  console.log(`[playability] over this file's whole run: ${describeLoad(hookStartedAt)}`);
   browser?.process.kill();
   await server?.close();
 });

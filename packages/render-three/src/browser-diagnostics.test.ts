@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { cpus } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,11 +30,15 @@ import {
   CdpSession,
   DEFAULT_UNTIL_TIMEOUT_MS,
   FOCUS_TIMEOUT_MS,
+  LAG_SAMPLE_INTERVAL_MS,
   LATE_OVERSHOOT_MS,
   LAUNCH_TIMEOUT_MS,
   NAVIGATION_TIMEOUT_MS,
   ROUND_TRIP_HISTORY,
   STALL_LAG_MS,
+  SYSTEM_CPU_SAMPLE_EVERY,
+  SYSTEM_QUIET_RATIO,
+  SYSTEM_SATURATED_RATIO,
   TRANSPORT_TIMEOUT_MS,
   PAINT_FRAMES_FLOOR,
   PAINT_TIMEOUT_MS,
@@ -47,6 +52,7 @@ import {
   evaluate,
   launchBrowser,
   openPage,
+  sleep,
   until,
 } from './browser.js';
 
@@ -907,6 +913,214 @@ describe('a transport deadline says which side of the socket stopped', () => {
     // due" in its explanation, and a substring assertion loose enough to match that would be red
     // for a reason unrelated to what it claims to check.
     expect(withoutDenominator.text).not.toContain('of ~');
+  });
+
+  it('separates an oversubscribed box from a quiet one, which "NOT SCHEDULED" alone cannot', () => {
+    // The retracted claim, verbatim from the code this replaces:
+    //
+    //   "it was NOT SCHEDULED, so the box is oversubscribed by something outside this process"
+    //
+    // `cpuRatio` is `process.cpuUsage()` over wall time. It is a statement about THIS process and is
+    // silent about every other one, so everything after "so" was an inference printed in the same
+    // typeface as the measurement beside it. It was then carried into three landings and two CI
+    // verdicts (`windows-latest` runs 30377421271 and 30380984122), where every browser failure read
+    // `0%` and was written up as an oversubscribed runner without the box ever being measured.
+    //
+    // The branches have opposite next steps, which is why the distinction is worth an instrument:
+    // saturated means reduce the browser's demand, quiet means CPU contention was never the
+    // mechanism and the next instrument is elsewhere entirely.
+    const stalled = { maxMs: 30_000, samples: 2, expected: 603, cpuRatio: 0 };
+
+    const saturated = describeDeadline(30_152, 30_000, { ...stalled, systemRatio: 0.97 });
+    expect(saturated.text).toMatch(/every core together was 97% busy/);
+    expect(saturated.text).toMatch(/the box really was oversubscribed/);
+
+    const quiet = describeDeadline(30_152, 30_000, { ...stalled, systemRatio: 0.12 });
+    expect(quiet.text).toMatch(/every core together was only 12% busy/);
+    expect(quiet.text).toMatch(/OVERSUBSCRIPTION IS REFUTED/);
+    expect(quiet.text).toMatch(/I\/O, a lock, a synchronous filesystem call, or the socket/);
+
+    const neither = describeDeadline(30_152, 30_000, { ...stalled, systemRatio: 0.7 });
+    expect(neither.text).toMatch(/neither branch is established/);
+
+    // And with no reading at all it must say so rather than fall back to the old assertion. An
+    // unmeasured quantity that renders as a claim is the defect this whole case exists to close.
+    const unmeasured = describeDeadline(30_152, 30_000, stalled);
+    expect(unmeasured.text).toMatch(/UNMEASURED over this window, so do not assume it/);
+    expect(unmeasured.text).not.toMatch(/box is oversubscribed/);
+
+    // The retracted sentence, pinned in every branch so it cannot return by any path.
+    for (const verdict of [saturated, quiet, neither, unmeasured]) {
+      expect(verdict.text).not.toMatch(/NOT SCHEDULED, so the box is oversubscribed/);
+    }
+  });
+
+  it('puts the saturated and quiet thresholds where a boundary cannot decide the verdict', () => {
+    // Driven both ways at each threshold. Without this the two constants could drift to meet, and a
+    // fork whose branches touch is a coin flip with a comment attached -- the failure this project
+    // has retired three separate bounds for.
+    const at = (systemRatio: number): string =>
+      describeDeadline(30_152, 30_000, {
+        maxMs: 30_000,
+        samples: 2,
+        expected: 603,
+        cpuRatio: 0,
+        systemRatio,
+      }).text;
+    expect(at(SYSTEM_SATURATED_RATIO)).toMatch(/really was oversubscribed/);
+    expect(at(SYSTEM_SATURATED_RATIO - 0.01)).toMatch(/neither branch is established/);
+    expect(at(SYSTEM_QUIET_RATIO)).toMatch(/OVERSUBSCRIPTION IS REFUTED/);
+    expect(at(SYSTEM_QUIET_RATIO + 0.01)).toMatch(/neither branch is established/);
+    expect(SYSTEM_SATURATED_RATIO).toBeGreaterThan(SYSTEM_QUIET_RATIO + 0.2);
+  });
+
+  it('measures the box and not merely this process, on whatever OS this is running on', async () => {
+    // THE control that makes every `systemRatio` reading above believable, and it has to run against
+    // the real `os.cpus()` on the real platform. A counter that never advanced would return
+    // `undefined` or a flat 0 and be read as "the box was idle" -- which is the REFUTED branch, the
+    // one that would send the next person to instrument I/O for a problem that was CPU all along.
+    // An instrument reporting nothing must never be indistinguishable from an instrument reporting
+    // nothing wrong, and here the two would have had opposite meanings.
+    startEventLoopLagMonitor();
+    const cores = cpus().length;
+    // Long enough to be spanned by at least two system-carrying samples, which are taken one in
+    // every `SYSTEM_CPU_SAMPLE_EVERY` lag samples rather than on every one -- `os.cpus()` costs
+    // ~736us against ~1.3us for `process.cpuUsage()`, so sampling it at the lag cadence would burn
+    // ~1.5% of a core inside the instrument whose subject is CPU starvation.
+    const window = SYSTEM_CPU_SAMPLE_EVERY * 50 * 5;
+
+    // ARM 1 -- this process saturates exactly one core.
+    const busyFrom = Date.now();
+    const spinUntil = busyFrom + window;
+    while (Date.now() < spinUntil) {
+      /* deliberately synchronous: one core, fully held, for the whole window */
+    }
+    const busy = maxLagSince(busyFrom);
+    const busyAt = Date.now();
+
+    // ARM 2 -- this process does nothing at all over a window of the same length.
+    //
+    // The `await sleep(0)` is load-bearing and is the finding of this case, not a nicety. The spin
+    // above took no samples at all -- that is the point of arm 1 -- so without a yield the newest
+    // reading in the history predates the spin, becomes arm 2's anchor, and drags the whole 2.5s of
+    // spin inside arm 2's ratio window: measured, this arm read `cpuRatio` 0.40 for a window in
+    // which this process did nothing whatever. The dilution is real, it is unbounded by the sampler
+    // cadence, and it is pinned separately by the case below rather than hidden here.
+    await sleep(LAG_SAMPLE_INTERVAL_MS * 3);
+    const idleFrom = Date.now();
+    await sleep(window);
+    const idle = maxLagSince(idleFrom);
+
+    // The counters advanced. Everything else here is downstream of this.
+    expect(busy.systemRatio).toBeDefined();
+    expect(idle.systemRatio).toBeDefined();
+
+    // And arm 1 really is the starved shape, not a healthy window that happens to work: a
+    // synchronous spin runs no timers, so the sampler misses most of what it was due. This is the
+    // assertion that makes the one above mean something -- `systemRatio` being defined over a
+    // *quiet* window would not have caught the design that returned `undefined` over a stalled one.
+    expect(busy.expected).toBeGreaterThan(20);
+    expect(busy.samples).toBeLessThan(busy.expected / 2);
+
+    // What follows is scaled by the window the ratios ACTUALLY cover, which is not the window that
+    // was asked for. `ratioFromMs` reports where it really begins, and here it is measured rather
+    // than assumed: the spin takes no samples, so the anchor is whatever the sampler managed before
+    // it, and under load that has been observed 1.7s back. An earlier draft asserted a flat
+    // `cpuRatio > 0.8` and a mutation control caught it reading 0.588 for a perfectly healthy spin
+    // -- a bound sitting inside its own quantity's band, which is the error this project keeps
+    // retiring. `spinShare` is the fraction of the covered window that really was spin; the
+    // assertions below are stated against it, so they mean the same thing however diluted the
+    // window is.
+    const spinShare = window / (busyAt - (busy.ratioFromMs ?? busyFrom));
+    // ...and a floor on the coverage itself, because a `ratioFromMs` reporting something ancient
+    // would drive `spinShare` to zero and make every assertion below trivially satisfiable.
+    expect(spinShare).toBeGreaterThan(0.2);
+    expect(spinShare).toBeLessThanOrEqual(1);
+
+    // Holding one core of `cores` for the spin puts at least `spinShare / cores` of the box's total
+    // capacity in the busy column, whatever else the machine is doing -- ambient load can only add.
+    // That makes this floor independent of how contended the runner is, which an arm comparing the
+    // two windows to each other would not be. The 0.8 is slack for sampling granularity at the two
+    // ends, not a tuned number.
+    expect(busy.systemRatio ?? 0).toBeGreaterThanOrEqual((spinShare * 0.8) / cores);
+
+    // `cpuRatio` moves with what this process actually did -- stated as a DIFFERENCE between the two
+    // arms rather than as a floor on either. A floor here is a bound inside a band: on a saturated
+    // box a spin loop is preempted and genuinely does not get a whole core, measured 72% where a
+    // quiet box reads 89%, so any absolute threshold is really a claim about the runner. The
+    // difference is structural -- spinning uses more CPU than sleeping, on every machine.
+    expect((busy.cpuRatio ?? 0) - (idle.cpuRatio ?? 0)).toBeGreaterThan(0.3);
+
+    // And the two ratios are different quantities, not one value plumbed to two names -- but WHICH
+    // arm demonstrates that depends on the box, so the claim is stated over both rather than pinned
+    // to whichever one happens to work here. On a quiet machine arm 1 separates them (this process
+    // ~90% of a core against the box at ~6% of capacity). On a saturated one arm 1 cannot: measured
+    // 72% against 95%, closer together than any threshold could tell apart -- and arm 2 separates
+    // them instead, at process 0% against box 57%. A single value plumbed to two names would move
+    // the two together in BOTH arms, so requiring a material gap in at least one is the claim
+    // itself, not a weakened version of it. An earlier draft asserted `systemRatio < cpuRatio` on
+    // arm 1 alone and went red on a loaded box for no defect at all.
+    const ratioGap = Math.max(
+      Math.abs((busy.cpuRatio ?? 0) - (busy.systemRatio ?? 0)),
+      Math.abs((idle.cpuRatio ?? 0) - (idle.systemRatio ?? 0)),
+    );
+    expect(ratioGap).toBeGreaterThan(0.15);
+
+    // Arm 2 produces the combination the new branch exists for: this process not on a CPU at all,
+    // with the box's own load measured independently of it. Reaching that state from the real
+    // sampler is what proves the REFUTED branch is a measurement rather than a sentence.
+    expect(idle.cpuRatio ?? 1).toBeLessThan(0.2);
+    console.log(
+      `[cpu] ${cores} core(s) · spinning one: process ${Math.round((busy.cpuRatio ?? 0) * 100)}% / ` +
+        `box ${Math.round((busy.systemRatio ?? 0) * 100)}% over a window ${Math.round(spinShare * 100)}% spin · idle: process ` +
+        `${Math.round((idle.cpuRatio ?? 0) * 100)}% / box ${Math.round((idle.systemRatio ?? 0) * 100)}%`,
+    );
+    // Deliberately NO numeric budget. This case launches no browser, so it pays none of the
+    // launch + navigate + commit floor, and the containment guard below reads every budget in this
+    // file out of its own source and requires it to clear that floor. A budget here would be a
+    // 30-second literal failing a 90-second floor for a case that cannot spend it.
+  });
+
+  it('says how far before the window its ratios really begin, because that is unbounded', async () => {
+    // Anchoring both ratios to the last reading BEFORE the window is what makes them answerable at
+    // all over a stalled window -- a blocked loop takes no samples while it is blocked, so two
+    // in-window endpoints do not exist. The price is that the anchor is only as fresh as the last
+    // sample the sampler managed to take, so a stall immediately before the window pushes the
+    // window's real start back by the length of that stall. The doc comment first claimed a flat
+    // 50ms/500ms bound; this case is the control that refuted it, and it exists so that the
+    // dilution is a reported quantity rather than a surprise in someone's attribution.
+    startEventLoopLagMonitor();
+
+    // Healthy: the loop has been turning, so the anchor is one sampler interval old at most and the
+    // ratio window is essentially the window that was asked for. Without this arm a `ratioFromMs`
+    // hardwired to something ancient would satisfy the arm below, and the pair would measure
+    // nothing.
+    await sleep(LAG_SAMPLE_INTERVAL_MS * 4);
+    const freshFrom = Date.now();
+    await sleep(LAG_SAMPLE_INTERVAL_MS * 8);
+    const fresh = maxLagSince(freshFrom);
+    expect(fresh.ratioFromMs).toBeDefined();
+    expect(freshFrom - (fresh.ratioFromMs ?? 0)).toBeLessThan(
+      SYSTEM_CPU_SAMPLE_EVERY * LAG_SAMPLE_INTERVAL_MS * 2,
+    );
+
+    // Starved: a synchronous block, then a window opened with no yield in between. Every sample the
+    // anchor could have been is on the far side of the block.
+    const blockMs = 1_200;
+    block(blockMs);
+    const staleFrom = Date.now();
+    await sleep(LAG_SAMPLE_INTERVAL_MS * 4);
+    const stale = maxLagSince(staleFrom);
+
+    // The claim is NOT that the ratio is wrong -- it is that the instrument says how much of its
+    // answer is about the period before the question. Half the block is a floor well inside the
+    // measurement rather than a bound on it.
+    expect(stale.ratioFromMs).toBeDefined();
+    expect(staleFrom - (stale.ratioFromMs ?? 0)).toBeGreaterThan(blockMs / 2);
+    console.log(
+      `[cpu] ratio window starts ${freshFrom - (fresh.ratioFromMs ?? 0)}ms before a healthy window ` +
+        `and ${staleFrom - (stale.ratioFromMs ?? 0)}ms before one opened straight after a ${blockMs}ms block`,
+    );
   });
 
   /**

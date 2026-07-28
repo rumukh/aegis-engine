@@ -14,7 +14,7 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpus, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
@@ -98,6 +98,68 @@ interface LagSample {
   at: number;
   lateBy: number;
   cpuMicros: number;
+  /**
+   * System-wide cumulative CPU times, on every {@link SYSTEM_CPU_SAMPLE_EVERY}th sample only.
+   * Used as the *anchor* preceding a measurement window, never as both of its endpoints — see
+   * {@link maxLagSince}.
+   */
+  sys?: { busyMs: number; idleMs: number };
+}
+
+/**
+ * How many lag samples apart a **system-wide** CPU reading is taken.
+ *
+ * `os.cpus()` is not free. Measured on this 16-core box, 20 000 calls each: **736.5us** per call
+ * against **1.3us** for `process.cpuUsage()` — a factor of 550, because it allocates one object per
+ * core. At the 50ms lag cadence that would be **14.7ms of CPU per second of wall clock**, ~1.5% of
+ * a core, continuously, for the life of the process — burnt *inside the instrument whose entire
+ * subject is CPU starvation*. An instrument that perturbs its own subject is worth less than none,
+ * so the system reading is taken every tenth sample: ~0.15% of a core.
+ *
+ * 500ms is ample for what this now does, but **not for the reason first written here.** The original
+ * comment argued that a 500ms cadence still owes 50-80 readings over a 25-40 second stall. That is
+ * arithmetic about a healthy loop and the windows in question are stalled ones, which take *no*
+ * samples while they are stalled — the figure was true and irrelevant, which is a worse failure than
+ * being wrong. See {@link maxLagSince}: the decimated samples now supply only the **anchor** taken
+ * before the window, and the closing reading is taken live, so this cadence bounds how stale the
+ * anchor may be (=500ms) rather than how many readings a stall contains (which is ~0).
+ *
+ * Cumulative rather than per-interval, for the same reason as `cpuMicros`: a delta across a stall
+ * spans the stall itself, which is exactly the period a per-interval field would be blind to.
+ */
+export const SYSTEM_CPU_SAMPLE_EVERY = 10;
+
+/**
+ * Cumulative busy and idle CPU time across every core, in ms.
+ *
+ * Validated on this box before being relied on, because a counter that never advances would report
+ * `0% busy` and be read as *"the box was idle"* — the empty-instrument failure this repository has
+ * hit repeatedly, in the one place it would invert a conclusion. Two arms, 2s each: saturating a
+ * single core read **50.9%** system-busy against **41.3%** while sleeping, on a box already loaded
+ * by sibling sessions. One core of sixteen predicts a 6.3-point rise; the observed rise was 9.6.
+ * The counters advance and the arms are distinguishable, which is all this is asked to do.
+ */
+function systemCpu(): { busyMs: number; idleMs: number } {
+  let busyMs = 0;
+  let idleMs = 0;
+  for (const core of cpus()) {
+    const times = core.times;
+    idleMs += times.idle;
+    busyMs += times.user + times.nice + times.sys + times.irq;
+  }
+  return { busyMs, idleMs };
+}
+
+/** Busy share of the whole box between two cumulative readings, or `undefined` if unmeasurable. */
+function systemBusyRatio(
+  from?: { busyMs: number; idleMs: number },
+  to?: { busyMs: number; idleMs: number },
+): number | undefined {
+  if (from === undefined || to === undefined) return undefined;
+  const busy = to.busyMs - from.busyMs;
+  const idle = to.idleMs - from.idleMs;
+  const total = busy + idle;
+  return total > 0 ? busy / total : undefined;
 }
 
 const lagHistory: LagSample[] = [];
@@ -122,10 +184,32 @@ export const LAG_HISTORY = 4_000;
 export function startEventLoopLagMonitor(): void {
   if (lagTimer !== undefined) return;
   let due = Date.now() + LAG_SAMPLE_INTERVAL_MS;
+  let tick = 0;
+  // A baseline reading taken synchronously at start, not on the first interval. Without it the
+  // monitor has no system-CPU anchor for its first LAG_SAMPLE_INTERVAL_MS, and a window opened
+  // immediately after starting it -- which is exactly what `beforeAll` does -- would have no
+  // endpoint before it and report `systemRatio` unmeasured. `lateBy` is 0 because it is not late.
+  //
+  // NO TEST CONTROLS THIS LINE, and that is stated rather than left to be discovered. A mutation
+  // deleting the `sys` reading below was run against the whole diagnostics spec and it stayed GREEN
+  // at 37/37 -- correctly, because the monitor is a process-wide singleton that those cases inherit
+  // with minutes of history already in it, so they never exercise the first interval at all. The
+  // claim here is proved by construction instead: `setInterval` does not fire until one interval has
+  // elapsed, so without this push there is no reading of any kind before then. Treat it as unpinned
+  // and do not delete it on the strength of a green suite.
+  const base = process.cpuUsage();
+  lagHistory.push({
+    at: Date.now(),
+    lateBy: 0,
+    cpuMicros: base.user + base.system,
+    sys: systemCpu(),
+  });
   lagTimer = setInterval(() => {
     const now = Date.now();
     const cpu = process.cpuUsage();
-    lagHistory.push({ at: now, lateBy: now - due, cpuMicros: cpu.user + cpu.system });
+    const sys = tick % SYSTEM_CPU_SAMPLE_EVERY === 0 ? systemCpu() : undefined;
+    tick += 1;
+    lagHistory.push({ at: now, lateBy: now - due, cpuMicros: cpu.user + cpu.system, sys });
     if (lagHistory.length > LAG_HISTORY) lagHistory.shift();
     due = now + LAG_SAMPLE_INTERVAL_MS;
   }, LAG_SAMPLE_INTERVAL_MS);
@@ -152,33 +236,99 @@ export function startEventLoopLagMonitor(): void {
  * - **~0** — the process was *not scheduled*. The box is oversubscribed by something else. Not ours.
  *
  * "Event loop lagged 30 seconds" is consistent with both, and they have opposite fixes. It is
- * `undefined` when fewer than two samples landed in the window, because a ratio needs two endpoints
- * — an unknown that says so rather than a zero that reads as "not scheduled".
+ * `undefined` only when the monitor has never taken a reading — see the note on anchoring below,
+ * which applies to this field in exactly the same way and for exactly the same reason.
+ *
+ * `systemRatio` exists because `cpuRatio ~ 0` **still does not say the box was oversubscribed**, and
+ * the message built on it claimed exactly that for three landings: *"it was NOT SCHEDULED, so the
+ * box is oversubscribed by something outside this process"*. `cpuRatio` measures **this process**.
+ * Nothing here measured the box, so the clause after "so" was an inference wearing a measurement's
+ * clothing — this repository's own defect, inside the diagnostic written to stop it. The two cases
+ * are distinguishable and have opposite next steps: node ~0 with the box saturated is genuine
+ * oversubscription, and node ~0 with the box **idle** refutes CPU contention outright and sends you
+ * to look at I/O, a lock, or the socket. Same shape and same reason as `cpuRatio` itself, one level
+ * out. `undefined` below two system-carrying samples, for the same reason.
+ *
+ * **Both ratios are measured from an anchor to a live reading, not between two samples inside the
+ * window, and the first design of this was wrong in the one condition it exists for.** Taking both
+ * ends from samples *inside* the window makes the ratio undefined precisely when it is needed: a
+ * blocked loop takes no samples at all while it is blocked, so a stall yields one overdue sample
+ * when it ends and never two. Measured against the real CI shape rather than argued —
+ * `windows-latest` run 30380984122 took **2, 3, 4 and 5 samples of ~600-850 due** across its four
+ * transport failures, and at one system reading per {@link SYSTEM_CPU_SAMPLE_EVERY} samples those
+ * windows expect **0.3** readings. Every one would have printed `UNMEASURED`. A local control caught
+ * it (`expected undefined to be defined` after a deliberate synchronous spin) before this shipped a
+ * second empty instrument, and then caught the same defect in `cpuRatio`, which had been computing
+ * between two in-window samples since it was added and is blind in the same way for the same reason.
+ *
+ * So the start endpoint is the latest reading taken at or **before** `sinceMs` — which exists
+ * whenever the monitor has been running, no matter how starved the window itself is — and the end
+ * endpoint is taken **live** here. `os.cpus()` costs ~736us and is called once per invocation, on a
+ * path that is already diagnosing a failure.
+ *
+ * **The price is dilution, it is unbounded, and `ratioFromMs` is how you see it.** The ratios cover
+ * `[anchor, now]`, not `[sinceMs, now]`. While the sampler is healthy the anchor is at most
+ * {@link LAG_SAMPLE_INTERVAL_MS} stale for `cpuRatio` and `SYSTEM_CPU_SAMPLE_EVERY x` that (=500ms)
+ * for `systemRatio` — but *the anchor is only as fresh as the last sample the sampler managed to
+ * take*, so a stall immediately **before** the window pushes it back by the length of that stall.
+ * An earlier draft of this comment claimed the 50ms/500ms bound unconditionally; a local control
+ * refuted it by measuring an idle window straight after a 2.5s synchronous spin and reading
+ * `cpuRatio` **0.40** instead of ~0 — the anchor predated the spin, so the spin was inside the
+ * window. That is a real misattribution risk in the one fork this field exists to resolve, so it is
+ * reported rather than bounded: `ratioFromMs` is the earliest moment **either** ratio covers, and a
+ * reader comparing it to `sinceMs` can see exactly how much of the answer is about the period before
+ * the question.
  */
 export function maxLagSince(sinceMs: number): {
   maxMs: number;
   samples: number;
   expected: number;
   cpuRatio?: number;
+  systemRatio?: number;
+  ratioFromMs?: number;
 } {
   let maxMs = 0;
   let samples = 0;
-  let first: LagSample | undefined;
-  let last: LagSample | undefined;
+  let anchor: LagSample | undefined;
+  let firstInWindow: LagSample | undefined;
+  let anchorSys: LagSample | undefined;
+  let firstSysInWindow: LagSample | undefined;
   for (const sample of lagHistory) {
-    if (sample.at < sinceMs) continue;
+    if (sample.at < sinceMs) {
+      // Keep the LATEST reading taken before the window opened. See the note on anchoring above:
+      // this is the only endpoint a stalled window is guaranteed to have.
+      anchor = sample;
+      if (sample.sys !== undefined) anchorSys = sample;
+      continue;
+    }
     samples += 1;
     if (sample.lateBy > maxMs) maxMs = sample.lateBy;
-    first ??= sample;
-    last = sample;
+    firstInWindow ??= sample;
+    if (sample.sys !== undefined) firstSysInWindow ??= sample;
   }
-  const expected = Math.max(0, Math.round((Date.now() - sinceMs) / LAG_SAMPLE_INTERVAL_MS));
-  if (first === undefined || last === undefined || last.at <= first.at) {
-    return { maxMs, samples, expected };
+  const now = Date.now();
+  const expected = Math.max(0, Math.round((now - sinceMs) / LAG_SAMPLE_INTERVAL_MS));
+  // A window that has not elapsed yet cannot be measured, and neither ratio may answer for it. Zero
+  // would read as "this process was never scheduled" and ~1 as "it ran flat out" — both are claims,
+  // and the truthful one here is that nothing was measured.
+  if (now <= sinceMs) return { maxMs, samples, expected };
+  const start = anchor ?? firstInWindow;
+  const startSys = anchorSys ?? firstSysInWindow;
+  if (start === undefined || now <= start.at) {
+    return { maxMs, samples, expected, systemRatio: systemBusyRatio(startSys?.sys, systemCpu()) };
   }
-  const wallMs = last.at - first.at;
-  const cpuMs = (last.cpuMicros - first.cpuMicros) / 1000;
-  return { maxMs, samples, expected, cpuRatio: cpuMs / wallMs };
+  const live = process.cpuUsage();
+  const cpuMs = (live.user + live.system - start.cpuMicros) / 1000;
+  return {
+    maxMs,
+    samples,
+    expected,
+    cpuRatio: cpuMs / (now - start.at),
+    systemRatio: systemBusyRatio(startSys?.sys, systemCpu()),
+    // The earliest moment either ratio covers. Compare it to `sinceMs`: the gap is how much of the
+    // answer is about the period *before* the question, and it is unbounded — see above.
+    ratioFromMs: Math.min(start.at, startSys?.at ?? start.at),
+  };
 }
 
 /**
@@ -204,14 +354,76 @@ export type DeadlineVerdict = 'on-time' | 'late' | 'stalled';
  */
 export const STALL_LAG_MS = 1_000;
 
-/** Name what the CPU share says, or say that it says nothing. */
-function describeCpu(lag: { cpuRatio?: number }): string {
-  if (lag.cpuRatio === undefined) return 'CPU share unknown \u2014 not measured over this window';
-  const pct = Math.round(lag.cpuRatio * 100);
-  if (lag.cpuRatio >= 0.8) return `this process held a CPU ${pct}% of the window — it was RUNNING`;
-  if (lag.cpuRatio <= 0.2)
-    return `this process held a CPU only ${pct}% of the window — it was NOT SCHEDULED, so the box is oversubscribed by something outside this process`;
-  return `this process held a CPU ${pct}% of the window — partly scheduled`;
+/**
+ * The busy share at or above which the whole box is described as saturated.
+ *
+ * Not a tuned number: at 85% of every core there is under a core and a half free on a 16-way box
+ * and under two thirds of one on a 4-vCPU runner, which is the shape that starves a process to 0%.
+ */
+export const SYSTEM_SATURATED_RATIO = 0.85;
+
+/**
+ * The busy share at or below which CPU contention is **refuted** as the reason this process stalled.
+ *
+ * Deliberately far from {@link SYSTEM_SATURATED_RATIO} rather than adjacent to it, so the band
+ * between them is a stated "neither" rather than a coin flip on the boundary. A box half idle did
+ * not deny anyone a core.
+ */
+export const SYSTEM_QUIET_RATIO = 0.5;
+
+/**
+ * Name what the CPU shares say, or say that they say nothing.
+ *
+ * **The `NOT SCHEDULED` branch used to end `so the box is oversubscribed by something outside this
+ * process`, and nothing in this file measured the box.** `cpuRatio` is `process.cpuUsage()` over
+ * wall time: it is a statement about *this* process and is silent about every other. The clause
+ * after "so" was an inference, printed in the same typeface as the measurement beside it, and it
+ * was carried into the record of three landings and one CI verdict (`windows-latest` runs
+ * 30377421271 and 30380984122, where every failure read `0%` and was written up as an oversubscribed
+ * runner). That is this repository's central defect class — an instrument that cannot distinguish
+ * two causes attributing to whichever it can name — occurring inside the diagnostic added to stop it.
+ *
+ * The fork matters because the two branches have opposite next steps. Node at 0% with the box
+ * saturated means the browser's own demand is the lever. Node at 0% with the box **idle** means CPU
+ * contention was never the mechanism, every conclusion drawn from these runs needs revisiting, and
+ * the next instrument is elsewhere entirely — I/O, a lock, a synchronous filesystem call, Defender,
+ * or the socket. Only a measurement of the box can tell those apart, so this now takes one.
+ */
+function describeCpu(lag: { cpuRatio?: number; systemRatio?: number }): string {
+  const { cpuRatio, systemRatio } = lag;
+  if (cpuRatio === undefined) return 'CPU share unknown — not measured over this window';
+  const pct = Math.round(cpuRatio * 100);
+  if (cpuRatio >= 0.8) return `this process held a CPU ${pct}% of the window — it was RUNNING`;
+  if (cpuRatio > 0.2) {
+    const box = systemRatio === undefined ? '' : `, box ${Math.round(systemRatio * 100)}% busy`;
+    return `this process held a CPU ${pct}% of the window${box} — partly scheduled`;
+  }
+  if (systemRatio === undefined) {
+    return (
+      `this process held a CPU only ${pct}% of the window — it was NOT SCHEDULED. Whether the box ` +
+      `was oversubscribed is UNMEASURED over this window, so do not assume it`
+    );
+  }
+  const box = Math.round(systemRatio * 100);
+  if (systemRatio >= SYSTEM_SATURATED_RATIO) {
+    return (
+      `this process held a CPU only ${pct}% of the window while every core together was ${box}% ` +
+      `busy — it was NOT SCHEDULED, and the box really was oversubscribed by something outside ` +
+      `this process`
+    );
+  }
+  if (systemRatio <= SYSTEM_QUIET_RATIO) {
+    return (
+      `this process held a CPU only ${pct}% of the window, but every core together was only ` +
+      `${box}% busy — so nothing was competing for the CPU it did not get. OVERSUBSCRIPTION IS ` +
+      `REFUTED for this window: look for a block that is not CPU at all (I/O, a lock, a ` +
+      `synchronous filesystem call, or the socket itself)`
+    );
+  }
+  return (
+    `this process held a CPU only ${pct}% of the window and every core together was ${box}% busy ` +
+    `— NOT SCHEDULED, but the box was not saturated either, so neither branch is established`
+  );
 }
 
 /**
@@ -240,7 +452,13 @@ function describeCpu(lag: { cpuRatio?: number }): string {
 export function describeDeadline(
   elapsedMs: number,
   timeoutMs: number,
-  lag: { maxMs: number; samples: number; expected?: number; cpuRatio?: number },
+  lag: {
+    maxMs: number;
+    samples: number;
+    expected?: number;
+    cpuRatio?: number;
+    systemRatio?: number;
+  },
 ): { verdict: DeadlineVerdict; text: string } {
   const overshoot = elapsedMs - timeoutMs;
   const coverage = lag.expected === undefined ? '' : ` of ~${lag.expected} due`;
