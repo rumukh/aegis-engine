@@ -135,4 +135,40 @@ describe('the test-run audit refuses a run that cannot be shown to have happened
     expect(refused.status).toBe(1);
     expect(refused.output).toContain('SKIPPED');
   });
+
+  /**
+   * The per-phase floors. `npm run test` runs the suite in phases (scripts/test-phases.mjs), and
+   * a phase is a smaller corpus than the whole suite — so the floors have to be settable per
+   * invocation. That is a way to *weaken* a check, which is why the refusing arms below exist:
+   * an override that could only accept would be indistinguishable from switching floors off.
+   */
+  it('applies an overridden floor, in both directions', () => {
+    const two = {
+      ...cleanReport(),
+      numTotalTests: 19,
+      numPassedTests: 19,
+      testResults: [{ name: 'a.test.ts' }, { name: 'b.test.ts' }],
+    };
+    expect(runAudit(two, 'phase-ok', '--min-files=2', '--min-tests=2').status).toBe(0);
+
+    const refused = runAudit(two, 'phase-short', '--min-files=3', '--min-tests=2');
+    expect(refused.status).toBe(1);
+    expect(refused.output).toContain('only 2 test files ran, floor is 3');
+
+    const refusedTests = runAudit(two, 'phase-short-tests', '--min-files=2', '--min-tests=20');
+    expect(refusedTests.status).toBe(1);
+    expect(refusedTests.output).toContain('only 19 tests ran, floor is 20');
+  });
+
+  it('refuses a malformed or misspelt floor rather than falling back to the default', () => {
+    // A floor that is silently ignored is a floor that reads as a floor that passed — the same
+    // defect as the renamed counters above, one typo earlier.
+    const bad = runAudit(cleanReport(), 'bad-floor', '--min-files=lots');
+    expect(bad.status).toBe(2);
+    expect(bad.output).toContain('non-negative integer');
+
+    const misspelt = runAudit(cleanReport(), 'misspelt-floor', '--minfiles=2');
+    expect(misspelt.status).toBe(2);
+    expect(misspelt.output).toContain('unknown option');
+  });
 });

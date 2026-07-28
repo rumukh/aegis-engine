@@ -1,6 +1,13 @@
-#!/usr/bin/env node
 /**
  * Audit vitest's own JSON report and refuse a run that did not actually happen.
+ *
+ * NO SHEBANG, deliberately. This module is imported as a library — by scripts/run-tests.mjs and
+ * by test/browser-specs-run-solo.test.ts, which asserts against `MIN_TEST_FILES` rather than
+ * against a copy of it. Vite's transform does not strip a shebang from a `.mjs` outside
+ * `node_modules`, so one here makes every importing spec fail to load with
+ * `SyntaxError: Invalid or unexpected token` pointing at the *import site* — a message that
+ * names neither this file nor the cause. Nothing needs it: every call site is `node
+ * scripts/audit-test-report.mjs` (ci.yml, run-tests.mjs, test/test-run-audit.test.ts).
  *
  * WHY THIS EXISTS — measured on `windows-latest`, run 30323223392 / 30324264768.
  *
@@ -28,7 +35,12 @@
  * code is the thing measured to be unreliable.
  *
  * Usage:  node scripts/audit-test-report.mjs <report.json> [--subset]
+ *                                            [--min-files=<n>] [--min-tests=<n>]
  * `--subset` drops the corpus floors only; failures and skips are refused either way.
+ * `--min-files` / `--min-tests` replace the defaults below for one invocation. They exist
+ * because the suite runs in phases (scripts/test-phases.mjs) and a phase is a smaller corpus
+ * than the whole suite — the whole-suite floors are applied by scripts/run-tests.mjs to the
+ * **sum**, so a phase that silently ran nothing is still refused. Both guards, not either.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -45,11 +57,13 @@ export const MIN_TESTS = 900;
 
 /**
  * @param {unknown} report parsed vitest JSON report
- * @param {{ enforceFloors?: boolean }} [options]
+ * @param {{ enforceFloors?: boolean, minFiles?: number, minTests?: number }} [options]
  * @returns {{ problems: string[], summary: string }}
  */
 export function auditReport(report, options = {}) {
   const enforceFloors = options.enforceFloors !== false;
+  const minFiles = options.minFiles ?? MIN_TEST_FILES;
+  const minTests = options.minTests ?? MIN_TESTS;
   const problems = [];
 
   if (report === null || typeof report !== 'object') {
@@ -98,22 +112,64 @@ export function auditReport(report, options = {}) {
   if (r.success !== true) problems.push(`the report's own success flag is ${String(r.success)}`);
 
   if (enforceFloors) {
-    if (files < MIN_TEST_FILES)
-      problems.push(`only ${files} test files ran, floor is ${MIN_TEST_FILES}`);
-    if (total < MIN_TESTS) problems.push(`only ${total} tests ran, floor is ${MIN_TESTS}`);
+    if (files < minFiles) problems.push(`only ${files} test files ran, floor is ${minFiles}`);
+    if (total < minTests) problems.push(`only ${total} tests ran, floor is ${minTests}`);
   }
 
   return { problems, summary };
 }
 
+/**
+ * Parse `--min-files=<n>` / `--min-tests=<n>`.
+ *
+ * A malformed value is refused rather than ignored: silently falling back to the default would
+ * mean a typo'd floor reads as a floor that passed, which is the shape this whole file exists
+ * to refuse.
+ *
+ * @param {string[]} argv
+ * @param {string} flag
+ * @returns {number | undefined}
+ * @throws {Error} when the flag is present with a value that is not a non-negative integer
+ */
+function numericFlag(argv, flag) {
+  const arg = argv.find((a) => a.startsWith(`${flag}=`));
+  if (arg === undefined) return undefined;
+  const raw = arg.slice(flag.length + 1);
+  if (!/^\d+$/.test(raw)) throw new Error(`${flag} needs a non-negative integer, got "${raw}"`);
+  return Number(raw);
+}
+
 /** @param {string[]} argv */
 export function main(argv) {
-  const args = argv.filter((a) => a !== '--subset');
+  const args = argv.filter((a) => !a.startsWith('--'));
   const enforceFloors = !argv.includes('--subset');
   const path = args[0];
 
+  // An unknown flag is refused rather than ignored. `--minfiles=2` silently ignored is a floor
+  // that reads as a floor that passed — the same defect as a malformed value, one typo earlier.
+  const unknown = argv.filter(
+    (a) => a.startsWith('--') && a !== '--subset' && !/^--min-(?:files|tests)=/.test(a),
+  );
+  if (unknown.length > 0) {
+    process.stderr.write(`[test-audit] unknown option(s): ${unknown.join(' ')}\n`);
+    return 2;
+  }
+
+  let minFiles;
+  let minTests;
+  try {
+    minFiles = numericFlag(argv, '--min-files');
+    minTests = numericFlag(argv, '--min-tests');
+  } catch (error) {
+    process.stderr.write(`[test-audit] ${String(error)}\n`);
+    return 2;
+  }
+
   if (path === undefined) {
-    process.stderr.write('usage: node scripts/audit-test-report.mjs <report.json> [--subset]\n');
+    process.stderr.write(
+      'usage: node scripts/audit-test-report.mjs <report.json> [--subset] ' +
+        '[--min-files=<n>] [--min-tests=<n>]\n',
+    );
     return 2;
   }
   if (!existsSync(path)) {
@@ -133,7 +189,7 @@ export function main(argv) {
     return 1;
   }
 
-  const { problems, summary } = auditReport(report, { enforceFloors });
+  const { problems, summary } = auditReport(report, { enforceFloors, minFiles, minTests });
   process.stdout.write(
     `[test-audit] ${summary}${enforceFloors ? '' : ' (subset run: floors not enforced)'}\n`,
   );

@@ -27,8 +27,16 @@
   // `dist/*.d.ts`, i.e. against the real published contract. That needs a build first, which is why
   // `verify` runs `build` before `typecheck:tests` and why this config has a `pretypecheck:tests`
   // hook in the root package.json for standalone runs.
+  // `allowJs` lets a test import a repository script (`scripts/*.mjs`) and get real types from
+  // that script's JSDoc, instead of the test re-implementing the script's logic in order to
+  // assert on it. Re-implementation is the tautology this repository keeps finding: the two
+  // sides would share no ancestor with the code that actually runs, so the assertion could pass
+  // while the script was wrong. `checkJs` is deliberately left off — these scripts are checked
+  // by running them, and turning it on here would type-check thousands of lines of JS that no
+  // other config claims.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "allowJs": true,
     "noEmit": true,
     "composite": false,
     "declaration": false,
