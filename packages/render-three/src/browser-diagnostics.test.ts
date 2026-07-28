@@ -933,7 +933,8 @@ describe('a transport deadline says which side of the socket stopped', () => {
 
     const saturated = describeDeadline(30_152, 30_000, { ...stalled, systemRatio: 0.97 });
     expect(saturated.text).toMatch(/every core together was 97% busy/);
-    expect(saturated.text).toMatch(/the box really was oversubscribed/);
+    expect(saturated.text).toMatch(/NOT SCHEDULED on a saturated box/);
+    expect(saturated.text).toMatch(/WHO saturated it is not established by this field/);
 
     const quiet = describeDeadline(30_152, 30_000, { ...stalled, systemRatio: 0.12 });
     expect(quiet.text).toMatch(/every core together was only 12% busy/);
@@ -952,6 +953,15 @@ describe('a transport deadline says which side of the socket stopped', () => {
     // The retracted sentence, pinned in every branch so it cannot return by any path.
     for (const verdict of [saturated, quiet, neither, unmeasured]) {
       expect(verdict.text).not.toMatch(/NOT SCHEDULED, so the box is oversubscribed/);
+      // And the SECOND retraction, which the first repair missed. Gating "the box is oversubscribed"
+      // on a real box reading left "by something outside this process" standing in the saturated
+      // branch -- a claim about ATTRIBUTION, which `systemRatio` cannot support either, because
+      // `os.cpus()` counts the browser and dev server this suite starts too. `windows-latest` run
+      // 30390018561 then measured the box at 6% before anything of ours exists and 100% during the
+      // run, so it was false as well as unsupported. A half-repaired sentence is the harder defect:
+      // the branch condition was fixed, the wording was not, and the docstring above quoted the
+      // whole sentence as retired while the code below still emitted half of it.
+      expect(verdict.text).not.toMatch(/oversubscribed by something outside/);
     }
   });
 
@@ -967,7 +977,7 @@ describe('a transport deadline says which side of the socket stopped', () => {
         cpuRatio: 0,
         systemRatio,
       }).text;
-    expect(at(SYSTEM_SATURATED_RATIO)).toMatch(/really was oversubscribed/);
+    expect(at(SYSTEM_SATURATED_RATIO)).toMatch(/NOT SCHEDULED on a saturated box/);
     expect(at(SYSTEM_SATURATED_RATIO - 0.01)).toMatch(/neither branch is established/);
     expect(at(SYSTEM_QUIET_RATIO)).toMatch(/OVERSUBSCRIPTION IS REFUTED/);
     expect(at(SYSTEM_QUIET_RATIO + 0.01)).toMatch(/neither branch is established/);

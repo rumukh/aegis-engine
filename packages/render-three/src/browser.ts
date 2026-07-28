@@ -256,7 +256,8 @@ export function startEventLoopLagMonitor(): void {
  * divided by wall time across the window, so:
  *
  * - **~1** — the process was running flat out. Something synchronous, or genuine saturation. Ours.
- * - **~0** — the process was *not scheduled*. The box is oversubscribed by something else. Not ours.
+ * - **~0** — the process was *not scheduled*. Something else held the cores; this field cannot say
+ *   what, and {@link startSystemLoadWindow} exists because guessing here was a shipped defect.
  *
  * "Event loop lagged 30 seconds" is consistent with both, and they have opposite fixes. It is
  * `undefined` only when the monitor has never taken a reading — see the note on anchoring below,
@@ -271,6 +272,20 @@ export function startEventLoopLagMonitor(): void {
  * oversubscription, and node ~0 with the box **idle** refutes CPU contention outright and sends you
  * to look at I/O, a lock, or the socket. Same shape and same reason as `cpuRatio` itself, one level
  * out. `undefined` below two system-carrying samples, for the same reason.
+ *
+ * **That repair was half done, and the surviving half has since been refuted by measurement.** It
+ * gated *"the box is oversubscribed"* on a real box reading and left *"by something outside this
+ * process"* standing in the saturated branch — a second claim, about attribution rather than about
+ * load, which `systemRatio` cannot support either: `os.cpus()` counts **every** process on the
+ * machine, and the browser and dev server this suite starts are among them. `windows-latest` run
+ * 30390018561 then measured the box at **6% before anything of ours exists** and **100%** during the
+ * run, so the saturation is ours and the clause was false as well as unsupported.
+ *
+ * **And saturation does not by itself explain a stall, which is the more useful half.** The same run
+ * measured `ubuntu-latest` — same tree, same instrument, same demand, and green — at **88% busy with
+ * a 23ms worst lag over 739 of ~745 samples**, against `windows-latest` at **100% with 74823ms over
+ * 1284 of ~16830**. A 3250x difference in starvation across a 12-point difference in box load is not
+ * a CPU-contention shape. Report what the counters say; do not let this field name a cause.
  *
  * **Both ratios are measured from an anchor to a live reading, not between two samples inside the
  * window, and the first design of this was wrong in the one condition it exists for.** Taking both
@@ -406,11 +421,19 @@ export const SYSTEM_QUIET_RATIO = 0.5;
  * runner). That is this repository's central defect class — an instrument that cannot distinguish
  * two causes attributing to whichever it can name — occurring inside the diagnostic added to stop it.
  *
- * The fork matters because the two branches have opposite next steps. Node at 0% with the box
- * saturated means the browser's own demand is the lever. Node at 0% with the box **idle** means CPU
- * contention was never the mechanism, every conclusion drawn from these runs needs revisiting, and
- * the next instrument is elsewhere entirely — I/O, a lock, a synchronous filesystem call, Defender,
- * or the socket. Only a measurement of the box can tell those apart, so this now takes one.
+ * The fork matters because the two branches have different next steps. Node at 0% with the box
+ * **idle** means CPU contention was never the mechanism, every conclusion drawn from these runs
+ * needs revisiting, and the next instrument is elsewhere entirely — I/O, a lock, a synchronous
+ * filesystem call, Defender, or the socket. Only a measurement of the box can tell those apart, so
+ * this now takes one.
+ *
+ * **The saturated branch is weaker than it first looks, and this is measured rather than hedged.**
+ * A saturated box neither identifies who saturated it — `os.cpus()` counts the browser and dev
+ * server this suite starts — nor establishes that saturation is what stalled the loop. Run
+ * 30390018561 measured both legs on one tree: `ubuntu-latest` **88% busy, 23ms worst lag over 739
+ * of ~745 samples, green**, and `windows-latest` **100% busy, 74823ms over 1284 of ~16830, red**.
+ * The same demand at a similar load starves one OS 3250x harder than the other, so "the box is
+ * busy" cannot be the mechanism on its own. This branch therefore reports and refuses to conclude.
  */
 function describeCpu(lag: { cpuRatio?: number; systemRatio?: number }): string {
   const { cpuRatio, systemRatio } = lag;
@@ -431,8 +454,12 @@ function describeCpu(lag: { cpuRatio?: number; systemRatio?: number }): string {
   if (systemRatio >= SYSTEM_SATURATED_RATIO) {
     return (
       `this process held a CPU only ${pct}% of the window while every core together was ${box}% ` +
-      `busy — it was NOT SCHEDULED, and the box really was oversubscribed by something outside ` +
-      `this process`
+      `busy — it was NOT SCHEDULED on a saturated box. WHO saturated it is not established by this ` +
+      `field: os.cpus() counts every process on the machine, and the browser and dev server this ` +
+      `suite starts are among them — measure a window before anything of ours exists to tell a ` +
+      `neighbour from our own demand. Nor does saturation on its own explain the stall: run ` +
+      `30390018561 measured ubuntu-latest at 88% busy with a 23ms worst lag and windows-latest at ` +
+      `100% busy with 74823ms, on the same tree under the same demand`
     );
   }
   if (systemRatio <= SYSTEM_QUIET_RATIO) {
