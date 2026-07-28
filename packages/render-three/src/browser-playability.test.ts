@@ -454,26 +454,49 @@ describe('the frame budget, measured in a real browser', () => {
 
 describe('the simulation must still be advancing when the human looks away', () => {
   for (const game of GAMES) {
-    it(`${game.id}: is still ticking after ${SAMPLE_FRAMES} displayed frames`, async () => {
+    it(`${game.id}: the world keeps moving while the page renders`, async () => {
       await closeAllPages(browser.port);
       const cdp = await openPage(browser.port, `${server.url}/play/${game.id}`, VIEWPORT);
       await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
       const before = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
       const started = Date.now();
       await evaluate<null>(cdp, 'globalThis.aegis.resetTimings(); null');
-      // Wait on *exchanges*, not only on frames: this test's claim is about the exchange loop, and
-      // a window of 40 frames can contain a single round trip on a fast page or on a loaded box.
-      // Asserting that the tick moved over a window that contained one exchange is a coin flip;
-      // over a window that contained several it is the property.
-      await until<string>(
-        cdp,
-        'JSON.stringify([globalThis.aegis.samples().work.length, globalThis.aegis.timings().snapshots])',
-        (value) => {
-          const [frames, snapshots] = JSON.parse(value) as [number, number];
-          return frames >= SAMPLE_FRAMES && snapshots >= SAMPLE_EXCHANGES;
-        },
-        SAMPLE_TIMEOUT_MS,
-      );
+      // Wait for the TRANSITION this test is about -- the tick moving -- rather than waiting for
+      // some other quantity to reach a number and then sampling the tick once. The earlier form
+      // did the latter and was a coin flip on a loaded box: measured during a 66-file verify, one
+      // exchange can take 980ms (fps) and a whole 20-frame window can land inside a single round
+      // trip. It failed with "expected 77 to be greater than 77" -- the page was alive, the
+      // window was just narrower than one exchange.
+      //
+      // A frozen page can never satisfy this wait however long it runs, which is the property. A
+      // live one satisfies it as soon as a round trip lands, so the budget can be generous
+      // without weakening the claim: the budget is not the measurement here, the transition is.
+      let last = '[]';
+      const deadline = Date.now() + SAMPLE_TIMEOUT_MS;
+      for (;;) {
+        last = await evaluate<string>(
+          cdp,
+          'JSON.stringify([globalThis.aegis.tick(), globalThis.aegis.samples().work.length, ' +
+            'globalThis.aegis.timings().snapshots])',
+        );
+        const [tick, frames, snapshots] = JSON.parse(last) as [number, number, number];
+        if (tick > before && frames >= SAMPLE_FRAMES && snapshots >= SAMPLE_EXCHANGES) break;
+        if (Date.now() > deadline) {
+          throw new Error(
+            '[liveness] ' +
+              game.id +
+              ': waited ' +
+              String(SAMPLE_TIMEOUT_MS) +
+              'ms for the world to move past tick ' +
+              String(before) +
+              ' and never saw it. Last [tick, frames, snapshots] = ' +
+              last +
+              '. frames == 0 means the browser never painted, which is not a freeze; frames ' +
+              'rising with snapshots flat is the exchange loop stuck, which is.',
+          );
+        }
+        await sleep(40);
+      }
       const after = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
       const timings = JSON.parse(
         await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
