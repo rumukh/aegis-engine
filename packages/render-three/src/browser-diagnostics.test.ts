@@ -187,7 +187,15 @@ describe('openPage actually opens the page', () => {
     const browser = await launchBrowser({ port: 9353 });
     try {
       const cdp = await openPage(browser.port, url);
+      // `openPage`'s contract is that the navigation has *happened* by the time it returns, so
+      // this is asserted at the moment it returns and not after any further waiting.
       expect(await evaluate<string>(cdp, 'String(location.href)')).toBe(url);
+      // The title is a different claim and needs a different moment. A document that has committed
+      // its navigation may still be parsing, so `document.title` can legitimately be '' here — it
+      // was, once the compositing flags shifted the timing, and the previous run passed only
+      // because the parse happened to win the race. Waiting on the document's own readiness signal
+      // is structural; a longer sleep would just be a bound inside a band.
+      await until<string>(cdp, 'document.readyState', (s) => s === 'complete', 60_000);
       // Anti-vacuity: "not about:blank" would also be satisfied by an error page. The document has
       // to be the one the server sent.
       expect(await evaluate<string>(cdp, 'document.title')).toBe('arrived');
