@@ -1005,7 +1005,7 @@ export interface LaunchedBrowser {
   profile: string;
   /**
    * What this process and the browser ended up at in the OS run queue, both reported rather than
-   * assumed — see {@link normaliseSchedulingPriority}.
+   * assumed -- see {@link separateSchedulingPriority}.
    */
   schedulingPriority: string;
 }
@@ -1047,36 +1047,42 @@ export interface LaunchOptions {
 }
 
 /**
- * Put this process and the browser on the same footing as the leg that passes, and say plainly
- * where each of them ended up.
+ * Put this process above the browser in the OS run queue, and say plainly where each of them
+ * ended up.
  *
  * Measured on run 30385141986, both legs, same commit. `windows-latest` rasterised **faster** than
  * the green `ubuntu-latest` leg (render p95 2.1ms against 5.4ms) and painted 274 frames while this
  * harness captured 21 of them; its event loop lagged 28352ms inside a 34s window and it held a CPU
  * 0% of that window. Same GL implementation on both legs, same 2 cores, 5.2GB of 8.0GB free, and
  * antivirus exclusions confirmed applied. The browser was never the problem. **This process was,
- * and this process is also the web server** — which is why `boot`, the one phase that is purely
- * Node reading files and answering requests, ran 56.7s against ubuntu's 1.8s.
+ * and this process is also the web server.**
  *
- * **This function used to try to win, and that was a mistake made twice.** Run 30386744222 raised
- * this process to ABOVE_NORMAL before the spawn, which on Windows leaves the child at NORMAL: a
- * full class of separation in the harness's favour, and it still failed. Run 30388603381 then
- * raised *after* the spawn, so the child inherited the runner's BELOW_NORMAL, and that was worse —
- * fps render p95 went from 2.2ms to 27.2ms, because a starved renderer is not a faster one. Both
- * arrangements were tried, both are recorded here, and neither helped.
+ * Three arrangements have now been run on CI, and the failure count is the only honest scoreboard:
  *
- * What is left is the part that was never a hypothesis but a measured asymmetry between the legs:
- * **the windows runner hands job processes out at BELOW_NORMAL (10) and ubuntu at NORMAL (0)**. So
- * both processes are put at NORMAL — the value the green leg has had all along — and the pair is
- * reported on every leg. This is levelling, not tuning, and the report says which number each
- * process started from so that "we set the priority" is never assumed on the strength of asking.
+ *     harness ABOVE_NORMAL, browser NORMAL        6 failures   (a1027ad, before the vendor cache)
+ *     harness ABOVE_NORMAL, browser BELOW_NORMAL  4 failures   (e94d68a)
+ *     harness NORMAL,       browser NORMAL        8 failures   (9ea2d63)
  *
- * Setting priority can fail (on Linux, lowering needs no privilege but the values differ, and a
- * process can exit between spawn and read). Every path returns a description rather than throwing:
- * a browser test must not fail on the preparation, and a preparation that quietly did nothing must
- * not read as one that worked.
+ * The last two share a commit's worth of everything else and differ only here, so that pair is a
+ * clean A/B: **separation is worth four failures.** The middle row was reached by accident — the
+ * raise happened after the spawn, so Chrome inherited the runner's BELOW_NORMAL — and it was then
+ * thrown away on the strength of `render p95` rising from 2.2ms to 27.2ms. That was the wrong
+ * instrument: render p95 is reported, not asserted, and trading it for four passing cases is a
+ * trade worth making. The levelling that replaced it is the 8-failure row.
+ *
+ * So both processes are now set explicitly rather than left to inheritance. The mechanism is not
+ * mysterious: Chrome brings tens of runnable threads (renderer, compositor, network service, and a
+ * SwiftShader rasteriser that will use every core it is given) against Node's one, and on a 2-core
+ * box a round-robin at equal priority hands the box to whoever has more threads. The harness only
+ * needs the CPU in short bursts — answer an HTTP request, read a CDP frame — so preferring it costs
+ * the browser very little wall time and buys back the thing that was actually failing.
+ *
+ * Windows starts job processes at BELOW_NORMAL and ubuntu at NORMAL, which is why the numbers in
+ * the report differ per leg and why it prints the value each process started from: a preparation
+ * that quietly did nothing must not read as one that worked. Every path returns a description
+ * rather than throwing, because a browser test must not fail on its own preparation.
  */
-export function normaliseSchedulingPriority(browserPid?: number): string {
+export function separateSchedulingPriority(browserPid?: number): string {
   const read = (pid?: number): number | undefined => {
     try {
       return pid === undefined ? getPriority() : getPriority(pid);
@@ -1084,21 +1090,24 @@ export function normaliseSchedulingPriority(browserPid?: number): string {
       return undefined;
     }
   };
-  const set = (pid: number | undefined, label: string): string => {
+  const put = (pid: number | undefined, want: number, label: string): string => {
     const before = read(pid);
     if (before === undefined) return `${label} unreadable`;
-    if (before === constants.priority.PRIORITY_NORMAL) return `${label} ${before}`;
+    if (before === want) return `${label} ${before}`;
     try {
-      if (pid === undefined) setPriority(constants.priority.PRIORITY_NORMAL);
-      else setPriority(pid, constants.priority.PRIORITY_NORMAL);
+      if (pid === undefined) setPriority(want);
+      else setPriority(pid, want);
     } catch (error) {
       return `${label} stays at ${before} (${(error as Error).message})`;
     }
     return `${label} ${before} -> ${read(pid) ?? '?'}`;
   };
-  const harness = set(undefined, 'harness');
-  const browser = browserPid === undefined ? 'browser not started' : set(browserPid, 'browser');
-  return `scheduling priority: ${harness}, ${browser} (0 is NORMAL; ubuntu already starts here)`;
+  const harness = put(undefined, constants.priority.PRIORITY_ABOVE_NORMAL, 'harness');
+  const browser =
+    browserPid === undefined
+      ? 'browser not started'
+      : put(browserPid, constants.priority.PRIORITY_BELOW_NORMAL, 'browser');
+  return `scheduling priority: ${harness}, ${browser} (lower is more favoured; want harness below browser)`;
 }
 
 /** Launch a headless browser with the DevTools endpoint open. */
@@ -1204,12 +1213,11 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
   ];
   if (options.headed !== true) args.unshift('--headless=new');
   const child = spawn(executable, args, { stdio: 'ignore' });
-  // After the spawn, because on Windows a child takes its parent's priority class at creation and
-  // both processes need setting. The windows runner starts job processes at BELOW_NORMAL, so Chrome
-  // inherits BELOW_NORMAL too; ubuntu starts everything at NORMAL. This puts both back where the
-  // green leg has them rather than trying to order them -- see {@link normaliseSchedulingPriority}
-  // for the two orderings that were tried and measured not to help.
-  const schedulingPriority = normaliseSchedulingPriority(child.pid);
+  // After the spawn, because on Windows a child takes its parent's priority class at creation, so
+  // raising the harness first would silently drag Chrome up with it and erase the separation. The
+  // windows runner starts job processes at BELOW_NORMAL; ubuntu starts everything at NORMAL. See
+  // {@link separateSchedulingPriority} for the three arrangements measured and their failure counts.
+  const schedulingPriority = separateSchedulingPriority(child.pid);
 
   // Discover the port Chrome actually bound. With `--remote-debugging-port=0` the number is not
   // known until Chrome has chosen it, and it publishes it in `DevToolsActivePort` (line 1 is the

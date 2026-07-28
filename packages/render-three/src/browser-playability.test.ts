@@ -429,7 +429,17 @@ let priorityOutcome = 'unmeasured';
 let controlRenderer = 'unmeasured';
 
 beforeAll(async () => {
-  server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
+  // `vendorMaxAgeSeconds` because this file opens one page per case against a tree that cannot
+  // change while it runs, and the measured cost on windows is the *request count*, not the bytes:
+  // one page load spent stall 842655ms + connect 62607ms against ttfb 136972ms. Revalidation would
+  // still pay the connection and the queue place for all 67 modules on every case. 600s covers the
+  // whole file (it takes ~520s on the slowest leg) without outliving the process that set it.
+  server = await startDevServer({
+    games: GAMES,
+    port: 0,
+    repoRoot: findRepoRoot(),
+    vendorMaxAgeSeconds: 600,
+  });
   // NOT `uncapFrameRate`. That option removes Chrome's frame-rate limit, and this harness ran with
   // it from landing #17 until it was measured. It was added alongside the four occlusion flags that
   // took a blank page from 0fps to 3861fps -- but those four are unconditional in `launchBrowser`,

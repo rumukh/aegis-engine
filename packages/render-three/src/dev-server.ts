@@ -47,6 +47,22 @@ export interface DevServerOptions {
   repoRoot?: string;
   /** Wall clock used by the fixed-step accumulator. Injectable for tests. */
   clock?: Clock;
+  /**
+   * Let the browser reuse `/vendor` modules without revalidating, for `seconds` at a time.
+   *
+   * Off by default (`0`), because a human running this server next to a rebuild must see the
+   * rebuild. Tests turn it on: they open one page per case against a tree that provably cannot
+   * change while they run, and the request count is what hurts them. Measured on the failing
+   * windows leg, one page load of the 67-module graph:
+   *
+   *     stall 842655ms  connect 62607ms  ttfb 136972ms  dl 261836ms
+   *
+   * `ttfb` is the only phase this server controls and it is not the largest. The rest is Chrome
+   * queueing behind its own six-connections-per-origin limit and moving bytes over loopback, and
+   * the only way to spend less of it is to ask for fewer things. A revalidation is cheaper than a
+   * transfer but it is still a request, a connection and a place in the queue.
+   */
+  vendorMaxAgeSeconds?: number;
 }
 
 /** A running dev server. */
@@ -230,6 +246,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const repoRoot = options.repoRoot ?? findRepoRoot();
   const clock = options.clock ?? systemClock;
   const host = options.host ?? '127.0.0.1';
+  const vendorMaxAgeSeconds = Math.max(0, Math.trunc(options.vendorMaxAgeSeconds ?? 0));
   const byId = new Map(options.games.map((game) => [game.id, game]));
   const runtimes = new Map<string, GameRuntime>();
 
@@ -385,10 +402,11 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       }
       // `no-cache` rather than `no-store`: the browser may keep the bytes but must revalidate, so a
       // rebuild is still picked up on the next request while an unchanged file costs a bodiless
-      // 304 instead of a re-transfer.
+      // 304 instead of a re-transfer. `vendorMaxAgeSeconds` trades that guarantee for silence --
+      // see the option's docblock for who is allowed to make that trade and why.
       const headers = {
         'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-        'cache-control': 'no-cache',
+        'cache-control': vendorMaxAgeSeconds > 0 ? `max-age=${vendorMaxAgeSeconds}` : 'no-cache',
         etag: entry.etag,
       };
       if (request.headers['if-none-match'] === entry.etag) {
