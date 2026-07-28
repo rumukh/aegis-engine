@@ -20,7 +20,7 @@
  * @packageDocumentation
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { createWorld } from '@aegis/core';
+import { createWorld, hashString } from '@aegis/core';
 import { platformerPlugin } from '@aegis/mode-platformer';
 import { isoPlugin } from '@aegis/mode-iso';
 import { fpsPlugin, LookState } from '@aegis/mode-fps';
@@ -148,19 +148,19 @@ describe('a slow picture must not make a slow game', () => {
 
 describe('one displayed frame of rendering work, without a browser', () => {
   /**
-   * Milliseconds the *median* frame may spend rebuilding the mirror world and reconciling the
-   * scene graph — the two halves of a displayed frame that are pure computation.
+   * Milliseconds the *median* frame spends rebuilding the mirror world and reconciling the scene
+   * graph — the two halves of a displayed frame that are pure computation.
    *
-   * This is the machine-independent half of the frame budget, and it exists because the browser
-   * half is not. `browser-playability.test.ts` measures the same work in a real page, and on a
-   * shared machine that measurement has been observed at **18.3ms for a phase that costs 0.5ms**
-   * (a `verify` run where vitest itself reported 440s of setup). A bound tight enough to be
-   * useful there would be a bound on how busy the box is.
+   * **Reported, not asserted.** This number was the assertion until it was measured properly. An
+   * absolute wall-clock bound in a shared 16-way-parallel Node process is a bound on how busy the
+   * box is, and this package has now had five reds that were about the machine: the browser
+   * page-work budget read 17.7ms then 40.1ms for a phase that costs 0.5ms, and a 12ms p95 ceiling
+   * here went red twice during a full `verify`. Measured medians at shipped level scale:
+   * platformer 0.23ms, iso 0.18ms, fps 0.56ms — an eighth of a 60Hz frame at worst.
    *
-   * Here there is no browser, no compositor and no GPU: `RenderAdapter` is deliberately free of
-   * GPU state and constructs in Node, which is what makes this possible at all. Measured medians
-   * at shipped level scale: platformer 0.22ms, iso 0.15ms, fps 0.51ms. 2ms is roughly four times
-   * the worst of those and an eighth of a 60Hz frame.
+   * The guard is now the ratio against {@link machineSpeedControl}, because only a ratio means
+   * the same thing on a 2-vCPU runner as it does here. Kept as a printed number because the
+   * absolute cost is what a reader actually wants to know.
    */
   const FRAME_COST_MEDIAN_BUDGET_MS = 2;
   /**
@@ -187,10 +187,49 @@ describe('one displayed frame of rendering work, without a browser', () => {
   /** Iterations per case. Enough that one descheduled sample cannot move the percentile. */
   const ITERATIONS = 200;
 
+  /**
+   * A fixed unit of pure computation, interleaved with the measurement above.
+   *
+   * It exists to give the frame cost a denominator. An absolute millisecond bound asserted in a
+   * shared Node process is a bound on how fast the machine is that day; a ratio against a
+   * workload measured in the same loop cancels the machine out — which is the only form that
+   * means the same thing on a 2-vCPU runner as on this box.
+   *
+   * `hashString` is core's frozen FNV-1a: no allocation, no I/O, no dependency on anything in
+   * this package, so nothing a change to `restore` or `sync` does can move it.
+   *
+   * Measured across three baseline runs on the same box — twice alone, once inside a 67-file
+   * `vitest run` — and then against the frame loop doing its work 2×, 3× and 4× per frame:
+   *
+   * | mode       | baseline (3 runs) | 2×   | 3×       | 4×       | bound | headroom |
+   * | ---------- | ----------------- | ---- | -------- | -------- | ----- | -------- |
+   * | platformer | 0.19 0.21 0.24    | 0.30 | 0.42     | **0.57** | 0.45  | 1.9×     |
+   * | iso        | 0.15 0.15 0.18    | 0.23 | 0.28     | **0.34** | 0.32  | 1.8×     |
+   * | fps        | 0.43 0.47 0.53    | 0.94 | **1.40** | **1.66** | 0.95  | 1.8×     |
+   *
+   * Bold is a red. So this catches a 3× regression on fps and a 4× one on the other two, and it
+   * does **not** catch a doubling. That is a weaker guarantee than the one I first wrote here,
+   * and the reason is worth keeping: **running `restore` and `sync` twice per frame does not cost
+   * twice as much.** It costs +25% (platformer), +28% (iso) and +77% (fps), because the second
+   * pass finds the world already built and the scene graph already correct. "Walks the world
+   * twice" is not a 2× regression in the measurement, so a bound that caught 2× would not have
+   * been catching that defect either — it would just have been tighter.
+   *
+   * The bound is squeezed from both sides and they nearly meet, which is why it is stated rather
+   * than chosen. Below ~1.8× it reds on noise: the third baseline run came in 13–20% above the
+   * first with no code change. Above ~2× it stops seeing anything. A window that narrow is only
+   * affordable because the machine is cancelled out — the same window in milliseconds would be a
+   * coin flip on a 2-vCPU runner, which is how the 12ms ceiling that used to live here went red
+   * twice for reasons that had nothing to do with the adapter.
+   */
+  function machineSpeedControl(): void {
+    for (let i = 0; i < 200; i++) hashString(`aegis-frame-pacing-control-${i}`);
+  }
+
   const CASES = [
-    { mode: 'platformer', plugin: platformerPlugin, scene: PLATFORMER_BUDGET_SCENE },
-    { mode: 'iso', plugin: isoPlugin, scene: ISO_BUDGET_SCENE },
-    { mode: 'fps', plugin: fpsPlugin, scene: FPS_BUDGET_SCENE },
+    { mode: 'platformer', plugin: platformerPlugin, scene: PLATFORMER_BUDGET_SCENE, ratio: 0.45 },
+    { mode: 'iso', plugin: isoPlugin, scene: ISO_BUDGET_SCENE, ratio: 0.32 },
+    { mode: 'fps', plugin: fpsPlugin, scene: FPS_BUDGET_SCENE, ratio: 0.95 },
   ] as const;
 
   for (const testCase of CASES) {
@@ -210,11 +249,18 @@ describe('one displayed frame of rendering work, without a browser', () => {
       }
 
       const samples: number[] = [];
+      const controls: number[] = [];
       for (let i = 0; i < ITERATIONS; i++) {
         const started = performance.now();
         mirror.restore(snapshot);
         adapter.sync(mirror);
         samples.push(performance.now() - started);
+        // Interleaved in the same loop, the same process and the same run: a fixed workload
+        // that depends on the machine and on nothing in this package. Its only job is to give
+        // the number above a denominator.
+        const controlStarted = performance.now();
+        machineSpeedControl();
+        controls.push(performance.now() - controlStarted);
       }
       // Read the scene before disposing it: `dispose` clears the scene, so an assertion about
       // what was drawn has to happen while it is still there.
@@ -231,14 +277,22 @@ describe('one displayed frame of rendering work, without a browser', () => {
       expect(drawn).toBeGreaterThan(0);
 
       const sorted = [...samples].sort((a, b) => a - b);
+      const controlSorted = [...controls].sort((a, b) => a - b);
+      const controlMedian = controlSorted[Math.floor(controlSorted.length * 0.5)] as number;
       const p95 = sorted[Math.floor(sorted.length * 0.95)] as number;
       const median = sorted[Math.floor(sorted.length * 0.5)] as number;
-      // eslint-disable-next-line no-console
+
       console.log(
         `      ${testCase.mode.padEnd(11)} restore+sync median ${median.toFixed(3)}ms, ` +
-          `p95 ${p95.toFixed(3)}ms [reporting only; reference ${FRAME_COST_P95_REFERENCE_MS}ms] over ${ITERATIONS} frames`,
+          `p95 ${p95.toFixed(3)}ms [reporting only; reference ${FRAME_COST_P95_REFERENCE_MS}ms], ` +
+          `control ${controlMedian.toFixed(3)}ms, ratio ${(median / controlMedian).toFixed(2)}x ` +
+          `[asserted <= ${String(testCase.ratio)}x; absolute reference ${FRAME_COST_MEDIAN_BUDGET_MS}ms] over ${ITERATIONS} frames`,
       );
-      expect(median).toBeLessThanOrEqual(FRAME_COST_MEDIAN_BUDGET_MS);
+      expect(median).toBeLessThanOrEqual(testCase.ratio * controlMedian);
+      // Reported, not asserted: the absolute figure the ratio is derived from, so a reader can
+      // see the real cost without recomputing it, and so the historical numbers in
+      // FRAME_COST_MEDIAN_BUDGET_MS stay comparable.
+      expect(median).toBeGreaterThan(0);
     });
   }
 });
