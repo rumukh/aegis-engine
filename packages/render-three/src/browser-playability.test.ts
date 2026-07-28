@@ -27,6 +27,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { platformerPlugin } from '@aegis/mode-platformer';
 import { isoPlugin } from '@aegis/mode-iso';
@@ -223,12 +224,15 @@ const PAGE_WORK_P95_REPORTING_MS = 8;
  * **Measured and printed on every run; deliberately not asserted.** Two measurements say why, and
  * both are in this file's own harness rather than reasoned about:
  *
- * - Capped, headless Chrome paces a *blank* page at 30.0fps with a p95 gap of 60.1ms on this
- *   machine. A threshold under that cap would be a threshold on Chrome's virtual display.
- * - Uncapped (which is how this harness runs), a blank page reaches ~508fps with a p95 of 10.9ms
- *   — but the fps game's gap is then dominated by *software rasterisation*: 6.7fps at 1280x720
- *   against 26.0fps at 320x180, strictly proportional to pixel count. On one loaded run the fps
- *   page produced four frames in two and a half seconds.
+ * - Capped, which is how this harness runs, headless Chrome paces a *blank* page at 32fps with a
+ *   median gap of 31.3ms on this machine. That is the virtual display's own cadence, so every game
+ *   page here is pinned at the same 31.3ms median and cannot do better however cheap it is. A
+ *   threshold under that cap would be a threshold on Chrome's virtual display.
+ * - Uncapped, a blank page reaches ~2340fps with a p95 of 1.4ms — but that state was measured to
+ *   starve the simulation to a third of its tick rate and a no-op CDP round trip to 0.6-0.7s, so
+ *   it is not a state this harness is allowed to run in any more (see the `beforeAll` comment).
+ *   In it, the fps game's gap is dominated by *software rasterisation*: 6.7fps at 1280x720 against
+ *   26.0fps at 320x180, strictly proportional to pixel count.
  *
  * So a gap threshold here would be a threshold on SwiftShader and on how busy the machine is,
  * and it would go red for reasons no player would ever meet — the exact "coin-flip red that
@@ -236,10 +240,16 @@ const PAGE_WORK_P95_REPORTING_MS = 8;
  * that the page *does* control is {@link FRAME_WORK_P95_BUDGET_MS}, which is asserted, and the
  * simulation's real-time fidelity is pinned exactly on a fake clock in `frame-pacing.test.ts`.
  *
- * This constant is the bound a run is compared against **in the printed report**, so the number
- * is visible and its trend is legible, without a red that nobody could act on. If this suite ever
- * runs on hardware with a real GPU, promoting this to an assertion is a one-line change and the
- * right one.
+ * This constant is the reference a run is printed against, so the number is visible and its trend
+ * is legible, without a red that nobody could act on. If this suite ever runs on hardware with a
+ * real GPU, promoting it to an assertion is a one-line change and the right one.
+ *
+ * It is printed as a *reference* and never as a "bound", deliberately. Capped, the blank-page
+ * control measures 74.4ms here — twice this number — and that is a perfectly healthy browser
+ * rendering at its vsync rate. A log line reading `control 74.4ms, bound 33.4ms` invites exactly
+ * one conclusion, and it is the wrong one. 33.4 was chosen when this file ran uncapped, where the
+ * whole band sat below it; the value is kept because its *trend* is still the useful thing, and
+ * the label is what changed.
  */
 const FRAME_GAP_P95_REPORTING_MS = 33.4;
 
@@ -370,7 +380,39 @@ let controlVisibility = 'unmeasured';
 
 beforeAll(async () => {
   server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
-  browser = await launchBrowser({ viewport: VIEWPORT, uncapFrameRate: true });
+  // NOT `uncapFrameRate`. That option removes Chrome's frame-rate limit, and this harness ran with
+  // it from landing #17 until it was measured. It was added alongside the four occlusion flags that
+  // took a blank page from 0fps to 3861fps -- but those four are unconditional in `launchBrowser`,
+  // so uncapping was never what fixed occlusion. It was cargo, and it is actively destructive:
+  //
+  //   3s window, this workstation, one variable, two states (poc probe, both arms run twice)
+  //                      simTick after 3s      page timer ticks      Runtime.evaluate('1') median
+  //     capped   fps            156                   314                        11ms
+  //     uncapped fps             52                   102                       600ms
+  //     capped   iso            160                   336                        12ms
+  //     uncapped iso             77                   158                        30ms
+  //     capped   platformer     160                   324                         7ms
+  //     uncapped platformer     135                   249                       692ms
+  //
+  // Uncapped, the render loop consumes the main thread it shares with the simulation exchange and
+  // with CDP: the sim advances at a THIRD of its rate, the page's own `setInterval` fires a third
+  // as often, and a *no-op* protocol round trip costs 0.6-0.7s on a 16-core workstation. The
+  // headline 452fps is bought by starving everything the number is supposed to describe.
+  //
+  // That is also the mechanism behind run 30347429388's eight windows failures. `windows-latest`
+  // has 2 vCPUs and a software rasteriser; scale a 0.7s no-op round trip by that and it crosses
+  // `TRANSPORT_TIMEOUT_MS`, which is exactly what the log says -- `no reply to Runtime.evaluate
+  // (id 10) after 30000ms` -- while the blank control in the same run reported a healthy 2866fps,
+  // because a blank page has no render loop to starve anything with.
+  //
+  // Capped, every page holds the display cadence (median gap 31.3ms) and the simulation runs at
+  // 160 ticks / 3s = 53Hz against its 60Hz nominal. That is a page a person could play.
+  //
+  // No `port` either: `launchBrowser` now asks Chrome for one (`--remote-debugging-port=0`) and
+  // reads back what it published, so two files cannot collide on a literal. That is the other
+  // side's change and it is kept -- my branch passed 9335 here, which is exactly the hazard it
+  // removes.
+  browser = await launchBrowser({ viewport: VIEWPORT });
 
   // Measured here rather than inside a test so every report below can print it, including when
   // the suite is run with a `-t` filter that would skip the control test itself. A number that
@@ -565,6 +607,37 @@ describe('every per-test budget must be able to contain the deadlines inside it'
     expect(worstCaseMs * 1.5).toBeLessThan(jobMs);
   });
 
+  it('this file must not uncap the browser frame rate, and the reason is a measurement', () => {
+    // Pinning a decision rather than a duration. `uncapFrameRate` was measured (poc probe, one
+    // variable, two states, both arms twice) to starve the simulation to a third of its tick rate
+    // and to push a *no-op* CDP round trip from 11ms to 600ms on a 16-core workstation -- which is
+    // the mechanism behind run 30347429388's `no reply to Runtime.evaluate (id 10) after 30000ms`
+    // on a 2-vCPU runner. Nothing about that is visible in a green local run, so re-adding the
+    // option would silently reintroduce eight CI failures a week from now with no clue attached.
+    //
+    // This is a source-level assertion deliberately: it is deterministic, it cannot be flaky, and
+    // unlike a timing bound it does not go red for reasons nobody can act on. Same instrument
+    // shape as the budget guard above -- one source, read rather than copied.
+    const source = readFileSync(fileURLToPath(import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    // Every `launchBrowser(...)` call, including the no-argument form. The earlier version of this
+    // regex required an object argument, which was true of every call when it was written and is
+    // not a property of the file: `launchBrowser`'s options are optional, and the diagnostics file
+    // next door calls it nine times with no argument at all. A detector that only sees one call
+    // shape reports zero findings the day the other shape arrives, which is indistinguishable from
+    // a clean file.
+    const launches = [...source.matchAll(/launchBrowser\(([^;\n]*)\)/g)].map((m) => m[0]);
+    // Anti-vacuity: a regex that stopped matching would make this pass while examining nothing,
+    // which is this project's most-repeated defect. The launch must be found before it is judged.
+    expect(launches.length).toBeGreaterThan(0);
+    for (const launch of launches) {
+      expect(
+        launch,
+        `this file launches its browser with ${launch}. Uncapping the frame rate starves the ` +
+          `simulation and the transport it is measuring; see the beforeAll comment for the numbers.`,
+      ).not.toMatch(/uncapFrameRate/);
+    }
+  });
+
   it('the beforeAll hook contains the browser launch and the control sample it performs', () => {
     // The per-case budgets above do not pay for the browser launch, because this file launches once
     // in `beforeAll` and shares the browser. That does not make the launch deadline free — it moves
@@ -611,10 +684,27 @@ describe('the frame budget, measured in a real browser', () => {
     // Without this, a page that had stopped executing entirely would be diagnosed as an occluded
     // window -- the wrong repair, applied confidently.
     expect(controlTimerTicks).toBeGreaterThan(10);
-    // The measurements below are only meaningful if the host is not itself the limit. Capped,
-    // this machine gives a blank page 30fps and a p95 gap of 60ms — a budget measured under that
-    // would be a budget on Chrome's virtual display. Uncapped it is ~500fps and ~11ms.
-    expect(controlGapP95).toBeLessThan(FRAME_GAP_P95_REPORTING_MS);
+    // There was an `expect(controlGapP95).toBeLessThan(FRAME_GAP_P95_REPORTING_MS)` here, and it
+    // was the only reason this harness ran with `uncapFrameRate`. It is deleted rather than
+    // widened, for the reason this file already gives for not asserting the *games'* gap p95 (see
+    // that constant's docblock): a millisecond bound on frame pacing is a bound on Chrome's
+    // headless virtual display and on how busy the box is, not on this project's code.
+    //
+    // Measured on this workstation, blank page, 3s, both arms run twice:
+    //
+    //     capped     32fps   median 31.3ms   p95 31.3-62.5ms
+    //     uncapped 2340fps   median  0.2ms   p95  1.4-2.7ms
+    //
+    // The old bound of 33.4ms sat between those two states, so it did not measure the host at all
+    // -- it measured which flags this file passed. Capped it fails on a perfectly healthy browser;
+    // uncapped it passes on one that is starving its own simulation by 3x. That is a bound inside
+    // a band, the error this project has now retired four times (C's determinism budget, D2's
+    // absolute p95, the 20s boot deadline, and this).
+    //
+    // What is left is what actually caught the real defect: the page drew frames, and its timer
+    // fired. Those are the two assertions above, they are counts rather than durations, and they
+    // are what turned run 30340124068's 0fps occlusion reading into a diagnosis. The pacing
+    // numbers stay in the report, where a trend is legible without a red nobody can act on.
   });
 
   for (const game of GAMES) {
@@ -644,7 +734,7 @@ describe('the frame budget, measured in a real browser', () => {
             `[reporting only; bound ${PAGE_WORK_P95_REPORTING_MS}ms, asserted in frame-pacing] · ` +
             `render p95 ${percentile(samples.render, 95).toFixed(2)}ms [GPU-bound, reporting only]` +
             ` · gap p95 ${percentile(samples.gaps, 95).toFixed(1)}ms [reporting only; control ` +
-            `${controlGapP95.toFixed(1)}ms, bound ${FRAME_GAP_P95_REPORTING_MS}ms] · ` +
+            `${controlGapP95.toFixed(1)}ms, reference ${FRAME_GAP_P95_REPORTING_MS}ms] · ` +
             `${timings.drawCalls} draws · ${timings.exchangeBytes}B · ` +
             `exchange median ${percentile(samples.exchange, 50).toFixed(1)}ms p95 ` +
             `${percentile(samples.exchange, 95).toFixed(1)}ms · boot ${bootMs}ms + sample ` +

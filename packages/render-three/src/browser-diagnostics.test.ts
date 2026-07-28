@@ -26,10 +26,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  CdpSession,
   DEFAULT_UNTIL_TIMEOUT_MS,
   FOCUS_TIMEOUT_MS,
   LAUNCH_TIMEOUT_MS,
   NAVIGATION_TIMEOUT_MS,
+  ROUND_TRIP_HISTORY,
   TRANSPORT_TIMEOUT_MS,
   classifyEvent,
   closeAllPages,
@@ -263,13 +265,21 @@ describe('openPage actually opens the page', () => {
       await expect(hung).rejects.toThrow(/no reply to Runtime\.evaluate/);
       // The message must name the *method* and report the elapsed time, because those are the two
       // things a reader needs and the two things a mute budget timeout cannot supply. It must NOT
-      // assert which of "dead transport" or "starved browser" it is: this instrument cannot tell
-      // them apart, and an earlier draft claimed "hung transport, not a slow page" — which was
-      // measured wrong when a merely-starved `Page.navigate` exceeded the deadline on a loaded box
-      // and was reported as a hang. Asserted here so the over-claim cannot come back.
-      await expect(hung).rejects.toThrow(/does not distinguish a dead transport/);
+      // assert which of "dead transport" or "starved browser" it is: an earlier draft claimed
+      // "hung transport, not a slow page" — which was measured wrong when a merely-starved
+      // `Page.navigate` exceeded the deadline on a loaded box and was reported as a hang. Asserted
+      // here so the over-claim cannot come back.
       await expect(hung).rejects.toThrow(/after \d+ms/);
       await expect(hung).rejects.not.toThrow(/is a hung transport, not a slow page/);
+
+      // And it must carry the quantity that DOES separate them. This session has completed
+      // commands — `openPage`'s four, plus the `6 * 7` control above — so the band must be present
+      // and must not claim the session never worked. Without this pair the band could be reported
+      // as empty on a perfectly healthy session and nobody would notice, which is the same
+      // "no data reads as no problem" defect one level down.
+      await expect(hung).rejects.toThrow(/successful round trip\(s\) on this session/);
+      await expect(hung).rejects.not.toThrow(/it did not degrade, it never worked/);
+      expect(cdp.roundTrips.length).toBeGreaterThan(0);
 
       // And the session is still usable afterwards — a deadline that poisoned the socket would
       // turn one unanswered command into a cascade of unrelated failures.
@@ -281,6 +291,53 @@ describe('openPage actually opens the page', () => {
       expect(afterwards.result.value).toBe(2);
 
       cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
+      browser.process.kill();
+    }
+  }, 120_000);
+
+  /**
+   * The shape run 30347429388 actually produced, and the one an empty band would have hidden.
+   *
+   * Two of that run's eight windows failures were `no reply to Page.enable (id 1)` — the *first*
+   * command of a freshly created session. A latency band is the right instrument for starvation,
+   * but on a session that has never completed anything it has no samples, and "no samples" rendered
+   * as an empty list reads as "nothing to report". That is this project's most-repeated defect, so
+   * the empty case is a sentence rather than a blank.
+   *
+   * Driven through `CdpSession.connect`, which attaches the socket and sends nothing — so a session
+   * with zero completed commands is produced deterministically rather than by racing a real hang.
+   * The paired arm is the point: the same method must say something *different* once a single
+   * command has succeeded, or the sentence would be unconditional and would prove nothing.
+   */
+  it('says a session never worked, rather than reporting an empty latency band', async () => {
+    const browser = await launchBrowser();
+    try {
+      const created = (await (
+        await fetch(`http://127.0.0.1:${browser.port}/json/new?about:blank`, { method: 'PUT' })
+      ).json()) as { webSocketDebuggerUrl: string };
+      const virgin = await CdpSession.connect(created.webSocketDebuggerUrl);
+
+      expect(virgin.roundTrips).toHaveLength(0);
+      expect(virgin.describeTransport()).toMatch(/it did not degrade, it never worked/);
+      expect(virgin.describeTransport()).not.toMatch(/successful round trip/);
+
+      // One real command, and the same method must now describe a band instead. Without this arm
+      // the assertion above is satisfied by a `describeTransport` that always says "never worked".
+      await virgin.send('Runtime.enable');
+      expect(virgin.roundTrips.length).toBeGreaterThan(0);
+      expect(virgin.describeTransport()).toMatch(/1 successful round trip\(s\)/);
+      expect(virgin.describeTransport()).not.toMatch(/never worked/);
+
+      // Bounded, so a render-loop page issuing thousands cannot turn a diagnostic into a heap.
+      expect(ROUND_TRIP_HISTORY).toBeGreaterThan(0);
+      for (let i = 0; i < ROUND_TRIP_HISTORY + 5; i += 1) {
+        await virgin.send('Runtime.evaluate', { expression: '1', returnByValue: true });
+      }
+      expect(virgin.roundTrips).toHaveLength(ROUND_TRIP_HISTORY);
+
+      virgin.close();
     } finally {
       await closeAllPages(browser.port);
       browser.process.kill();
@@ -376,6 +433,66 @@ describe('openPage actually opens the page', () => {
   }, 120_000);
 });
 
+describe('closing pages is verified, not merely requested', () => {
+  // `closeAllPages` used to issue a close per target and sleep 150ms. That asserts nothing:
+  // `/json/close` *asks* Chrome to tear a renderer down, and a page whose main thread never yields
+  // does not necessarily stop when asked. The cost of not checking lands on the innocent successor
+  // -- in run 30347429388 two cases failed on `Page.enable (id 1)`, the first command of a freshly
+  // created session, which is what a browser looks like when it is still busy with the target
+  // somebody believed was closed.
+  //
+  // The throw path is driven against a stub DevTools endpoint rather than a real browser, because
+  // a page that refuses to die is exactly the thing that cannot be produced on demand. The stub is
+  // honest about what it is: it answers `/json/list` with one page forever and accepts every
+  // close, which is the observable behaviour of a wedged renderer.
+  it('names the pages that were asked to close and did not', async () => {
+    let closesReceived = 0;
+    const stub = createServer((request, response) => {
+      if (request.url?.startsWith('/json/close/')) closesReceived += 1;
+      response.setHeader('content-type', 'application/json');
+      response.end(
+        request.url === '/json/list'
+          ? JSON.stringify([{ id: 'wedged', type: 'page' }])
+          : JSON.stringify({}),
+      );
+    });
+    await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
+    const port = (stub.address() as AddressInfo).port;
+    try {
+      await expect(closeAllPages(port, 300)).rejects.toThrow(
+        /1 page target\(s\) were asked to close and are still open after 300ms/,
+      );
+      // The close must actually have been attempted, or "still open" would be trivially true and
+      // this case would pass against a function that did nothing at all.
+      expect(closesReceived).toBeGreaterThan(0);
+      // The message has to say why the failure matters here rather than where it surfaces, since
+      // the whole defect is that it surfaces somewhere else.
+      await expect(closeAllPages(port, 300)).rejects.toThrow(/whichever case ran next/);
+    } finally {
+      await new Promise<void>((resolve) => stub.close(() => resolve()));
+    }
+  }, 30_000);
+
+  it('returns without throwing once the pages are actually gone, so the guard is not vacuous', async () => {
+    // The accepting arm. Without it, every assertion above is satisfied by a function that refuses
+    // unconditionally -- which would be a "guard" that makes every caller fail.
+    let listed = [{ id: 'closing', type: 'page' }];
+    const stub = createServer((request, response) => {
+      if (request.url?.startsWith('/json/close/')) listed = [];
+      response.setHeader('content-type', 'application/json');
+      response.end(request.url === '/json/list' ? JSON.stringify(listed) : JSON.stringify({}));
+    });
+    await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
+    const port = (stub.address() as AddressInfo).port;
+    try {
+      await expect(closeAllPages(port, 5_000)).resolves.toBeUndefined();
+      expect(listed).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve) => stub.close(() => resolve()));
+    }
+  }, 30_000);
+});
+
 describe('the CDP event classifier', () => {
   // A browser cannot be made to emit a warning-level Log entry on demand, so the warning path --
   // the one that matters, because Chrome reports "software WebGL has been deprecated" at warning
@@ -435,43 +552,119 @@ describe('every budget in this file must contain the deadlines every case pays',
   const FLOOR_MS =
     LAUNCH_TIMEOUT_MS + TRANSPORT_TIMEOUT_MS + NAVIGATION_TIMEOUT_MS + FOCUS_TIMEOUT_MS;
 
-  const budgets = [...source.matchAll(/^ {2}\}, (\d[\d_]*)\);$/gm)].map((m) =>
-    Number(m[1]!.replace(/_/g, '')),
+  /**
+   * Each `it(...)` in this file, with its own budget and its own body.
+   *
+   * This used to be three global counts — budgets, `launchBrowser` occurrences, `openPage`
+   * occurrences — plus an exact `launches === budgets.length` premise. That premise was true when
+   * it was written and it is not a property of the file: it broke the moment a budgeted case was
+   * added that does not launch a browser (the `closeAllPages` controls above drive a stub HTTP
+   * endpoint). The old form would have forced those cases to carry a 120s budget they can never
+   * use, purely to keep a count balanced — padding a number to satisfy a guard, which is how a
+   * guard stops meaning anything.
+   *
+   * So the association is measured instead of assumed: a case that launches a browser pays the
+   * floor, and a case that does not, does not. The inner `}` of a nested closure is indented more
+   * than two spaces, so `^ {2}\}` can only be the case's own.
+   */
+  const cases = [...source.matchAll(/^ {2}it\(([\s\S]*?)^ {2}\}(?:, (\d[\d_]*))?\);$/gm)].map(
+    (match) => {
+      const body = match[1] ?? '';
+      return {
+        body,
+        // The case's own title, so a red names the case instead of leaving a reader to search the
+        // file for whichever `it(` lost its budget. `body` begins immediately after `it(`, so the
+        // first quoted run is the title.
+        title: /^\s*(['"`])([\s\S]*?)\1/.exec(body)?.[2] ?? '(untitled)',
+        budgetMs: match[2] === undefined ? undefined : Number(match[2].replace(/_/g, '')),
+      };
+    },
   );
-  const launches = source.match(/launchBrowser\(/g)?.length ?? 0;
-  const opens = source.match(/openPage\(/g)?.length ?? 0;
+  /**
+   * The two markers, assembled from pieces so that the guard's own cases are not matched by the
+   * guard's own detector.
+   *
+   * The corpus is this file, and these cases mention both call shapes in order to look for them —
+   * so written as plain literals the detector matched itself, classified its own two cases as
+   * browser cases, found them budgetless and went red. Measured, not foreseen: it is what the
+   * first run of this rewrite reported.
+   *
+   * Splitting is safe rather than merely clever, because the failure is one-directional. If a
+   * later edit reintroduces either literal here, these cases are classified as browser cases,
+   * carry no budget, and the guard goes **red**. A self-match can cost a false alarm; it can
+   * never produce a false green, which is the only direction that matters.
+   *
+   * The launch marker is `launchBrowser(` and not `launchBrowser({`. It was the latter, which
+   * matched every call in the file it was written against and then matched **one of nine** after
+   * the port literals were removed and the options object with them — and the guard said so,
+   * `expected 1 to be greater than or equal to 8`, rather than quietly auditing a single case.
+   * That is the anti-vacuity floor earning its place: the detector broke and the break was loud.
+   */
+  const LAUNCH_CALL = 'launchBrowser' + '(';
+  const OPEN_CALL = 'openPage' + '(';
+
+  const browserCases = cases.filter((c) => c.body.includes(LAUNCH_CALL));
+  const budgets = cases.flatMap((c) => (c.budgetMs === undefined ? [] : [c.budgetMs]));
 
   it('has actually found the budgets, the launches and the page opens', () => {
     // Anti-vacuity, and it is the whole reason the check below means anything: a regex that stopped
     // matching would leave an empty list, and an empty list satisfies "every budget is big enough"
     // while auditing nothing. This is the failure mode this repository has hit more often than any
     // other, so the corpus is asserted before it is used.
+    expect(cases.length).toBeGreaterThanOrEqual(12);
     expect(budgets.length).toBeGreaterThanOrEqual(8);
-    expect(launches).toBeGreaterThanOrEqual(8);
-    expect(opens).toBeGreaterThanOrEqual(8);
-    // And the premise the floor rests on: every budgeted case pays for at least one launch and one
-    // open. It is `>=` rather than `===` because these are counts of *source occurrences*, and one
-    // case deliberately launches three browsers to reproduce the concurrency that made the focus
-    // race visible — three `launchBrowser()` calls against a single `openPage` inside a `.map`.
+    expect(browserCases.length).toBeGreaterThanOrEqual(8);
+    // The titles are what a red will name, so they are asserted rather than assumed. A broken title
+    // regex would leave every message reading `case "(untitled)"` — still a red for the right
+    // reason, but one that has stopped telling the reader which case, which is most of its value.
+    expect(cases.filter((c) => c.title === '(untitled)')).toEqual([]);
+    // The load-bearing premise, now stated per case rather than as a count: every case that
+    // launches a browser declares a budget. A browser case with no budget silently takes vitest's
+    // default, which is the shape that produced eight mute timeouts in run 30340124068.
     //
-    // That case does not multiply the floor: its three launches run in `Promise.all`, so three hung
-    // launches expire together at `LAUNCH_TIMEOUT_MS` rather than in series. A case that launched
-    // three in *sequence* would need its own budget, which is why the relationship is stated here
-    // rather than left to be inferred from the counts.
-    expect(launches).toBeGreaterThanOrEqual(budgets.length);
-    expect(opens).toBeGreaterThanOrEqual(budgets.length);
+    // The count form this replaces — `launches >= budgets.length`, `opens >= budgets.length` —
+    // needed a paragraph to explain why it was `>=` rather than `===`: one case deliberately
+    // launches three browsers to reproduce the concurrency that made the focus race visible. Per
+    // case, that stops being a special case at all. It is one browser case carrying one budget,
+    // and it is admitted by the same rule as every other. The reason its floor is not tripled
+    // still matters and is kept: its three launches run in `Promise.all`, so three hung launches
+    // expire *together* at `LAUNCH_TIMEOUT_MS` rather than in series. A case that launched three
+    // sequentially would need a budget of its own, and this guard would not catch that — stated
+    // here because a limit a guard does not cover should be written down, not discovered.
+    for (const browserCase of browserCases) {
+      expect(
+        browserCase.budgetMs,
+        `case "${browserCase.title}" launches a browser and declares no budget`,
+      ).toBeDefined();
+    }
+    // What must never happen is an open without a launch — a case borrowing a browser whose launch
+    // nobody budgeted for. Checked within each case rather than by comparing two file-wide totals,
+    // which could balance while being wrong in both directions at once.
+    for (const testCase of cases) {
+      if (testCase.body.includes(OPEN_CALL)) {
+        expect(testCase.body).toContain(LAUNCH_CALL);
+      }
+    }
+    expect(LAUNCH_TIMEOUT_MS + TRANSPORT_TIMEOUT_MS).toBeLessThan(FLOOR_MS);
   });
 
   it('gives every budgeted case room for the launch and the navigation it cannot avoid', () => {
-    for (const budget of budgets) {
-      expect(budget).toBeGreaterThan(FLOOR_MS);
+    for (const browserCase of browserCases) {
+      expect(
+        browserCase.budgetMs,
+        `case "${browserCase.title}" has a budget smaller than the deadlines it cannot avoid`,
+      ).toBeGreaterThan(FLOOR_MS);
     }
     // Printed, not merely asserted, so a reader can see how much room is actually left rather than
     // learning only that some unstated inequality held.
-    // eslint-disable-next-line no-console
     console.log(
       `[budgets] floor ${FLOOR_MS}ms (launch ${LAUNCH_TIMEOUT_MS} + reply ${TRANSPORT_TIMEOUT_MS} + ` +
-        `commit ${NAVIGATION_TIMEOUT_MS} + focus ${FOCUS_TIMEOUT_MS}); budgets ${budgets.join(', ')}`,
+        `commit ${NAVIGATION_TIMEOUT_MS} + focus ${FOCUS_TIMEOUT_MS}); browser-case budgets ` +
+        `${browserCases.map((c) => c.budgetMs).join(', ')}; ` +
+        `non-browser budgets ${cases
+          .filter((c) => c.budgetMs !== undefined && !c.body.includes(LAUNCH_CALL))
+          .map((c) => c.budgetMs)
+          .join(', ')}`,
     );
   });
 

@@ -56,11 +56,32 @@ export function findBrowser(): string {
  */
 export const TRANSPORT_TIMEOUT_MS = 30_000;
 
+/**
+ * How many recent successful round trips {@link CdpSession} keeps in order to describe itself when
+ * one of them eventually does not come back. Bounded because a render-loop page can issue thousands
+ * and the question this answers — "was this session healthy a moment ago?" — needs only the recent
+ * shape, not the whole history.
+ */
+export const ROUND_TRIP_HISTORY = 24;
+
 export class CdpSession {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, { ok: (value: unknown) => void; fail: (e: Error) => void }>();
   readonly #diagnostics: string[] = [];
   readonly #warnings: string[] = [];
+  /**
+   * Elapsed ms of recent *successful* round trips on this session, in arrival order.
+   *
+   * This exists because the transport timeout message was honest about a gap it could not close: it
+   * said, correctly, that it could not tell a dead transport from a browser too starved to answer.
+   * Saying so is better than over-claiming, but the right response to "my instrument cannot
+   * distinguish these" is to measure the quantity that does. A 30s timeout preceded by twenty 20ms
+   * round trips is a session that fell off a cliff; the same timeout preceded by round trips
+   * climbing 200ms, 900ms, 4000ms is a session being progressively starved; and a timeout with *no*
+   * prior successes at all is a session that never worked, which is a third thing again and the one
+   * a latency band would otherwise hide by being empty.
+   */
+  readonly #roundTrips: number[] = [];
   #nextId = 1;
 
   private constructor(socket: WebSocket) {
@@ -114,6 +135,42 @@ export class CdpSession {
     return this.#warnings;
   }
 
+  /**
+   * The recent successful round trips on this session, oldest first, in ms.
+   *
+   * Exposed so a caller can report the band without waiting for a failure — a green run that prints
+   * its latency is the only thing that makes a later red readable, because a band is meaningless
+   * until you know what normal looked like on the same machine.
+   */
+  get roundTrips(): readonly number[] {
+    return this.#roundTrips;
+  }
+
+  /**
+   * One line describing this session's recent transport health, or an explicit statement that it
+   * has never completed a command.
+   *
+   * The empty case is spelled out rather than rendered as an empty band, because "no data" reading
+   * as "nothing wrong" is this project's most-repeated defect and a band printed as `[]` is exactly
+   * that shape.
+   */
+  describeTransport(): string {
+    const trips = this.#roundTrips;
+    if (trips.length === 0) {
+      return (
+        'this session has never completed a single command, so there is no healthy band to ' +
+        'compare against: it did not degrade, it never worked'
+      );
+    }
+    const sorted = [...trips].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)] ?? Number.NaN;
+    return (
+      `last ${trips.length} successful round trip(s) on this session: ` +
+      `min ${sorted[0]}ms, median ${median}ms, max ${sorted[sorted.length - 1]}ms; ` +
+      `most recent first-to-last ${trips.join('/')}ms`
+    );
+  }
+
   #record(method: string, params: Record<string, unknown> | undefined): void {
     const event = classifyEvent(method, params);
     if (event === undefined) return;
@@ -146,13 +203,21 @@ export class CdpSession {
    * (four samples alone, four under full-suite parallelism), so 30s is roughly 6x the worst routine
    * observation. It is a hang detector, not a performance bound.
    *
-   * It is NOT, however, able to tell a dead transport from a browser too starved to answer, and an
-   * earlier version of the message asserted that it was. That claim was measured false during this
-   * change set's own gate: on a box whose 16 logical CPUs were pinned at 100% by an unrelated
-   * runaway process, a `Page.navigate` exceeded 30s and was reported as a hang. The message now
-   * reports the elapsed time and the measured band and leaves the reading to the reader. The number
-   * stays where it is, because it has to remain smaller than the budgets containing it for the
-   * failure to be *named* at all, and a named failure with an honest message beats a mute one.
+   * It is NOT, however, able on its own to tell a dead transport from a browser too starved to
+   * answer, and an earlier version of the message asserted that it was. That claim was measured
+   * false during this change set's own gate: on a box whose 16 logical CPUs were pinned at 100% by
+   * an unrelated runaway process, a `Page.navigate` exceeded 30s and was reported as a hang. The
+   * number stays where it is, because it has to remain smaller than the budgets containing it for
+   * the failure to be *named* at all, and a named failure beats a mute one.
+   *
+   * What the message no longer does is stop at admitting the gap. Saying "my instrument cannot
+   * distinguish these two" is honest, and the correct next move is to measure the quantity that
+   * can: the session now carries the elapsed time of its recent successful round trips and prints
+   * that band alongside the failure. Three shapes fall out of it, and they have different fixes —
+   * a healthy band that stops dead is a wedge, a climbing band is starvation, and an *empty* band
+   * means the session never completed a command in its life. Run 30347429388 produced two failures
+   * on `Page.enable (id 1)` — the first command of a fresh session — which is that third shape and
+   * is not a thing a larger deadline can repair.
    */
   send<T = Record<string, unknown>>(
     method: string,
@@ -169,9 +234,10 @@ export class CdpSession {
             `[cdp] no reply to ${method} (id ${id}) after ${Date.now() - startedAt}ms. The browser ` +
               `accepted the command and did not answer within the transport deadline, so every ` +
               `deadline waiting on this reply was unreachable and would have expired mutely. ` +
-              `This does not distinguish a dead transport from a browser too starved to answer: ` +
-              `measured, a protocol round trip on this code path costs 0.7-4.8s, so read the ` +
-              `elapsed figure above against that band before concluding which one you have.`,
+              `Transport health: ${this.describeTransport()}. Read the three shapes apart rather ` +
+              `than pooling them: a cliff (healthy band, then nothing) is a wedge; a climb is ` +
+              `starvation; and no completed commands at all means the session never worked, which ` +
+              `no amount of extra deadline will fix.`,
           ),
         );
       }, timeoutMs);
@@ -181,6 +247,8 @@ export class CdpSession {
       this.#pending.set(id, {
         ok: (value) => {
           clearTimeout(timer);
+          this.#roundTrips.push(Date.now() - startedAt);
+          if (this.#roundTrips.length > ROUND_TRIP_HISTORY) this.#roundTrips.shift();
           (ok as (value: unknown) => void)(value);
         },
         fail: (e) => {
@@ -750,17 +818,48 @@ export async function openPage(
   return cdp;
 }
 
-/** Close every open page target, so one measurement cannot be starved by the previous one. */
-export async function closeAllPages(port: number): Promise<void> {
-  const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as {
-    id: string;
-    type: string;
-  }[];
-  for (const target of targets) {
-    if (target.type !== 'page') continue;
+/**
+ * Close every open page target and **verify that they are gone**, so one measurement cannot be
+ * starved by the previous one.
+ *
+ * The verification is the point, and its absence was a real hole. The old body issued a close for
+ * each target and slept 150ms, which asserts nothing: `/json/close` asks Chrome to tear a renderer
+ * down, and a renderer whose main thread is inside a tight loop does not necessarily stop when
+ * asked. A page that refuses to die keeps consuming the CPU the *next* page needs, and the symptom
+ * lands on the innocent successor — in run 30347429388, two cases failed on `Page.enable (id 1)`,
+ * the first command of a freshly created session, which is what a browser looks like when it is
+ * still busy with the target somebody believed was closed.
+ *
+ * So the postcondition this function has always claimed in its own name is now checked, and its
+ * failure is named. A fixed sleep is a hope; a poll with a deadline is a measurement.
+ */
+export async function closeAllPages(port: number, timeoutMs = TRANSPORT_TIMEOUT_MS): Promise<void> {
+  const pages = async (): Promise<{ id: string; type: string }[]> => {
+    const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as {
+      id: string;
+      type: string;
+    }[];
+    return targets.filter((target) => target.type === 'page');
+  };
+
+  for (const target of await pages()) {
     await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`);
   }
-  await sleep(150);
+
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const left = await pages();
+    if (left.length === 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `[cdp] ${left.length} page target(s) were asked to close and are still open after ` +
+          `${timeoutMs}ms. A page whose main thread never yields cannot be torn down on request, ` +
+          `and it goes on competing for the CPU that the next measurement needs — so the failure ` +
+          `would otherwise land on whichever case ran next, which is not the one at fault.`,
+      );
+    }
+    await sleep(50);
+  }
 }
 
 /** Save a PNG screenshot of the page. */
