@@ -603,6 +603,12 @@ export async function describePage(cdp: CdpSession): Promise<string> {
     attempt('bodyChars', () => (document.body ? document.body.innerHTML.length : -1));
     attempt('canvases', () => document.querySelectorAll('canvas').length);
     attempt('aegis', () => typeof globalThis.aegis);
+    // Set by the served page around its own boot() call. Absent, 'imported', 'booted' and
+    // 'threw: …' are four different bugs that all look identical from \`aegis: undefined\`.
+    attempt('bootStage', () =>
+      globalThis.__aegisBootStage === undefined
+        ? 'ABSENT - the module graph never finished loading'
+        : String(globalThis.__aegisBootStage));
     attempt('scripts', () =>
       Array.from(document.querySelectorAll('script')).map((s) => (s.src || 'inline') + ' [' + (s.type || 'classic') + ']'));
     attempt('webgl2', () => !!document.createElement('canvas').getContext('webgl2'));

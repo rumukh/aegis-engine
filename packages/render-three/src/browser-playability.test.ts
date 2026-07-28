@@ -1039,6 +1039,7 @@ function stallingProxy(target: string): {
   failures(): readonly string[];
   retried(): readonly string[];
   slow(): readonly string[];
+  open(): readonly string[];
 } {
   let stall = false;
   let rejectsLeft = 0;
@@ -1079,6 +1080,24 @@ function stallingProxy(target: string): {
   const agent = new Agent({ keepAlive: true });
   const retried: string[] = [];
   const slow: string[] = [];
+
+  /**
+   * Forwards that have started and not finished, read at report time.
+   *
+   * `slow` is populated from `response.on('finish')`, so it can only ever name a forward that
+   * *completed* — and the failure being hunted is one that never does. Round 9 demonstrated the
+   * blind spot on exactly the leg where it mattered: both freeze tests timed out at 60s and
+   * `slow forwards` printed nothing at all, which reads as "the proxy was healthy" and was
+   * instead "the proxy cannot see this". An instrument whose silence is ambiguous is worse than
+   * no instrument, because silence gets credited as evidence.
+   *
+   * `headersAt` is what makes an open forward diagnostic rather than merely alarming: still
+   * waiting on headers means the dev server never answered, whereas headers-arrived-body-moving
+   * means Chrome stopped reading. Those are opposite bugs and the page-side timings cannot
+   * separate them — `dl 20254ms` against `ttfb 2ms` was round 8's entire remaining failure.
+   */
+  const inFlight = new Map<number, { url: string; startedAt: number; headersAt: number }>();
+  let forwardSeq = 0;
 
   /** Report a forwarding failure to stderr *and* to the test, rather than answering an empty 500. */
   const fail = (error: unknown, request: IncomingMessage, response: ServerResponse): void => {
@@ -1128,24 +1147,30 @@ function stallingProxy(target: string): {
     // eligible to be retried. That is exactly the set this proxy carries for module loads.
     const replayable = request.method === undefined || /^(GET|HEAD)$/.test(request.method);
 
-    // Registered once, against whichever attempt is in flight. Registering it inside `send` left a
-    // retry with a stale listener still holding the dead request, and `response` only ever closes
-    // once -- so the live attempt could be missed entirely while a destroyed one was destroyed
-    // again.
-    let current: ClientRequest | undefined;
-    response.on('close', () => {
-      if (!response.writableEnded) {
-        clientGone = true;
-        current?.destroy();
-      }
-    });
-
     // Which side of the pipe stalled, for a forward that takes visibly long. `dl 20254ms` against
     // `ttfb 2ms` was the whole of round 8's remaining failure and the page-side numbers could not
     // say whether the dev server had stopped delivering or Chrome had stopped reading. These two
     // splits can: `headers` is this proxy waiting on the server, `body` is the pipe to Chrome.
     const startedAt = Date.now();
     let headersAt = 0;
+    const forwardId = forwardSeq++;
+    const tracked = { url: request.url ?? '/', startedAt, headersAt: 0 };
+    inFlight.set(forwardId, tracked);
+
+    // Registered once, against whichever attempt is in flight. Registering it inside `send` left a
+    // retry with a stale listener still holding the dead request, and `response` only ever closes
+    // once -- so the live attempt could be missed entirely while a destroyed one was destroyed
+    // again.
+    let current: ClientRequest | undefined;
+    response.on('close', () => {
+      // `close` fires on every outcome -- finished, aborted, destroyed -- so this is the single
+      // place that cannot leak a settled forward into the report as a false "still open".
+      inFlight.delete(forwardId);
+      if (!response.writableEnded) {
+        clientGone = true;
+        current?.destroy();
+      }
+    });
 
     const send = (attemptsLeft: number): void => {
       const forwarded = httpRequest({
@@ -1171,6 +1196,7 @@ function stallingProxy(target: string): {
       });
       forwarded.on('response', (answer: IncomingMessage) => {
         headersAt = Date.now();
+        tracked.headersAt = headersAt;
         response.writeHead(answer.statusCode ?? 502, answer.headers);
         answer.pipe(response);
         response.on('finish', () => {
@@ -1228,6 +1254,20 @@ function stallingProxy(target: string): {
     slow(): readonly string[] {
       return slow;
     },
+    /**
+     * Forwards still open right now. Unlike {@link slow} this is sampled, not accumulated, so it
+     * is the only accessor that can describe the request a hung page is actually waiting on.
+     */
+    open(): readonly string[] {
+      const now = Date.now();
+      return [...inFlight.values()].map(
+        (forward) =>
+          `${forward.url} still open after ${now - forward.startedAt}ms ` +
+          (forward.headersAt === 0
+            ? '[no headers yet - waiting on the dev server]'
+            : `[headers at ${forward.headersAt - forward.startedAt}ms, body still moving to Chrome]`),
+      );
+    },
   };
 }
 
@@ -1241,6 +1281,7 @@ function describeProxyFailures(proxy: {
   failures(): readonly string[];
   retried(): readonly string[];
   slow(): readonly string[];
+  open(): readonly string[];
 }): string {
   const failures = proxy.failures();
   // Recovered resets are reported alongside, never folded in. They are the pooled-socket race the
@@ -1248,8 +1289,13 @@ function describeProxyFailures(proxy: {
   // path is load-bearing and assuming it. A run that reports none has not exercised it.
   const retried = proxy.retried();
   const slow = proxy.slow();
+  // Sampled last and printed first among the timing fields, because on a hung page this is the
+  // only line that can name the request nothing is waiting behind. `slow` cannot: it is fed by
+  // `response.on('finish')`, so it describes the forwards that got away with it.
+  const open = proxy.open();
   const extra =
     (retried.length === 0 ? '' : ` (${retried.length} recovered by replay)`) +
+    (open.length === 0 ? '' : ` · IN FLIGHT NOW: ${open.slice(0, 5).join(' | ')}`) +
     (slow.length === 0 ? '' : ` · slow forwards: ${slow.slice(0, 5).join(' | ')}`);
   return failures.length === 0
     ? ` · proxy forwarded everything it was asked to${extra}`

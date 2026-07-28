@@ -158,7 +158,21 @@ ${controls}
   </section>
   <script type="module">
     import { boot } from '/vendor/@aegis/render-three/dist/client/boot.js';
-    boot(${JSON.stringify(config)});
+    // Boot-stage marker, read back by the browser harness when a page fails to come up.
+    // Without it a stuck page is indistinguishable from a page that never got its modules:
+    // both present as \`globalThis.aegis === undefined\` with no reported error. The marker
+    // being absent means the module graph never finished loading; 'imported' means boot() is
+    // still inside its body; 'threw: …' carries the stack of a boot that failed. The import
+    // above stays static on purpose — the first statement of a module body runs only once
+    // every dependency has loaded, which is exactly the fact the absent case reports.
+    globalThis.__aegisBootStage = 'imported';
+    try {
+      boot(${JSON.stringify(config)});
+      globalThis.__aegisBootStage = 'booted';
+    } catch (error) {
+      globalThis.__aegisBootStage = 'threw: ' + ((error && error.stack) || String(error));
+      throw error;
+    }
   </script>
 </body>
 </html>
