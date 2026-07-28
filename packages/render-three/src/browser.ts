@@ -64,6 +64,126 @@ export const TRANSPORT_TIMEOUT_MS = 30_000;
  */
 export const ROUND_TRIP_HISTORY = 24;
 
+/**
+ * How often the event-loop lag sampler wakes, in milliseconds.
+ *
+ * Small enough that a lag figure is a measurement rather than a rounding of this interval, and
+ * large enough that the sampler itself is not the load. A sample that fires late by more than this
+ * interval is by definition time this process spent not being scheduled or not returning to the
+ * loop.
+ */
+export const LAG_SAMPLE_INTERVAL_MS = 50;
+
+/**
+ * How late a deadline has to fire before it is reported as *late* rather than as noise.
+ *
+ * A timer is never exact: it fires on the first loop turn at or after its due time, so a few
+ * milliseconds of overshoot is normal and says nothing. One second is twenty sampler intervals and
+ * is far outside anything observed on a healthy loop; the figures that motivated this constant are
+ * measured in *seconds* (see {@link describeDeadline}).
+ */
+export const LATE_OVERSHOOT_MS = 1_000;
+
+let lagTimer: ReturnType<typeof setInterval> | undefined;
+const lagHistory: { at: number; lateBy: number }[] = [];
+
+/**
+ * How many lag samples are kept.
+ *
+ * At {@link LAG_SAMPLE_INTERVAL_MS} this is 200 seconds of history, which covers the longest
+ * deadline in this package with room to spare. Bounded because the sampler runs for the life of the
+ * process and an unbounded array would be a slow leak inside the instrument that measures leaks.
+ */
+export const LAG_HISTORY = 4_000;
+
+/**
+ * Start sampling this process's event-loop lag, if it is not already running.
+ *
+ * Deliberately process-wide rather than per-session: the quantity is a property of *this Node
+ * process*, not of any one socket, and a per-session copy would report a different number for two
+ * sessions starved by the same thing. Idempotent, and the interval is `unref`'d so it can never by
+ * itself hold the process open.
+ */
+export function startEventLoopLagMonitor(): void {
+  if (lagTimer !== undefined) return;
+  let due = Date.now() + LAG_SAMPLE_INTERVAL_MS;
+  lagTimer = setInterval(() => {
+    const now = Date.now();
+    lagHistory.push({ at: now, lateBy: now - due });
+    if (lagHistory.length > LAG_HISTORY) lagHistory.shift();
+    due = now + LAG_SAMPLE_INTERVAL_MS;
+  }, LAG_SAMPLE_INTERVAL_MS);
+  lagTimer.unref?.();
+}
+
+/**
+ * The worst event-loop lag observed at or after `sinceMs`, and how many samples that is over.
+ *
+ * The sample count is returned rather than folded away because a maximum over **zero** samples and
+ * a maximum **of** zero render identically as `0ms` and mean opposite things — the first is an
+ * instrument that never ran. Callers print both.
+ */
+export function maxLagSince(sinceMs: number): { maxMs: number; samples: number } {
+  let maxMs = 0;
+  let samples = 0;
+  for (const sample of lagHistory) {
+    if (sample.at < sinceMs) continue;
+    samples += 1;
+    if (sample.lateBy > maxMs) maxMs = sample.lateBy;
+  }
+  return { maxMs, samples };
+}
+
+/** Whether a deadline fired when it was asked to, or long after. */
+export type DeadlineVerdict = 'on-time' | 'late';
+
+/**
+ * Say which side of the socket a transport timeout points at, from the deadline's own overshoot.
+ *
+ * This exists because the transport timeout message asserted something its own numbers refuted.
+ * It opened *"The browser accepted the command and did not answer"* — a claim about the browser —
+ * while reporting an elapsed time of **53484ms against a 30000ms deadline** (`windows-latest`, run
+ * 30364502178). A timer that fires 23 seconds late did not measure a silent browser: it measured a
+ * Node process that was not scheduled, or was inside something synchronous, for 23 seconds. A reply
+ * may well have arrived on the socket and sat unread. Two more failures in the same run overshot by
+ * 17.0s and 5.8s.
+ *
+ * The overshoot was in the message all along and nobody read it, which is why the classification is
+ * a function rather than a sentence: a shape that is computed gets looked at, and a shape that is
+ * merely printed does not. The same run's three failures were read as browser-side wedges purely
+ * because the taxonomy the message offered — cliff, climb, empty — describes only the far side.
+ *
+ * `lagMaxMs` is reported alongside rather than folded into the verdict. The overshoot is the direct
+ * evidence and needs nothing else to be believed; the lag figure says whether the whole loop was
+ * starved or only this one timer was unlucky, and the two disagreeing is itself informative.
+ */
+export function describeDeadline(
+  elapsedMs: number,
+  timeoutMs: number,
+  lag: { maxMs: number; samples: number },
+): { verdict: DeadlineVerdict; text: string } {
+  const overshoot = elapsedMs - timeoutMs;
+  const band = `${lag.maxMs}ms over ${lag.samples} sample(s)`;
+  if (overshoot > LATE_OVERSHOOT_MS) {
+    return {
+      verdict: 'late',
+      text:
+        `The ${timeoutMs}ms deadline fired ${overshoot}ms LATE, and this process's own event loop ` +
+        `lagged up to ${band} while the command was outstanding. A deadline that late was not ` +
+        `measuring a silent browser: it was measuring a Node process that was not running. The ` +
+        `reply may have arrived and gone unread, so look at THIS side of the socket first — the ` +
+        `transport band below describes the far side and cannot see this.`,
+    };
+  }
+  return {
+    verdict: 'on-time',
+    text:
+      `The ${timeoutMs}ms deadline fired ${overshoot}ms late, i.e. on time, so this process was ` +
+      `being scheduled throughout and the reply genuinely did not arrive (worst event-loop lag ` +
+      `while the command was outstanding: ${band}). Look at the browser.`,
+  };
+}
+
 export class CdpSession {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, { ok: (value: unknown) => void; fail: (e: Error) => void }>();
@@ -113,6 +233,10 @@ export class CdpSession {
 
   /** Connect to a CDP WebSocket endpoint. */
   static connect(url: string): Promise<CdpSession> {
+    // Started here rather than at module load so that importing this file costs nothing: the lag
+    // figure is only ever read by a transport timeout, and a process with no CDP session cannot
+    // have one. Idempotent, so every subsequent session shares the one sampler.
+    startEventLoopLagMonitor();
     return new Promise((ok, fail) => {
       const socket = new WebSocket(url);
       socket.addEventListener('open', () => ok(new CdpSession(socket)));
@@ -218,6 +342,13 @@ export class CdpSession {
    * means the session never completed a command in its life. Run 30347429388 produced two failures
    * on `Page.enable (id 1)` — the first command of a fresh session — which is that third shape and
    * is not a thing a larger deadline can repair.
+   *
+   * All three of those shapes describe the *far* side of the socket, and there is a fourth that
+   * they cannot see and that this message spent three landings mis-attributing: the deadline's own
+   * lateness. See {@link describeDeadline} — a 30000ms deadline reported at 53484ms did not observe
+   * a silent browser, it observed a Node process that was not running for 23 seconds, and the reply
+   * may have been sitting unread on the socket the whole time. That figure was printed in every one
+   * of those failures and read by nobody, because nothing computed anything from it.
    */
   send<T = Record<string, unknown>>(
     method: string,
@@ -229,15 +360,19 @@ export class CdpSession {
       const startedAt = Date.now();
       const timer = setTimeout(() => {
         this.#pending.delete(id);
+        const deadline = describeDeadline(
+          Date.now() - startedAt,
+          timeoutMs,
+          maxLagSince(startedAt),
+        );
         fail(
           new Error(
-            `[cdp] no reply to ${method} (id ${id}) after ${Date.now() - startedAt}ms. The browser ` +
-              `accepted the command and did not answer within the transport deadline, so every ` +
+            `[cdp] no reply to ${method} (id ${id}) after ${Date.now() - startedAt}ms, so every ` +
               `deadline waiting on this reply was unreachable and would have expired mutely. ` +
-              `Transport health: ${this.describeTransport()}. Read the three shapes apart rather ` +
-              `than pooling them: a cliff (healthy band, then nothing) is a wedge; a climb is ` +
-              `starvation; and no completed commands at all means the session never worked, which ` +
-              `no amount of extra deadline will fix.`,
+              `${deadline.text} Transport health: ${this.describeTransport()}. Read the three ` +
+              `shapes apart rather than pooling them: a cliff (healthy band, then nothing) is a ` +
+              `wedge; a climb is starvation; and no completed commands at all means the session ` +
+              `never worked, which no amount of extra deadline will fix.`,
           ),
         );
       }, timeoutMs);

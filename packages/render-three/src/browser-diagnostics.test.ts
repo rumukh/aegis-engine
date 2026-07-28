@@ -29,6 +29,7 @@ import {
   CdpSession,
   DEFAULT_UNTIL_TIMEOUT_MS,
   FOCUS_TIMEOUT_MS,
+  LATE_OVERSHOOT_MS,
   LAUNCH_TIMEOUT_MS,
   NAVIGATION_TIMEOUT_MS,
   ROUND_TRIP_HISTORY,
@@ -36,7 +37,10 @@ import {
   PAINT_FRAMES_FLOOR,
   PAINT_TIMEOUT_MS,
   classifyEvent,
+  describeDeadline,
+  maxLagSince,
   paintVerdict,
+  startEventLoopLagMonitor,
   waitForPaint,
   closeAllPages,
   evaluate,
@@ -284,6 +288,14 @@ describe('openPage actually opens the page', () => {
       await expect(hung).rejects.toThrow(/successful round trip\(s\) on this session/);
       await expect(hung).rejects.not.toThrow(/it did not degrade, it never worked/);
       expect(cdp.roundTrips.length).toBeGreaterThan(0);
+
+      // Nothing is blocking this process, so the deadline fired when it was asked to and the
+      // browser really is the thing that went quiet. This is the arm that gives the `late` verdict
+      // its meaning: without a case that reads `on time`, "look at THIS side of the socket" would
+      // be satisfiable by a classifier that says it every time.
+      await expect(hung).rejects.toThrow(/i\.e\. on time/);
+      await expect(hung).rejects.toThrow(/Look at the browser/);
+      await expect(hung).rejects.not.toThrow(/LATE/);
 
       // And the session is still usable afterwards — a deadline that poisoned the socket would
       // turn one unanswered command into a cascade of unrelated failures.
@@ -660,6 +672,187 @@ describe('the paint precondition', () => {
         cdp.close();
       }
     } finally {
+      browser.process.kill();
+    }
+  }, 120_000);
+});
+
+/**
+ * The transport timeout message spent three landings asserting something its own numbers refuted.
+ *
+ * It opened *"The browser accepted the command and did not answer within the transport deadline"*
+ * and then reported, in the same sentence, `after 53484ms` against a 30000ms deadline. Two more
+ * failures in run 30364502178 overshot by 17.0s and 5.8s. A `setTimeout(30000)` that fires 23
+ * seconds late is not evidence about a browser: it is evidence that this Node process was not
+ * scheduled, or was inside something synchronous, for 23 seconds — during which the reply may have
+ * been sitting on the socket unread.
+ *
+ * All three were read as browser-side wedges, by me, because the taxonomy the message offered —
+ * cliff, climb, empty — describes only the far side of the socket and there was nothing in it that
+ * could describe the near side. The overshoot was printed in every one of those failures and read
+ * by nobody, which is why the verdict is now *computed*: a shape that is computed gets looked at,
+ * and a shape that is merely printed does not.
+ */
+describe('a transport deadline says which side of the socket stopped', () => {
+  /**
+   * Block this process for `ms`, on purpose.
+   *
+   * `await` would not do: the whole subject here is a loop that is *not* running, and a sleeping
+   * loop is a perfectly healthy one. Only a synchronous spin reproduces the condition.
+   */
+  const block = (ms: number): void => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      /* deliberately holding the event loop, which is the quantity under test */
+    }
+  };
+
+  const idle = (ms: number): Promise<void> => new Promise((ok) => setTimeout(ok, ms));
+
+  it('calls a deadline that fired when it was asked to a browser that did not answer', () => {
+    const verdict = describeDeadline(30_000, 30_000, { maxMs: 3, samples: 400 });
+    expect(verdict.verdict).toBe('on-time');
+    expect(verdict.text).toMatch(/i\.e\. on time/);
+    expect(verdict.text).toMatch(/Look at the browser/);
+    // The retraction, pinned. This is the arm that must stay green for the `late` arm below to
+    // mean anything: a classifier that never blames the browser would satisfy every negative
+    // assertion in this block while having deleted the distinction entirely.
+    expect(verdict.text).not.toMatch(/LATE/);
+  });
+
+  it('calls a deadline that fired seconds late a Node process that was not running', () => {
+    // The measured figure from run 30364502178: `Runtime.evaluate (id 10)`, 53484ms elapsed.
+    const verdict = describeDeadline(53_484, 30_000, { maxMs: 21_900, samples: 640 });
+    expect(verdict.verdict).toBe('late');
+    expect(verdict.text).toMatch(/23484ms LATE/);
+    expect(verdict.text).toMatch(/21900ms over 640 sample\(s\)/);
+    expect(verdict.text).toMatch(/look at THIS side of the socket first/);
+    // And it must NOT say the browser did not answer. This is the retraction of the exact sentence
+    // that mis-attributed three CI failures, asserted here so a later edit cannot restore it —
+    // the same device as `rejects.not.toThrow(/is a hung transport, not a slow page/)` above, for
+    // the same reason: an over-claim that has been deleted once will come back unless something
+    // goes red when it does.
+    expect(verdict.text).not.toMatch(/did not answer/);
+    expect(verdict.text).not.toMatch(/Look at the browser/);
+  });
+
+  it('does not let the verdict turn on a single millisecond either side of the threshold', () => {
+    // Both sides of `LATE_OVERSHOOT_MS` are driven, because a boundary nobody tests is a boundary
+    // that gets written with the wrong comparison and stays that way. `>` not `>=`: exactly the
+    // threshold is still on time.
+    expect(
+      describeDeadline(30_000 + LATE_OVERSHOOT_MS, 30_000, { maxMs: 0, samples: 1 }).verdict,
+    ).toBe('on-time');
+    expect(
+      describeDeadline(30_000 + LATE_OVERSHOOT_MS + 1, 30_000, { maxMs: 0, samples: 1 }).verdict,
+    ).toBe('late');
+    // A deadline that fired early — a clock that stepped backwards, which is not hypothetical on a
+    // virtualised runner — must not read as `late`.
+    expect(describeDeadline(29_000, 30_000, { maxMs: 0, samples: 1 }).verdict).toBe('on-time');
+  });
+
+  it('renders a maximum over no samples differently from a maximum of zero', () => {
+    // These two are the same number and opposite claims: `0ms over 0 sample(s)` is an instrument
+    // that never ran, and `0ms over 400 sample(s)` is a loop that was never starved. Folding the
+    // count away would render "I did not measure" as "I measured nothing wrong", which is this
+    // repository's most-repeated defect and the reason `maxLagSince` returns a pair.
+    const unmeasured = describeDeadline(60_000, 30_000, { maxMs: 0, samples: 0 });
+    const healthy = describeDeadline(60_000, 30_000, { maxMs: 0, samples: 400 });
+    expect(unmeasured.text).toMatch(/0ms over 0 sample\(s\)/);
+    expect(healthy.text).toMatch(/0ms over 400 sample\(s\)/);
+    expect(unmeasured.text).not.toBe(healthy.text);
+  });
+
+  it('measures a blocked event loop as lag, and an idle one as nearly none', async () => {
+    startEventLoopLagMonitor();
+
+    const idleFrom = Date.now();
+    await idle(600);
+    const whileIdle = maxLagSince(idleFrom);
+
+    const blockedFrom = Date.now();
+    await idle(100);
+    block(1_200);
+    await idle(100);
+    const whileBlocked = maxLagSince(blockedFrom);
+
+    // The sampler ran at all. Without this the two assertions below are satisfied by an instrument
+    // that produced nothing, which is exactly the shape being guarded against.
+    expect(whileIdle.samples).toBeGreaterThan(0);
+    expect(whileBlocked.samples).toBeGreaterThan(0);
+
+    // A 1200ms synchronous block cannot be observed as less than about 1150ms of lag by a 50ms
+    // sampler. The floor is deliberately well under it so this is a measurement of the block and
+    // not of the sampler's own precision.
+    expect(whileBlocked.maxMs).toBeGreaterThan(800);
+
+    // The differential is the control. An absolute bound on the idle window would be a bound
+    // inside a band — a GC pause or a scheduler preemption on a loaded box can produce tens of
+    // milliseconds of lag through no fault of anyone's — so what is asserted is that the two
+    // windows are separated by the block, which is the only variable between them.
+    expect(whileIdle.maxMs).toBeLessThan(whileBlocked.maxMs / 4);
+
+    // A window that has not happened yet contains no samples. This is what makes the per-command
+    // figure honest: the lag reported by a timeout is the lag *since that command was sent*, not
+    // the worst this process has ever seen, so an unrelated block ten minutes earlier cannot be
+    // presented as evidence about this command.
+    expect(maxLagSince(Date.now() + 60_000)).toEqual({ maxMs: 0, samples: 0 });
+  });
+
+  /**
+   * The whole defect, end to end, through a real browser.
+   *
+   * The command here is not hung — `6 * 7` is answered by Chrome in single-digit milliseconds. What
+   * is broken is this side: the process is blocked solidly past the deadline, so the reply arrives
+   * and is never read, and the timer fires long after it was due. That is the situation the old
+   * message described as *"the browser accepted the command and did not answer"*, and it is the
+   * reason three `windows-latest` failures were investigated as browser wedges.
+   *
+   * Deliberately not a stubbed clock. A fake timer would prove the classifier's arithmetic, which
+   * the pure cases above already do; only a real block proves that a *real* reply on a *real*
+   * socket goes unread and produces this verdict.
+   */
+  it('reports LATE when the reply arrived and this process was not running to read it', async () => {
+    const browser = await launchBrowser();
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+
+      // The control, and it is the same one the hung-transport case uses for the same reason: if
+      // this deadline rejected everything, the assertion below would pass while proving only that
+      // 1500ms is too short for any command at all.
+      const alive = await cdp.send<{ result: { value: number } }>(
+        'Runtime.evaluate',
+        { expression: '6 * 7', returnByValue: true },
+        1_500,
+      );
+      expect(alive.result.value).toBe(42);
+
+      const answerable = cdp.send(
+        'Runtime.evaluate',
+        { expression: '6 * 7', returnByValue: true },
+        1_500,
+      );
+      // Chrome answers this within milliseconds. Nothing here reads it, because nothing here is
+      // running: libuv runs the timers phase before the poll phase, so when the block ends the
+      // deadline fires first and the reply is discarded as unmatched.
+      block(4_000);
+
+      await expect(answerable).rejects.toThrow(/fired \d+ms LATE/);
+      await expect(answerable).rejects.toThrow(/was not running/);
+      await expect(answerable).rejects.not.toThrow(/did not answer/);
+
+      // The session survives it, and the very next command succeeds — which is the strongest form
+      // of "the browser was never the problem" available: the far side was healthy throughout.
+      const afterwards = await cdp.send<{ result: { value: number } }>(
+        'Runtime.evaluate',
+        { expression: '1 + 1', returnByValue: true },
+        3_000,
+      );
+      expect(afterwards.result.value).toBe(2);
+
+      cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
       browser.process.kill();
     }
   }, 120_000);
