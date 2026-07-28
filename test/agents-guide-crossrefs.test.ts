@@ -33,7 +33,8 @@
  * valid" and means "no citations were examined". So the corpus sizes are asserted first, and the
  * checks below are only meaningful because those assertions ran.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -44,19 +45,47 @@ const read = (p: string): string => readFileSync(p, 'utf8').replace(/\r\n/g, '\n
 
 const guide = read(join(root, 'AGENTS.md'));
 
-/** Directories that hold no authored source, including the fixture root under `node_modules`. */
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.git', '.turbo']);
 const SOURCE_ROOTS = ['packages', 'games', 'test', 'scripts', 'poc'];
 
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) sourceFiles(join(dir, entry.name), out);
-    } else if (/\.(ts|mts|cts|js|mjs|cjs)$/.test(entry.name)) {
-      out.push(join(dir, entry.name));
-    }
-  }
-  return out;
+/**
+ * The corpus comes from git, not from a filesystem walk, and that is a correctness decision rather
+ * than a tidy-up.
+ *
+ * A recursive `readdirSync` cannot tell an authored source file from a copy some other test made
+ * ninety milliseconds ago and is about to delete. `packages/harness/src/module-instances.test.ts`
+ * copies the built harness into `packages/harness/.tmp/harness-copy-<random>/` and removes it in
+ * `afterAll`; this walker recursed into it and died mid-run:
+ *
+ *     ENOENT: no such file or directory, open '...packages/harness/.tmp/harness-copy-GDXFxB/
+ *     verification.js'
+ *
+ * Nine unrelated cases were lost with it. That is the third sighting of this defect class in this
+ * repository, after `packages/cli`'s fixture directories took down two other files, and the
+ * previous two repairs were both "add the new directory to a skip list" — which works until the
+ * next test invents a scratch directory nobody has heard of.
+ *
+ * `--cached --others --exclude-standard` is tracked files plus untracked files that git is not
+ * ignoring. Scratch directories are ignored (`.gitignore` line 8 is `.tmp/`), so they are excluded
+ * by the repository's own declaration instead of by a list maintained here, and no future one can
+ * reintroduce the race. `--others` matters: a source file written but not yet committed is still a
+ * source file, and dropping it would turn this guard into something that only checks history.
+ */
+function sourceFiles(): string[] {
+  const listed = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return listed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line !== '' &&
+        /\.(ts|mts|cts|js|mjs|cjs)$/.test(line) &&
+        SOURCE_ROOTS.some((dir) => line.startsWith(`${dir}/`)),
+    )
+    .map((line) => join(root, line));
 }
 
 /** Section ids declared by headings: `## 9. Rough edges` and `### 1.5 Setup` both count. */
@@ -97,23 +126,21 @@ const CITATION = /`?AGENTS\.md`?[^\n§]{0,40}§\s*(\d+(?:\.\d+)*)/g;
 
 function citations(): Citation[] {
   const found: Citation[] = [];
-  for (const dir of SOURCE_ROOTS) {
-    for (const file of sourceFiles(join(root, dir))) {
-      const text = read(file);
-      const lines = text.split('\n');
-      lines.forEach((line, i) => {
-        for (const m of line.matchAll(CITATION)) {
-          const section = m[1];
-          if (section === undefined) continue;
-          found.push({
-            file: file.slice(root.length + 1).replace(/\\/g, '/'),
-            line: i + 1,
-            section,
-            tail: line.slice((m.index ?? 0) + m[0].length),
-          });
-        }
-      });
-    }
+  for (const file of sourceFiles()) {
+    const text = read(file);
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+      for (const m of line.matchAll(CITATION)) {
+        const section = m[1];
+        if (section === undefined) continue;
+        found.push({
+          file: file.slice(root.length + 1).replace(/\\/g, '/'),
+          line: i + 1,
+          section,
+          tail: line.slice((m.index ?? 0) + m[0].length),
+        });
+      }
+    });
   }
   return found;
 }
@@ -210,9 +237,34 @@ describe('the guard can actually fail', () => {
     expect(quotedFragment(' makes the general argument')).toBeUndefined();
   });
 
-  it('the walker reaches real source and skips node_modules', () => {
-    const files = sourceFiles(join(root, 'packages'));
-    expect(files.length).toBeGreaterThan(50);
-    expect(files.filter((f) => f.includes(`${'node_modules'}`))).toEqual([]);
+  it('the corpus reaches real source, skips node_modules, and skips ignored scratch', () => {
+    // Three claims, and the third is the one this instrument was rebuilt for. A guard that
+    // "found nothing" would satisfy the exclusion claims trivially, so the inclusion claims are
+    // asserted in the same case: a corpus that collapses takes them down with it.
+    const ignoredDir = join(root, 'packages', 'harness', '.tmp', 'zz-crossrefs-probe');
+    const ignoredFile = join(ignoredDir, 'verification.ts');
+    const untrackedFile = join(root, 'packages', 'harness', 'src', 'zz-crossrefs-probe.ts');
+    try {
+      mkdirSync(ignoredDir, { recursive: true });
+      // A bare numeric citation: were this picked up, check 3 above would redden on a file that
+      // no one committed and that is about to delete itself. The literal is split so that this
+      // line is not itself a citation — the corpus includes this file, and writing the marker
+      // whole here reddens check 3 for real. (It did, the first time this control was run.)
+      writeFileSync(ignoredFile, '// AGENTS' + '.md \u00a79 #3\n', 'utf8');
+      writeFileSync(untrackedFile, '// no citation here\n', 'utf8');
+
+      const files = sourceFiles().map((f) => f.slice(root.length + 1).replace(/\\/g, '/'));
+      expect(files.length).toBeGreaterThan(50);
+      expect(files.filter((f) => f.includes('node_modules'))).toEqual([]);
+      // Ignored scratch is out — by the repository's ignore rules, not by a list kept here.
+      expect(files.filter((f) => f.includes('/.tmp/'))).toEqual([]);
+      // Uncommitted source is in, or this guard would only ever check history.
+      expect(files).toContain('packages/harness/src/zz-crossrefs-probe.ts');
+      // And the real corpus is still there alongside the probes.
+      expect(files).toContain('test/agents-guide-crossrefs.test.ts');
+    } finally {
+      rmSync(ignoredDir, { recursive: true, force: true });
+      rmSync(untrackedFile, { force: true });
+    }
   });
 });

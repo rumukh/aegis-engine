@@ -22,7 +22,8 @@
  * surfaces as a harness test failure. The message names the offending file so that is not
  * misleading.
  */
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -32,18 +33,43 @@ import ts from 'typescript';
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const SEARCH_ROOTS = ['packages', 'games'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage']);
 
-/** Every `.ts` file under the searched roots, excluding build output. */
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) sourceFiles(join(dir, entry.name), out);
-    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
-      out.push(join(dir, entry.name));
-    }
-  }
-  return out;
+/**
+ * Every `.ts` file under the searched roots, excluding build output — taken from git rather than
+ * from a recursive `readdirSync`.
+ *
+ * The walk this replaces recursed into whatever happened to be on disk, and other tests put things
+ * there: `module-instances.test.ts` in this very package copies the built harness into
+ * `packages/harness/.tmp/harness-copy-<random>/` and deletes it in `afterAll`. A walker that
+ * enumerates the parent and then reads the child loses the race and dies with ENOENT, taking every
+ * case in its file with it — which is how `test/agents-guide-crossrefs.test.ts` failed a gate, and
+ * how this file failed one earlier against `packages/cli`'s fixture directories.
+ *
+ * Both previous repairs added the offending directory to `SKIP_DIRS`. That is a list of the scratch
+ * directories somebody has already been bitten by. `--cached --others --exclude-standard` is
+ * instead tracked files plus untracked files git is not ignoring: scratch is excluded because the
+ * repository declares it scratch, so a directory invented next week is handled without an edit
+ * here. `--others` keeps uncommitted source in scope — this invariant has to redden while you are
+ * writing the violation, not after you commit it, and the control below plants an untracked file
+ * precisely to pin that.
+ */
+function sourceFiles(): string[] {
+  const listed = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return listed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line !== '' &&
+        line.endsWith('.ts') &&
+        !line.endsWith('.d.ts') &&
+        SEARCH_ROOTS.some((root) => line.startsWith(`${root}/`)),
+    )
+    .map((line) => join(REPO_ROOT, line));
 }
 
 /** Whether `node`'s subtree reads a `.hash` property off anything. */
@@ -108,7 +134,7 @@ function violationsIn(file: string): Violation[] {
 
 describe('golden hashes are pinned, repository-wide', () => {
   it('no hashEquals call is handed a run\u2019s own hash, by any spelling', () => {
-    const files = SEARCH_ROOTS.flatMap((root) => sourceFiles(join(REPO_ROOT, root)));
+    const files = sourceFiles();
     expect(files.length).toBeGreaterThan(50); // the scan actually found the tree
 
     const violations = files.flatMap(violationsIn);
@@ -126,54 +152,72 @@ describe('golden hashes are pinned, repository-wide', () => {
   });
 
   /**
-   * The walker must never descend into another package's transient scratch directories.
+   * The corpus must never include another package's transient scratch directories.
    *
-   * `sourceFiles` recurses into every directory that is not `node_modules`, `dist` or `coverage`.
-   * While the CLI's test fixtures were created directly under `packages/cli`, this walk could
-   * `readdir` the parent, see a fixture directory, and `readdir` the child **after** its owning
-   * test had deleted it — killing a harness invariant test inside a CLI test's scratch space:
+   * This has now bitten twice, in two different directories. First, while the CLI's fixtures were
+   * created directly under `packages/cli`, a recursive walk could `readdir` the parent, see a
+   * fixture, and `readdir` the child **after** its owning test deleted it:
    *
    * ```
    * Error: ENOENT: no such file or directory, scandir '…/packages/cli/aegis-clitest-02uq7a'
    * ```
    *
+   * Then `module-instances.test.ts` — in this package — did the same thing from
+   * `packages/harness/.tmp/harness-copy-<random>/`, killing a different repository-wide guard.
+   * Both were "add it to the skip list" repairs, and the second one proved the first had not fixed
+   * anything: a skip list only ever contains the scratch directories somebody has already lost a
+   * gate to. The corpus now comes from git, so anything the repository declares ignorable is out
+   * by construction and no future scratch directory has to be foreseen.
+   *
    * A race cannot be watched fail on demand, so this control is **deterministic instead of
    * timing-based**, and it carries its own positive half rather than relying on a stashed revert:
-   * the same probe file is planted in both locations, and the walk must find the one under
-   * `packages/` and miss the one under `node_modules/.aegis-clitest/`. Finding *neither* would
-   * satisfy a one-sided assertion while proving the walk had stopped working.
+   * the same probe file is planted in three locations, and the corpus must contain the one under
+   * `packages/` and neither of the two ignored ones. Finding *nothing* would satisfy both exclusion
+   * assertions while proving the corpus had collapsed — hence the positive half.
    *
-   * This is the property that makes the fixture move structural: fixtures now live somewhere no
-   * walker rooted at `packages/`/`games/` can reach, so no future walker has to remember.
+   * The in-tree probe is deliberately never committed, so it also pins `--others`: were the corpus
+   * narrowed to tracked files, this guard would stop seeing violations while they were being
+   * written and only notice them after they landed.
    */
-  it('walks the source tree but not the scratch directories inside node_modules', () => {
+  it('lists the source tree but not the ignored scratch directories inside it', () => {
     const inTree = join(REPO_ROOT, 'packages', 'harness', 'src', 'zz-walker-probe.ts');
     const scratch = join(REPO_ROOT, 'node_modules', '.aegis-clitest', 'zz-probe-dir');
     const inScratch = join(scratch, 'zz-walker-probe.ts');
+    const tmpDir = join(REPO_ROOT, 'packages', 'harness', '.tmp', 'zz-probe-copy');
+    const inTmp = join(tmpDir, 'zz-walker-probe.ts');
     const body = 'export const zzWalkerProbe = 1;\n';
     mkdirSync(scratch, { recursive: true });
+    mkdirSync(tmpDir, { recursive: true });
     writeFileSync(inTree, body, 'utf8');
     writeFileSync(inScratch, body, 'utf8');
+    writeFileSync(inTmp, body, 'utf8');
     try {
-      const files = SEARCH_ROOTS.flatMap((root) => sourceFiles(join(REPO_ROOT, root)));
-      // Anti-vacuity, twice over: the walk must still be finding the tree at all, and it must be
-      // able to find a file of exactly this shape — or "it missed the scratch copy" means nothing.
+      const files = sourceFiles();
+      // Anti-vacuity, twice over: the corpus must still be finding the tree at all, and it must be
+      // able to find a file of exactly this shape — or "it missed the scratch copies" means nothing.
       expect(files.length).toBeGreaterThan(50);
       expect(
         files.filter((f) => f === inTree),
-        'the walk did not find a plain .ts file planted in packages/harness/src, so its failure ' +
-          'to find the scratch copy below proves nothing about where it refuses to go',
+        'the corpus did not contain a plain .ts file planted in packages/harness/src, so its ' +
+          'failure to contain the scratch copies below proves nothing about what it excludes',
       ).toEqual([inTree]);
 
       expect(
         files.filter((f) => f.includes('.aegis-clitest')),
-        'the repository walk descended into a live test fixture directory. Those are created and ' +
-          'deleted while other suites run, so this walk can ENOENT on a directory that vanished ' +
-          'between reading the parent and reading the child.',
+        'the repository corpus included a live test fixture directory. Those are created and ' +
+          'deleted while other suites run, so reading them can ENOENT on a directory that ' +
+          'vanished between listing it and opening it.',
+      ).toEqual([]);
+
+      expect(
+        files.filter((f) => f.includes(`${'.tmp'}`)),
+        'the repository corpus included packages/harness/.tmp, where module-instances.test.ts ' +
+          'copies the built harness and deletes it in afterAll. Reading it races that delete.',
       ).toEqual([]);
     } finally {
       rmSync(inTree, { force: true });
       rmSync(scratch, { recursive: true, force: true });
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
