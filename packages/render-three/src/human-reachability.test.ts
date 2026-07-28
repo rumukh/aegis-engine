@@ -31,7 +31,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Transform } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
 import { Health } from '@aegis/content';
-import { fpsPlugin } from '@aegis/mode-fps';
+import { fpsPlugin, LookState } from '@aegis/mode-fps';
 import { Controlled, GridPosition, isoPlugin } from '@aegis/mode-iso';
 import { BodyState, platformerPlugin } from '@aegis/mode-platformer';
 import { Vector3 } from 'three';
@@ -574,4 +574,164 @@ describe('a human is not tick-exact, and the games must not require it', () => {
     // and buffering stopped being wired to the human's key, this is what would notice.
     expect(withHelp).toBeGreaterThan(withoutHelp);
   });
+});
+
+describe('the view must follow the hand, not the packet schedule', () => {
+  // The user's report included "vertical behaves randomly". Nothing in the axis tests speaks to
+  // that: they assert a sign, and a sign is not smoothness. The measurable form of "erratic" is
+  // that the same physical mouse movement produces a different view depending on when the
+  // packets happened to arrive — which is exactly what a variable frame gap (measured here at
+  // 34-72ms against a 60Hz simulation) would expose.
+  //
+  // So the property is stated as an invariance: total hand movement in, same view out, under
+  // every delivery pattern the exchange loop can produce.
+  const DELIVERIES = [
+    {
+      name: 'all on one tick',
+      drive: (session: LiveSession, total: number): void => {
+        session.input.submit({ seq: 1, look: { dx: 0, dy: total } });
+        for (let i = 0; i < 10; i++) session.step();
+      },
+    },
+    {
+      name: 'one packet spread across ten ticks',
+      drive: (session: LiveSession, total: number): void => {
+        session.input.submit({ seq: 1, look: { dx: 0, dy: total } });
+        session.input.spreadLookOver(10);
+        for (let i = 0; i < 10; i++) session.step();
+      },
+    },
+    {
+      name: 'ten packets, one per tick',
+      drive: (session: LiveSession, total: number): void => {
+        for (let i = 0; i < 10; i++) {
+          session.input.submit({ seq: i + 1, look: { dx: 0, dy: total / 10 } });
+          session.step();
+        }
+      },
+    },
+    {
+      name: 'two packets before a single tick, then nine idle ticks',
+      drive: (session: LiveSession, total: number): void => {
+        session.input.submit({ seq: 1, look: { dx: 0, dy: total / 2 } });
+        session.input.submit({ seq: 2, look: { dx: 0, dy: total / 2 } });
+        for (let i = 0; i < 10; i++) session.step();
+      },
+    },
+    {
+      name: 'a spread batch interrupted by a fresh packet halfway',
+      drive: (session: LiveSession, total: number): void => {
+        session.input.submit({ seq: 1, look: { dx: 0, dy: total / 2 } });
+        session.input.spreadLookOver(10);
+        for (let i = 0; i < 5; i++) session.step();
+        session.input.submit({ seq: 2, look: { dx: 0, dy: total / 2 } });
+        for (let i = 0; i < 5; i++) session.step();
+      },
+    },
+  ];
+
+  it('pitch depends on how far the mouse moved, not on when the packets arrived', () => {
+    const pitchOf = (session: LiveSession): number =>
+      session.world
+        .query({ has: [LookState] })
+        .one()
+        .get(LookState).pitchDeg;
+    // Well inside `maxPitchDeg` (89) so the clamp is not doing the equalising for us.
+    const TOTAL = -60;
+    const results = DELIVERIES.map((delivery) => {
+      const session = createLiveSession({ scene: AIM_SCENE, plugin: fpsPlugin });
+      delivery.drive(session, TOTAL);
+      return { name: delivery.name, pitch: pitchOf(session) };
+    });
+    for (const result of results) {
+      console.log(
+        `      pitch after ${String(TOTAL)} deg of mouse: ${result.pitch.toFixed(3)} — ${result.name}`,
+      );
+    }
+    // Anti-vacuity: a collector that dropped every event would make all five agree at zero.
+    for (const result of results) expect(Math.abs(result.pitch)).toBeGreaterThan(1);
+    const first = results[0] as { pitch: number };
+    for (const result of results) expect(result.pitch).toBeCloseTo(first.pitch, 6);
+  });
+
+  it('an out-of-order packet is dropped rather than replayed', () => {
+    // The exchange is a round trip over HTTP; nothing guarantees ordering. A stale packet applied
+    // after a newer one would rotate the view backwards for one tick, which is what "random"
+    // looks like from a chair.
+    const session = createLiveSession({ scene: AIM_SCENE, plugin: fpsPlugin });
+    session.input.submit({ seq: 2, look: { dx: 10, dy: -10 } });
+    session.input.submit({ seq: 1, look: { dx: 10, dy: -10 } });
+    session.step();
+    const look = session.world
+      .query({ has: [LookState] })
+      .one()
+      .get(LookState);
+    console.log(
+      `      out-of-order packet: yaw ${look.yawDeg.toFixed(3)}, pitch ${look.pitchDeg.toFixed(3)} (one packet's worth, not two)`,
+    );
+    // Anti-vacuity: the accepted packet must have been applied at all.
+    expect(Math.abs(look.pitchDeg)).toBeGreaterThan(1);
+    expect(look.pitchDeg).toBeCloseTo(-10, 6);
+  });
+});
+
+describe('every isometric objective must be reachable by a hand, not only by a script', () => {
+  // "In isometry only walking works." The scripted playthrough reaches `mission.completed` at
+  // tick 505, which proves the level is completable — not that a person can complete it. Each
+  // objective cell is ordered here through a real mousedown at the pixel it is drawn on.
+  //
+  // What this can and cannot show: the switch-opens-the-door causality is a *game* system and
+  // this rig runs the stock mode plugin, so what is asserted is that a hand can put the operative
+  // on each objective cell. Combat is covered by the guard-chest case above; the pick correctness
+  // that all of it rests on is covered exhaustively, 46 of 46 cells, in adapters/iso-pick.test.ts.
+  const OBJECTIVES = [
+    { name: 'the security switch', cell: { x: 1, y: 3 } },
+    { name: 'the vault exit', cell: { x: 3, y: 3 } },
+  ];
+
+  for (const objective of OBJECTIVES) {
+    it(`a click on ${objective.name} walks the operative onto it`, () => {
+      const world = buildTestWorld(ISO_SCENE, isoPlugin);
+      const adapter = createIsoAdapter({ aspect: VIEWPORT.width / VIEWPORT.height });
+      adapter.mount(world);
+      const rig = inputRig(ISO_SCENE, isoPlugin, 'iso', (x, y) => adapter.pick(x, y));
+      try {
+        const cell = (): { x: number; y: number } => {
+          const at = rig.session.world
+            .query({ has: [GridPosition, Controlled] })
+            .one()
+            .get(GridPosition);
+          return { x: at.cellX, y: at.cellY };
+        };
+        rig.play(1);
+        adapter.sync(rig.session.world);
+        const from = cell();
+        expect(from, 'the operative must not already be standing on the objective').not.toEqual(
+          objective.cell,
+        );
+
+        const ndc = new Vector3(objective.cell.x, 0, objective.cell.y).project(adapter.camera);
+        const clientX = ((ndc.x + 1) / 2) * VIEWPORT.width;
+        const clientY = ((1 - ndc.y) / 2) * VIEWPORT.height;
+        expect(Math.abs(ndc.x), 'the objective must be on screen to be clicked').toBeLessThan(1);
+        expect(Math.abs(ndc.y), 'the objective must be on screen to be clicked').toBeLessThan(1);
+
+        rig.dom.dispatch('mousedown', {
+          button: 0,
+          clientX,
+          clientY,
+          preventDefault: () => undefined,
+        });
+        rig.play(300);
+        const to = cell();
+        console.log(
+          `      iso objective ${objective.name}: pixel (${clientX.toFixed(0)},${clientY.toFixed(0)}) — (${String(from.x)},${String(from.y)}) -> (${String(to.x)},${String(to.y)})`,
+        );
+        expect(to).toEqual(objective.cell);
+      } finally {
+        adapter.dispose();
+        rig.dispose();
+      }
+    });
+  }
 });
