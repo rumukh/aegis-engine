@@ -31,7 +31,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { main as audit, MIN_TEST_FILES, MIN_TESTS } from './audit-test-report.mjs';
-import { testPhases } from './test-phases.mjs';
+import {
+  browserSpecs,
+  isHostedCi,
+  SOLO_SKIP_REASON,
+  soloEnabled,
+  testPhases,
+} from './test-phases.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const forwarded = process.argv.slice(2);
@@ -62,6 +68,19 @@ const phases = isSubset
       },
     ]
   : testPhases(root, (path) => readFileSync(join(root, path), 'utf8'));
+
+// An omitted phase must be louder than a failing one, because a gate that quietly covers less is
+// the exact defect the auditor exists to prevent — a windows leg once reported green in 3m36s
+// with nine browser tests that never executed. So the reason and **every file that did not run**
+// are named, rather than the omission being inferable from a phase list nobody reads.
+if (!isSubset && !soloEnabled(process.platform, isHostedCi())) {
+  const omitted = browserSpecs(root, (path) => readFileSync(join(root, path), 'utf8'));
+  process.stdout.write(
+    `\n[test-run] phase "solo": NOT RUN on ${process.platform} hosted CI — ${SOLO_SKIP_REASON}\n` +
+      `[test-run] ${String(omitted.length)} browser spec(s) did NOT execute in this job:\n` +
+      omitted.map((path) => `[test-run]   ${path}\n`).join(''),
+  );
+}
 
 const vitest = join(root, 'node_modules', 'vitest', 'vitest.mjs');
 let failed = false;

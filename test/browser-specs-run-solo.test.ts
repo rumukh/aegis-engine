@@ -27,7 +27,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { MIN_TEST_FILES } from '../scripts/audit-test-report.mjs';
-import { BROWSER_MARKER, browserSpecs, specFiles, testPhases } from '../scripts/test-phases.mjs';
+import {
+  BROWSER_MARKER,
+  browserSpecs,
+  isHostedCi,
+  SOLO_SKIP_REASON,
+  soloEnabled,
+  specFiles,
+  testPhases,
+} from '../scripts/test-phases.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -64,11 +72,16 @@ function allSpecsFromGit(): string[] {
  * Look a phase up by name rather than by position, and throw when it is missing. An index into
  * a list nobody validates is the shared-mutable-index defect AGENTS.md §9 describes; a
  * destructure that silently yields `undefined` is the same thing with better syntax.
+ *
+ * Platform and hosted-ness are passed **explicitly**, never defaulted. The solo phase is omitted
+ * on a hosted `win32` runner (ADR-0010), so an arm that let `testPhases` read `process.platform`
+ * would assert a different property depending on which leg of the CI matrix ran it — and would
+ * pass on ubuntu while being unreachable on windows, which is an arm nobody controls.
  */
-function phase(name: string) {
-  const found = testPhases(root, read).find((p) => p.name === name);
+function phase(name: string, platform = 'linux', hosted = true) {
+  const found = testPhases(root, read, platform, hosted).find((p) => p.name === name);
   if (found === undefined) {
-    const names = testPhases(root, read).map((p) => p.name);
+    const names = testPhases(root, read, platform, hosted).map((p) => p.name);
     throw new Error(`no phase named "${name}" — testPhases returned [${names.join(', ')}]`);
   }
   return found;
@@ -143,7 +156,10 @@ describe('every spec that launches a browser runs in the solo phase', () => {
     // `windows-latest` job painting immediately, where one launched early painted 3 frames in
     // 3 seconds — the cold period is a property of the job, not of the browser instance.
     // Running these last buys that warm-up for free.
-    expect(testPhases(root, read).map((p: { name: string }) => p.name)).toEqual(['shared', 'solo']);
+    expect(testPhases(root, read, 'linux', true).map((p: { name: string }) => p.name)).toEqual([
+      'shared',
+      'solo',
+    ]);
   });
 
   it('demands every solo file report in, rather than a floor a partial run could clear', () => {
@@ -177,5 +193,79 @@ describe('every spec that launches a browser runs in the solo phase', () => {
     const synthetic = (path: string): string =>
       path === 'packages/x/src/renderer-e2e.test.ts' ? `await ${MARKER}{ headless: true });` : '';
     expect(browserSpecs(root, synthetic, corpus)).toEqual(['packages/x/src/renderer-e2e.test.ts']);
+  });
+});
+
+describe('the browser phase is omitted on a hosted windows runner, and only there', () => {
+  // WHY this exclusion exists at all is ADR-0010, and it is not a small claim: it is the one
+  // place in this repository where a gate deliberately covers less than it could. The arms below
+  // pin the *shape* of that decision so it cannot widen quietly — a platform check written inline
+  // would be one edit away from excluding ubuntu too, and nothing would have said so.
+
+  it('runs the browser phase everywhere except a hosted windows runner', () => {
+    // All four cells, because three of them are the reason this is a two-argument predicate and
+    // not a `process.platform === 'win32'` check. Windows on a workstation runs these specs and
+    // passes — this repository's landing gate has run them on Windows before every landing — and
+    // a hosted linux runner runs them and passes on every push.
+    expect(soloEnabled('linux', true)).toBe(true);
+    expect(soloEnabled('linux', false)).toBe(true);
+    expect(soloEnabled('win32', false)).toBe(true);
+    expect(soloEnabled('win32', true)).toBe(false);
+  });
+
+  it('actually drops the phase from the plan, rather than merely reporting that it could', () => {
+    // The predicate could be correct and unused. This drives the real `testPhases`, which is the
+    // only thing `run-tests.mjs` executes.
+    expect(testPhases(root, read, 'win32', true).map((p) => p.name)).toEqual(['shared']);
+    expect(testPhases(root, read, 'win32', false).map((p) => p.name)).toEqual(['shared', 'solo']);
+    expect(testPhases(root, read, 'linux', true).map((p) => p.name)).toEqual(['shared', 'solo']);
+  });
+
+  it('changes nothing about the shared phase — only whether the solo phase runs', () => {
+    // The dangerous adjacent failure. `shared` is defined by excluding the browser specs, so a
+    // change that also stopped excluding them would put a software-rasterising Chrome back into
+    // the parallel pool on the exact runner that cannot schedule one, and the leg would go red
+    // for a reason that reads like a regression in whatever landed that day.
+    const onWindowsCi = phase('shared', 'win32', true);
+    const elsewhere = phase('shared', 'linux', true);
+    expect(onWindowsCi.args).toEqual(elsewhere.args);
+    expect(onWindowsCi.minFiles).toBe(elsewhere.minFiles);
+    expect(onWindowsCi.minTests).toBe(elsewhere.minTests);
+    // And the exclusions are really still there, asserted against the independent scan rather
+    // than against the classifier, for the reason `scannedBrowserSpecs` exists.
+    for (const spec of scannedBrowserSpecs()) expect(onWindowsCi.args).toContain(spec);
+  });
+
+  it('still classifies the browser specs on windows CI, so a broken classifier still throws', () => {
+    // Omitting the phase must not omit the check. `browserSpecs` throwing on an empty result is
+    // what stops a classifier that stopped matching from returning every browser spec to the
+    // shared pool; short-circuiting the call on windows would have removed that guarantee on the
+    // one leg where a browser spec in the shared pool does the most damage.
+    expect(() => testPhases(root, () => '', 'win32', true)).toThrow(
+      new RegExp(BROWSER_MARKER.replace('(', '\\(')),
+    );
+  });
+
+  it('states a reason that names the ADR and does not read as a pass', () => {
+    // A skip reason is prose in a log, which this project has measured to be the highest
+    // half-life propagation channel it has. So the two things a reader most needs are pinned:
+    // where the evidence lives, and that this is an exclusion rather than coverage.
+    expect(SOLO_SKIP_REASON).toContain(
+      'docs/adr/0010-browser-specs-do-not-run-on-hosted-windows.md',
+    );
+    expect(SOLO_SKIP_REASON).toContain('exclusion, not a pass');
+    // The measured asymmetry that justifies it, carried in the message itself: a reason a reader
+    // has to go and look up is a reason nobody checks.
+    expect(SOLO_SKIP_REASON).toMatch(/74823ms/);
+  });
+
+  it('recognises a hosted runner from the environment, and a workstation from its absence', () => {
+    // Injected rather than mutated: `process.env.CI` is read by other machinery in the same
+    // worker, and a test that sets it would be measuring its own side effect.
+    expect(isHostedCi({ CI: 'true' })).toBe(true);
+    expect(isHostedCi({ GITHUB_ACTIONS: 'true' })).toBe(true);
+    expect(isHostedCi({})).toBe(false);
+    // `CI` is a string, and the string 'false' is the value a runner sets when it means false.
+    expect(isHostedCi({ CI: 'false' })).toBe(false);
   });
 });

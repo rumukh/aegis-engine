@@ -107,6 +107,58 @@ export function browserSpecs(root, read, paths) {
 }
 
 /**
+ * Why the browser phase does not run on a hosted `windows-latest` runner.
+ *
+ * The full evidence chain, the nine refuted levers and the gap this leaves are in
+ * `docs/adr/0010-browser-specs-do-not-run-on-hosted-windows.md`. The one-line version, from both
+ * legs of run 30390018561 — same tree, same instrument, same job: the demand is identical (all
+ * three phase windows agree to a few points, the page paints on the first poll on both, both are
+ * 2-vCPU 8 GiB), and the consequence is not. ubuntu's event loop lags **23ms** at 88% box load;
+ * the same loop lags **74823ms** at 100%. A factor of ~3250 across twelve points of load is not a
+ * CPU-scarcity shape, which is why nine attempts to reduce demand all failed to move it.
+ *
+ * Exported so the message is stated once and printed where it is acted on, rather than being a
+ * comment nobody sees in a log.
+ */
+export const SOLO_SKIP_REASON =
+  'a hosted windows-latest runner cannot schedule this process alongside a software-rasterising ' +
+  'Chrome: the same tree measures a 23ms worst event-loop lag on ubuntu-latest and 74823ms on ' +
+  'windows-latest, at 88% and 100% box load respectively, with identical page demand on both. ' +
+  'See docs/adr/0010-browser-specs-do-not-run-on-hosted-windows.md — this is an exclusion, not a ' +
+  'pass: no hosted job exercises a real browser on Windows, and the landing gate on a Windows ' +
+  'workstation is what covers it';
+
+/**
+ * Whether this process is running on a hosted CI runner.
+ *
+ * Injectable rather than reading `process.env` directly, so the guard can drive both answers
+ * without mutating the environment of a running test worker.
+ *
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {boolean}
+ */
+export function isHostedCi(env = process.env) {
+  return env.CI === 'true' || env.GITHUB_ACTIONS === 'true';
+}
+
+/**
+ * Whether the browser phase may run here.
+ *
+ * A pure two-argument predicate rather than an `if` inside {@link testPhases}, for the reason this
+ * repository has had to learn several times: a decision expressed as a branch inside a larger
+ * function can only be tested through that function, and the arm nobody can reach is the arm
+ * nobody controls. Both axes matter and neither alone is sufficient — Windows on a developer's
+ * workstation runs these specs and passes, and a hosted Linux runner runs them and passes.
+ *
+ * @param {string} platform `process.platform`
+ * @param {boolean} hosted see {@link isHostedCi}
+ * @returns {boolean}
+ */
+export function soloEnabled(platform, hosted) {
+  return !(platform === 'win32' && hosted);
+}
+
+/**
  * @typedef {object} TestPhase
  * @property {string} name
  * @property {string} why one line, printed before the phase runs
@@ -119,11 +171,17 @@ export function browserSpecs(root, read, paths) {
 /**
  * @param {string} root repository root
  * @param {(path: string) => string} read see {@link browserSpecs}
+ * @param {string} [platform] `process.platform`; explicit so the guard can drive both answers
+ * @param {boolean} [hosted] see {@link isHostedCi}
  * @returns {TestPhase[]} in the order they must run
  */
-export function testPhases(root, read) {
+export function testPhases(root, read, platform = process.platform, hosted = isHostedCi()) {
+  // Classified unconditionally, even where the solo phase will not run: the shared phase has to
+  // exclude these files either way, and `browserSpecs` throwing on an empty result is the guard
+  // against a classifier that silently returns every browser spec to the shared pool. Skipping
+  // the call on Windows would skip that check exactly where the split matters most.
   const solo = browserSpecs(root, read);
-  return [
+  const phases = [
     {
       name: 'shared',
       why: 'everything that does not drive a browser, in parallel',
@@ -132,7 +190,9 @@ export function testPhases(root, read) {
       minFiles: 50,
       minTests: 800,
     },
-    {
+  ];
+  if (soloEnabled(platform, hosted)) {
+    phases.push({
       name: 'solo',
       why: `${String(solo.length)} browser spec(s), one at a time, with the machine to themselves`,
       report: '.vitest-report.solo.json',
@@ -146,6 +206,7 @@ export function testPhases(root, read) {
       // Deliberately weak, and it does not have to be strong: the audit refuses skips outright,
       // and a browser file whose hook dies reports its cases as skipped rather than as absent.
       minTests: solo.length,
-    },
-  ];
+    });
+  }
+  return phases;
 }
