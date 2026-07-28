@@ -75,16 +75,18 @@ describe('a browser timeout explains itself', () => {
 
   // Both cases above open `about:blank` and inject their error *after* the CDP domains are
   // enabled, so between them they prove only that the collector works for errors that happen
-  // after `openPage` returns. The failure they were written for happens during page *load* --
-  // and `openPage` navigates the target at creation time, via `/json/new?<url>`, before the
-  // WebSocket exists and before `Log.enable` is sent. Whether Chrome replays what it buffered
-  // is a fact about Chrome, not a fact about this code, and it is the difference between "no
-  // error" meaning "nothing went wrong" and "nothing was listening".
+  // after `openPage` returns. The failure they were written for happens during page *load*.
   //
-  // Measured, one variable and two states: with the URL supplied at creation the 404 below IS
-  // reported, and it is also reported when the page is opened blank and navigated afterwards.
-  // Pinned here so that a future change to `openPage`'s ordering -- or a Chrome that stops
-  // replaying -- reddens, instead of quietly restoring a mute timeout.
+  // `openPage` now creates the target blank and navigates it once `Log.enable` has been sent, so
+  // the collector is live before the real document starts loading. That ordering is the reason
+  // this case can be relied on; it used to depend on Chrome replaying entries it had buffered
+  // before the WebSocket existed, which is a fact about Chrome rather than about this code, and
+  // it is the difference between "no error" meaning "nothing went wrong" and "nothing was
+  // listening".
+  //
+  // Measured, one variable and two states: the 404 below is reported with the URL supplied at
+  // creation AND with the page opened blank and navigated afterwards. Pinned here so that a
+  // future change to `openPage`'s ordering reddens, instead of quietly restoring a mute timeout.
   it('names a module that failed to load, though the page never threw', async () => {
     const server = createServer((request, response) => {
       if (request.url === '/') {
@@ -162,6 +164,75 @@ describe('a browser timeout explains itself', () => {
     }
     // 120s, for the same reason as the case above: browser launch plus a real page load sits in
     // front of the 2s wait this case is actually about.
+  }, 120_000);
+});
+
+describe('openPage actually opens the page', () => {
+  // The assertion nobody wrote, which is why three CI runs and eight failing cases were spent on
+  // a timeout that only ever said what was being awaited. On `windows-latest` a page asked for a
+  // real URL sat on about:blank with `scripts: []` and `resources: []` -- it had not navigated,
+  // so nothing loaded, so nothing failed, so there was no error to report. Every downstream test
+  // then waited sixty seconds for application state that could never arrive.
+  //
+  // This is the cheapest possible check and it is the difference between a named failure and a
+  // mute one: after openPage returns, the page must BE where it was sent.
+  it('has actually navigated by the time it returns, not merely been asked to', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<!doctype html><title>arrived</title><body>arrived');
+    });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+    const address = server.address() as AddressInfo;
+    const url = `http://127.0.0.1:${address.port}/`;
+    const browser = await launchBrowser({ port: 9353 });
+    try {
+      const cdp = await openPage(browser.port, url);
+      expect(await evaluate<string>(cdp, 'String(location.href)')).toBe(url);
+      // Anti-vacuity: "not about:blank" would also be satisfied by an error page. The document has
+      // to be the one the server sent.
+      expect(await evaluate<string>(cdp, 'document.title')).toBe('arrived');
+      cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
+      browser.process.kill();
+      server.close();
+    }
+  }, 120_000);
+
+  it('still supports about:blank, which is what the control pages use', async () => {
+    const browser = await launchBrowser({ port: 9354 });
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+      expect(await evaluate<string>(cdp, 'String(location.href)')).toBe('about:blank');
+      cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
+      browser.process.kill();
+    }
+  }, 120_000);
+
+  // The precondition `openPage` was relying on without ever stating, which is why breaking it cost
+  // a gate rather than a line of output. Creating a target with `/json/new?<url>` activates the
+  // tab; creating it blank and navigating does not, and an unfocused document is refused pointer
+  // lock by Chrome with `WrongDocumentError`. Nothing said so, so `poc/capture.mjs` failed on fps
+  // -- three PoCs deep, in a different package, with a message about mouse-look.
+  //
+  // Asserted here rather than inside `openPage` deliberately: only one page in a browser can hold
+  // focus, so a caller that legitimately holds two open would redden on a rule it is not breaking.
+  // This case controls that by opening exactly one.
+  it('hands back a focused page, which is what capabilities like pointer lock require', async () => {
+    const browser = await launchBrowser({ port: 9355 });
+    try {
+      const cdp = await openPage(browser.port, 'about:blank');
+      expect(await evaluate<boolean>(cdp, 'document.hasFocus()')).toBe(true);
+      // Anti-vacuity for the assertion above: `hasFocus` on a page that was never rendered at all
+      // would be a fact about nothing. A visible document is the state in which focus is meaningful.
+      expect(await evaluate<string>(cdp, 'document.visibilityState')).toBe('visible');
+      cdp.close();
+    } finally {
+      await closeAllPages(browser.port);
+      browser.process.kill();
+    }
   }, 120_000);
 });
 

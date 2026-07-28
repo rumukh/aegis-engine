@@ -429,8 +429,25 @@ export async function openPage(
   url: string,
   viewport = { width: 1280, height: 720 },
 ): Promise<CdpSession> {
+  // The target is created BLANK and navigated afterwards, deliberately.
+  //
+  // `/json/new?<url>` asks Chrome to create a target already pointing at a URL. On
+  // `windows-latest` it does not: run 30331670032 had a page that had been asked for
+  // `http://127.0.0.1:<port>/` describe itself as
+  //
+  //     href: about:blank   readyState: complete   scripts: []   resources: []   bodyChars: 0
+  //
+  // Nothing was fetched, so nothing failed, so there was no error to report -- which is why eight
+  // browser cases failed there for three runs with "the page reported no error" while ubuntu-latest
+  // passed the same commit. Whether that Chrome rejects the percent-encoded query, ignores it, or
+  // races the navigation is NOT established, and this does not depend on knowing: navigating
+  // explicitly removes the dependence rather than guessing at it.
+  //
+  // It has a second benefit that was worth having anyway. Creating the target blank means the CDP
+  // domains are enabled before the real document starts loading, so load-time failures cannot be
+  // missed even by a Chrome that does not replay its buffered log entries.
   const created = (await (
-    await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' })
+    await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })
   ).json()) as { webSocketDebuggerUrl: string };
   const cdp = await CdpSession.connect(created.webSocketDebuggerUrl);
   await cdp.send('Page.enable');
@@ -445,6 +462,40 @@ export async function openPage(
     deviceScaleFactor: 1,
     mobile: false,
   });
+  if (url !== 'about:blank') {
+    const navigation = await cdp.send<{ errorText?: string }>('Page.navigate', { url });
+    // Chrome reports a refused navigation here rather than throwing. Unchecked, it produces a page
+    // that sits on about:blank and a caller that waits for application state that can never come.
+    if (navigation.errorText !== undefined && navigation.errorText !== '')
+      throw new Error(`[aegis:render-three] navigation to ${url} failed: ${navigation.errorText}`);
+    // And the precondition that actually bit us: a navigation can be accepted and still not
+    // happen. A page that never left about:blank must say so HERE, where the URL is known, rather
+    // than sixty seconds later as an unexplained timeout somewhere else.
+    await until<string>(
+      cdp,
+      'String(location.href)',
+      (href) => href !== 'about:blank',
+      60_000,
+    ).catch(() => {
+      throw new Error(
+        `[aegis:render-three] asked the browser to open ${url}, but the page is still on ` +
+          'about:blank. The navigation was accepted and never happened.',
+      );
+    });
+  }
+  // Creating a target with `/json/new?<url>` activates the new tab as a side effect. Creating it
+  // blank and navigating does NOT, and the consequence is invisible until something asks for a
+  // capability that requires focus. Measured, one variable, two states:
+  //
+  //     /json/new?<url>                        hasFocus=true   pointer lock engaged
+  //     blank + Page.navigate                  hasFocus=false  pointer lock REFUSED
+  //     blank + Page.navigate + bringToFront   hasFocus=true   pointer lock engaged
+  //
+  // `poc/capture.mjs` failed 2 of 2 on the middle row and passed 2 of 2 on the first, which is how
+  // this was attributed rather than guessed at: the fps capture clicks to take pointer lock, and
+  // Chrome answers an unfocused document with `WrongDocumentError`. So this line is not defensive
+  // tidying -- it restores the one side effect the old creation path was silently relying on.
+  await cdp.send('Page.bringToFront');
   return cdp;
 }
 
