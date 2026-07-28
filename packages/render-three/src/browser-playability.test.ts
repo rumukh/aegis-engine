@@ -401,6 +401,29 @@ let controlTimerTicks = 0;
 /** The page's own account of whether anything was expected to be drawn to it. */
 let controlVisibility = 'unmeasured';
 
+/**
+ * What GL implementation the page's WebGL context actually resolves to, as its own driver reports.
+ *
+ * The blank-page control above measures compositor pacing and touches no GL at all, which is why it
+ * cannot see the difference that matters here. Measured on run 30383232019, same tree, same commit:
+ *
+ *     blank-page control       ubuntu 60fps / gap 16.7ms      windows 64fps / gap 15.9ms
+ *     fps game, sim rate       ubuntu 180 ticks over 2.8s     windows 101 ticks over 14.5s
+ *                                     = 65.0/s                        = 7.0/s
+ *
+ * Two hosts that are indistinguishable while idle and 9x apart the moment a page rasterises. Free
+ * memory was 5.3GB of 8.0GB on the failing leg, so nothing was paging, and both legs report the
+ * same core count. That leaves the raster path itself, and `--use-angle=swiftshader` is a *request*
+ * — the GPU process is free to fall back, and on Windows the fallback is a different software
+ * rasteriser (WARP) with different performance. Nothing in this repository has ever checked which
+ * one answered.
+ *
+ * So this reports the renderer string rather than assuming the flag took. It is reporting-only and
+ * prints on a green leg too, which is the point: the comparison needs the passing side, and a
+ * diagnostic that only appears on failure cannot supply it.
+ */
+let controlRenderer = 'unmeasured';
+
 beforeAll(async () => {
   server = await startDevServer({ games: GAMES, port: 0, repoRoot: findRepoRoot() });
   // NOT `uncapFrameRate`. That option removes Chrome's frame-rate limit, and this harness ran with
@@ -501,6 +524,21 @@ beforeAll(async () => {
     `document.visibilityState + '/hidden=' + document.hidden + '/focus=' + document.hasFocus()`,
   );
   controlGapP95 = percentile(controlGaps, 95);
+  // Asked of a real WebGL context rather than of Chrome's GPU report, because what this file cares
+  // about is what three.js will be handed on the next line, not what the browser believes it has.
+  controlRenderer = await evaluate<string>(
+    cdp,
+    `(() => {
+       const canvas = document.createElement('canvas');
+       const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+       if (gl === null) return 'NO WEBGL CONTEXT';
+       const info = gl.getExtension('WEBGL_debug_renderer_info');
+       const name = info === null
+         ? String(gl.getParameter(gl.RENDERER))
+         : String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
+       return name + ' | ' + String(gl.getParameter(gl.VERSION));
+     })()`,
+  );
   cdp.close();
   // The budget is `BUDGET_BEFORE_ALL_MS`, stated once at the top of this file with its arithmetic
   // and read by the two guards that audit it. It was raised 90s -> 180s when `windows-latest` was
@@ -729,6 +767,10 @@ describe('the frame budget, measured in a real browser', () => {
         `median gap ${percentile(controlGaps, 50).toFixed(1)}ms, p95 ${controlGapP95.toFixed(1)}ms, ` +
         `timer ticks ${controlTimerTicks} over the same 3s, page ${controlVisibility}`,
     );
+    // Printed on its own line and on every leg, green or red. This is the one number that separates
+    // "this runner is slower" from "this runner rasterises through a different implementation", and
+    // the blank-page control above cannot answer it because it never touches GL.
+    report(`renderer: ${controlRenderer}`);
     // Zero frames is the reading that cost run 30335228246 nine cases, and on its own it is
     // ambiguous. The timer count disambiguates it, so this failure explains itself in one line
     // rather than in another 25-minute round trip:

@@ -59,26 +59,19 @@ jobs:
         with:
           node-version: '24'
 
-      # Windows only, and it is not a performance tweak — it is removing a second program from the
-      # measurement.
+      # Windows only. Kept, but on a weaker claim than the one it was added under — read on before
+      # citing this step as a fix.
       #
-      # `packages/render-three/src/browser-playability.test.ts` drives a real Chromium over CDP and
-      # is the only file in this suite whose result depends on the host being responsive. On
-      # `windows-latest` it has failed by the transport wedging for 25-40 seconds at a time while
-      # the Node process held a CPU **0%** of the window — not scheduled, and not burning CPU
-      # either, which is what waiting on the OS looks like. Run 30380984122 showed it with the
-      # machine to itself: every other test file had finished, the second browser file ran after it
-      # and passed 33 of 33, and `ubuntu-latest` ran the identical corpus green with that file at
-      # 47.7s against 665.9s here.
+      # It was added believing the failing leg was blocked on I/O that the green leg does not have:
+      # Defender scanning the fresh Chrome profile each launch creates under TEMP. Run 30383232019
+      # refuted that. Free memory was 5.3GB of 8.0GB, so nothing was paging, and the browser test's
+      # own blank-page control measured 64fps / 15.9ms median gap on windows against 60fps / 16.7ms
+      # on ubuntu — the failing host is not slower. The two legs separate only once a page
+      # rasterises: the fps game ticked 65.0/s on ubuntu and 7.0/s on windows in that same run.
       #
-      # Defender scans every file Chrome writes, and each launch creates a fresh profile under
-      # TEMP. On the leg that has an antivirus this is the largest asymmetry with the leg that does
-      # not. Scoped to paths and processes rather than switching real-time protection off, so the
-      # runner keeps its protection for everything this job does not own.
-      #
-      # `continue-on-error` because this is an optimisation of the host, not a gate: if a future
-      # runner image withholds the privilege, the job must still run and report on the tests rather
-      # than fail on the preparation.
+      # So this is housekeeping, not the repair. It is scoped to paths and processes rather than
+      # switching real-time protection off, and continue-on-error because it is preparation: if a
+      # runner image withholds the privilege the job must still run and report on the tests.
       - name: Exclude this job's own files from Defender (windows)
         if: runner.os == 'Windows'
         continue-on-error: true

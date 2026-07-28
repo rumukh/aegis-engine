@@ -1013,23 +1013,26 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--disable-extensions',
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
-    // Work Chrome does that has nothing to do with rendering a local page, and that this project
-    // has now paid for twice on `windows-latest`.
+    // Work Chrome does that has nothing to do with rendering a local page. Kept, but read the
+    // correction: **the reasoning that added these was wrong, and the flags survive on a weaker
+    // claim than the one they were added under.**
     //
-    // The evidence is a shape, not a hunch. Run 30380984122 gave this file the machine entirely to
-    // itself — every other test file had finished, and the other browser file ran afterwards and
-    // passed 33 of 33 — and it still failed five cases with the CDP transport wedging for 25-40
-    // seconds at a stretch while this process held a CPU **0%** of the window. The round-trip band
-    // was healthy either side of each wedge (8/104/69/102/27/61/118/2/**28904**/165/12/348ms), so
-    // nothing was degrading: the process was repeatedly stopped dead and then resumed. A process
-    // that is not scheduled *and* not burning CPU is a process waiting on the OS, and Chrome's
-    // startup network fetches and disk caches are the work in this launch that waits on the OS.
+    // They were added believing the failing `windows-latest` leg was blocked on I/O — startup
+    // fetches and disk caches, scanned by an antivirus the green leg does not have. Run 30383232019
+    // refuted it, using the host instrument added in the same commit. Free memory was 5.3GB of
+    // 8.0GB, so nothing was paging; and `browser-playability.test.ts`'s blank-page control measured
+    // **64fps / 15.9ms median gap on windows against 60fps / 16.7ms on ubuntu** — the failing host
+    // is *not slower*. The legs separate only once a page rasterises: the fps game ticked 65.0/s on
+    // ubuntu and 7.0/s on windows, from the same commit in the same run.
     //
-    // None of these touch rendering, so none of them can move a number this file reports. They are
-    // the standard headless-CI set (Puppeteer ships most of them by default) minus anything that
-    // changes how frames are produced, which is the line the four throttle flags below are also
-    // held to. `--disk-cache-size=1` is Chrome's documented way to say "effectively none": zero is
-    // read as "unset, use the default".
+    // A 9x gap that appears only under GL load, on hosts indistinguishable while idle, is not a
+    // disk story. The measurement that can discriminate is the WebGL renderer string, which nothing
+    // here had ever taken; `browser-playability.test.ts` now reports it on both legs.
+    //
+    // What is still true, and is why they stay: none of these touch rendering, so none can move a
+    // number that file reports, and none can make a starved host worse. That is a reason to keep
+    // them, not evidence that they helped. `--disk-cache-size=1` is Chrome's documented way to say
+    // "effectively none": zero is read as "unset, use the default".
     '--disable-background-networking',
     '--disable-component-update',
     '--disable-client-side-phishing-detection',
