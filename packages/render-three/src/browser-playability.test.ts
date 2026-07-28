@@ -25,6 +25,8 @@
  */
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { platformerPlugin } from '@aegis/mode-platformer';
 import { isoPlugin } from '@aegis/mode-iso';
@@ -34,7 +36,17 @@ import type { DevServer } from './dev-server.js';
 import { findRepoRoot } from './catalog.js';
 import type { GameDefinition } from './catalog.js';
 import { BINDINGS } from './bindings.js';
-import { closeAllPages, evaluate, launchBrowser, openPage, sleep, until } from './browser.js';
+import {
+  DEFAULT_UNTIL_TIMEOUT_MS,
+  LAUNCH_TIMEOUT_MS,
+  NAVIGATION_TIMEOUT_MS,
+  closeAllPages,
+  evaluate,
+  launchBrowser,
+  openPage,
+  sleep,
+  until,
+} from './browser.js';
 import type { CdpSession, LaunchedBrowser } from './browser.js';
 import {
   FPS_BUDGET_SCENE,
@@ -71,10 +83,15 @@ const SAMPLE_FRAMES = 20;
 /**
  * How long to wait for {@link SAMPLE_FRAMES}, in milliseconds.
  *
- * A bound on hanging, not a budget. On a quiet machine a page reaches twenty frames in under a
- * second; the value is set for a machine several times slower than this one under full load.
+ * A bound on hanging, not a budget. Measured worst case for this wait, from the three PoCs on this
+ * workstation: platformer 388ms, iso 314ms, fps 1006ms. 20s is twenty times the slowest of those,
+ * and four times what a runner measured 5.6x slower than this box would need.
+ *
+ * It was 60s. Nothing was wrong with 60s as a hang bound; what was wrong is that it was one of
+ * three 60s deadlines stacked inside a 90s vitest budget, so it could never fire. See the deadline
+ * table at {@link BUDGET_SAMPLE_MS}.
  */
-const SAMPLE_TIMEOUT_MS = 60_000;
+const SAMPLE_TIMEOUT_MS = 20_000;
 
 /**
  * How many frame exchanges each measurement must also see complete.
@@ -84,6 +101,58 @@ const SAMPLE_TIMEOUT_MS = 60_000;
  * failing on the fastest page rather than the slowest.
  */
 const SAMPLE_EXCHANGES = 3;
+
+/*
+ * ---------------------------------------------------------------------------------------------
+ * PER-TEST BUDGETS, and why they are derived rather than chosen
+ *
+ * A vitest per-test budget is the outermost deadline on the path. If it is smaller than the sum of
+ * the deadlines inside it, then the inner deadlines cannot fire, and the case dies at the budget
+ * with `Test timed out in NNNNNms` and **not one word about what it was waiting for**. Every
+ * diagnostic this file has been given -- the boot time, `describePage`, the named navigation
+ * failure, the transport deadline -- is unreachable in that state.
+ *
+ * That is not a hypothetical. Run 30340124068 on `windows-latest`: eight cases, six at 90s and two
+ * at 120s, every one of them a mute `Test timed out`, zero diagnostic output. The blank-page
+ * control in the same file passed at 3861 fps in the same run, so the browser was healthy. The
+ * arithmetic, as it stood:
+ *
+ *     frame budget / liveness   nav 60 + boot 60 + sample 60  = 180.4s   inside a  90s budget
+ *     freeze                    nav 60 + boot 60 + 4 x 30     = 240.0s   inside a 120s budget
+ *
+ * Two thirds of the deadlines on each path were unreachable by construction. The muteness was not
+ * a missing instrument; it was an instrument that could never be read.
+ *
+ * So each budget below is `sum(deadlines on its path) + margin`, and each deadline is a stated
+ * multiple of the worst *measured* value of the quantity it bounds:
+ *
+ *     nav      30s   `openPage`      strict sub-interval of boot; worst whole boot 22 826ms
+ *     boot     60s   `until` default 2.6x the worst boot measured under load (landing #14)
+ *     sample   20s   SAMPLE_TIMEOUT_MS         20x the worst measured (fps, 1006ms)
+ *     freeze   20s   FREEZE_TRANSITION_BUDGET_MS  10x the mechanism's own 2s abort timer
+ *
+ *     frame budget  30 + 60 + 0.4 + 20 = 110.4s  ->  150s
+ *     liveness      30 + 60 + 20       = 110.0s  ->  150s
+ *     freeze        30 + 60 + 20 x 4   = 170.0s  ->  210s
+ *
+ * The same rule applies one level further out and `ci.yml` was corrected with it: the job timeout
+ * must exceed the sum of the test budgets it contains, or a mute *job* timeout simply replaces the
+ * mute test timeout. Worst case for this file is 3 x 150 + 3 x 150 + 2 x 210 + 180 (`beforeAll`)
+ * = 1500s = 25 minutes, which is what took the job timeout from 30 minutes to 45.
+ *
+ * None of this costs anything when the page is healthy: `until` returns the moment its condition
+ * holds. A deadline is not a delay. This file's own measured cost is 72.7s for all nine cases.
+ * ---------------------------------------------------------------------------------------------
+ */
+
+/** Budget for a case that calls {@link sample}: nav 30 + boot 60 + 0.4 + sample 20 = 110.4s. */
+const BUDGET_SAMPLE_MS = 150_000;
+
+/** Budget for a liveness case: nav 30 + boot 60 + its own SAMPLE_TIMEOUT_MS wait 20 = 110s. */
+const BUDGET_LIVENESS_MS = 150_000;
+
+/** Budget for a freeze case: nav 30 + boot 60 + four transition waits at 20 = 170s. */
+const BUDGET_FREEZE_MS = 210_000;
 
 /**
  * Milliseconds of the page's **own bookkeeping** the slowest 5% of displayed frames may cost:
@@ -381,6 +450,114 @@ async function sample(url: string): Promise<{
   return { cdp, timings, samples, bootMs, sampleMs: Date.now() - sampleStart };
 }
 
+describe('every per-test budget must be able to contain the deadlines inside it', () => {
+  // This is the arithmetic from the table above, made executable. It is here rather than in a
+  // comment because the numbers it relates live in two files: `NAVIGATION_TIMEOUT_MS` and
+  // `DEFAULT_UNTIL_TIMEOUT_MS` are `browser.ts`'s, the rest are this file's. A number copied
+  // between files is a shared mutable index with no instrument -- the exact defect that put five
+  // stale `AGENTS.md` citations on `main` -- and the failure mode here is silent: raise the boot
+  // deadline by twenty seconds and nothing goes red, eight cases just quietly stop being able to
+  // report why they failed. That is what run 30340124068 looked like.
+  //
+  // A budget is not a performance assertion, so there is nothing to tune here. If a deadline grows
+  // past its budget, the budget grows too -- and the job timeout in `ci.yml` grows with it, which
+  // is the same rule one level out and is checked below.
+  const paths = [
+    {
+      what: 'frame budget (calls sample())',
+      budget: BUDGET_SAMPLE_MS,
+      deadlines: [NAVIGATION_TIMEOUT_MS, DEFAULT_UNTIL_TIMEOUT_MS, 400, SAMPLE_TIMEOUT_MS],
+    },
+    {
+      what: 'liveness',
+      budget: BUDGET_LIVENESS_MS,
+      deadlines: [NAVIGATION_TIMEOUT_MS, DEFAULT_UNTIL_TIMEOUT_MS, SAMPLE_TIMEOUT_MS],
+    },
+    {
+      what: 'freeze (four transition waits in series)',
+      budget: BUDGET_FREEZE_MS,
+      deadlines: [
+        LAUNCH_TIMEOUT_MS,
+        NAVIGATION_TIMEOUT_MS,
+        DEFAULT_UNTIL_TIMEOUT_MS,
+        FREEZE_TRANSITION_BUDGET_MS,
+        FREEZE_TRANSITION_BUDGET_MS,
+        FREEZE_TRANSITION_BUDGET_MS,
+        FREEZE_TRANSITION_BUDGET_MS,
+      ],
+    },
+  ];
+
+  for (const path of paths) {
+    it(`${path.what}: the budget exceeds the sum of its deadlines`, () => {
+      const sum = path.deadlines.reduce((a, b) => a + b, 0);
+      // Anti-vacuity. An empty or zeroed deadline list would satisfy the comparison below while
+      // measuring nothing, and that is the shape of every silent pass this file exists to prevent.
+      expect(path.deadlines.length).toBeGreaterThanOrEqual(3);
+      expect(Math.min(...path.deadlines)).toBeGreaterThan(0);
+      report(`${path.what.padEnd(38)} deadlines ${sum}ms < budget ${path.budget}ms`);
+      expect(sum).toBeLessThan(path.budget);
+    });
+  }
+
+  it('the checker can actually fail, so a green above means something', () => {
+    // The predicate driven directly, both ways, with the real shape of the data. Without this the
+    // three cases above are satisfied by any comparison that is always true.
+    const check = (budget: number, deadlines: number[]): boolean =>
+      deadlines.reduce((a, b) => a + b, 0) < budget;
+    expect(check(150_000, [30_000, 60_000, 400, 20_000])).toBe(true);
+    // The arithmetic exactly as it stood in run 30340124068: three 60s deadlines in a 90s budget.
+    expect(check(90_000, [60_000, 60_000, 400, 60_000])).toBe(false);
+    // And the freeze path as it stood: 240s of deadlines in a 120s budget.
+    expect(check(120_000, [60_000, 60_000, 30_000, 30_000, 30_000, 30_000])).toBe(false);
+  });
+
+  it("the CI job timeout contains this file's worst case, which is the same rule one level out", () => {
+    // A job killed at its timeout says nothing about which test was waiting for what. Replacing
+    // eight mute test timeouts with one mute job timeout would be no progress, so the outer bound
+    // is checked against the inner ones rather than against a feeling about how long CI takes.
+    const ci = readFileSync(join(findRepoRoot(), '.github/workflows/ci.yml'), 'utf8').replace(
+      /\r\n/g,
+      '\n',
+    );
+    const match = /^\s*timeout-minutes:\s*(\d+)\s*$/m.exec(ci);
+    // Not `?.` with a fallback: a workflow that has lost its timeout must redden here rather than
+    // be compared against a default that was never written down.
+    if (match === null) throw new Error('ci.yml declares no timeout-minutes');
+    const jobMs = Number(match[1]) * 60_000;
+
+    // Worst case for this file: three of each sample-based case, two freeze cases, plus the hook.
+    const beforeAllMs = 180_000;
+    const worstCaseMs =
+      3 * BUDGET_SAMPLE_MS + 3 * BUDGET_LIVENESS_MS + 2 * BUDGET_FREEZE_MS + beforeAllMs;
+    report(
+      `ci.yml timeout ${jobMs / 60_000}min vs this file's worst case ${Math.round(worstCaseMs / 60_000)}min`,
+    );
+    // Strictly greater, and by enough to leave room for the rest of the suite and `npm ci`. The
+    // margin is stated as a ratio rather than a subtraction so it does not need re-deriving when
+    // either side moves: this file is the most expensive in the repository, and the rest of the
+    // job was measured at roughly half of it again.
+    expect(worstCaseMs * 1.5).toBeLessThan(jobMs);
+  });
+
+  it('the beforeAll hook contains the browser launch and the control sample it performs', () => {
+    // The per-case budgets above do not pay for the browser launch, because this file launches once
+    // in `beforeAll` and shares the browser. That does not make the launch deadline free — it moves
+    // it into the hook's own budget, which is a deadline like any other and was not being audited.
+    // It fails in the worst available way: a hook that times out does not fail its file, vitest
+    // reports the file's cases as *skipped*, and skipped reads as green. Run 30324264768 reported a
+    // windows leg passing in 3m36s with `9 tests | 9 skipped` for exactly this reason.
+    const hookMs = 180_000;
+    const controlSampleMs = 3_000;
+    const contained = LAUNCH_TIMEOUT_MS + NAVIGATION_TIMEOUT_MS + controlSampleMs;
+    expect(contained).toBeLessThan(hookMs);
+    // Anti-vacuity: if the constants were ever imported as `undefined`, `NaN < 180000` is false and
+    // this would fail — but a zeroed pair would pass while proving nothing, so the floor is stated.
+    expect(LAUNCH_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(NAVIGATION_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+});
+
 describe('the frame budget, measured in a real browser', () => {
   it('gives the probe a ceiling to measure against', () => {
     // Anti-vacuity for every test below: if a page doing nothing cannot animate, the numbers this
@@ -416,145 +593,153 @@ describe('the frame budget, measured in a real browser', () => {
   });
 
   for (const game of GAMES) {
-    it(`${game.id}: holds the per-frame budget`, async () => {
-      const { cdp, timings, samples, bootMs, sampleMs } = await sample(
-        `${server.url}/play/${game.id}`,
-      );
-      cdp.close();
+    it(
+      `${game.id}: holds the per-frame budget`,
+      async () => {
+        const { cdp, timings, samples, bootMs, sampleMs } = await sample(
+          `${server.url}/play/${game.id}`,
+        );
+        cdp.close();
 
-      // The page's own bookkeeping, excluding the GPU-bound submit. See the constant's docblock.
-      const pageWork = samples.restore.map(
-        (value, at) => value + (samples.sync[at] ?? 0) + (samples.hud[at] ?? 0),
-      );
-      const pageWorkP95 = percentile(pageWork, 95);
-      const phases =
-        `restore ${percentile(samples.restore, 95).toFixed(2)} + sync ` +
-        `${percentile(samples.sync, 95).toFixed(2)} + hud ` +
-        `${percentile(samples.hud, 95).toFixed(2)}`;
-      // Reported *before* anything is asserted, deliberately. A precondition that fails after the
-      // report prints nothing about the run that failed it, and this suite runs alongside sixty
-      // other test files — the numbers are how anyone tells "the page regressed" from "the box
-      // was busy". Costing two runs to learn which assertion fired is the wrong trade.
-      report(
-        `${game.id.padEnd(11)} page work p95 ${pageWorkP95.toFixed(2)}ms (${phases}) ` +
-          `[reporting only; bound ${PAGE_WORK_P95_REPORTING_MS}ms, asserted in frame-pacing] · ` +
-          `render p95 ${percentile(samples.render, 95).toFixed(2)}ms [GPU-bound, reporting only]` +
-          ` · gap p95 ${percentile(samples.gaps, 95).toFixed(1)}ms [reporting only; control ` +
-          `${controlGapP95.toFixed(1)}ms, bound ${FRAME_GAP_P95_REPORTING_MS}ms] · ` +
-          `${timings.drawCalls} draws · ${timings.exchangeBytes}B · ` +
-          `exchange median ${percentile(samples.exchange, 50).toFixed(1)}ms p95 ` +
-          `${percentile(samples.exchange, 95).toFixed(1)}ms · boot ${bootMs}ms + sample ` +
-          `${sampleMs}ms · ${timings.frames} frames, ` +
-          `${timings.snapshots} snapshots, ${timings.exchangeErrors} exchange errors, ` +
-          `${samples.work.length} samples`,
-      );
+        // The page's own bookkeeping, excluding the GPU-bound submit. See the constant's docblock.
+        const pageWork = samples.restore.map(
+          (value, at) => value + (samples.sync[at] ?? 0) + (samples.hud[at] ?? 0),
+        );
+        const pageWorkP95 = percentile(pageWork, 95);
+        const phases =
+          `restore ${percentile(samples.restore, 95).toFixed(2)} + sync ` +
+          `${percentile(samples.sync, 95).toFixed(2)} + hud ` +
+          `${percentile(samples.hud, 95).toFixed(2)}`;
+        // Reported *before* anything is asserted, deliberately. A precondition that fails after the
+        // report prints nothing about the run that failed it, and this suite runs alongside sixty
+        // other test files — the numbers are how anyone tells "the page regressed" from "the box
+        // was busy". Costing two runs to learn which assertion fired is the wrong trade.
+        report(
+          `${game.id.padEnd(11)} page work p95 ${pageWorkP95.toFixed(2)}ms (${phases}) ` +
+            `[reporting only; bound ${PAGE_WORK_P95_REPORTING_MS}ms, asserted in frame-pacing] · ` +
+            `render p95 ${percentile(samples.render, 95).toFixed(2)}ms [GPU-bound, reporting only]` +
+            ` · gap p95 ${percentile(samples.gaps, 95).toFixed(1)}ms [reporting only; control ` +
+            `${controlGapP95.toFixed(1)}ms, bound ${FRAME_GAP_P95_REPORTING_MS}ms] · ` +
+            `${timings.drawCalls} draws · ${timings.exchangeBytes}B · ` +
+            `exchange median ${percentile(samples.exchange, 50).toFixed(1)}ms p95 ` +
+            `${percentile(samples.exchange, 95).toFixed(1)}ms · boot ${bootMs}ms + sample ` +
+            `${sampleMs}ms · ${timings.frames} frames, ` +
+            `${timings.snapshots} snapshots, ${timings.exchangeErrors} exchange errors, ` +
+            `${samples.work.length} samples`,
+        );
 
-      // Preconditions. Each one distinguishes "measured and fine" from "never measured": a page
-      // that booted and then stopped, or one whose counters were never written, would otherwise
-      // satisfy every budget below by reporting zero.
-      expect(timings.frames, 'the page must have drawn frames').toBeGreaterThan(10);
-      expect(timings.snapshots, 'the page must have fetched snapshots').toBeGreaterThanOrEqual(
-        SAMPLE_EXCHANGES,
-      );
-      expect(timings.drawCalls, 'the renderer must have drawn something').toBeGreaterThan(0);
-      expect(timings.exchangeBytes, 'a snapshot must have crossed the wire').toBeGreaterThan(0);
-      // Not zero errors: the page abandons an exchange that takes longer than its own 2s timeout,
-      // and on a loaded machine a legitimate fps exchange has been measured at 1.1s. One abandoned
-      // request costs one frame and the loop retries — that is the timeout doing its job, not a
-      // broken page. What would invalidate the measurement is a page failing *most* of its
-      // exchanges.
-      //
-      // Stated as a rate with room in it, because this is the third precondition in this file to
-      // be written too tight for a shared machine: first `exchangeErrors === 0`, then
-      // `snapshots > errors * 5` — which is off by one at exactly the sampling floor — and then
-      // that same ratio again at 2 errors against 7 snapshots, a page that completed 78% of its
-      // exchanges and was working fine. Two thirds is the threshold: below that the page is not
-      // measurable, above it the abandonments are the guard working.
-      expect(
-        timings.exchangeErrors * 2,
-        `at least two thirds of exchanges must complete (saw ${timings.exchangeErrors} errors ` +
-          `against ${timings.snapshots} snapshots)`,
-      ).toBeLessThanOrEqual(timings.snapshots);
-      // A percentile over a handful of samples is not a percentile. sample waits for this
-      // count, so falling short means the page could not produce 40 frames in 30 seconds --
-      // which is a frame-budget failure in its own right and should be read as one.
-      expect(
-        samples.work.length,
-        'the page must have produced enough frames for a percentile to mean anything',
-      ).toBeGreaterThanOrEqual(SAMPLE_FRAMES);
+        // Preconditions. Each one distinguishes "measured and fine" from "never measured": a page
+        // that booted and then stopped, or one whose counters were never written, would otherwise
+        // satisfy every budget below by reporting zero.
+        expect(timings.frames, 'the page must have drawn frames').toBeGreaterThan(10);
+        expect(timings.snapshots, 'the page must have fetched snapshots').toBeGreaterThanOrEqual(
+          SAMPLE_EXCHANGES,
+        );
+        expect(timings.drawCalls, 'the renderer must have drawn something').toBeGreaterThan(0);
+        expect(timings.exchangeBytes, 'a snapshot must have crossed the wire').toBeGreaterThan(0);
+        // Not zero errors: the page abandons an exchange that takes longer than its own 2s timeout,
+        // and on a loaded machine a legitimate fps exchange has been measured at 1.1s. One abandoned
+        // request costs one frame and the loop retries — that is the timeout doing its job, not a
+        // broken page. What would invalidate the measurement is a page failing *most* of its
+        // exchanges.
+        //
+        // Stated as a rate with room in it, because this is the third precondition in this file to
+        // be written too tight for a shared machine: first `exchangeErrors === 0`, then
+        // `snapshots > errors * 5` — which is off by one at exactly the sampling floor — and then
+        // that same ratio again at 2 errors against 7 snapshots, a page that completed 78% of its
+        // exchanges and was working fine. Two thirds is the threshold: below that the page is not
+        // measurable, above it the abandonments are the guard working.
+        expect(
+          timings.exchangeErrors * 2,
+          `at least two thirds of exchanges must complete (saw ${timings.exchangeErrors} errors ` +
+            `against ${timings.snapshots} snapshots)`,
+        ).toBeLessThanOrEqual(timings.snapshots);
+        // A percentile over a handful of samples is not a percentile. sample waits for this
+        // count, so falling short means the page could not produce 40 frames in 30 seconds --
+        // which is a frame-budget failure in its own right and should be read as one.
+        expect(
+          samples.work.length,
+          'the page must have produced enough frames for a percentile to mean anything',
+        ).toBeGreaterThanOrEqual(SAMPLE_FRAMES);
 
-      expect(timings.drawCalls).toBeLessThanOrEqual(DRAW_CALL_BUDGET);
-      expect(timings.exchangeBytes).toBeLessThanOrEqual(PAYLOAD_BUDGET_BYTES);
-    }, 90_000);
+        expect(timings.drawCalls).toBeLessThanOrEqual(DRAW_CALL_BUDGET);
+        expect(timings.exchangeBytes).toBeLessThanOrEqual(PAYLOAD_BUDGET_BYTES);
+      },
+      BUDGET_SAMPLE_MS,
+    );
   }
 });
 
 describe('the simulation must still be advancing when the human looks away', () => {
   for (const game of GAMES) {
-    it(`${game.id}: the world keeps moving while the page renders`, async () => {
-      await closeAllPages(browser.port);
-      const cdp = await openPage(browser.port, `${server.url}/play/${game.id}`, VIEWPORT);
-      await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
-      const before = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-      const started = Date.now();
-      await evaluate<null>(cdp, 'globalThis.aegis.resetTimings(); null');
-      // Wait for the TRANSITION this test is about -- the tick moving -- rather than waiting for
-      // some other quantity to reach a number and then sampling the tick once. The earlier form
-      // did the latter and was a coin flip on a loaded box: measured during a 66-file verify, one
-      // exchange can take 980ms (fps) and a whole 20-frame window can land inside a single round
-      // trip. It failed with "expected 77 to be greater than 77" -- the page was alive, the
-      // window was just narrower than one exchange.
-      //
-      // A frozen page can never satisfy this wait however long it runs, which is the property. A
-      // live one satisfies it as soon as a round trip lands, so the budget can be generous
-      // without weakening the claim: the budget is not the measurement here, the transition is.
-      let last = '[]';
-      const deadline = Date.now() + SAMPLE_TIMEOUT_MS;
-      for (;;) {
-        last = await evaluate<string>(
-          cdp,
-          'JSON.stringify([globalThis.aegis.tick(), globalThis.aegis.samples().work.length, ' +
-            'globalThis.aegis.timings().snapshots])',
-        );
-        const [tick, frames, snapshots] = JSON.parse(last) as [number, number, number];
-        if (tick > before && frames >= SAMPLE_FRAMES && snapshots >= SAMPLE_EXCHANGES) break;
-        if (Date.now() > deadline) {
-          throw new Error(
-            '[liveness] ' +
-              game.id +
-              ': waited ' +
-              String(SAMPLE_TIMEOUT_MS) +
-              'ms for the world to move past tick ' +
-              String(before) +
-              ' and never saw it. Last [tick, frames, snapshots] = ' +
-              last +
-              '. frames == 0 means the browser never painted, which is not a freeze; frames ' +
-              'rising with snapshots flat is the exchange loop stuck, which is.',
+    it(
+      `${game.id}: the world keeps moving while the page renders`,
+      async () => {
+        await closeAllPages(browser.port);
+        const cdp = await openPage(browser.port, `${server.url}/play/${game.id}`, VIEWPORT);
+        await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
+        const before = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+        const started = Date.now();
+        await evaluate<null>(cdp, 'globalThis.aegis.resetTimings(); null');
+        // Wait for the TRANSITION this test is about -- the tick moving -- rather than waiting for
+        // some other quantity to reach a number and then sampling the tick once. The earlier form
+        // did the latter and was a coin flip on a loaded box: measured during a 66-file verify, one
+        // exchange can take 980ms (fps) and a whole 20-frame window can land inside a single round
+        // trip. It failed with "expected 77 to be greater than 77" -- the page was alive, the
+        // window was just narrower than one exchange.
+        //
+        // A frozen page can never satisfy this wait however long it runs, which is the property. A
+        // live one satisfies it as soon as a round trip lands, so the budget can be generous
+        // without weakening the claim: the budget is not the measurement here, the transition is.
+        let last = '[]';
+        const deadline = Date.now() + SAMPLE_TIMEOUT_MS;
+        for (;;) {
+          last = await evaluate<string>(
+            cdp,
+            'JSON.stringify([globalThis.aegis.tick(), globalThis.aegis.samples().work.length, ' +
+              'globalThis.aegis.timings().snapshots])',
           );
+          const [tick, frames, snapshots] = JSON.parse(last) as [number, number, number];
+          if (tick > before && frames >= SAMPLE_FRAMES && snapshots >= SAMPLE_EXCHANGES) break;
+          if (Date.now() > deadline) {
+            throw new Error(
+              '[liveness] ' +
+                game.id +
+                ': waited ' +
+                String(SAMPLE_TIMEOUT_MS) +
+                'ms for the world to move past tick ' +
+                String(before) +
+                ' and never saw it. Last [tick, frames, snapshots] = ' +
+                last +
+                '. frames == 0 means the browser never painted, which is not a freeze; frames ' +
+                'rising with snapshots flat is the exchange loop stuck, which is.',
+            );
+          }
+          await sleep(40);
         }
-        await sleep(40);
-      }
-      const after = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-      const timings = JSON.parse(
-        await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
-      ) as Timings;
-      cdp.close();
-      const seconds = (Date.now() - started) / 1000;
-      report(
-        `${game.id.padEnd(11)} ${after - before} ticks over ${seconds.toFixed(1)}s ` +
-          `(${((after - before) / seconds).toFixed(1)}/s), ${timings.snapshots} snapshots`,
-      );
-      // The claim, exactly as the acceptance definition asks it: after a run of stated length,
-      // the exchange is still going round and the world the human is watching has moved.
-      expect(after).toBeGreaterThan(before);
-      expect(timings.snapshots).toBeGreaterThan(0);
-      // Same ratio reasoning as the budget test: an abandoned slow request is the timeout working.
-      expect(timings.exchangeErrors * 2).toBeLessThanOrEqual(timings.snapshots);
-      // Deliberately no *rate* assertion. Ticks per wall-clock second here is a function of how
-      // fast this software rasteriser can paint — the printed line shows it, and
-      // `frame-pacing.test.ts` pins the accumulator's real-time fidelity exactly, on a fake
-      // clock, where a loaded machine cannot turn a real property into a coin flip.
-    }, 90_000);
+        const after = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+        const timings = JSON.parse(
+          await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
+        ) as Timings;
+        cdp.close();
+        const seconds = (Date.now() - started) / 1000;
+        report(
+          `${game.id.padEnd(11)} ${after - before} ticks over ${seconds.toFixed(1)}s ` +
+            `(${((after - before) / seconds).toFixed(1)}/s), ${timings.snapshots} snapshots`,
+        );
+        // The claim, exactly as the acceptance definition asks it: after a run of stated length,
+        // the exchange is still going round and the world the human is watching has moved.
+        expect(after).toBeGreaterThan(before);
+        expect(timings.snapshots).toBeGreaterThan(0);
+        // Same ratio reasoning as the budget test: an abandoned slow request is the timeout working.
+        expect(timings.exchangeErrors * 2).toBeLessThanOrEqual(timings.snapshots);
+        // Deliberately no *rate* assertion. Ticks per wall-clock second here is a function of how
+        // fast this software rasteriser can paint — the printed line shows it, and
+        // `frame-pacing.test.ts` pins the accumulator's real-time fidelity exactly, on a fake
+        // clock, where a loaded machine cannot turn a real property into a coin flip.
+      },
+      BUDGET_LIVENESS_MS,
+    );
   }
 });
 
@@ -662,12 +847,17 @@ function stallingProxy(target: string): {
  * flip; the durable evidence that a request was abandoned rather than answered is that
  * `exchangeErrors` rose, and that is what is asserted now.
  *
- * 30s is fifteen times the mechanism's own 2s timeout, so it holds on a machine several times
+ * 20s is ten times the mechanism's own 2s timeout, so it holds on a machine several times
  * slower than this one. It is a bound on hanging, not a budget: in a healthy run every one of
- * these transitions lands in well under a second, and the test prints how long each actually took
- * so a drift toward the bound is visible rather than sudden.
+ * these transitions lands in well under a second -- measured once at `swallowed +721ms` during a
+ * 62-file `verify`, so 20s is 28x the only value ever observed -- and the test prints how long
+ * each actually took so a drift toward the bound is visible rather than sudden.
+ *
+ * It was 30s. Four of these run in series inside one case, so at 30s they alone came to 120s,
+ * which was the entire budget of the case containing them *and* a boot wait *and* a navigation
+ * wait. Reduced by containment rather than by taste; see the deadline table above.
  */
-const FREEZE_TRANSITION_BUDGET_MS = 30_000;
+const FREEZE_TRANSITION_BUDGET_MS = 20_000;
 
 /** Poll an in-process predicate until it holds, naming what was being waited for on timeout. */
 async function untilLocal(
@@ -686,174 +876,182 @@ async function untilLocal(
 }
 
 describe('a stalled frame request must not freeze the game', () => {
-  it('recovers on its own after a request that never answers', async () => {
-    const proxy = stallingProxy(server.url);
-    const proxyUrl = await proxy.url;
-    const log: string[] = [];
-    try {
-      await closeAllPages(browser.port);
-      const cdp = await openPage(browser.port, `${proxyUrl}/play/platformer`, VIEWPORT);
-      await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
+  it(
+    'recovers on its own after a request that never answers',
+    async () => {
+      const proxy = stallingProxy(server.url);
+      const proxyUrl = await proxy.url;
+      const log: string[] = [];
+      try {
+        await closeAllPages(browser.port);
+        const cdp = await openPage(browser.port, `${proxyUrl}/play/platformer`, VIEWPORT);
+        await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
 
-      const read = async (): Promise<Timings> =>
-        JSON.parse(
-          await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
-        ) as Timings;
-      /** Wait for a page-side counter to pass `floor`, timing and logging the transition. */
-      const awaitCounter = async (
-        expression: string,
-        floor: number,
-        what: string,
-      ): Promise<void> => {
-        const started = Date.now();
-        await until<number>(cdp, expression, (n) => n > floor, FREEZE_TRANSITION_BUDGET_MS);
-        log.push(`${what} +${Date.now() - started}ms`);
-      };
+        const read = async (): Promise<Timings> =>
+          JSON.parse(
+            await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
+          ) as Timings;
+        /** Wait for a page-side counter to pass `floor`, timing and logging the transition. */
+        const awaitCounter = async (
+          expression: string,
+          floor: number,
+          what: string,
+        ): Promise<void> => {
+          const started = Date.now();
+          await until<number>(cdp, expression, (n) => n > floor, FREEZE_TRANSITION_BUDGET_MS);
+          log.push(`${what} +${Date.now() - started}ms`);
+        };
 
-      // Precondition, waited for rather than slept for: the page is demonstrably exchanging
-      // through the proxy. A page that failed to boot would otherwise "recover" trivially.
-      await until<number>(
-        cdp,
-        'globalThis.aegis.timings().snapshots',
-        (n) => n >= SAMPLE_EXCHANGES,
-        FREEZE_TRANSITION_BUDGET_MS,
-      );
-      const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+        // Precondition, waited for rather than slept for: the page is demonstrably exchanging
+        // through the proxy. A page that failed to boot would otherwise "recover" trivially.
+        await until<number>(
+          cdp,
+          'globalThis.aegis.timings().snapshots',
+          (n) => n >= SAMPLE_EXCHANGES,
+          FREEZE_TRANSITION_BUDGET_MS,
+        );
+        const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
 
-      // 1. Arm the stall and wait for the proxy to actually swallow a request. This is in-process
-      //    and exact — no assumption about how often the page talks.
-      proxy.stallNext();
-      log.push(
-        `swallowed +${await untilLocal(() => proxy.stalled() === 1, 'a /frame request to be swallowed')}ms`,
-      );
-      const atStall = await read();
-
-      // 2. The durable evidence that the swallowed request was *abandoned* rather than answered:
-      //    the page recorded a failed exchange. Nothing else in this test can raise that counter.
-      await awaitCounter(
-        'globalThis.aegis.timings().exchangeErrors',
-        atStall.exchangeErrors,
-        'abort recorded',
-      ).catch(async (error: unknown) => {
-        // Distinguish "recovery is broken" from "the browser was never scheduled". The page's
-        // abort is a 2s timer; if it has not fired within this budget then either the timer is
-        // gone — a real defect — or the page has not run at all, which is a fact about the
-        // machine. The frame counter tells them apart, and a red that cannot say which is a red
-        // nobody can act on. Measured once at `swallowed +721ms` during a 62-file `verify`.
-        const now = JSON.parse(
-          await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
-        ) as Timings;
-        const drew = now.frames - atStall.frames;
+        // 1. Arm the stall and wait for the proxy to actually swallow a request. This is in-process
+        //    and exact — no assumption about how often the page talks.
+        proxy.stallNext();
         log.push(
-          drew > 0
-            ? `page drew ${drew} frames while waiting, so it WAS running and the abort never came`
-            : 'page drew NO frames while waiting: it was never scheduled, which is the machine ' +
-                'and not the product — this file competes with sixty others for a software rasteriser',
+          `swallowed +${await untilLocal(() => proxy.stalled() === 1, 'a /frame request to be swallowed')}ms`,
+        );
+        const atStall = await read();
+
+        // 2. The durable evidence that the swallowed request was *abandoned* rather than answered:
+        //    the page recorded a failed exchange. Nothing else in this test can raise that counter.
+        await awaitCounter(
+          'globalThis.aegis.timings().exchangeErrors',
+          atStall.exchangeErrors,
+          'abort recorded',
+        ).catch(async (error: unknown) => {
+          // Distinguish "recovery is broken" from "the browser was never scheduled". The page's
+          // abort is a 2s timer; if it has not fired within this budget then either the timer is
+          // gone — a real defect — or the page has not run at all, which is a fact about the
+          // machine. The frame counter tells them apart, and a red that cannot say which is a red
+          // nobody can act on. Measured once at `swallowed +721ms` during a 62-file `verify`.
+          const now = JSON.parse(
+            await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
+          ) as Timings;
+          const drew = now.frames - atStall.frames;
+          log.push(
+            drew > 0
+              ? `page drew ${drew} frames while waiting, so it WAS running and the abort never came`
+              : 'page drew NO frames while waiting: it was never scheduled, which is the machine ' +
+                  'and not the product — this file competes with sixty others for a software rasteriser',
+          );
+          throw error;
+        });
+
+        // 3. Recovery: the exchange loop goes round again on its own, without a reload or a click.
+        await awaitCounter(
+          'globalThis.aegis.timings().snapshots',
+          atStall.snapshots,
+          'exchange resumed',
+        );
+
+        // 4. And the world moved — a page that resumed fetching but never advanced would pass 3.
+        const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+        report(`freeze/stall: ${log.join(' · ')} · tick ${tickBefore} -> ${tickAfter}`);
+        expect(tickAfter).toBeGreaterThan(tickBefore);
+        expect(proxy.stalled()).toBe(1);
+        cdp.close();
+      } catch (error) {
+        // A failure here must say which transition never arrived, not just that a wait expired.
+        report(
+          `freeze/stall FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
         );
         throw error;
-      });
+      } finally {
+        proxy.server.closeAllConnections();
+        proxy.server.close();
+      }
+    },
+    BUDGET_FREEZE_MS,
+  );
 
-      // 3. Recovery: the exchange loop goes round again on its own, without a reload or a click.
-      await awaitCounter(
-        'globalThis.aegis.timings().snapshots',
-        atStall.snapshots,
-        'exchange resumed',
-      );
+  it(
+    'resumes after a run of exchanges that are refused outright',
+    async () => {
+      // The other half of the guard's contract, and the cheaper failure to cause: a *settled*
+      // rejection. `exchange()` is chained `.catch(...).finally(...)`, so this path is supposed to
+      // clear `inFlight` — but "supposed to" is what the whole reopened criterion is about. A
+      // server restart, a dropped wifi connection or a 5xx from a proxy all look like this, and if
+      // the loop did not resume the game would be dead until the human reloaded.
+      const proxy = stallingProxy(server.url);
+      const proxyUrl = await proxy.url;
+      const log: string[] = [];
+      try {
+        await closeAllPages(browser.port);
+        const cdp = await openPage(browser.port, `${proxyUrl}/play/iso`, VIEWPORT);
+        await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
 
-      // 4. And the world moved — a page that resumed fetching but never advanced would pass 3.
-      const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-      report(`freeze/stall: ${log.join(' · ')} · tick ${tickBefore} -> ${tickAfter}`);
-      expect(tickAfter).toBeGreaterThan(tickBefore);
-      expect(proxy.stalled()).toBe(1);
-      cdp.close();
-    } catch (error) {
-      // A failure here must say which transition never arrived, not just that a wait expired.
-      report(
-        `freeze/stall FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
-      );
-      throw error;
-    } finally {
-      proxy.server.closeAllConnections();
-      proxy.server.close();
-    }
-  }, 120_000);
+        const read = async (): Promise<Timings> =>
+          JSON.parse(
+            await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
+          ) as Timings;
+        const awaitCounter = async (
+          expression: string,
+          floor: number,
+          what: string,
+        ): Promise<void> => {
+          const started = Date.now();
+          await until<number>(cdp, expression, (n) => n > floor, FREEZE_TRANSITION_BUDGET_MS);
+          log.push(`${what} +${Date.now() - started}ms`);
+        };
 
-  it('resumes after a run of exchanges that are refused outright', async () => {
-    // The other half of the guard's contract, and the cheaper failure to cause: a *settled*
-    // rejection. `exchange()` is chained `.catch(...).finally(...)`, so this path is supposed to
-    // clear `inFlight` — but "supposed to" is what the whole reopened criterion is about. A
-    // server restart, a dropped wifi connection or a 5xx from a proxy all look like this, and if
-    // the loop did not resume the game would be dead until the human reloaded.
-    const proxy = stallingProxy(server.url);
-    const proxyUrl = await proxy.url;
-    const log: string[] = [];
-    try {
-      await closeAllPages(browser.port);
-      const cdp = await openPage(browser.port, `${proxyUrl}/play/iso`, VIEWPORT);
-      await until<number>(cdp, 'globalThis.aegis ? globalThis.aegis.tick() : -1', (t) => t >= 0);
+        // Waited for, not slept for — same reason as the stall test above.
+        await until<number>(
+          cdp,
+          'globalThis.aegis.timings().snapshots',
+          (n) => n >= SAMPLE_EXCHANGES,
+          FREEZE_TRANSITION_BUDGET_MS,
+        );
+        const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
 
-      const read = async (): Promise<Timings> =>
-        JSON.parse(
-          await evaluate<string>(cdp, 'JSON.stringify(globalThis.aegis.timings())'),
-        ) as Timings;
-      const awaitCounter = async (
-        expression: string,
-        floor: number,
-        what: string,
-      ): Promise<void> => {
-        const started = Date.now();
-        await until<number>(cdp, expression, (n) => n > floor, FREEZE_TRANSITION_BUDGET_MS);
-        log.push(`${what} +${Date.now() - started}ms`);
-      };
+        // 1. Refuse a run of exchanges, then wait for the proxy to have actually refused them.
+        proxy.rejectNext(25);
+        log.push(
+          `refused +${await untilLocal(() => proxy.rejected() >= 5, 'the proxy to refuse five requests')}ms`,
+        );
+        // 2. And wait for the page to have *seen* them. A proxy that refused into the void would
+        //    make "the page recovered" a statement about nothing.
+        await until<number>(
+          cdp,
+          'globalThis.aegis.timings().exchangeErrors',
+          (n) => n >= 5,
+          FREEZE_TRANSITION_BUDGET_MS,
+        );
+        const failing = await read();
 
-      // Waited for, not slept for — same reason as the stall test above.
-      await until<number>(
-        cdp,
-        'globalThis.aegis.timings().snapshots',
-        (n) => n >= SAMPLE_EXCHANGES,
-        FREEZE_TRANSITION_BUDGET_MS,
-      );
-      const tickBefore = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-
-      // 1. Refuse a run of exchanges, then wait for the proxy to have actually refused them.
-      proxy.rejectNext(25);
-      log.push(
-        `refused +${await untilLocal(() => proxy.rejected() >= 5, 'the proxy to refuse five requests')}ms`,
-      );
-      // 2. And wait for the page to have *seen* them. A proxy that refused into the void would
-      //    make "the page recovered" a statement about nothing.
-      await until<number>(
-        cdp,
-        'globalThis.aegis.timings().exchangeErrors',
-        (n) => n >= 5,
-        FREEZE_TRANSITION_BUDGET_MS,
-      );
-      const failing = await read();
-
-      // 3. Recovery, and 4. the world moving again.
-      await awaitCounter(
-        'globalThis.aegis.timings().snapshots',
-        failing.snapshots,
-        'exchange resumed',
-      );
-      const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
-      report(
-        `freeze/reject: refused ${proxy.rejected()} · ${log.join(' · ')} · ` +
-          `tick ${tickBefore} -> ${tickAfter}`,
-      );
-      expect(proxy.rejected()).toBeGreaterThan(4);
-      // Liveness, not just plumbing: the simulation is advancing again, which is what a human
-      // would check. A page that resumed fetching but never advanced would pass step 3.
-      expect(tickAfter).toBeGreaterThan(tickBefore);
-      cdp.close();
-    } catch (error) {
-      report(
-        `freeze/reject FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
-      );
-      throw error;
-    } finally {
-      proxy.server.closeAllConnections();
-      proxy.server.close();
-    }
-  }, 120_000);
+        // 3. Recovery, and 4. the world moving again.
+        await awaitCounter(
+          'globalThis.aegis.timings().snapshots',
+          failing.snapshots,
+          'exchange resumed',
+        );
+        const tickAfter = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
+        report(
+          `freeze/reject: refused ${proxy.rejected()} · ${log.join(' · ')} · ` +
+            `tick ${tickBefore} -> ${tickAfter}`,
+        );
+        expect(proxy.rejected()).toBeGreaterThan(4);
+        // Liveness, not just plumbing: the simulation is advancing again, which is what a human
+        // would check. A page that resumed fetching but never advanced would pass step 3.
+        expect(tickAfter).toBeGreaterThan(tickBefore);
+        cdp.close();
+      } catch (error) {
+        report(
+          `freeze/reject FAILED after: ${log.length > 0 ? log.join(' · ') : '(no transition observed)'}`,
+        );
+        throw error;
+      } finally {
+        proxy.server.closeAllConnections();
+        proxy.server.close();
+      }
+    },
+    BUDGET_FREEZE_MS,
+  );
 });

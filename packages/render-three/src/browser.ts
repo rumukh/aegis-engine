@@ -46,6 +46,16 @@ export function findBrowser(): string {
 }
 
 /** A minimal Chrome DevTools Protocol session over one WebSocket. */
+/**
+ * Deadline on a single CDP command's *reply*, in milliseconds.
+ *
+ * Declared here rather than as a literal default on {@link CdpSession.send} because it is one of
+ * the deadlines a per-test budget has to contain, and a number that only exists inside a function
+ * signature cannot be included in anyone's arithmetic. See the doc comment on `send` for what it
+ * is and — more importantly — for what it is measured *not* able to tell you.
+ */
+export const TRANSPORT_TIMEOUT_MS = 30_000;
+
 export class CdpSession {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, { ok: (value: unknown) => void; fail: (e: Error) => void }>();
@@ -113,11 +123,71 @@ export class CdpSession {
     if (into.length < 20) into.push(event.text);
   }
 
-  /** Send a CDP command and await its result. */
-  send<T = Record<string, unknown>>(method: string, params: object = {}): Promise<T> {
+  /**
+   * Send a CDP command and await its result, with a deadline on the *transport itself*.
+   *
+   * The deadline is not defensive tidiness; it is the difference between an instrument that can
+   * report and one that cannot. `until()` bounds how long a *condition* may take, and it checks
+   * its deadline between polls — so it can only ever check it if each poll returns. A command that
+   * is accepted and never answered leaves `await evaluate(...)` pending forever, `until` never
+   * reaches its own deadline line, and the whole thing dies at vitest's per-test timeout with no
+   * message at all.
+   *
+   * That is exactly what run 30340124068 produced on `windows-latest`: eight cases, every one of
+   * them `Test timed out in 90000ms`, and **not one line of diagnostic output** — no boot time, no
+   * page description, though the machinery to print both had been landed in the two preceding
+   * commits specifically so that a timeout would explain itself. The blank-page control in the
+   * same file passed at 3861 fps, so the browser was alive and answering. Whatever stops answering
+   * does so once an application page is involved, and the previous design guaranteed it would stay
+   * anonymous.
+   *
+   * 30s: every command this file sends is either a protocol round trip or a `Runtime.evaluate` of
+   * a small expression. Measured on this box, a launch-plus-`openPage` round trip costs 0.7-4.8s
+   * (four samples alone, four under full-suite parallelism), so 30s is roughly 6x the worst routine
+   * observation. It is a hang detector, not a performance bound.
+   *
+   * It is NOT, however, able to tell a dead transport from a browser too starved to answer, and an
+   * earlier version of the message asserted that it was. That claim was measured false during this
+   * change set's own gate: on a box whose 16 logical CPUs were pinned at 100% by an unrelated
+   * runaway process, a `Page.navigate` exceeded 30s and was reported as a hang. The message now
+   * reports the elapsed time and the measured band and leaves the reading to the reader. The number
+   * stays where it is, because it has to remain smaller than the budgets containing it for the
+   * failure to be *named* at all, and a named failure with an honest message beats a mute one.
+   */
+  send<T = Record<string, unknown>>(
+    method: string,
+    params: object = {},
+    timeoutMs = TRANSPORT_TIMEOUT_MS,
+  ): Promise<T> {
     const id = this.#nextId++;
     return new Promise<T>((ok, fail) => {
-      this.#pending.set(id, { ok: ok as (value: unknown) => void, fail });
+      const startedAt = Date.now();
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        fail(
+          new Error(
+            `[cdp] no reply to ${method} (id ${id}) after ${Date.now() - startedAt}ms. The browser ` +
+              `accepted the command and did not answer within the transport deadline, so every ` +
+              `deadline waiting on this reply was unreachable and would have expired mutely. ` +
+              `This does not distinguish a dead transport from a browser too starved to answer: ` +
+              `measured, a protocol round trip on this code path costs 0.7-4.8s, so read the ` +
+              `elapsed figure above against that band before concluding which one you have.`,
+          ),
+        );
+      }, timeoutMs);
+      // Unref so a pending command can never by itself hold the process open; the rejection above
+      // is what callers see, and a stray timer outliving the run would be its own defect.
+      timer.unref?.();
+      this.#pending.set(id, {
+        ok: (value) => {
+          clearTimeout(timer);
+          (ok as (value: unknown) => void)(value);
+        },
+        fail: (e) => {
+          clearTimeout(timer);
+          fail(e);
+        },
+      });
       this.#socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -291,6 +361,47 @@ export async function evaluate<T>(cdp: CdpSession, expression: string): Promise<
   return result.result.value;
 }
 
+/**
+ * Default deadline for {@link until}, in milliseconds.
+ *
+ * Exported rather than left as a literal so that callers which have to *contain* it can compute
+ * with it. A test budget smaller than the deadlines inside it cannot let any of them fire, and a
+ * number copied into a comment in another file is exactly the shared-mutable-index defect this
+ * repository has been bitten by before. `browser-playability.test.ts` derives its per-case budgets
+ * from this constant and asserts the containment, so raising this reddens that guard rather than
+ * silently making eight cases mute again.
+ */
+export const DEFAULT_UNTIL_TIMEOUT_MS = 60_000;
+
+/**
+ * Deadline for the post-`Page.navigate` commit wait inside {@link openPage}, in milliseconds.
+ *
+ * Exported for the same reason as {@link DEFAULT_UNTIL_TIMEOUT_MS}: every caller of `openPage`
+ * pays this before any of its own deadlines start, so a budget that does not include it is wrong.
+ */
+export const NAVIGATION_TIMEOUT_MS = 30_000;
+
+/**
+ * Deadline for a freshly spawned browser to expose its DevTools endpoint, in milliseconds.
+ *
+ * This value is unchanged, but it was a bare literal inside `launchBrowser` and therefore invisible
+ * to the containment arithmetic — which is how it came to be the largest deadline on a path whose
+ * budget did not count it. Measured on this Windows box: launch costs 1188/1556/1359/1656ms alone
+ * and 1637/1982/2658/1983ms under full-suite parallelism, so 30s is roughly 11x the worst routine
+ * observation. It has nevertheless been *seen* to expire, once, on a box under external starvation
+ * (16 logical CPUs pinned at 100% by a runaway `msedgewebview2` holding ~400 000 CPU-seconds). That
+ * excursion is recorded rather than used to size this number: a bound taken from a pathological
+ * outlier is as unjustified as one taken from a single quiet reading, and the failure it produces
+ * is at least *named* (`browser did not expose a DevTools endpoint`) rather than mute, which is the
+ * property this change set exists to establish.
+ *
+ * What was actually wrong was the containment, not the value: two cases in
+ * `browser-diagnostics.test.ts` had a 60s budget containing 30 (this) + 30 (navigate reply) +
+ * 30 (navigation commit) + 2 = 92s of deadlines, so under load they died at the budget having said
+ * nothing. Exported so both browser test files can compute with it and assert that they contain it.
+ */
+export const LAUNCH_TIMEOUT_MS = 30_000;
+
 /** Poll `expression` until `accept` returns true, or throw on timeout. */
 export async function until<T>(
   cdp: CdpSession,
@@ -318,7 +429,7 @@ export async function until<T>(
    * genuine hang. It costs nothing when the page boots — `until` returns as soon as the condition
    * holds — and it is only ever spent when something is actually wrong.
    */
-  timeoutMs = 60_000,
+  timeoutMs = DEFAULT_UNTIL_TIMEOUT_MS,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -429,7 +540,7 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
   if (options.headed !== true) args.unshift('--headless=new');
   const child = spawn(executable, args, { stdio: 'ignore' });
 
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
   for (;;) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`);
@@ -491,11 +602,20 @@ export async function openPage(
     // And the precondition that actually bit us: a navigation can be accepted and still not
     // happen. A page that never left about:blank must say so HERE, where the URL is known, rather
     // than sixty seconds later as an unexplained timeout somewhere else.
+    //
+    // 30s, and the number is chosen by containment rather than by feel. This interval is a strict
+    // sub-interval of the boot wait that every caller performs next -- the document must commit
+    // before any application state can exist -- and the worst *whole boot* ever measured on this
+    // matrix is 22 826ms (windows, under full-suite load, landing #14). So 30s sits above the worst
+    // observation of the interval that contains this one, and it cannot fire before the boot wait
+    // would have. It was 60s, which is not wrong so much as unaffordable: three 60s deadlines were
+    // stacked inside a 90s vitest budget, so the budget always fired first and the caller died
+    // saying nothing. See the deadline table at the head of `browser-playability.test.ts`.
     await until<string>(
       cdp,
       'String(location.href)',
       (href) => href !== 'about:blank',
-      60_000,
+      NAVIGATION_TIMEOUT_MS,
     ).catch(() => {
       throw new Error(
         `[aegis:render-three] asked the browser to open ${url}, but the page is still on ` +

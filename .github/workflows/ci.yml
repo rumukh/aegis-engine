@@ -18,10 +18,24 @@ jobs:
     # Measured locally on a 16-core Windows box under load from four concurrent sessions:
     # `npm ci` 112s + `npm run verify` 248s = 6 minutes. Hosted runners are 2-4 vCPU, so budget
     # 3x for the machine and 1.7x on top of that for a cold module cache and network variance:
-    # 30 minutes is ~5x the measured local wall clock. This is a guard against a *hang*, not a
-    # performance assertion -- GitHub's default is 360 minutes, which would burn six hours to
-    # tell us nothing. If this ever fires, the answer is to find what hung, not to raise it.
-    timeout-minutes: 30
+    # ~5x the measured local wall clock. This is a guard against a *hang*, not a performance
+    # assertion -- GitHub's default is 360 minutes, which would burn six hours to tell us nothing.
+    #
+    # 45, not 30, and the correction is the same rule that this run's own test budgets were just
+    # rewritten by: **an outer deadline that is smaller than the sum of the deadlines it contains
+    # cannot let any of them fire.** A job killed at its timeout reports nothing about which test
+    # was waiting for what -- exactly the mute failure the per-test budgets were resized to end.
+    # Replacing eight mute test timeouts with one mute job timeout would be no progress at all.
+    #
+    # The arithmetic it now has to contain (see the deadline table in browser-playability.test.ts):
+    #   browser-playability worst case  3x150 + 3x150 + 2x210 + 180 beforeAll = 1500s = 25 min
+    #   rest of the suite on windows    ~580s at the measured 5.6x ubuntu ratio =  10 min
+    #   npm ci on a cold cache          ~200s                                   =   3 min
+    #                                                                             ------
+    #                                                                              38 min
+    # 45 leaves margin without approaching the 360-minute default. A healthy run of this job has
+    # been measured at 3-11 minutes, so none of this is paid for unless something is already wrong.
+    timeout-minutes: 45
 
     # The committed root .npmrc pins the corporate Azure Artifacts proxy, which is correct for
     # local development (ENVIRONMENT.md) and unreachable from a GitHub-hosted runner. An env var
