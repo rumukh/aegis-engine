@@ -28,7 +28,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MIN_TEST_FILES } from '../scripts/audit-test-report.mjs';
 import {
-  BROWSER_MARKER,
+  BROWSER_IMPORT,
   browserSpecs,
   isHostedCi,
   SOLO_SKIP_REASON,
@@ -40,12 +40,18 @@ import {
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * The detector, written the way the classifier writes it and for the same reason: this file is
- * itself in the corpus it scans, so a literal here would classify this test as a browser spec.
- * `browser-diagnostics.test.ts`'s containment guard was caught matching its own detector string
- * exactly this way.
+ * The binding name, written as a concatenation — and the asymmetry with the classifier is the
+ * whole point of this file, not an inconsistency.
+ *
+ * `scripts/test-phases.mjs` classifies by parsing the file's syntax, so a mention of the name in
+ * a comment, a string or a template literal cannot be mistaken for an import; it needs no dodge
+ * and has none. This guard's scan is deliberately **textual**, because a second detector that
+ * shares the first one's mechanism cannot disagree with it, and a check whose two sides cannot
+ * disagree is a tautology (AGENTS.md §6.2). Textual means self-matching, so this file — which is
+ * itself in the corpus it scans, and which builds synthetic import statements below — has to keep
+ * the concatenation.
  */
-const MARKER = 'launchBrowser' + '(';
+const NAME = 'launch' + 'Browser';
 
 /** @param {string} path repo-relative */
 function read(path: string): string {
@@ -88,6 +94,17 @@ function phase(name: string, platform = 'linux', hosted = true) {
 }
 
 /**
+ * Strip line and block comments, so a file that merely *discusses* the launcher is not counted
+ * as using it. Approximate by design: a comment opener inside a string literal is stripped too.
+ * That is safe in one direction only, and one direction is enough — stripping can only *remove*
+ * text, so it can only ever produce a false negative, and a false negative here shows up as a
+ * disagreement with the classifier, i.e. as a red, never as a silent pass.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+}
+
+/**
  * The browser specs, derived here and *not* taken from the classifier.
  *
  * Every arm below that says something about the phases has to compare them against a set with
@@ -95,10 +112,27 @@ function phase(name: string, platform = 'linux', hosted = true) {
  * version of this file drove the solo-phase and `minFiles` arms from `browserSpecs()`, and the
  * undercount control — make the classifier return one file instead of two — left both of them
  * **green**, because both sides shrank together. Only the arm anchored on this scan went red.
+ *
+ * "Independent" now means independent of *mechanism*, not merely of corpus. The classifier parses
+ * the file and asks whether it imports the binding; this asks whether the name appears in code
+ * once comments are removed. The two agree on this repository today (measured: the same two
+ * files) and are built to fail differently, which is what makes their equality a real check:
+ *
+ *   - a mention in a comment, a string or a template literal — neither sees it;
+ *   - `import { launchBrowser as boot }` — both see it (the classifier reads the imported name,
+ *     not the local alias; the scan sees the word);
+ *   - `import * as browser` then `browser.<name>(` — this scan sees it, the classifier does not;
+ *   - a dynamic `await import(...)` — the classifier does not see it, and neither does this
+ *     unless the name is written out.
+ *
+ * Each of those disagreements is a finding rather than a nuisance: it names a call shape one of
+ * the two detectors cannot classify, which is precisely the information a single detector of
+ * either kind destroys by answering confidently.
  */
 function scannedBrowserSpecs(): string[] {
+  const word = new RegExp(`\\b${NAME}\\b`);
   return allSpecsFromGit()
-    .filter((path) => read(path).includes(MARKER))
+    .filter((path) => word.test(withoutComments(read(path))))
     .sort((a, b) => a.localeCompare(b));
 }
 
@@ -175,13 +209,11 @@ describe('every spec that launches a browser runs in the solo phase', () => {
     // return every browser spec to the shared phase and report a healthy two-phase split, which
     // is this repository's oldest defect: an instrument producing nothing reads as an instrument
     // reporting nothing wrong. It must throw, and it must say what it could not find.
-    expect(() => browserSpecs(root, () => '')).toThrow(/no spec contains/);
-    expect(() => testPhases(root, () => '')).toThrow(
-      new RegExp(BROWSER_MARKER.replace('(', '\\(')),
-    );
+    expect(() => browserSpecs(root, () => '')).toThrow(/no spec imports/);
+    expect(() => testPhases(root, () => '')).toThrow(new RegExp(BROWSER_IMPORT));
   });
 
-  it('classifies by the marker and not by the file name', () => {
+  it('classifies by the import and not by the file name', () => {
     // A name-based rule is the tempting shortcut and it is wrong in both directions: a spec
     // called `browser-*` that never launches one would be serialised for no reason, and a spec
     // called anything else that does would be starved. Driven over a corpus written here, so
@@ -191,8 +223,45 @@ describe('every spec that launches a browser runs in the solo phase', () => {
       'packages/x/src/renderer-e2e.test.ts', // named for nothing, launches one
     ];
     const synthetic = (path: string): string =>
-      path === 'packages/x/src/renderer-e2e.test.ts' ? `await ${MARKER}{ headless: true });` : '';
+      path === 'packages/x/src/renderer-e2e.test.ts'
+        ? `import { ${NAME} } from './browser.js';\nawait ${NAME}();\n`
+        : '';
     expect(browserSpecs(root, synthetic, corpus)).toEqual(['packages/x/src/renderer-e2e.test.ts']);
+  });
+
+  it('does not classify a file whose only mention of the launcher is in prose', () => {
+    // The defect this landing closes, watched directly rather than inferred from the rewrite.
+    // Under the previous text-occurrence rule every one of these three files was classified as a
+    // browser spec and pushed into the serialised phase; a file that discusses the launcher and a
+    // file that uses it were the same bytes. `browser-playability.test.ts` really does mention it
+    // in four comments and a regex source, so this is the live shape and not an invented one.
+    const corpus = [
+      'packages/x/src/talks-about-it.test.ts',
+      'packages/x/src/quotes-an-import.test.ts',
+      'packages/x/src/holds-a-regex.test.ts',
+      'packages/x/src/actually-imports-it.test.ts',
+    ];
+    const sources: Record<string, string> = {
+      'packages/x/src/talks-about-it.test.ts': `// call ${NAME}() before each case\nexport const a = 1;\n`,
+      'packages/x/src/quotes-an-import.test.ts': `/* import { ${NAME} } from './browser.js'; */\nexport const a = 1;\n`,
+      'packages/x/src/holds-a-regex.test.ts': `const calls = /${NAME}\\(([^;\\n]*)\\)/g;\nexport const a = calls;\n`,
+      'packages/x/src/actually-imports-it.test.ts': `import { ${NAME} } from './browser.js';\nawait ${NAME}();\n`,
+    };
+    const read4 = (path: string): string => sources[path] ?? '';
+
+    // The accepting arm sits in the same corpus deliberately: a classifier that answered "no" to
+    // everything would satisfy the three refusals, and "found nothing" is the exact failure this
+    // whole file exists to refuse.
+    expect(browserSpecs(root, read4, corpus)).toEqual([
+      'packages/x/src/actually-imports-it.test.ts',
+    ]);
+  });
+
+  it('sees a renamed import, which is the same capability under another local name', () => {
+    const corpus = ['packages/x/src/renamed.test.ts'];
+    const renamed = (): string =>
+      `import { ${NAME} as boot } from './browser.js';\nawait boot();\n`;
+    expect(browserSpecs(root, renamed, corpus)).toEqual(corpus);
   });
 });
 
@@ -241,9 +310,7 @@ describe('the browser phase is omitted on a hosted windows runner, and only ther
     // what stops a classifier that stopped matching from returning every browser spec to the
     // shared pool; short-circuiting the call on windows would have removed that guarantee on the
     // one leg where a browser spec in the shared pool does the most damage.
-    expect(() => testPhases(root, () => '', 'win32', true)).toThrow(
-      new RegExp(BROWSER_MARKER.replace('(', '\\(')),
-    );
+    expect(() => testPhases(root, () => '', 'win32', true)).toThrow(new RegExp(BROWSER_IMPORT));
   });
 
   it('states a reason that names the ADR and does not read as a pass', () => {

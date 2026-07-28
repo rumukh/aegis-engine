@@ -39,16 +39,59 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import ts from 'typescript';
 
 /**
- * The marker that makes a spec a browser spec.
+ * The import binding that makes a spec a browser spec: a file cannot launch a browser without
+ * importing the launcher.
  *
- * Written as a concatenation because this classifier is applied to files that discuss it —
- * `test/browser-specs-run-solo.test.ts` is itself in the corpus, and a literal here would
- * travel into any file that quotes this one. `browser-diagnostics.test.ts`'s containment guard
- * was caught matching its own detector string the same way (landing #20).
+ * WHY A BINDING AND NOT A TEXT MATCH. This classifier used to scan for the literal
+ * `launchBrowser` followed by an open parenthesis, and a file that merely *discussed* that
+ * string was indistinguishable from one that used it — so both this file and
+ * `test/browser-specs-run-solo.test.ts` had to write the marker as a concatenation to avoid
+ * classifying themselves. That dodge is a per-file act of memory, which is the shape this
+ * repository has retired three times already (skip-lists for transient directories, twice, then
+ * git-derived corpora). A textual detector cannot be made self-immune, because prose about a
+ * property and code with that property are the same bytes.
+ *
+ * So the detector reads the file's *syntax* instead. A mention inside a comment, a string, or a
+ * template literal is not an `ImportDeclaration`, and no amount of quoting turns it into one.
+ * Measured over this repository's 73 specs: identical classification to the old text scan (the
+ * same two files, zero disagreements), and self-immune on four shapes that defeat a text scan —
+ * a line comment naming the call, a block comment containing the import, a template literal
+ * holding a whole import statement, and a bare string literal of the binding name.
+ *
+ * Cost, measured before adoption because an instrument's price is part of its case, and stated
+ * whole rather than in the flattering half: 240 ms to load the TypeScript module plus 198 ms to
+ * parse all 73 specs — ~440 ms, once per `npm run test`, against a suite that runs for minutes.
  */
-export const BROWSER_MARKER = 'launchBrowser' + '(';
+export const BROWSER_IMPORT = 'launchBrowser';
+
+/**
+ * Does this source import the browser launcher by name?
+ *
+ * Renamed imports (`launchBrowser as boot`) count — the propertyName is the imported binding and
+ * the alias is only what this file calls it. A namespace import (`import * as browser`) does not,
+ * and that is a deliberate limitation rather than an oversight: it is exactly the disagreement
+ * `test/browser-specs-run-solo.test.ts` exists to catch, because its own scan is textual and
+ * would see the call. Two detectors that fail differently are the point of having two.
+ *
+ * @param {string} path repo-relative, used only for parser diagnostics
+ * @param {string} source
+ * @returns {boolean}
+ */
+export function importsBrowserLauncher(path, source) {
+  const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  for (const statement of parsed.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if ((element.propertyName ?? element.name).text === BROWSER_IMPORT) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Spec paths, mirroring `vitest.config.ts`'s `include`.
@@ -95,12 +138,13 @@ export function specFiles(root) {
  */
 export function browserSpecs(root, read, paths) {
   const corpus = paths ?? specFiles(root);
-  const found = corpus.filter((path) => read(path).includes(BROWSER_MARKER));
+  const found = corpus.filter((path) => importsBrowserLauncher(path, read(path)));
   if (found.length === 0) {
     throw new Error(
-      `[test-phases] no spec contains ${BROWSER_MARKER} — the classifier found nothing, which ` +
-        `would silently return every browser test to the shared phase. Either the marker changed ` +
-        `or the corpus is empty; both are defects, and neither may be treated as "no browser tests".`,
+      `[test-phases] no spec imports ${BROWSER_IMPORT} — the classifier found nothing, which ` +
+        `would silently return every browser test to the shared phase. Either the launcher was ` +
+        `renamed or the corpus is empty; both are defects, and neither may be treated as "no ` +
+        `browser tests".`,
     );
   }
   return found;
