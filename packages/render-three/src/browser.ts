@@ -49,6 +49,7 @@ export function findBrowser(): string {
 export class CdpSession {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, { ok: (value: unknown) => void; fail: (e: Error) => void }>();
+  readonly #diagnostics: string[] = [];
   #nextId = 1;
 
   private constructor(socket: WebSocket) {
@@ -56,9 +57,19 @@ export class CdpSession {
     socket.addEventListener('message', (event: MessageEvent) => {
       const message = JSON.parse(String(event.data)) as {
         id?: number;
+        method?: string;
+        params?: Record<string, unknown>;
         result?: unknown;
         error?: { message: string };
       };
+      // CDP multiplexes command replies (which carry `id`) and events (which carry `method`) down
+      // one socket. Events used to be dropped here, which meant a page that threw on load was
+      // indistinguishable from a page that loaded fine and simply never satisfied the condition
+      // being waited on — the timeout said only what was awaited, never why it never arrived.
+      if (message.method !== undefined) {
+        this.#record(message.method, message.params);
+        return;
+      }
       if (message.id === undefined) return;
       const waiter = this.#pending.get(message.id);
       if (waiter === undefined) return;
@@ -77,6 +88,19 @@ export class CdpSession {
     });
   }
 
+  /** Page-side failures, in arrival order. The only place a browser-side error is reported. */
+  get diagnostics(): readonly string[] {
+    return this.#diagnostics;
+  }
+
+  #record(method: string, params: Record<string, unknown> | undefined): void {
+    const text = describeFailureEvent(method, params);
+    if (text === undefined) return;
+    // Bounded: a page in a render loop can throw once per frame, and a thousand copies of one
+    // message is not more informative than the first few.
+    if (this.#diagnostics.length < 20) this.#diagnostics.push(text);
+  }
+
   /** Send a CDP command and await its result. */
   send<T = Record<string, unknown>>(method: string, params: object = {}): Promise<T> {
     const id = this.#nextId++;
@@ -90,6 +114,33 @@ export class CdpSession {
   close(): void {
     this.#socket.close();
   }
+}
+
+/**
+ * Render the CDP events that mean "the page is broken", and ignore the rest.
+ *
+ * Deliberately narrow. The point is to explain a timeout, and a transcript of every network and
+ * lifecycle event would bury the one line that matters in the noise it arrived with.
+ */
+function describeFailureEvent(
+  method: string,
+  params: Record<string, unknown> | undefined,
+): string | undefined {
+  if (params === undefined)
+    return method === 'Inspector.targetCrashed' ? 'the page crashed' : undefined;
+  if (method === 'Runtime.exceptionThrown') {
+    const details = params['exceptionDetails'] as
+      { text?: string; exception?: { description?: string } } | undefined;
+    const described = details?.exception?.description ?? details?.text;
+    return described === undefined ? undefined : `uncaught in page: ${described}`;
+  }
+  if (method === 'Log.entryAdded') {
+    const entry = params['entry'] as { level?: string; text?: string } | undefined;
+    if (entry?.level !== 'error' || entry.text === undefined) return undefined;
+    return `browser log: ${entry.text}`;
+  }
+  if (method === 'Inspector.targetCrashed') return 'the page crashed';
+  return undefined;
 }
 
 /** Virtual key codes for every key the binding tables can name. */
@@ -177,7 +228,17 @@ export async function until<T>(
   for (;;) {
     const value = await evaluate<T>(cdp, expression);
     if (accept(value)) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${expression}`);
+    if (Date.now() > deadline) {
+      // The two failures a mute timeout cannot tell apart: a page that died, and a page that is
+      // alive and simply never satisfied the condition. They have completely different causes and
+      // completely different fixes, so the message states which one happened.
+      const seen = cdp.diagnostics;
+      const why =
+        seen.length === 0
+          ? 'The page reported no error, so it was still running and the condition never became true.'
+          : `The page reported:\n  ${seen.join('\n  ')}`;
+      throw new Error(`timed out waiting for ${expression} after ${timeoutMs}ms. ${why}`);
+    }
     await sleep(40);
   }
 }
@@ -269,6 +330,10 @@ export async function openPage(
   const cdp = await CdpSession.connect(created.webSocketDebuggerUrl);
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
+  // Browser-level errors — a WebGL context that cannot be created, a module that 404s — are
+  // reported through Log, not Runtime, and are exactly the failures a headless CI runner produces
+  // that a developer's machine never does.
+  await cdp.send('Log.enable');
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: viewport.width,
     height: viewport.height,
