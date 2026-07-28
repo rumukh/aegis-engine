@@ -225,9 +225,16 @@ describe('openPage actually opens the page', () => {
   // lock by Chrome with `WrongDocumentError`. Nothing said so, so `poc/capture.mjs` failed on fps
   // -- three PoCs deep, in a different package, with a message about mouse-look.
   //
-  // Asserted here rather than inside `openPage` deliberately: only one page in a browser can hold
-  // focus, so a caller that legitimately holds two open would redden on a rule it is not breaking.
-  // This case controls that by opening exactly one.
+  // This case was intermittently red on `main`, and the reason is worth recording because the
+  // obvious diagnosis is wrong. It is not two browsers contending for one OS foreground: measured
+  // with four brought up concurrently, all four held focus at once. `Page.bringToFront` is
+  // acknowledged by the browser process while `document.hasFocus()` is answered by the renderer,
+  // and under load those moments are up to 213ms apart -- so the sample was early, not contended.
+  //
+  // The fix therefore belongs in `openPage`, which now waits for focus to arrive rather than for
+  // the command to be accepted. This assertion is unchanged, and deliberately so: it was never
+  // wrong. It was the only thing reporting a race that `capture.ts` still runs (it clicks for
+  // pointer lock and waits 250ms -- a 37ms margin over that lag).
   it('hands back a focused page, which is what capabilities like pointer lock require', async () => {
     const browser = await launchBrowser({ port: 9355 });
     try {
@@ -240,6 +247,33 @@ describe('openPage actually opens the page', () => {
     } finally {
       await closeAllPages(browser.port);
       browser.process.kill();
+    }
+  }, 120_000);
+
+  // The case above, run in the condition that made it flaky. Opening pages while other browsers
+  // are coming up is what two parallel test files do to each other, and it is the load that pushed
+  // focus propagation past the moment `openPage` used to return.
+  //
+  // Asserted on every page rather than on the set: the failure being guarded is one page missing
+  // focus, so a check that tolerated "most of them" would pass in the exact state that broke fps.
+  it('holds that guarantee when several browsers are coming up at once', async () => {
+    const ports = [9356, 9357, 9358];
+    const browsers = await Promise.all(ports.map((port) => launchBrowser({ port })));
+    try {
+      const focused = await Promise.all(
+        browsers.map(async (browser) => {
+          const cdp = await openPage(browser.port, 'about:blank');
+          const state = await evaluate<boolean>(cdp, 'document.hasFocus()');
+          cdp.close();
+          return state;
+        }),
+      );
+      expect(focused).toEqual([true, true, true]);
+    } finally {
+      for (const browser of browsers) {
+        await closeAllPages(browser.port);
+        browser.process.kill();
+      }
     }
   }, 120_000);
 });

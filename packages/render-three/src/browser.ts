@@ -516,6 +516,33 @@ export async function openPage(
   // Chrome answers an unfocused document with `WrongDocumentError`. So this line is not defensive
   // tidying -- it restores the one side effect the old creation path was silently relying on.
   await cdp.send('Page.bringToFront');
+  // ...and then WAIT for it, which is the same lesson as the navigation check above, one line
+  // lower. `Page.bringToFront` is acknowledged by the BROWSER process; `document.hasFocus()` is
+  // answered by the RENDERER. Awaiting the command proves it was accepted, not that it arrived --
+  // exactly the distinction that made "the navigation was accepted and never happened" worth its
+  // own check.
+  //
+  // Under load those two moments are measurably apart. Four browsers brought up concurrently,
+  // 16 samples, polling every 25ms:
+  //
+  //     15 samples  hasFocus=true at the moment bringToFront resolved
+  //      1 sample   hasFocus=false, becoming true 213ms later
+  //      0 samples  still false after 3s
+  //
+  // Nothing there is contended: all four held focus at once, so this is not one window winning a
+  // fight for the foreground. It is one page's focus not having reached its renderer yet.
+  //
+  // That 213ms is not academic. `capture.ts` clicks for pointer lock and waits 250ms before
+  // checking -- a 37ms margin over a lag that grows with machine load. This is the WrongDocumentError
+  // above, still live, merely rarer; and a test that samples the same instant is not flaky so much
+  // as it is the only thing that has ever reported it.
+  await until<boolean>(cdp, 'document.hasFocus()', (focused) => focused === true).catch(() => {
+    throw new Error(
+      '[aegis:render-three] the page was brought to the front and never took focus. Capabilities ' +
+        'that require it (pointer lock, and therefore mouse-look) would be refused with ' +
+        'WrongDocumentError.',
+    );
+  });
   return cdp;
 }
 
