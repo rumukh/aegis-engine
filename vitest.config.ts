@@ -81,6 +81,30 @@ export default defineConfig({
     // hangs, not a budget — the 129s outlier spawns a real eslint run and needs its own explicit
     // timeout in its own file, which belongs to whoever owns `packages/harness`.
     testTimeout: 120_000,
+    // And the same number for hooks, because the default is 10s and nothing here had ever said so.
+    //
+    // Measured, not reasoned: of the 27 hooks in this repository, 26 ran on vitest's 10 000 ms
+    // default and exactly one carried an explicit budget — `browser-playability.test.ts`'s
+    // `beforeAll`, raised to 180s in a landing that fixed the file in front of it and left the
+    // class open. So a hook had one twelfth of a test's budget while doing the same kind of work:
+    // these hooks spawn CLI subprocesses, launch Chrome, and delete scaffolded game trees on
+    // Windows. `packages/cli/src/discovery.test.ts`'s `afterEach` blew the 10s default mid-gate at
+    // 22 771 ms, in a file whose own sibling case is measured at 12 715 ms — the cleanup was given
+    // less room than the thing it cleans up after.
+    //
+    // The failure mode is the worst one available in this suite, which is why this is not merely
+    // tidiness. A `beforeAll` that times out does not fail its file: vitest reports that file's
+    // cases as **skipped**, and skipped is not failed. That is exactly how CI run 30324264768
+    // reported a green windows leg in 3m36s with nine browser tests that never executed. An
+    // `afterEach` that times out is louder but no better — it fails a case that had already
+    // passed, and blames whichever case happened to be last.
+    //
+    // 120s is not a budget for hooks to spend; it is the same bound-on-hangs argument as the line
+    // above, applied to the half of the run that had been left on a default nobody chose. A hook
+    // that genuinely needs more says so in its own file, and `browser-playability.test.ts`'s 180s
+    // still does — it is now an override above a stated root rather than the only thing standing
+    // between this suite and 10 seconds.
+    hookTimeout: 120_000,
     environment: 'node',
     reporters: ['default'],
   },
