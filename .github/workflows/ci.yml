@@ -60,3 +60,20 @@ jobs:
       # stale or half-written `dist`.
       - name: Verify (build + typecheck tests + test + lint)
         run: npm run verify
+
+      # A SECOND, INDEPENDENT PATH TO RED — deliberately outside `npm run verify`.
+      #
+      # Measured on this workflow, runs 30323223392 and 30324264768, both on `windows-latest`:
+      # `npm run test` reported `(9 tests | 8 failed)` and the next link in verify's `&&` chain
+      # started 1.1 seconds later, so the exit code was lost somewhere in npm's chain and the job
+      # went green with eight failing tests. A separate run of the same tree reported nine browser
+      # tests SKIPPED — a `beforeAll` that could not launch a browser — and also went green.
+      #
+      # `scripts/run-tests.mjs` refuses both shapes from inside verify. This step exists because
+      # that refusal travels back through the very npm chain that was measured to drop it. Here
+      # the runner observes the exit code directly, so the two paths cannot fail in the same way.
+      # The report is written by the run above; if it is absent this step fails, which is correct —
+      # a verify that produced no evidence is not a verify that passed.
+      - name: Audit that the test run actually happened
+        if: always()
+        run: node scripts/audit-test-report.mjs .vitest-report.json

@@ -122,10 +122,19 @@ npm run verify
 ```
 
 That is `build` → `typecheck:tests` → `test` → `lint` (eslint + dependency boundaries +
-prettier) over the **whole workspace**. Not your package — the workspace. `.github/workflows/ci.yml`
-exists but this repo has no git remote, so it never runs. `npm run verify` is the gate.
+prettier) over the **whole workspace**. Not your package — the workspace. `npm run verify` is the
+gate, and `.github/workflows/ci.yml` now runs it on every push, on `windows-latest` and
+`ubuntu-latest`. Measured on the first runs: ubuntu 2m15s green; windows 11m, and on windows the
+browser tests in `packages/render-three` are **not yet passing** — see [§9](#9-known-rough-edges).
 
-`npm run test` runs Vitest over `packages/*/{src,test}/**/*.test.ts` and
+`npm run test` does not invoke Vitest directly. It runs `scripts/run-tests.mjs`, which deletes the
+previous run's report, runs Vitest, and then refuses the run unless Vitest's own JSON report shows
+it happened: no failures, **no skipped tests** (this repo declares none, so a skip means a hook
+died and took its file's cases with it), and a floor on how much of the corpus ran. That wrapper
+exists because CI was measured reporting green twice on a suite whose browser tests had failed or
+been skipped — the exit code alone was not enough to tell a passing run from an absent one.
+
+Vitest runs over `packages/*/{src,test}/**/*.test.ts` and
 `games/*/{src,test}/**/*.test.ts`. `aegis test` is a second, independent runner over the same
 specs, discovering compiled `*.gametest.{js,mjs,cjs}` modules
 ([§6.6](#66-the-template)). Both should be green; they fail differently, and the one you reach for
@@ -1712,8 +1721,9 @@ golden.
 about behaviour, and the only thing separating a true one from a merely convincing one is a command
 you ran.
 
-**Row 7 is the one exception to the paragraph that opens this section, and says so rather than
-borrowing its authority.** It was not reproduced by a probe with a control; it is proved by
+**The resource-id row below is the one exception to the paragraph that opens this section, and says
+so rather than borrowing its authority.** It was not reproduced by a probe with a control; it is
+proved by
 construction, which for this defect is the stronger evidence and not the weaker. Resource-id
 checking is opt-in — `validateResources` returns immediately when no registry is supplied
 (`packages/content/src/load.ts:626`) — and **all three** callers in shipped code pass only a
@@ -1734,6 +1744,8 @@ probe would only ever have told you about the one path it took.
 | 4   | **The ASCII raster clamps off-grid entities to the border**, so a fallen entity renders as if standing inside a wall.                                                                                                                                                                                                                                                                                                               | Confirming with `--view world` ([§5.3](#53-see-a-2d-level)).                                                                                                     |
 | 5   | **A scaffolded `*.gametest.mjs` names its plugin as a string**, so `runGameTest` cannot run it directly (`plugin.components is not a function`) — only the CLI resolves strings.                                                                                                                                                                                                                                                    | Substituting the plugin object before calling `runGameTest` ([§6.5](#65-mutation-check-your-own-test)).                                                          |
 | 6   | **A typo in a scene's `resources` id is silent, and the value still reaches the world.** Resource-id checking is opt-in and no shipped caller opts in, so `"gravty"` validates clean, runs clean, and is stored under the misspelling — where the mode that wanted `"gravity"` never looks. Unlike row 2 there is not even a `markers` line, because nothing knows the id was meant to be anything.                                 | Dumping resources with `aegis inspect --view world` and reading back the id you actually got, not the one you typed.                                             |
+
+| 7 | **The `packages/render-three` browser tests do not pass on `windows-latest` in CI**, though they pass there locally and on `ubuntu-latest`. Measured across three legs on two trees: eight of nine failed with `timed out waiting for globalThis.aegis`, and a fourth leg skipped all nine when the `beforeAll` could not launch a browser inside 90s. The blank-page control passed at 9768 fps in the same run, so Chrome does launch — it is the application page that never boots. Every one of those legs was reported **green** before `scripts/run-tests.mjs` existed. | Running them locally, and treating any `windows-latest` green over `packages/render-three` as unproven until this row is deleted. |
 
 The reason this section exists at all — and the reason [§6](#6-writing-a-game-test-that-can-actually-fail)
 is written the way it is — is a defect that entered this codebase from `docs/architecture.md` §7,

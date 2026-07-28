@@ -18,7 +18,7 @@
     "pretypecheck:tests": "npm run build",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "pretest": "npm run build",
-    "test": "vitest run",
+    "test": "node scripts/run-tests.mjs",
     "pretest:watch": "npm run build",
     "test:watch": "vitest",
     "verify": "npm run build && npm run typecheck:tests && npm run test && npm run lint",

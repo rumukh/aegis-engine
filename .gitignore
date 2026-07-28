@@ -16,3 +16,8 @@ out/
 *.rej
 *.swp
 *~
+
+# The self-description a test run writes about itself, consumed by scripts/audit-test-report.mjs
+# in the same process that produced it. Never committed: a checked-in report is a claim about
+# a run nobody can point at.
+.vitest-report.json
