@@ -1071,8 +1071,9 @@ function stallingProxy(target: string): {
     }
 
     // Everything else is forwarded verbatim, header for header and byte for byte, without ever
-    // holding a whole body in memory. Upstream's own `cache-control: no-store` and `content-type`
-    // travel with it, so the page sees what the dev server actually said.
+    // holding a whole body in memory. Upstream's own cache-control, content-type and ETag travel
+    // with it in both directions, so the page sees what the dev server actually said — including a
+    // bodiless 304 when the page already holds an unchanged module.
     const forwarded = httpRequest({
       agent,
       host: upstream.hostname,
