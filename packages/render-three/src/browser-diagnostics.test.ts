@@ -33,6 +33,7 @@ import {
   LAUNCH_TIMEOUT_MS,
   NAVIGATION_TIMEOUT_MS,
   ROUND_TRIP_HISTORY,
+  STALL_LAG_MS,
   TRANSPORT_TIMEOUT_MS,
   PAINT_FRAMES_FLOOR,
   PAINT_TIMEOUT_MS,
@@ -293,9 +294,10 @@ describe('openPage actually opens the page', () => {
       // browser really is the thing that went quiet. This is the arm that gives the `late` verdict
       // its meaning: without a case that reads `on time`, "look at THIS side of the socket" would
       // be satisfiable by a classifier that says it every time.
-      await expect(hung).rejects.toThrow(/i\.e\. on time/);
+      await expect(hung).rejects.toThrow(/the loop kept up throughout/);
       await expect(hung).rejects.toThrow(/Look at the browser/);
       await expect(hung).rejects.not.toThrow(/LATE/);
+      await expect(hung).rejects.not.toThrow(/does NOT mean this process ran throughout/);
 
       // And the session is still usable afterwards — a deadline that poisoned the socket would
       // turn one unanswered command into a cascade of unrelated failures.
@@ -710,9 +712,9 @@ describe('a transport deadline says which side of the socket stopped', () => {
   const idle = (ms: number): Promise<void> => new Promise((ok) => setTimeout(ok, ms));
 
   it('calls a deadline that fired when it was asked to a browser that did not answer', () => {
-    const verdict = describeDeadline(30_000, 30_000, { maxMs: 3, samples: 400 });
+    const verdict = describeDeadline(30_000, 30_000, { maxMs: 3, samples: 400, expected: 400 });
     expect(verdict.verdict).toBe('on-time');
-    expect(verdict.text).toMatch(/i\.e\. on time/);
+    expect(verdict.text).toMatch(/the loop kept up throughout/);
     expect(verdict.text).toMatch(/Look at the browser/);
     // The retraction, pinned. This is the arm that must stay green for the `late` arm below to
     // mean anything: a classifier that never blames the browser would satisfy every negative
@@ -796,7 +798,115 @@ describe('a transport deadline says which side of the socket stopped', () => {
     // figure honest: the lag reported by a timeout is the lag *since that command was sent*, not
     // the worst this process has ever seen, so an unrelated block ten minutes earlier cannot be
     // presented as evidence about this command.
-    expect(maxLagSince(Date.now() + 60_000)).toEqual({ maxMs: 0, samples: 0 });
+    const future = maxLagSince(Date.now() + 60_000);
+    expect(future.maxMs).toBe(0);
+    expect(future.samples).toBe(0);
+    // ...and with nothing to divide, the CPU share is *unknown* rather than zero. Zero would read
+    // as "this process was never scheduled", which is the opposite of "I did not measure".
+    expect(future.cpuRatio).toBeUndefined();
+
+    // The denominator is derived from the WINDOW, not from the samples: it is what the sampler
+    // *owed*, which is the only thing that makes a sample count evidence. Asserted differentially
+    // rather than absolutely — a longer window owes proportionally more — because an absolute count
+    // would be a bound inside the band of whatever else the box is doing.
+    const shortWindow = maxLagSince(Date.now() - 500);
+    const longWindow = maxLagSince(Date.now() - 5_000);
+    expect(shortWindow.expected).toBeGreaterThan(5);
+    expect(longWindow.expected).toBeGreaterThan(shortWindow.expected * 5);
+  });
+
+  it('separates a process that is not running from one that is running flat out', async () => {
+    // This is the fork nothing else in this file can resolve, and the reason `cpuRatio` exists.
+    // "The event loop lagged 30 seconds" is consistent with two opposite causes -- something
+    // synchronous in *our* process, or an oversubscribed box that never scheduled us -- and they
+    // have opposite fixes. Run 30371952350 could not be attributed for exactly this reason.
+    startEventLoopLagMonitor();
+
+    const idleFrom = Date.now();
+    await idle(700);
+    const whileIdle = maxLagSince(idleFrom);
+
+    const busyFrom = Date.now();
+    await idle(50);
+    block(700);
+    await idle(50);
+    const whileBusy = maxLagSince(busyFrom);
+
+    // Anti-vacuity: both windows were actually sampled, and both have two endpoints to divide.
+    expect(whileIdle.samples).toBeGreaterThan(1);
+    expect(whileBusy.samples).toBeGreaterThan(1);
+    expect(whileIdle.cpuRatio).toBeDefined();
+    expect(whileBusy.cpuRatio).toBeDefined();
+
+    // A spin loop holds a CPU for essentially the whole of its window. An `await setTimeout` does
+    // not. The claim is the *separation*, not either absolute value: an absolute floor on the busy
+    // window would be a bound inside a band on a contended box, which is the error this project
+    // has retired three times.
+    expect(whileBusy.cpuRatio ?? 0).toBeGreaterThan((whileIdle.cpuRatio ?? 0) + 0.3);
+
+    // And the two verdicts read differently, which is the whole point of measuring it.
+    expect(
+      describeDeadline(30_000, 30_000, { maxMs: 5_000, samples: 3, cpuRatio: 0.98 }).text,
+    ).toMatch(/it was RUNNING/);
+    expect(
+      describeDeadline(30_000, 30_000, { maxMs: 5_000, samples: 3, cpuRatio: 0.02 }).text,
+    ).toMatch(/NOT SCHEDULED/);
+    expect(describeDeadline(30_000, 30_000, { maxMs: 5_000, samples: 3 }).text).toMatch(
+      /CPU share unknown/,
+    );
+  });
+
+  it('refuses to call a loop that stopped "scheduled throughout" just because the deadline was long', () => {
+    // The measured contradiction, from `windows-latest` run 30371952350, `Runtime.evaluate (id 49)`:
+    // 30152ms elapsed against a 30000ms deadline -- 152ms over, so `on-time` under the old rule --
+    // printed beside `30102ms over 2 sample(s)` of its own event-loop lag. Both cannot be true.
+    //
+    // A 30s deadline absorbs a block shorter than itself: the timer and the 50ms sampler both come
+    // due when the block ends, and only the sampler shows how long it was. The overshoot is
+    // therefore the WEAK detector, and reading it as the strong one inverted the attribution on two
+    // of that run's three failures.
+    const verdict = describeDeadline(30_152, 30_000, { maxMs: 30_102, samples: 2, expected: 603 });
+    expect(verdict.verdict).toBe('stalled');
+    expect(verdict.text).toMatch(/does NOT mean this process ran throughout/);
+    expect(verdict.text).toMatch(/30102ms over 2 sample\(s\) of ~603 due/);
+    expect(verdict.text).toMatch(/look at THIS side of the socket first/i);
+    // The retracted sentence, pinned so it cannot come back.
+    expect(verdict.text).not.toMatch(/being scheduled throughout/);
+    expect(verdict.text).not.toMatch(/Look at the browser/);
+  });
+
+  it('still blames the browser when the loop really did keep up, and still says LATE when it did not', () => {
+    // Without this arm, `stalled` could be produced by a classifier that has simply stopped
+    // answering `on-time` -- which would satisfy every assertion in the case above while deleting
+    // the distinction it exists to draw. All three verdicts must be reachable from one instrument.
+    expect(
+      describeDeadline(30_000, 30_000, { maxMs: STALL_LAG_MS, samples: 600, expected: 600 })
+        .verdict,
+    ).toBe('on-time');
+    expect(
+      describeDeadline(30_000, 30_000, { maxMs: STALL_LAG_MS + 1, samples: 600, expected: 600 })
+        .verdict,
+    ).toBe('stalled');
+    // `late` outranks `stalled`: an overshoot is direct evidence about this command, where the lag
+    // is evidence about the process. A run that is both gets the stronger statement.
+    expect(
+      describeDeadline(77_467, 30_000, { maxMs: 54_512, samples: 5, expected: 1_549 }).verdict,
+    ).toBe('late');
+  });
+
+  it('reports the sampler\u2019s own miss rate, because 2 of 600 is not "a small sample"', () => {
+    // `30102ms over 2 sample(s)` reads as a handful of readings. `2 sample(s) of ~603 due` reads as
+    // an instrument that was itself starved -- which is the finding. The denominator is the whole
+    // difference between those two sentences.
+    const starved = describeDeadline(30_152, 30_000, { maxMs: 30_102, samples: 2, expected: 603 });
+    expect(starved.text).toContain('of ~603 due');
+    // And when a caller cannot supply it, the text must not invent one.
+    const withoutDenominator = describeDeadline(30_152, 30_000, { maxMs: 30_102, samples: 2 });
+    expect(withoutDenominator.text).toContain('over 2 sample(s)');
+    // The denominator fragment specifically, not the word "due" — the stalled prose contains "come
+    // due" in its explanation, and a substring assertion loose enough to match that would be red
+    // for a reason unrelated to what it claims to check.
+    expect(withoutDenominator.text).not.toContain('of ~');
   });
 
   /**

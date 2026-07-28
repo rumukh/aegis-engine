@@ -230,9 +230,61 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
     };
   };
 
+  /**
+   * Turn a thrown value into something a reader can act on.
+   *
+   * Exported because it is the whole content of the 500 path and a 500 that cannot be provoked in
+   * a test is a 500 nobody has ever read.
+   */
+  const describeFailure = (
+    error: unknown,
+    method: string,
+    path: string,
+  ): { error: string; method: string; path: string; stack?: string } => {
+    const message =
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : `non-Error thrown: ${String(error)}`;
+    return {
+      error: message,
+      method,
+      path,
+      ...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {}),
+    };
+  };
+
+  /**
+   * The 500 path, which until now discarded the only thing that mattered.
+   *
+   * It read `.catch(() => sendJson(response, 500, { error: 'internal error' }))`. The thrown value
+   * was bound to nothing and printed nowhere, so a request that failed produced a body naming no
+   * cause, no method and no path, and **nothing at all on stderr**.
+   *
+   * That is not a hypothetical cost. `windows-latest` run 30371420409 logged
+   * `Failed to load resource: the server responded with a status of 500 (Internal Server Error)`
+   * against `/play/platformer` and `/play/iso`, on a page that reached `readyState: complete` with
+   * `aegis: undefined` — i.e. the boot never finished. The 500 is the most specific evidence in
+   * that entire run and it was unreadable: the message says a request failed and refuses to say
+   * which, or why. Three CI round trips were spent reading other things.
+   *
+   * The reason is worth naming because it recurs: an error handler is the one path nobody
+   * exercises, so a handler that destroys its input looks exactly like a handler that works. It is
+   * the same defect as a test that cannot fail, moved into production code.
+   *
+   * Also written to stderr, not only into the response body, because the body reaches the *page* —
+   * and on CI the page's console is summarised, truncated and sometimes (as above) never read at
+   * all, whereas the server's stderr lands in the job log verbatim.
+   */
   const server: Server = createServer((request, response) => {
-    void handle(request, response).catch(() => {
-      if (!response.headersSent) sendJson(response, 500, { error: 'internal error' });
+    const method = request.method ?? '(no method)';
+    const path = request.url ?? '(no url)';
+    void handle(request, response).catch((error: unknown) => {
+      const detail = describeFailure(error, method, path);
+      console.error(
+        `[aegis:dev-server] ${method} ${path} failed: ${detail.error}` +
+          (detail.stack !== undefined ? `\n${detail.stack}` : ''),
+      );
+      if (!response.headersSent) sendJson(response, 500, detail);
       else response.end();
     });
   });

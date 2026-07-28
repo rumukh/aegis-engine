@@ -85,7 +85,22 @@ export const LAG_SAMPLE_INTERVAL_MS = 50;
 export const LATE_OVERSHOOT_MS = 1_000;
 
 let lagTimer: ReturnType<typeof setInterval> | undefined;
-const lagHistory: { at: number; lateBy: number }[] = [];
+
+/**
+ * One reading of the loop's health.
+ *
+ * `cpuMicros` is cumulative process CPU time (user + system) at the moment of the sample. Cumulative
+ * rather than per-interval so that a *missed* interval is still covered: the difference between two
+ * surviving samples spans the gap between them, which is exactly the period a stalled loop takes no
+ * samples in and is exactly the period we need to attribute.
+ */
+interface LagSample {
+  at: number;
+  lateBy: number;
+  cpuMicros: number;
+}
+
+const lagHistory: LagSample[] = [];
 
 /**
  * How many lag samples are kept.
@@ -109,7 +124,8 @@ export function startEventLoopLagMonitor(): void {
   let due = Date.now() + LAG_SAMPLE_INTERVAL_MS;
   lagTimer = setInterval(() => {
     const now = Date.now();
-    lagHistory.push({ at: now, lateBy: now - due });
+    const cpu = process.cpuUsage();
+    lagHistory.push({ at: now, lateBy: now - due, cpuMicros: cpu.user + cpu.system });
     if (lagHistory.length > LAG_HISTORY) lagHistory.shift();
     due = now + LAG_SAMPLE_INTERVAL_MS;
   }, LAG_SAMPLE_INTERVAL_MS);
@@ -117,28 +133,90 @@ export function startEventLoopLagMonitor(): void {
 }
 
 /**
- * The worst event-loop lag observed at or after `sinceMs`, and how many samples that is over.
+ * The worst event-loop lag observed at or after `sinceMs`, how many samples that is over, how many
+ * were **due**, and what share of the window this process actually spent on a CPU.
  *
  * The sample count is returned rather than folded away because a maximum over **zero** samples and
  * a maximum **of** zero render identically as `0ms` and mean opposite things — the first is an
  * instrument that never ran. Callers print both.
+ *
+ * `expected` was added after `windows-latest` run 30371952350 reported `30102ms over 2 sample(s)`
+ * for a 30-second window. A 50ms sampler owes ~600 samples there, so **the sampler's own miss rate
+ * is a measurement**: 2 of 600 says the loop was stopped, not merely busy. Without the denominator
+ * `2 sample(s)` reads as a small number of readings rather than as evidence.
+ *
+ * `cpuRatio` is the fork nothing else in this file could resolve. It is CPU time (user + system)
+ * divided by wall time across the window, so:
+ *
+ * - **~1** — the process was running flat out. Something synchronous, or genuine saturation. Ours.
+ * - **~0** — the process was *not scheduled*. The box is oversubscribed by something else. Not ours.
+ *
+ * "Event loop lagged 30 seconds" is consistent with both, and they have opposite fixes. It is
+ * `undefined` when fewer than two samples landed in the window, because a ratio needs two endpoints
+ * — an unknown that says so rather than a zero that reads as "not scheduled".
  */
-export function maxLagSince(sinceMs: number): { maxMs: number; samples: number } {
+export function maxLagSince(sinceMs: number): {
+  maxMs: number;
+  samples: number;
+  expected: number;
+  cpuRatio?: number;
+} {
   let maxMs = 0;
   let samples = 0;
+  let first: LagSample | undefined;
+  let last: LagSample | undefined;
   for (const sample of lagHistory) {
     if (sample.at < sinceMs) continue;
     samples += 1;
     if (sample.lateBy > maxMs) maxMs = sample.lateBy;
+    first ??= sample;
+    last = sample;
   }
-  return { maxMs, samples };
+  const expected = Math.max(0, Math.round((Date.now() - sinceMs) / LAG_SAMPLE_INTERVAL_MS));
+  if (first === undefined || last === undefined || last.at <= first.at) {
+    return { maxMs, samples, expected };
+  }
+  const wallMs = last.at - first.at;
+  const cpuMs = (last.cpuMicros - first.cpuMicros) / 1000;
+  return { maxMs, samples, expected, cpuRatio: cpuMs / wallMs };
 }
 
-/** Whether a deadline fired when it was asked to, or long after. */
-export type DeadlineVerdict = 'on-time' | 'late';
+/**
+ * Whether a deadline fired when it was asked to, or long after — or fired on time over a loop that
+ * had nevertheless stopped.
+ *
+ * `stalled` exists because the first two were not enough, and the gap was not theoretical: run
+ * 30371952350 printed *"fired 152ms late, i.e. on time, so this process was being scheduled
+ * throughout"* in the same sentence as *"event-loop lag 30102ms over 2 sample(s)"*. Both cannot be
+ * true. **A long deadline absorbs a block that a short sampler exposes**: a 30s timer created at T
+ * and a 50ms sampler both come due when a 30s block ends, and the timer is 152ms overdue while the
+ * sampler is 30s overdue. The overshoot is therefore a *weak* detector of starvation — it can only
+ * see a block that outlasts the deadline itself — and reading it as the strong one inverted the
+ * attribution on two of that run's three failures.
+ */
+export type DeadlineVerdict = 'on-time' | 'late' | 'stalled';
 
 /**
- * Say which side of the socket a transport timeout points at, from the deadline's own overshoot.
+ * The lag beyond which this process cannot be described as having run continuously.
+ *
+ * Same scale and same reasoning as {@link LATE_OVERSHOOT_MS}: twenty sampler intervals, well clear
+ * of ordinary GC and scheduler jitter, and three orders below the figures that motivated it.
+ */
+export const STALL_LAG_MS = 1_000;
+
+/** Name what the CPU share says, or say that it says nothing. */
+function describeCpu(lag: { cpuRatio?: number }): string {
+  if (lag.cpuRatio === undefined) return 'CPU share unknown \u2014 not measured over this window';
+  const pct = Math.round(lag.cpuRatio * 100);
+  if (lag.cpuRatio >= 0.8) return `this process held a CPU ${pct}% of the window — it was RUNNING`;
+  if (lag.cpuRatio <= 0.2)
+    return `this process held a CPU only ${pct}% of the window — it was NOT SCHEDULED, so the box is oversubscribed by something outside this process`;
+  return `this process held a CPU ${pct}% of the window — partly scheduled`;
+}
+
+/**
+ * Say which side of the socket a transport timeout points at, from the deadline's own overshoot
+ * **and** from the loop's own lag, which are not the same evidence.
  *
  * This exists because the transport timeout message asserted something its own numbers refuted.
  * It opened *"The browser accepted the command and did not answer"* — a claim about the browser —
@@ -153,17 +231,20 @@ export type DeadlineVerdict = 'on-time' | 'late';
  * merely printed does not. The same run's three failures were read as browser-side wedges purely
  * because the taxonomy the message offered — cliff, climb, empty — describes only the far side.
  *
- * `lagMaxMs` is reported alongside rather than folded into the verdict. The overshoot is the direct
- * evidence and needs nothing else to be believed; the lag figure says whether the whole loop was
- * starved or only this one timer was unlucky, and the two disagreeing is itself informative.
+ * **And then this function made the same mistake one level in.** It classified from the overshoot
+ * alone and printed *"so this process was being scheduled throughout"* — a claim the lag figure
+ * beside it flatly refuted, twice in one run. See {@link DeadlineVerdict}. The repair is not a
+ * better sentence: it is to let the quantity that can see the fault decide, and to make the case
+ * where the two disagree a **named verdict** rather than a footnote to a wrong one.
  */
 export function describeDeadline(
   elapsedMs: number,
   timeoutMs: number,
-  lag: { maxMs: number; samples: number },
+  lag: { maxMs: number; samples: number; expected?: number; cpuRatio?: number },
 ): { verdict: DeadlineVerdict; text: string } {
   const overshoot = elapsedMs - timeoutMs;
-  const band = `${lag.maxMs}ms over ${lag.samples} sample(s)`;
+  const coverage = lag.expected === undefined ? '' : ` of ~${lag.expected} due`;
+  const band = `${lag.maxMs}ms over ${lag.samples} sample(s)${coverage}`;
   if (overshoot > LATE_OVERSHOOT_MS) {
     return {
       verdict: 'late',
@@ -172,15 +253,27 @@ export function describeDeadline(
         `lagged up to ${band} while the command was outstanding. A deadline that late was not ` +
         `measuring a silent browser: it was measuring a Node process that was not running. The ` +
         `reply may have arrived and gone unread, so look at THIS side of the socket first — the ` +
-        `transport band below describes the far side and cannot see this.`,
+        `transport band below describes the far side and cannot see this. ${describeCpu(lag)}.`,
+    };
+  }
+  if (lag.maxMs > STALL_LAG_MS) {
+    return {
+      verdict: 'stalled',
+      text:
+        `The ${timeoutMs}ms deadline fired only ${overshoot}ms late, but that does NOT mean this ` +
+        `process ran throughout: its event loop lagged up to ${band} while the command was ` +
+        `outstanding. A deadline this long absorbs a block shorter than itself — the timer and the ` +
+        `50ms sampler both come due when the block ends, and only the sampler shows how long it ` +
+        `was. So the loop stopped and the reply could have arrived and gone unread. ` +
+        `${describeCpu(lag)}. Look at THIS side of the socket first.`,
     };
   }
   return {
     verdict: 'on-time',
     text:
-      `The ${timeoutMs}ms deadline fired ${overshoot}ms late, i.e. on time, so this process was ` +
-      `being scheduled throughout and the reply genuinely did not arrive (worst event-loop lag ` +
-      `while the command was outstanding: ${band}). Look at the browser.`,
+      `The ${timeoutMs}ms deadline fired ${overshoot}ms late, and the loop kept up throughout ` +
+      `(worst event-loop lag while the command was outstanding: ${band}), so the reply genuinely ` +
+      `did not arrive. ${describeCpu(lag)}. Look at the browser.`,
   };
 }
 

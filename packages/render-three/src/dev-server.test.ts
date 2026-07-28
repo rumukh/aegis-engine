@@ -7,7 +7,7 @@
  * is injectable, and therefore isolated.
  * @packageDocumentation
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createWorld } from '@aegis/core';
 import { PlatformerController } from '@aegis/mode-platformer';
 import { platformerPlugin } from '@aegis/mode-platformer';
@@ -323,5 +323,122 @@ describe('dev server', () => {
     // The page still receives everything emitted since it last looked.
     const page = await frame('platformer');
     expect(page.events.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The 500 path.
+ *
+ * It had never been exercised. That is exactly why it was able to discard the thrown value and
+ * still look correct: an error handler is the one branch nobody drives, so a handler that destroys
+ * its input is indistinguishable from one that works until the day something actually throws — and
+ * on that day it says `{"error":"internal error"}` and nothing else. On `windows-latest` run
+ * 30371420409 that day arrived, twice, and the most specific evidence in the run was unreadable.
+ *
+ * Driven through a real socket rather than by calling the handler, because the claim is about what
+ * a *client* receives, and the response body is the only thing a browser can report.
+ */
+describe('a failed request says what failed', () => {
+  /** A catalogue entry whose session cannot be constructed, so `runtimeFor` throws on first use. */
+  const BOOBY_TRAP = 'deliberate failure, to drive the 500 path';
+  const RUDE_TRAP = 'a bare string, thrown rudely';
+  const brokenGames: GameDefinition[] = [
+    GAMES[0] as GameDefinition,
+    {
+      id: 'broken',
+      title: 'Broken',
+      blurb: 'cannot be constructed',
+      objective: 'none',
+      mode: 'platformer',
+      get plugin(): GameDefinition['plugin'] {
+        throw new Error(BOOBY_TRAP);
+      },
+      scene: PLATFORMER_SCENE,
+      bindings: BINDINGS.platformer,
+    },
+    {
+      id: 'rude',
+      title: 'Rude',
+      blurb: 'throws a non-Error',
+      objective: 'none',
+      mode: 'platformer',
+      get plugin(): GameDefinition['plugin'] {
+        throw RUDE_TRAP;
+      },
+      scene: PLATFORMER_SCENE,
+      bindings: BINDINGS.platformer,
+    },
+  ];
+
+  let broken: DevServer;
+
+  beforeAll(async () => {
+    broken = await startDevServer({ games: brokenGames, port: 0, repoRoot, clock: () => now });
+  });
+
+  afterAll(async () => {
+    await broken.close();
+  });
+
+  it('reports the thrown message, the method and the path — not "internal error"', async () => {
+    const written: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      written.push(args.map(String).join(' '));
+    });
+    let response: Response;
+    try {
+      response = await fetch(`${broken.url}/api/broken/frame`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: { seq: 1, axes: {} } }),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(response.status).toBe(500);
+
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['error']).toContain(BOOBY_TRAP);
+    expect(body['method']).toBe('POST');
+    expect(body['path']).toBe('/api/broken/frame');
+    // A stack is what turns "something threw" into a line number.
+    expect(String(body['stack'])).toContain(BOOBY_TRAP);
+    // The retracted body. Pinned so the regression cannot come back in a later edit.
+    expect(JSON.stringify(body)).not.toContain('internal error');
+
+    // The stderr half is the one that matters on CI: the body reaches the *page*, whose console is
+    // summarised and truncated in the job log (and in run 30371420409 was never read at all),
+    // whereas the server's stderr lands there verbatim.
+    expect(written.join('\n')).toContain(BOOBY_TRAP);
+    expect(written.join('\n')).toContain('/api/broken/frame');
+  });
+
+  it('describes a non-Error throw instead of printing "[object Object]"', async () => {
+    // `throw 'a string'` is legal and loses `.message`, `.name` and `.stack`. A handler that only
+    // knows how to read an Error reports nothing at all for it — the same blindness one level in.
+    const response = await fetch(`${broken.url}/api/rude/state`);
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['error']).toContain('non-Error thrown');
+    expect(body['error']).toContain(RUDE_TRAP);
+    expect(body['stack']).toBeUndefined();
+  });
+
+  it('does not report a failure for a request that succeeds (the accepting arm)', async () => {
+    // Without this, every assertion above is satisfied by a server that 500s on everything.
+    const response = await fetch(`${broken.url}/api/platformer/state`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['error']).toBeUndefined();
+    expect(body['stack']).toBeUndefined();
+  });
+
+  it('still 404s an unknown game rather than 500ing it', async () => {
+    // The two failure modes must stay distinguishable: "no such game" is the client's fault and
+    // carries no stack, "the game blew up" is ours and carries one. A 500 path that swallowed the
+    // 404 would make the new detail arrive for the wrong reason.
+    const response = await fetch(`${broken.url}/api/no-such-game/state`);
+    expect(response.status).toBe(404);
+    expect(JSON.stringify(await response.json())).not.toContain('stack');
   });
 });
