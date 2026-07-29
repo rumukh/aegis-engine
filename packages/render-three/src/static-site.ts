@@ -28,7 +28,7 @@
  * @packageDocumentation
  */
 import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, posix, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import type { GameMode } from '@aegis/core';
 import { SESSION_CONTROLS } from './bindings.js';
 import type { ModeBindings } from './bindings.js';
@@ -241,12 +241,48 @@ export class StaticGraphError extends Error {
   }
 }
 
+/**
+ * Is `child` inside `parent` (or the same directory)?
+ *
+ * The `isAbsolute` clause is the whole point, and leaving it out cost a CI round trip. On Windows,
+ * `path.relative` between two different **drives** returns the target as an absolute path — there
+ * is no `..` chain that gets you from `C:\` to `D:\`. So `relative(outDir, repoRoot)` answered
+ * `D:\a\aegis-engine\aegis-engine` on a hosted runner whose repository is on `D:` and whose
+ * `os.tmpdir()` is on `C:`, and every "does not start with `..`, therefore it is inside" test in
+ * this file inverted at once: the export guard refused a perfectly good temp directory, and
+ * `placeOf` would have addressed a vendored module as if it lived in the artifact.
+ *
+ * Neither showed up locally, because on a development machine the repository and the temp
+ * directory are on the same drive; the same code answers correctly there for the wrong reason.
+ * `scripts/check-deps.mjs` has had this clause since it was written.
+ *
+ * `api` is injectable so the Windows semantics can be driven from any host — see
+ * `static-site.test.ts`, which checks both `path.win32` and `path.posix`. A cross-drive case is
+ * unreachable on POSIX, and a bug reachable on only one CI leg is a bug nobody can debug locally.
+ */
+export function isInside(
+  parent: string,
+  child: string,
+  api: {
+    relative: (a: string, b: string) => string;
+    isAbsolute: (p: string) => boolean;
+    sep: string;
+  } = {
+    relative,
+    isAbsolute,
+    sep,
+  },
+): boolean {
+  const rel = api.relative(parent, child);
+  if (api.isAbsolute(rel)) return false;
+  return rel === '' || !(rel.startsWith('..' + api.sep) || rel === '..');
+}
+
 /** Where a module lands under `vendor/`, or `undefined` if it escapes every known package root. */
 function vendorTarget(modules: readonly StaticModule[], file: string): string | undefined {
   for (const module of modules) {
-    const rel = relative(module.root, file);
-    if (rel === '' || rel.startsWith('..' + sep) || rel === '..') continue;
-    return posix.join('vendor', module.name, ...rel.split(sep));
+    if (!isInside(module.root, file)) continue;
+    return posix.join('vendor', module.name, ...relative(module.root, file).split(sep));
   }
   return undefined;
 }
@@ -302,11 +338,8 @@ export function collectModuleGraph(options: {
 
   /** Where a reached module is addressed inside the artifact. */
   const placeOf = (file: string): string | undefined => {
-    if (siteRoot !== undefined) {
-      const rel = relative(siteRoot, file);
-      if (rel !== '' && !rel.startsWith('..' + sep) && rel !== '..') {
-        return rel.split(sep).join('/');
-      }
+    if (siteRoot !== undefined && file !== siteRoot && isInside(siteRoot, file)) {
+      return relative(siteRoot, file).split(sep).join('/');
     }
     return vendorTarget(options.modules, file);
   };
@@ -655,8 +688,7 @@ export function exportStaticSite(options: ExportOptions): ExportResult {
   // `--out ..`. A directory that *contains* the repository, or that holds a `package.json` or a
   // `.git`, is not a build output — it is somebody's work.
   const repoRoot = resolve(options.repoRoot);
-  const toRepo = relative(outDir, repoRoot);
-  if (toRepo === '' || !(toRepo.startsWith('..' + sep) || toRepo === '..')) {
+  if (isInside(outDir, repoRoot)) {
     throw new StaticGraphError(
       `[aegis:static-site] refusing to write the site to ${outDir}: the repository is inside it, ` +
         'and this directory is deleted before it is written.',

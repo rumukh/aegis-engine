@@ -29,15 +29,35 @@
  *
  * Every one of them is separately shown to be able to fail.
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Subprocesses are awaited, never `execFileSync`.
+ *
+ * A synchronous child blocks this worker's event loop for as long as it runs, and vitest's worker
+ * talks to the main process over an RPC with its own deadline. Measured here: the build-refusal
+ * case spawns two full site exports back to back, ~19s of blocked loop, and the run ended with
+ * `[vitest-worker]: Timeout calling "onTaskUpdate"` — every case green and the process exiting 1,
+ * for a reason that has nothing to do with what is being asserted.
+ */
+const run = promisify(execFile);
 
 /** The prefix a GitHub **project** Pages site is served under. The whole point of relative URLs. */
 const PAGES_BASE = '/aegis-engine/';
@@ -186,15 +206,14 @@ function closureFrom(
   return { reached, unresolved, nodeBuiltins };
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   siteDir = mkdtempSync(join(tmpdir(), 'aegis-pages-'));
   // The command CI runs, run the way CI runs it. Building the site through its real entry point is
   // what makes this a test of the shipped thing rather than of a function called with tidy
   // arguments — the `dist/` it reads is the one `pretest` just built.
-  execFileSync(process.execPath, [join('poc', 'build-site.mjs'), '--out', siteDir], {
+  await run(process.execPath, [join('poc', 'build-site.mjs'), '--out', siteDir], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
-    stdio: 'pipe',
   });
   siteFiles = walk(siteDir);
   siteText = new Map(
@@ -420,7 +439,7 @@ describe('the pages run the games this repository actually ships', () => {
     }
   });
 
-  it('names, in strings, the very plugin objects poc/play.mjs runs', () => {
+  it('names, in strings, the very plugin objects poc/play.mjs runs', async () => {
     // The catalogue says the same thing twice — once as an imported value for the dev server, once
     // as a module specifier plus an export name for the browser — and two spellings of one fact
     // drift. This resolves the strings in a real Node process and compares object identity, so a
@@ -439,7 +458,7 @@ describe('the pages run the games this repository actually ships', () => {
       }
       process.stdout.write(JSON.stringify(out));
     `;
-    const stdout = execFileSync(process.execPath, ['--input-type=module', '-e', probe], {
+    const { stdout } = await run(process.execPath, ['--input-type=module', '-e', probe], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
     });
@@ -460,7 +479,7 @@ describe('the pages run the games this repository actually ships', () => {
 });
 
 describe('the build refuses rather than shipping a broken site', () => {
-  it('fails when a module the graph needs is missing', () => {
+  it('fails when a module the graph needs is missing', async () => {
     // The export's whole safety argument is that an unservable static import stops the build. A
     // refusal nobody has watched happen is a refusal nobody can rely on. Driving it through the
     // real command means the failure path this asserts is the one CI would hit.
@@ -470,18 +489,11 @@ describe('the build refuses rather than shipping a broken site', () => {
     // at its own first import and proves nothing about the crawler.
     const moved = join(REPO_ROOT, 'packages', 'render-three', 'dist', 'client', 'static-boot.js');
     const stash = `${moved}.stashed`;
-    const rename = (from: string, to: string): void => {
-      execFileSync(process.execPath, [
-        '-e',
-        `require('fs').renameSync(${JSON.stringify(from)}, ${JSON.stringify(to)})`,
-      ]);
-    };
-    const build = (out: string): { failed: boolean; message: string } => {
+    const build = async (out: string): Promise<{ failed: boolean; message: string }> => {
       try {
-        execFileSync(process.execPath, [join('poc', 'build-site.mjs'), '--out', out], {
+        await run(process.execPath, [join('poc', 'build-site.mjs'), '--out', out], {
           cwd: REPO_ROOT,
           encoding: 'utf8',
-          stdio: 'pipe',
         });
         return { failed: false, message: '' };
       } catch (error) {
@@ -492,20 +504,20 @@ describe('the build refuses rather than shipping a broken site', () => {
     const broken = mkdtempSync(join(tmpdir(), 'aegis-pages-broken-'));
     const ok = mkdtempSync(join(tmpdir(), 'aegis-pages-ok-'));
     try {
-      rename(moved, stash);
-      const refused = build(broken);
-      rename(stash, moved);
+      renameSync(moved, stash);
+      const refused = await build(broken);
+      renameSync(stash, moved);
       expect(refused.failed, 'the export succeeded with the browser runtime missing').toBe(true);
       expect(refused.message).toMatch(/does not exist/);
       expect(refused.message).toMatch(/static-boot\.js/);
 
       // The other half: the same command over the same tree succeeds once the module is back.
       // Without it, the refusal above would also be satisfied by a build that is simply broken.
-      const restored = build(ok);
+      const restored = await build(ok);
       expect(restored.failed, restored.message).toBe(false);
       expect(existsSync(join(ok, 'index.html'))).toBe(true);
     } finally {
-      if (existsSync(stash)) rename(stash, moved);
+      if (existsSync(stash)) renameSync(stash, moved);
       rmSync(broken, { recursive: true, force: true });
       rmSync(ok, { recursive: true, force: true });
     }

@@ -14,13 +14,14 @@
  */
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, resolve, win32 } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BINDINGS } from './bindings.js';
 import {
   collectModuleGraph,
   engineModules,
   exportStaticSite,
+  isInside,
   moduleSpecifiers,
   renderStaticBootModule,
   renderStaticIndexPage,
@@ -243,6 +244,37 @@ describe('renderStaticBootModule', () => {
     expect(() => renderStaticBootModule(game({ pluginExport: 'not an identifier' }))).toThrow(
       StaticGraphError,
     );
+  });
+});
+
+describe('isInside', () => {
+  // The regression this exists for was found by CI and not by this machine, which is the whole
+  // argument for driving both path flavours explicitly. On a hosted `windows-latest` runner the
+  // repository is on `D:` and `os.tmpdir()` is on `C:`; `path.relative` between two drives returns
+  // an absolute path, so every "does not begin with `..`, therefore it is inside" test inverted.
+  // The export refused a perfectly good temp directory and the whole `pages-site` file was
+  // reported as 22 skipped cases. On a development machine both paths share a drive, so the same
+  // code answered correctly for the wrong reason and the bug was invisible locally.
+  it('answers on POSIX paths', () => {
+    const p = posix;
+    expect(isInside('/a', '/a/b/c', p)).toBe(true);
+    expect(isInside('/a', '/a', p)).toBe(true);
+    expect(isInside('/a', '/b', p)).toBe(false);
+    expect(isInside('/a/b', '/a', p)).toBe(false);
+    // A prefix of the *string* is not a prefix of the *path*.
+    expect(isInside('/a', '/ab', p)).toBe(false);
+  });
+
+  it('answers on Windows paths, including across drives', () => {
+    const w = win32;
+    expect(isInside('D:\\repo', 'D:\\repo\\packages\\core', w)).toBe(true);
+    expect(isInside('D:\\repo', 'D:\\repo', w)).toBe(true);
+    expect(isInside('D:\\repo\\packages', 'D:\\repo', w)).toBe(false);
+    // The arm that was wrong: two different drives are not nested either way, and `relative`
+    // says so by returning an absolute path rather than a `..` chain.
+    expect(win32.relative('C:\\tmp\\out', 'D:\\repo')).toBe('D:\\repo');
+    expect(isInside('C:\\tmp\\out', 'D:\\repo', w)).toBe(false);
+    expect(isInside('D:\\repo', 'C:\\tmp\\out', w)).toBe(false);
   });
 });
 

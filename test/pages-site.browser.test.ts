@@ -28,13 +28,14 @@
  * ADR-0010 excludes that phase from hosted `windows-latest`. It runs on `ubuntu-latest` in CI and
  * on a Windows workstation before landing.
  */
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createReadStream, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   DEFAULT_UNTIL_TIMEOUT_MS,
@@ -147,10 +148,11 @@ function startFileServer(root: string): Promise<{ server: Server; origin: string
 beforeAll(
   async () => {
     siteDir = mkdtempSync(join(tmpdir(), 'aegis-pages-browser-'));
-    execFileSync(process.execPath, [join('poc', 'build-site.mjs'), '--out', siteDir], {
+    // Awaited rather than `execFileSync`: a synchronous child blocks this worker's event loop, and
+    // vitest's worker RPC has its own deadline. See the same note in `test/pages-site.test.ts`.
+    await promisify(execFile)(process.execPath, [join('poc', 'build-site.mjs'), '--out', siteDir], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
-      stdio: 'pipe',
     });
     const started = await startFileServer(siteDir);
     server = started.server;
