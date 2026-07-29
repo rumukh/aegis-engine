@@ -372,3 +372,84 @@ describe('the browser phase is omitted on a hosted windows runner, and only ther
     expect(isHostedCi({ CI: 'false' })).toBe(false);
   });
 });
+
+/**
+ * The browser phase is omitted on a hosted Windows runner. That must stay a statement about *that
+ * host* and never become a statement about every host.
+ *
+ * The guards above are complete about the phase logic: given a platform and a hosted flag, they
+ * pin exactly which phases run. None of them can see the input that decides whether the exempt
+ * branch is the only branch ever taken — the CI matrix. `soloEnabled` is a pure function of
+ * arguments the workflow supplies, so trimming `.github/workflows/ci.yml` to Windows alone leaves
+ * every assertion in this file green while the browser specs run **nowhere**, and the visible
+ * result is a fully green CI, which is the outcome an author making that edit is looking for.
+ *
+ * That is this repository's oldest failure shape — an instrument that produces nothing reading
+ * identically to an instrument reporting nothing wrong — reached through the one door the
+ * exemption opened. It costs one assertion to close, and the exemption is what makes it load
+ * bearing: the fix that turned CI green (landing #33) is only sound while a non-Windows leg
+ * exists to carry the specs it stopped running.
+ */
+describe('the windows exemption cannot quietly become a universal one', () => {
+  /** Runner labels from the workflow's matrix, read from the file rather than assumed. */
+  function matrixRunners(): string[] {
+    const yml = read('.github/workflows/ci.yml');
+    const list = /^\s*os:\s*\[([^\]]+)\]/m.exec(yml)?.[1];
+    if (list === undefined) {
+      throw new Error(
+        'could not read the `os:` matrix out of .github/workflows/ci.yml. This guard is the only ' +
+          'thing keeping the browser specs on any host at all, so a parse that silently returned ' +
+          'nothing would report health while they ran nowhere. It throws instead.',
+      );
+    }
+    return list.split(',').map((entry) => entry.trim());
+  }
+
+  /**
+   * A runner label's `process.platform`. Throws on an unknown label rather than guessing: a new
+   * runner image has to be classified deliberately, because guessing in the permissive direction
+   * is precisely the silent retirement this block exists to prevent.
+   */
+  function nodePlatformOf(runner: string): string {
+    if (runner.startsWith('windows')) return 'win32';
+    if (runner.startsWith('ubuntu')) return 'linux';
+    if (runner.startsWith('macos')) return 'darwin';
+    throw new Error(
+      `unknown runner label "${runner}" — teach nodePlatformOf() its process.platform value, and ` +
+        `check soloEnabled() gives the answer you want for it.`,
+    );
+  }
+
+  it('keeps a runner in the CI matrix that actually runs the browser phase', () => {
+    const runners = matrixRunners();
+
+    // Anti-vacuity, aimed at the specific way this arm could pass over nothing: a regex that
+    // matched an empty list, or a workflow that lost its matrix, leaves the check below with
+    // nothing to disagree with.
+    expect(runners.length).toBeGreaterThan(1);
+    expect(runners).toContain('windows-latest');
+
+    // `true` for hosted, always, and never `isHostedCi()`: the question is what happens *on a
+    // runner*. Reading this process's environment would answer it for whichever machine happened
+    // to run the suite — and on a workstation `soloEnabled` is true for every platform, so the
+    // assertion would be incapable of failing exactly where it is most needed.
+    expect(
+      runners.filter((runner) => soloEnabled(nodePlatformOf(runner), true)),
+      'every runner in the CI matrix is one that skips the browser specs, so they now run ' +
+        'nowhere and every leg will report green. scripts/test-phases.mjs drops them on a hosted ' +
+        'windows runner because that host was measured unable to run them — not because they ' +
+        'stopped mattering. Keep a non-windows leg, or move them back into the shared gate.',
+    ).not.toEqual([]);
+  });
+
+  it('the matrix check can fail — control', () => {
+    // The arm above is worth exactly what its ability to go red is worth, and it reads a file
+    // this block also parses. Driven here over matrices written down rather than read, so both
+    // answers are exercised on data this repository does not currently contain.
+    expect(['windows-latest'].filter((r) => soloEnabled(nodePlatformOf(r), true))).toEqual([]);
+    expect(['ubuntu-latest'].filter((r) => soloEnabled(nodePlatformOf(r), true))).toEqual([
+      'ubuntu-latest',
+    ]);
+    expect(() => nodePlatformOf('freebsd-13')).toThrow(/unknown runner label/);
+  });
+});
