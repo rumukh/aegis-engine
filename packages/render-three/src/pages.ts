@@ -43,7 +43,7 @@ export function importMap(): string {
 }
 
 /** Shared page chrome. */
-const STYLE = `
+export const PAGE_STYLE = `
   :root { color-scheme: dark; --ink: #e6edf3; --dim: #8b98a5; --edge: #22303f; }
   * { box-sizing: border-box; }
   body { margin: 0; background: #05070d; color: var(--ink);
@@ -97,7 +97,7 @@ export function renderIndexPage(games: readonly GameDefinition[]): string {
 <head>
   <meta charset="utf-8" />
   <title>Aegis — play the proof-of-concept games</title>
-  <style>${STYLE}</style>
+  <style>${PAGE_STYLE}</style>
 </head>
 <body>
   <main class="index">
@@ -135,7 +135,7 @@ export function renderPlayPage(game: GameDefinition): string {
 <head>
   <meta charset="utf-8" />
   <title>${escapeHtml(game.title)} — Aegis</title>
-  <style>${STYLE}</style>
+  <style>${PAGE_STYLE}</style>
   <script type="importmap">
 ${importMap()}
   </script>

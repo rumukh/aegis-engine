@@ -1248,6 +1248,14 @@ const VIRTUAL_KEYS: Readonly<Record<string, { key: string; vk: number }>> = {
   ArrowDown: { key: 'ArrowDown', vk: 40 },
   ArrowLeft: { key: 'ArrowLeft', vk: 37 },
   ArrowRight: { key: 'ArrowRight', vk: 39 },
+  // The three session controls (`SESSION_CONTROLS` in bindings.ts). They are not gameplay input,
+  // which is why they were absent: the screenshot capture drives pause/step through the dev
+  // server's `/control` endpoint instead of the keyboard. The static site has no such endpoint —
+  // its pages handle P, `.` and R locally — so the only way to check that they work is to press
+  // them, and the only way to press them is for the mapping to exist.
+  KeyP: { key: 'p', vk: 80 },
+  KeyR: { key: 'r', vk: 82 },
+  Period: { key: '.', vk: 190 },
 };
 
 /** Dispatch a real key event into the page. */

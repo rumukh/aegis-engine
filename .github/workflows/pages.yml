@@ -1,0 +1,106 @@
+name: Pages
+
+# Publish the three proof-of-concept games as a **playable** static site.
+#
+# The site has no backend, and that is the whole design rather than a limitation worked around:
+# `packages/render-three/src/client/static-boot.ts` runs the same `createLiveSession` the dev
+# server runs, in the page, on the same fixed timestep. `poc/build-site.mjs` crawls the module
+# graph from the pages' own entry points and refuses to emit a site whose graph reaches a module it
+# cannot serve — including any `node:` built-in — so a broken artifact fails this job rather than
+# becoming a deployment that loads and cannot play.
+#
+# `ci.yml` is untouched and remains the gate. This workflow deploys what that gate has already
+# type-checked, tested and linted; it re-runs one targeted spec of its own (see below) because the
+# thing it is about to publish is built here, in this job, on a different machine.
+
+on:
+  push:
+    branches: [main]
+  # So a deployment can be re-run without an empty commit — useful after enabling Pages, or after
+  # a settings change that has nothing to do with the tree.
+  workflow_dispatch:
+
+# The three permissions the official Pages pipeline needs, and no more: read the code, write the
+# Pages deployment, and mint the OIDC token `deploy-pages` exchanges for it.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one in flight: a cancelled deploy can leave the site
+# serving a half-uploaded artifact, which is worse than serving the previous one for a minute.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build the static site
+    runs-on: ubuntu-latest
+    # ubuntu, not the CI matrix. This job produces bytes, not a cross-OS determinism claim, and the
+    # artifact is byte-identical either way — the export copies already-built `dist/` output.
+    # ADR-0010 also excludes the browser specs from hosted windows, so ubuntu is the leg that can
+    # actually run the page.
+
+    # The committed root `.npmrc` pins the corporate Azure Artifacts proxy, which is correct on the
+    # development machine (ENVIRONMENT.md) and unreachable from a hosted runner. An env var
+    # outranks a project `.npmrc` in npm's config precedence. See the long note in `ci.yml`.
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build the workspace
+        run: npm run build
+
+      # A site is only deployable if the thing being deployed is the thing that was tested. This
+      # spec exports the site through the very command the next step runs and then reads the
+      # artifact back: closed module graph, no `node:` import, no `/api/`, no root-relative URL,
+      # every embedded scene byte-identical to the one the headless acceptance tests run. It costs
+      # ~30s and it is the difference between deploying a game and deploying a page.
+      - name: Refuse to deploy an artifact that is a shell
+        run: npm run test -- test/pages-site.test.ts
+
+      - name: Export the static site
+        run: npm run build:site
+
+      # Stated here as well as in the spec above, because this is the copy that is uploaded. A
+      # `dist-site` that exists but is empty would otherwise deploy cleanly and serve nothing.
+      - name: Check the artifact before uploading it
+        run: |
+          set -eu
+          for page in index.html 404.html play/platformer/index.html play/iso/index.html play/fps/index.html; do
+            test -s "dist-site/$page" || { echo "missing or empty: dist-site/$page" >&2; exit 1; }
+          done
+          modules=$(find dist-site -name '*.js' | wc -l)
+          echo "dist-site: $modules JavaScript module(s)"
+          test "$modules" -ge 80 || { echo "only $modules modules — the export is not complete" >&2; exit 1; }
+
+      - uses: actions/configure-pages@v5
+        # Turns Pages on with "GitHub Actions" as the source if it is not already, so the first
+        # deployment does not need a manual visit to the settings page.
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-site
+
+  deploy:
+    name: deploy to github-pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

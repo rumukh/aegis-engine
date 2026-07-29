@@ -26,6 +26,43 @@ Then open <http://127.0.0.1:5173> and pick a game. Flags: `--port <n>`, `--host 
 Every game also takes `P` (pause/resume), `.` (single-step one tick while paused) and `R`
 (restart at tick 0).
 
+## Ship them as a static site
+
+```
+npm run build
+npm run build:site        # writes dist-site/
+```
+
+`dist-site/` is a self-contained static site — a landing page, one route per game, the workspace's
+built `dist/` modules and three.js — that any file server can hand out. `.github/workflows/pages.yml`
+publishes it to GitHub Pages.
+
+**It is not the dev server's HTML with the server removed, and that distinction is the whole point.**
+The dev server owns the simulation in a Node process and the page posts input to
+`POST /api/<id>/frame` once per displayed frame; uploading that page to Pages would produce a site
+that loads, paints its HUD, and fails every exchange for ever. So the static build moves the session
+into the page: `client/static-boot.ts` builds the same `createLiveSession`, from the same composed
+plugin and the same scene document, and steps it on the same fixed timestep.
+
+Nothing about the non-interference rule moves with it. The page still renders from
+`session.snapshot()` restored into a **separate mirror world**, and the adapter is handed the mirror
+— never the simulation's `World`. The boundary was always the snapshot, not the process.
+
+Three properties the exporter enforces rather than hopes for:
+
+- **the module graph is crawled, not copied.** `dist/` contains `dev-server.js`, `catalog.js` and
+  `capture.js`, which import `node:http` and `node:fs`. Only modules actually reachable from a
+  page's own entry point are vendored, so a Node-only module cannot be shipped by accident.
+- **an unservable static import fails the build.** Including any `node:` built-in. (`@aegis/harness`
+  reaches `node:fs/promises` behind an `await import(...)`, which a page never fetches; the exporter
+  reports it and does not fail.)
+- **every URL is relative**, so the same bytes work at `https://<user>.github.io/aegis-engine/`, at a
+  domain root, and under any prefix a reviewer serves them from.
+
+`test/pages-site.test.ts` reads the artifact back with an independent parser; the site is then
+played in a real browser, from a server that only serves files, by
+`test/pages-site.browser.test.ts`.
+
 ## Screenshots
 
 `node poc/capture.mjs` plays all three games in a real browser with real key and
@@ -118,9 +155,11 @@ they are not. Crude on purpose — legibility over beauty (CHARTER §5).
 | `session.ts`                               | world + schedule + live input, steppable in real time                               |
 | `catalog.ts`                               | `GameDefinition` and scene loading — game-agnostic; the caller supplies the entries |
 | `dev-server.ts`, `pages.ts`, `protocol.ts` | the `node:http` server, its HTML, and the wire types                                |
-| `client/`                                  | the browser entry: render loop, input capture, HUD                                  |
+| `static-site.ts`                           | the static (GitHub Pages) export: pages, import map, module-graph crawl             |
+| `client/`                                  | the browser entries: `boot.ts` (dev server), `static-boot.ts` (static), input, HUD  |
 | `play.ts`, `capture.ts`                    | serve a catalogue, and screenshot a catalogue                                       |
 | `../../poc/poc-games.mjs`                  | **the composition root**: wires the three PoC games into a catalogue                |
+| `../../poc/build-site.mjs`                 | the same catalogue, exported as the static site                                     |
 
 An adapter owns **no GPU state** — it builds a `THREE.Scene` and a `THREE.Camera` and nothing
 else — so it constructs and runs headlessly in Node, which is how the non-interference proof runs

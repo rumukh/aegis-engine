@@ -8,7 +8,6 @@
  * tests and the CLI read from. No pixels are involved; a run is pure computation over data.
  * @packageDocumentation
  */
-import { readFile } from 'node:fs/promises';
 import {
   createSimulation,
   createSchedule,
@@ -645,8 +644,27 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
   };
 }
 
-/** Read and parse a scene document from disk, throwing structured diagnostics on failure. */
+/**
+ * Read and parse a scene document from disk, throwing structured diagnostics on failure.
+ *
+ * `node:fs/promises` is imported **here**, lazily, rather than at module scope — and that is the
+ * only reason `@aegis/harness` can be loaded in a browser at all.
+ *
+ * This is the one Node built-in anywhere in `core`, `content` or `harness`. A static
+ * `import { readFile } from 'node:fs/promises'` puts it in the module graph of everything that
+ * imports the harness barrel, and `@aegis/game-iso`'s package main imports that barrel for
+ * `defineGameTest`. So the static GitHub Pages build — which runs the very same simulation in the
+ * page (`packages/render-three/src/client/static-boot.ts`) and therefore has to import a game's
+ * composed plugin — died on `node:fs/promises` before a single tick ran. Deferring the import
+ * moves it out of the static graph without changing a thing in Node: the specifier is resolved on
+ * the first call, which only ever happens when someone passes `runScene` a **path**.
+ *
+ * A browser that calls `runScene('some/path.scene.json')` still fails, and should: there is no
+ * filesystem to read it from. Passing an already-parsed {@link SceneFile} — what the static site
+ * does — never reaches this function.
+ */
 async function loadSceneFromPath(path: string): Promise<SceneFile> {
+  const { readFile } = await import('node:fs/promises');
   const text = await readFile(path, 'utf8');
   const parsed = parseScene(text, path);
   if (!parsed.ok || !parsed.value) throw new DiagnosticError(parsed.diagnostics);
