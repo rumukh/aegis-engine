@@ -15,6 +15,7 @@
 // The games are ordinary built workspace packages, imported by bare specifier. Nothing is
 // transpiled, stripped or resolved by hand.
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { coyoteGapPlugin } from '@aegis/game-platformer';
 import { serverVaultPlugin } from '@aegis/game-iso';
 import { sectorBreachPlugin } from '@aegis/game-fps';
@@ -29,14 +30,25 @@ import { findRepoRoot, loadInputScript, loadScene } from '../packages/render-thr
  * run: it replays the same file the game's acceptance test runs, then requires the win event and
  * a live player. Both are the game's facts, declared here, where the renderer is allowed to know
  * them.
+ *
+ * `pluginModule`/`pluginExport` say the same thing as `plugin`, in the one other form a consumer
+ * can need: a **string** a browser's import map can resolve. The static GitHub Pages build has no
+ * Node process to hand it a plugin object, so its generated boot module writes
+ * `import { <pluginExport> } from '<pluginModule>'` and the import map points that specifier at
+ * the game's own built `dist`. Nothing about the game is duplicated — the page imports the very
+ * module `poc/play.mjs` does. `test/pages-site.test.ts` asserts the string and the value agree, so
+ * the two spellings cannot drift apart.
  */
-const POC = [
+export const POC = [
   {
     id: 'platformer',
     title: 'Coyote Gap',
     blurb: 'Side-on platformer: coyote time, jump buffering, a moving platform and a critter.',
     objective: 'Cross the gaps and reach the goal volume on the far right.',
     plugin: coyoteGapPlugin,
+    pluginModule: '@aegis/game-platformer',
+    pluginExport: 'coyoteGapPlugin',
+    packageDir: 'games/platformer',
     scene: 'games/platformer/levels/coyote-gap.scene.json',
     script: 'games/platformer/play/coyote-gap.input',
     // The tick count the game's own acceptance test runs, so the replay covers the same run.
@@ -49,6 +61,9 @@ const POC = [
     blurb: 'Isometric infiltration: click-to-move A*, a patrolling guard, a switch and a door.',
     objective: 'Flip the switch to unseal the vault door, then reach the exit pad.',
     plugin: serverVaultPlugin,
+    pluginModule: '@aegis/game-iso',
+    pluginExport: 'serverVaultPlugin',
+    packageDir: 'games/iso',
     scene: 'games/iso/levels/server-vault.scene.json',
     script: 'games/iso/play/server-vault.input',
     scriptTicks: 960,
@@ -60,6 +75,9 @@ const POC = [
     blurb: 'First person: hitscan weapon, a blast door, a coolant pit and a security grunt.',
     objective: 'Shoot the panel, jump the coolant pit, kill the grunt, reach the exit.',
     plugin: sectorBreachPlugin,
+    pluginModule: '@aegis/game-fps',
+    pluginExport: 'sectorBreachPlugin',
+    packageDir: 'games/fps',
     scene: 'games/fps/levels/sector-breach.scene.json',
     script: 'games/fps/play/sector-breach.input',
     scriptTicks: 600,
@@ -95,5 +113,57 @@ export async function pocGames() {
       acceptance: entry.acceptance,
       bindings: BINDINGS[entry.plugin.mode],
     })),
+  );
+}
+
+/**
+ * The same catalogue, in the shape the **static** exporter needs.
+ *
+ * Two differences, and both are consequences of there being no Node process on the other side:
+ * the scene travels as *text* (the page embeds it verbatim and runs it through the same
+ * `parseScene` a headless run does), and the plugin travels as a module specifier plus an export
+ * name rather than as an object.
+ */
+export async function pocStaticGames() {
+  const root = findRepoRoot();
+  return Promise.all(
+    POC.map(async (entry) => ({
+      id: entry.id,
+      title: entry.title,
+      blurb: entry.blurb,
+      objective: entry.objective,
+      mode: entry.plugin.mode,
+      bindings: BINDINGS[entry.plugin.mode],
+      sceneText: await readFile(at(root, entry.scene), 'utf8'),
+      pluginModule: entry.pluginModule,
+      pluginExport: entry.pluginExport,
+    })),
+  );
+}
+
+/**
+ * The games' own bare specifiers, for the exported site's import map.
+ *
+ * The entry is read out of each game's `package.json` rather than guessed: `@aegis/game-iso`'s
+ * main is `dist/server-vault.js`, not `dist/index.js`, and a table that assumed otherwise would
+ * have shipped a site whose iso page imported a module that does not exist.
+ */
+export async function pocStaticModules(root = findRepoRoot()) {
+  return Promise.all(
+    POC.map(async (entry) => {
+      const dir = at(root, entry.packageDir);
+      const manifest = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'));
+      const main =
+        manifest.exports?.['.']?.import ?? manifest.exports?.['.']?.default ?? manifest.main;
+      if (typeof main !== 'string') {
+        throw new Error(`[aegis:poc] ${entry.packageDir}/package.json names no ESM entry point`);
+      }
+      return {
+        specifier: entry.pluginModule,
+        name: entry.pluginModule,
+        root: dir,
+        entry: join(dir, ...main.replace(/^\.\//, '').split('/')),
+      };
+    }),
   );
 }

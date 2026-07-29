@@ -97,7 +97,18 @@ const restrictedMathSyntax = [
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/*.tsbuildinfo', 'coverage/**'],
+    // `dist-site/` is the exported static site: a copy of already-linted `dist/` output plus
+    // three.js's 1.27 MB bundle. Linting it produced 240 errors about `console` and `window` in
+    // somebody else's ESM build. It is ignored for exactly the reason `**/dist/**` is — it is
+    // output, not source — and it needs its own entry only because the name does not end in
+    // `dist`.
+    ignores: [
+      '**/dist/**',
+      'dist-site/**',
+      '**/node_modules/**',
+      '**/*.tsbuildinfo',
+      'coverage/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -181,7 +192,17 @@ export default tseslint.config(
   },
   {
     // Node tooling scripts and flat-config files run in Node, not the sim sandbox.
-    files: ['scripts/**/*.{js,mjs}', '*.config.{js,mjs,ts}', 'eslint.config.js'],
+    //
+    // `poc/**` is here for the same reason: it is the composition root where the engine meets the
+    // games, it runs under `node`, and `poc/build-site.mjs` reads `process.argv` and writes to
+    // `process.stdout`. Without this entry those are bare `no-undef` errors — a lint failure that
+    // says nothing about determinism and everything about a glob that had not been extended.
+    files: [
+      'scripts/**/*.{js,mjs}',
+      'poc/**/*.{js,mjs}',
+      '*.config.{js,mjs,ts}',
+      'eslint.config.js',
+    ],
     languageOptions: {
       globals: { console: 'readonly', process: 'readonly', URL: 'readonly' },
     },
