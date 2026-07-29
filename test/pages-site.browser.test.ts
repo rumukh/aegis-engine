@@ -72,16 +72,24 @@ const VIEWPORT = { width: 640, height: 360 };
  * dies with `Test timed out` and not one word about what it was waiting for.
  *
  *   openPage: navigation 30s + focus 10s              = 40s
- *   waitForPaint                                      = 90s   (only the first case pays it)
  *   until(booted)                                     = 60s
+ *   until(moved), twice in the worst case             = 120s
  *   in-test waits and interactions, generously        = 15s
  *                                                     ------
- *                                                      205s
+ *                                                      235s
  *
  * 240s leaves margin over that and is a bound on hanging, not a budget: a healthy case here is
- * measured at 5-12s on this workstation.
+ * measured at 3-20s on this workstation.
  */
 const CASE_MS = 240_000;
+
+/**
+ * How long to wait for a change the page is expected to make, in milliseconds.
+ *
+ * `DEFAULT_UNTIL_TIMEOUT_MS`, i.e. the same bound `until` uses for anything else — stated here so
+ * the budget arithmetic above can add it up rather than assume it.
+ */
+const CHANGE_MS = DEFAULT_UNTIL_TIMEOUT_MS;
 
 /** How long to let a game run before reading its tick again, in milliseconds. */
 const OBSERVE_MS = 1_200;
@@ -158,6 +166,19 @@ beforeAll(
     server = started.server;
     origin = started.origin;
     browser = await launchBrowser({ viewport: VIEWPORT });
+
+    // Warm the browser up on a BLANK page, once, exactly as `browser-playability.test.ts` does.
+    // `waitForPaint` requires ten animation frames inside one second, which is the right test for
+    // "is this browser compositing at all" and the wrong one for a game page: these rasterise in
+    // software, and `browser-playability` measures the fps page at 6.7fps on this workstation at
+    // 1280x720. Asking it of `/play/fps/` asks the heaviest page in the repository to beat a frame
+    // rate the environment sets, and on a hosted ubuntu runner it did not — one CI leg spent the
+    // whole 90s deadline there and failed a case with nothing wrong with it, on a commit whose
+    // previous ubuntu leg had passed the same case. So the warm-up stays, where it is a claim
+    // about the browser, and `openGame` asks the question that is actually about the page.
+    const blank = await openPage(browser.port, 'about:blank', VIEWPORT);
+    await waitForPaint(blank);
+    await blank.close();
   },
   LAUNCH_TIMEOUT_MS + PAINT_TIMEOUT_MS + 60_000,
 );
@@ -185,13 +206,19 @@ afterAll(async () => {
   rmSync(siteDir, { recursive: true, force: true });
 });
 
-/** Open a play page and wait until its simulation is running. */
+/**
+ * Open a play page and wait until its simulation is running and it has drawn.
+ *
+ * `aegis.frames() > 0` is the paint signal that belongs here: one animation frame, not ten in a
+ * second. It is also strictly stronger evidence than a frame counter installed from outside,
+ * because the counter it reads is incremented inside the page's own render loop — so it cannot be
+ * satisfied by a page that composites without ever running `bootStatic`'s `frame()`.
+ */
 async function openGame(id: string): Promise<CdpSession> {
   const cdp = await openPage(browser.port, `${origin}${BASE}play/${id}/`, VIEWPORT);
-  await waitForPaint(cdp);
   await until<boolean>(
     cdp,
-    'globalThis.aegis !== undefined && globalThis.aegis.snapshot() !== null',
+    'globalThis.aegis !== undefined && globalThis.aegis.snapshot() !== null && globalThis.aegis.frames() > 0',
     (ready) => ready === true,
   );
   return cdp;
@@ -208,6 +235,11 @@ async function entity(cdp: CdpSession, name: string): Promise<Record<string, any
 /** Every event type the run has emitted so far. */
 async function eventTypes(cdp: CdpSession): Promise<string[]> {
   return evaluate<string[]>(cdp, 'globalThis.aegis.events().map((e) => e.type)');
+}
+
+/** A page expression reading one axis of a named entity's `Transform`, out of the mirror. */
+function positionExpr(name: string, axis: 'x' | 'y' | 'z'): string {
+  return `globalThis.aegis.snapshot().entities.find((e) => e.name === ${JSON.stringify(name)}).components.Transform.position.${axis}`;
 }
 
 /** Every URL the page has actually fetched. */
@@ -271,7 +303,11 @@ describe('coyote gap (platformer) plays in the browser', () => {
         const startX = (await entity(cdp, 'player')).Transform.position.x as number;
         await key(cdp, 'ArrowRight', true);
         await evaluate<null>(cdp, 'globalThis.aegis.sync().then(() => null)');
-        await sleep(OBSERVE_MS);
+        // Waited for rather than slept through. These pages rasterise in software and a hosted
+        // runner's frame rate is the environment's, not the page's; a fixed sleep turns "the
+        // player moves" into "the player moves *this fast*", which is a threshold on somebody
+        // else's machine. The deadline still bounds a page that never moves at all.
+        await until<number>(cdp, positionExpr('player', 'x'), (x) => x > startX + 1, CHANGE_MS);
         const heldX = (await entity(cdp, 'player')).Transform.position.x as number;
         await key(cdp, 'ArrowRight', false);
         await evaluate<null>(cdp, 'globalThis.aegis.sync().then(() => null)');
@@ -436,7 +472,7 @@ describe('sector breach (fps) plays in the browser', () => {
         const startZ = (await entity(cdp, 'player')).Transform.position.z as number;
         await key(cdp, 'KeyW', true);
         await evaluate<null>(cdp, 'globalThis.aegis.sync().then(() => null)');
-        await sleep(OBSERVE_MS);
+        await until<number>(cdp, positionExpr('player', 'z'), (z) => z > startZ + 1, CHANGE_MS);
         await key(cdp, 'KeyW', false);
         await evaluate<null>(cdp, 'globalThis.aegis.sync().then(() => null)');
         await sleep(300);
@@ -449,8 +485,7 @@ describe('sector breach (fps) plays in the browser', () => {
           x: number;
           z: number;
         };
-        const distance = Math.abs(walkedTo.x - 0) + Math.abs(walkedTo.z - startZ);
-        expect(distance, 'holding W did not move the capsule').toBeGreaterThan(1);
+        expect(walkedTo.z, 'holding W did not move the capsule').toBeGreaterThan(startZ + 1);
         expect(settled.x, 'the capsule kept moving after W came up').toBeCloseTo(walkedTo.x, 6);
         expect(settled.z, 'the capsule kept moving after W came up').toBeCloseTo(walkedTo.z, 6);
 
