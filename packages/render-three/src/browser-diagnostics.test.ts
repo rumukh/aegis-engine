@@ -795,9 +795,10 @@ describe('a transport deadline says which side of the socket stopped', () => {
     await idle(600);
     const whileIdle = maxLagSince(idleFrom);
 
+    const blockMs = 1_200;
     const blockedFrom = Date.now();
     await idle(100);
-    block(1_200);
+    block(blockMs);
     await idle(100);
     const whileBlocked = maxLagSince(blockedFrom);
 
@@ -811,11 +812,18 @@ describe('a transport deadline says which side of the socket stopped', () => {
     // not of the sampler's own precision.
     expect(whileBlocked.maxMs).toBeGreaterThan(800);
 
-    // The differential is the control. An absolute bound on the idle window would be a bound
-    // inside a band — a GC pause or a scheduler preemption on a loaded box can produce tens of
-    // milliseconds of lag through no fault of anyone's — so what is asserted is that the two
-    // windows are separated by the block, which is the only variable between them.
-    expect(whileIdle.maxMs).toBeLessThan(whileBlocked.maxMs / 4);
+    // The differential is the control, and it has to be a differential in the arithmetic and not
+    // only in the wording. An earlier form asserted `whileIdle.maxMs < whileBlocked.maxMs / 4`,
+    // which reads as a ratio but is a constant: `whileBlocked.maxMs` is pinned near `blockMs` by
+    // the block itself on every box, so the right-hand side is ~300ms however loaded the machine
+    // is, while the left-hand side grows without bound as the box fills. That is exactly the
+    // "bound inside a band" the paragraph above refuses -- and it was measured red at 309 against
+    // 297.25 under contention, with no defect present.
+    //
+    // Subtraction is the form that survives, because both windows ride the same background noise
+    // and the block is the only variable between them. On a quiet box: 1200 - 5. Under twelve
+    // spinning cores: 1189 - 309. The difference is the block in both, which is the claim.
+    expect(whileBlocked.maxMs - whileIdle.maxMs).toBeGreaterThan(blockMs / 2);
 
     // A window that has not happened yet contains no samples. This is what makes the per-command
     // figure honest: the lag reported by a timeout is the lag *since that command was sent*, not
@@ -1466,13 +1474,28 @@ describe('a transport deadline says which side of the socket stopped', () => {
     // ratio window is essentially the window that was asked for. Without this arm a `ratioFromMs`
     // hardwired to something ancient would satisfy the arm below, and the pair would measure
     // nothing.
-    await sleep(LAG_SAMPLE_INTERVAL_MS * 4);
+    //
+    // The allowance is measured, not assumed, and that is this arm's whole correction. Its own
+    // docblock says a stall immediately before the window pushes the window's real start back by
+    // the length of that stall -- and then an earlier form asserted a flat 1000ms anyway, which
+    // contradicted the very dilution this case exists to report. On a loaded box the sampler is
+    // descheduled along with everything else, so the anchor legitimately ages past any constant:
+    // measured 762ms here under twelve spinning cores, and 1106ms against the flat bound on
+    // another box, both with no defect present. What is bounded instead is two sampling periods
+    // PLUS the worst stall actually observed either side of the window boundary.
+    const settleFrom = Date.now();
+    await sleep(LAG_SAMPLE_INTERVAL_MS * 8);
+    const beforeWindow = maxLagSince(settleFrom);
     const freshFrom = Date.now();
     await sleep(LAG_SAMPLE_INTERVAL_MS * 8);
     const fresh = maxLagSince(freshFrom);
     expect(fresh.ratioFromMs).toBeDefined();
+    // Anti-vacuity: the allowance is only honest while it stays far below the age a hardwired
+    // anchor would show. A stall big enough to make this bound meaningless is itself the finding.
+    const stallAllowance = Math.max(beforeWindow.maxMs, fresh.maxMs);
+    expect(stallAllowance).toBeLessThan(SYSTEM_CPU_SAMPLE_EVERY * LAG_SAMPLE_INTERVAL_MS * 4);
     expect(freshFrom - (fresh.ratioFromMs ?? 0)).toBeLessThan(
-      SYSTEM_CPU_SAMPLE_EVERY * LAG_SAMPLE_INTERVAL_MS * 2,
+      SYSTEM_CPU_SAMPLE_EVERY * LAG_SAMPLE_INTERVAL_MS * 2 + stallAllowance,
     );
 
     // Starved: a synchronous block, then a window opened with no yield in between. Every sample the
@@ -1490,6 +1513,7 @@ describe('a transport deadline says which side of the socket stopped', () => {
     expect(staleFrom - (stale.ratioFromMs ?? 0)).toBeGreaterThan(blockMs / 2);
     console.log(
       `[cpu] ratio window starts ${freshFrom - (fresh.ratioFromMs ?? 0)}ms before a healthy window ` +
+        `(allowed ${SYSTEM_CPU_SAMPLE_EVERY * LAG_SAMPLE_INTERVAL_MS * 2} + ${stallAllowance}ms of measured stall) ` +
         `and ${staleFrom - (stale.ratioFromMs ?? 0)}ms before one opened straight after a ${blockMs}ms block`,
     );
   });
