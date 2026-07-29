@@ -179,11 +179,31 @@ function systemBusyRatio(
  *
  * `ratio` is `undefined` rather than `0` when the counters did not advance -- an unknown that says
  * so, because `0` means "the box was idle" and would invert the conclusion.
+ *
+ * `busyMs` is the raw numerator -- the busy-time delta summed across every core -- and it is
+ * reported alongside the quotient rather than folded into it, because THE QUOTIENT SATURATES AND
+ * THE NUMERATOR DOES NOT. On a box pinned at 100% the idle delta is exactly 0 over every window, so
+ * `busy / (busy + 0)` is exactly `1` however long the window was: measured here at 0ms of idle
+ * across spans of 500/1100/1000/4000ms, which is arithmetic rather than a sample. The numerator over
+ * those same four windows read 8984/24118/16755/65673ms. Any caller asking "are these really three
+ * independent measurements, or one snapshot plumbed to three names?" must ask it of `busyMs`: a
+ * reused snapshot collapses the numerator, and nothing else does.
  */
-export function startSystemLoadWindow(): () => { ratio: number | undefined; windowMs: number } {
+export function startSystemLoadWindow(): () => {
+  ratio: number | undefined;
+  windowMs: number;
+  busyMs: number;
+} {
   const from = systemCpu();
   const openedAt = Date.now();
-  return () => ({ ratio: systemBusyRatio(from, systemCpu()), windowMs: Date.now() - openedAt });
+  return () => {
+    const to = systemCpu();
+    return {
+      ratio: systemBusyRatio(from, to),
+      windowMs: Date.now() - openedAt,
+      busyMs: to.busyMs - from.busyMs,
+    };
+  };
 }
 
 const lagHistory: LagSample[] = [];

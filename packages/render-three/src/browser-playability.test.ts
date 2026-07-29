@@ -466,11 +466,20 @@ const BASELINE_WINDOW_MS = 500;
  * outran its instrument is to shrink the claim first and let the next person decide whether to
  * build the bigger instrument.
  */
-let loadRest: { ratio: number | undefined; windowMs: number } = { ratio: undefined, windowMs: 0 };
-let loadBoot: { ratio: number | undefined; windowMs: number } = { ratio: undefined, windowMs: 0 };
-let loadPainting: { ratio: number | undefined; windowMs: number } = {
+let loadRest: { ratio: number | undefined; windowMs: number; busyMs: number } = {
   ratio: undefined,
   windowMs: 0,
+  busyMs: 0,
+};
+let loadBoot: { ratio: number | undefined; windowMs: number; busyMs: number } = {
+  ratio: undefined,
+  windowMs: 0,
+  busyMs: 0,
+};
+let loadPainting: { ratio: number | undefined; windowMs: number; busyMs: number } = {
+  ratio: undefined,
+  windowMs: 0,
+  busyMs: 0,
 };
 /** The environment's own frame pacing, measured once on a page that does nothing. */
 let controlGapP95 = Number.NaN;
@@ -482,9 +491,18 @@ let controlTimerTicks = 0;
 let controlVisibility = 'unmeasured';
 
 /** One window's reading, with the span it covers, because a ratio alone is not a measurement. */
-function describeWindow(label: string, w: { ratio?: number; windowMs: number }): string {
+function describeWindow(
+  label: string,
+  w: { ratio?: number; windowMs: number; busyMs: number },
+): string {
   const share = w.ratio === undefined ? 'unmeasured' : `${Math.round(w.ratio * 100)}%`;
-  return `${label} ${share} over ${w.windowMs}ms`;
+  // The numerator is printed beside the quotient, not folded into it. `share` saturates at 100% and
+  // stops discriminating there; `busyMs` keeps scaling with the span and the core count, so on a
+  // pinned box it is the only one of the two still carrying information. Landing #24 needed a
+  // denominator printed for the same reason and landing #26 needed a coverage start; this is the
+  // third time, and the repair that finally sticks is emitting the raw term rather than trusting
+  // the next reader to know the derived one is degenerate.
+  return `${label} ${share} over ${w.windowMs}ms (${w.busyMs}ms busy across all cores)`;
 }
 
 beforeAll(async () => {
@@ -918,16 +936,39 @@ describe('the box-CPU attribution windows must be live, whatever they read', () 
     expect(loadBoot.ratio, 'the boot window produced no box-CPU reading').toBeDefined();
     expect(loadPainting.ratio, 'the painting window produced no box-CPU reading').toBeDefined();
 
-    // Anti-tautology, and the arm most likely to fire on a real defect. Three ratios computed from
-    // three different pairs of cumulative snapshots cannot be bit-identical unless a snapshot is
-    // being reused -- i.e. unless one value has been plumbed to three names, which is exactly the
-    // shape landing #26's M8 control caught in `systemRatio`. Identity rather than a magnitude, so
-    // this cannot become the fifth bound inside a band.
-    const distinct = new Set([loadRest.ratio, loadBoot.ratio, loadPainting.ratio]);
+    // Anti-tautology, and the arm most likely to fire on a real defect: three windows must be three
+    // measurements, not one snapshot plumbed to three names -- exactly the shape landing #26's M8
+    // control caught in `systemRatio`. Identity rather than a magnitude, so this cannot become the
+    // fifth bound inside a band.
+    //
+    // ASSERTED ON THE NUMERATOR, NOT ON THE QUOTIENT, and that is the whole of this repair. The arm
+    // shipped comparing the three `ratio`s and went red on a saturated 16-core workstation with no
+    // defect present. `systemBusyRatio` is `busy / (busy + idle)`; when every core is pinned the
+    // idle delta is exactly 0, so the quotient is exactly 1 for EVERY window regardless of length.
+    // Measured directly rather than inferred from the red -- four windows of 500/1100/1000/4000ms
+    // returned idle deltas of 0ms in all four, which is arithmetic and not a sample:
+    //
+    //   span    busy delta   idle delta   ratio
+    //    707ms      8984ms          0ms       1
+    //   1246ms     24118ms          0ms       1
+    //   1015ms     16755ms          0ms       1
+    //   4023ms     65673ms          0ms       1
+    //
+    // So the quotient has a CEILING and the defect this arm hunts collapses the NUMERATOR. Two
+    // different causes -- one real, one an artifact of a busy box -- were being funnelled into one
+    // indistinguishable output, which is this repository's oldest defect wearing an anti-tautology
+    // arm as a costume. `busyMs` has no ceiling: it scales with the span and the core count, so
+    // saturation makes the three readings MORE distinct while a reused snapshot still makes them
+    // identical. Strictly stronger against every mutation the original caught, and it drops the one
+    // false red. The pair `${ratio}@${windowMs}` was considered and rejected: a reuse of the CPU
+    // snapshot alone leaves `windowMs` distinct, so the pair-set would still be size 3.
+    const distinct = new Set([loadRest.busyMs, loadBoot.busyMs, loadPainting.busyMs]);
     expect(
       distinct.size,
-      `all three windows reported the same ratio (${String(loadRest.ratio)}), which three ` +
-        `independent quotients of cumulative counters do not do -- one snapshot is being reused.`,
+      `all three windows reported the same busy-time delta (${loadRest.busyMs}ms), which three ` +
+        `independent readings of a cumulative counter do not do -- one snapshot is being reused. ` +
+        `(ratios ${String(loadRest.ratio)} / ${String(loadBoot.ratio)} / ${String(loadPainting.ratio)}; ` +
+        `these are NOT the discriminator -- they saturate at 1 on a pinned box.)`,
     ).toBeGreaterThan(1);
   });
 });
