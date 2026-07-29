@@ -31,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { main as audit, MIN_TEST_FILES, MIN_TESTS } from './audit-test-report.mjs';
-import { testPhases } from './test-phases.mjs';
+import { browserSpecs, hostsBrowserSpecs, testPhases } from './test-phases.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const forwarded = process.argv.slice(2);
@@ -62,6 +62,21 @@ const phases = isSubset
       },
     ]
   : testPhases(root, (path) => readFileSync(join(root, path), 'utf8'));
+
+// Said out loud, at the top of the log, naming the files. A platform that runs less of the suite
+// than another one is a fact a reader must be handed rather than one they could derive by noticing
+// a phase heading is missing — "I checked and found nothing" and "I never looked" print the same,
+// and this is the branch where the second one is true by design.
+if (!isSubset && !hostsBrowserSpecs(process.platform)) {
+  const skipped = browserSpecs(root, (path) => readFileSync(join(root, path), 'utf8'));
+  process.stdout.write(
+    `[test-run] NOT RUN ON ${process.platform}: ${String(skipped.length)} browser spec(s)\n` +
+      skipped.map((path) => `[test-run]   - ${path}\n`).join('') +
+      `[test-run]   They gate on every non-windows leg of the CI matrix, which ` +
+      `test/browser-specs-run-solo.test.ts requires to exist. scripts/test-phases.mjs carries ` +
+      `the measurement that put them there.\n`,
+  );
+}
 
 const vitest = join(root, 'node_modules', 'vitest', 'vitest.mjs');
 let failed = false;

@@ -27,7 +27,13 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { MIN_TEST_FILES } from '../scripts/audit-test-report.mjs';
-import { BROWSER_MARKER, browserSpecs, specFiles, testPhases } from '../scripts/test-phases.mjs';
+import {
+  BROWSER_MARKER,
+  browserSpecs,
+  hostsBrowserSpecs,
+  specFiles,
+  testPhases,
+} from '../scripts/test-phases.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -64,12 +70,19 @@ function allSpecsFromGit(): string[] {
  * Look a phase up by name rather than by position, and throw when it is missing. An index into
  * a list nobody validates is the shared-mutable-index defect AGENTS.md §9 describes; a
  * destructure that silently yields `undefined` is the same thing with better syntax.
+ *
+ * The platform defaults to `linux` rather than to this host's: the phase list is now
+ * platform-dependent, and a guard that asked the host would assert one arrangement on a developer's
+ * Windows box and the other on CI, silently, which is the shape of every defect this file exists
+ * to catch. Both arrangements are asserted explicitly below instead.
  */
-function phase(name: string) {
-  const found = testPhases(root, read).find((p) => p.name === name);
+function phase(name: string, platform = 'linux', env: Record<string, string | undefined> = {}) {
+  const found = testPhases(root, read, platform, env).find((p) => p.name === name);
   if (found === undefined) {
-    const names = testPhases(root, read).map((p) => p.name);
-    throw new Error(`no phase named "${name}" — testPhases returned [${names.join(', ')}]`);
+    const names = testPhases(root, read, platform, env).map((p) => p.name);
+    throw new Error(
+      `no phase named "${name}" on ${platform} — testPhases returned [${names.join(', ')}]`,
+    );
   }
   return found;
 }
@@ -143,7 +156,10 @@ describe('every spec that launches a browser runs in the solo phase', () => {
     // `windows-latest` job painting immediately, where one launched early painted 3 frames in
     // 3 seconds — the cold period is a property of the job, not of the browser instance.
     // Running these last buys that warm-up for free.
-    expect(testPhases(root, read).map((p: { name: string }) => p.name)).toEqual(['shared', 'solo']);
+    expect(testPhases(root, read, 'linux', {}).map((p: { name: string }) => p.name)).toEqual([
+      'shared',
+      'solo',
+    ]);
   });
 
   it('demands every solo file report in, rather than a floor a partial run could clear', () => {
@@ -177,5 +193,112 @@ describe('every spec that launches a browser runs in the solo phase', () => {
     const synthetic = (path: string): string =>
       path === 'packages/x/src/renderer-e2e.test.ts' ? `await ${MARKER}{ headless: true });` : '';
     expect(browserSpecs(root, synthetic, corpus)).toEqual(['packages/x/src/renderer-e2e.test.ts']);
+  });
+});
+
+/**
+ * The browser specs do not run on `windows-latest`, and that must stay a scope decision rather
+ * than becoming a silent retirement.
+ *
+ * scripts/test-phases.mjs carries the measurement (eleven CI rounds; the same commit producing 0
+ * failures and then 3; both directions of the priority lever each starving the other party). What
+ * that measurement licenses is narrow: *this host cannot run them*. It does not license *nobody
+ * runs them*, and the distance between those two is one edit to a matrix line — an edit that
+ * would turn every leg green and remove the entire browser suite from the gate at the same time.
+ *
+ * So the claim under test is a conjunction, and both halves matter: the split omits them exactly
+ * on Windows, and the CI matrix still contains a host that does not omit them.
+ */
+describe('dropping the browser specs on Windows cannot become dropping them everywhere', () => {
+  /** Runner labels from the workflow's matrix, read from the file rather than assumed. */
+  function matrixRunners(): string[] {
+    const yml = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const list = /^\s*os:\s*\[([^\]]+)\]/m.exec(yml)?.[1];
+    if (list === undefined) {
+      throw new Error(
+        'could not read the `os:` matrix out of .github/workflows/ci.yml. This guard is the only ' +
+          'thing keeping the browser specs on some host; a parse that silently returned nothing ' +
+          'would report health while they ran nowhere, so it throws instead.',
+      );
+    }
+    return list.split(',').map((entry) => entry.trim());
+  }
+
+  /**
+   * A runner label's `process.platform`. Throws on an unknown label rather than guessing: a new
+   * runner image must be classified deliberately, because guessing wrong in the permissive
+   * direction is exactly the silent retirement this file is about.
+   */
+  function nodePlatformOf(runner: string): string {
+    if (runner.startsWith('windows')) return 'win32';
+    if (runner.startsWith('ubuntu')) return 'linux';
+    if (runner.startsWith('macos')) return 'darwin';
+    throw new Error(
+      `unknown runner label "${runner}" — teach nodePlatformOf() its process.platform value, ` +
+        `and check hostsBrowserSpecs() gives the answer you want for it.`,
+    );
+  }
+
+  it('omits the solo phase only on a Windows CI runner', () => {
+    const CI = { CI: 'true' };
+    expect(testPhases(root, read, 'win32', CI).map((p) => p.name)).toEqual(['shared']);
+    expect(testPhases(root, read, 'linux', CI).map((p) => p.name)).toEqual(['shared', 'solo']);
+    expect(testPhases(root, read, 'darwin', CI).map((p) => p.name)).toEqual(['shared', 'solo']);
+    // The condition is the hosted runner, not the operating system. ENVIRONMENT.md names Windows
+    // as the primary development host and these specs pass there; keying on the OS alone would
+    // have retired them from the machine most of this work happens on, to fix a fault it does not
+    // have. Asserted rather than left to the docblock, because it is the half a later "simplify
+    // this predicate" edit would drop first.
+    expect(testPhases(root, read, 'win32', {}).map((p) => p.name)).toEqual(['shared', 'solo']);
+  });
+
+  it('still excludes them from the shared phase on Windows, rather than handing them back', () => {
+    // The tempting simplification — drop the solo phase and let the shared glob pick them up — is
+    // the worst available arrangement: it runs them in parallel with ~70 other files, which is the
+    // contention originally measured at seven failures, and reports it as full coverage.
+    const shared = phase('shared', 'win32', { CI: 'true' });
+    const browsers = scannedBrowserSpecs();
+    expect(browsers.length).toBeGreaterThan(0);
+    for (const spec of browsers) {
+      expect(shared.args).toContain(spec);
+      expect(shared.args[shared.args.indexOf(spec) - 1]).toBe('--exclude');
+    }
+  });
+
+  it('keeps a host in the CI matrix that runs them', () => {
+    const runners = matrixRunners();
+
+    // Anti-vacuity, and pointed at the specific way this could pass over nothing: a regex that
+    // matched an empty list, or a workflow that lost its matrix, would satisfy the arm below by
+    // having nothing to disagree with.
+    expect(runners.length).toBeGreaterThan(1);
+    expect(runners).toContain('windows-latest');
+
+    // `{ CI: 'true' }` explicitly, never `process.env`: the question is what happens *on a
+    // runner*, and reading this machine's environment would answer it for a developer's laptop
+    // instead — where the predicate is true for every platform and the check therefore cannot
+    // fail. That is the same defect as asserting on a value derived from the thing under test.
+    expect(
+      runners.filter((runner) => hostsBrowserSpecs(nodePlatformOf(runner), { CI: 'true' })),
+      'every runner in the CI matrix is one that skips the browser specs, so they now run ' +
+        'nowhere and every leg will be green. scripts/test-phases.mjs drops them on a Windows ' +
+        'runner because that host was measured unable to run them — not because they stopped ' +
+        'mattering. Keep a non-Windows leg, or move the browser specs back into the shared gate.',
+    ).not.toEqual([]);
+  });
+
+  it('the matrix check can fail — control', () => {
+    // The assertion above is worth exactly as much as its ability to go red, and its input is a
+    // file this test also parses. Drive it with a Windows-only matrix and the same predicate must
+    // reject: without this, a `hostsBrowserSpecs` that returned true for everything would leave
+    // the arm above green while licensing precisely the edit it forbids.
+    const onCi = { CI: 'true' };
+    expect(['windows-latest'].filter((r) => hostsBrowserSpecs(nodePlatformOf(r), onCi))).toEqual(
+      [],
+    );
+    expect(['ubuntu-latest'].filter((r) => hostsBrowserSpecs(nodePlatformOf(r), onCi))).toEqual([
+      'ubuntu-latest',
+    ]);
+    expect(() => nodePlatformOf('freebsd-13')).toThrow(/unknown runner label/);
   });
 });

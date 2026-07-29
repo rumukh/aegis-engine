@@ -24,18 +24,34 @@ import { afterAll, describe, expect, it } from 'vitest';
  * regression arrives on the leg the author is least likely to be watching.
  *
  * The scan is over source text rather than over an import graph because that is the property that
- * matters: a file that *mentions* `launchBrowser(` is a file that will start a browser when it
- * runs, whatever it imported to get there.
+ * matters: a file that *mentions* a `launchBrowser` call is a file that will start a browser when
+ * it runs, whatever it imported to get there.
  */
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /**
- * This file, which is excluded from its own scan because it necessarily contains what it searches
- * for — both in the scan itself and in the prose above explaining why the scan exists.
+ * The marker, built by concatenation so that this file does not contain it.
  *
- * Derived from `import.meta.url` rather than written down, so the exclusion cannot grow. A literal
- * list of "files exempt from the browser check" is the one edit that would quietly reintroduce the
- * failure this guard exists to prevent, and this shape makes that edit impossible to express.
+ * This started as a bare literal plus a self-exclusion, and the self-exclusion worked — for *this*
+ * scan. It could not work for anybody else's. `scripts/test-phases.mjs` reads the same marker to
+ * decide which specs get the machine to themselves, it has no concept of `SELF`, and it therefore
+ * classified this guard — which launches nothing — as a browser spec. Harmless while that only
+ * cost a serialised slot; not harmless now that browser specs are also the files that do not run
+ * on `windows-latest`, since a cheap static guard would have silently stopped running there.
+ *
+ * The lesson is the general one: an exclusion is local to the scanner that implements it, but a
+ * marker in the text is visible to every scanner in the repository. Not containing it is the only
+ * form of exemption that travels. `scripts/test-phases.mjs` and `test/browser-specs-run-solo.ts`
+ * write it the same way for the same reason.
+ */
+const MARKER = 'launchBrowser' + '(';
+
+/**
+ * This file, used as the anti-vacuity anchor for its own corpus: it is tracked, it sits under
+ * `test/`, and it matches the same filter, so an enumeration that omits it is broken.
+ *
+ * Derived from `import.meta.url` rather than written down. It is deliberately *not* an exemption
+ * list — see {@link MARKER} for why this guard no longer needs to exempt itself at all.
  */
 const SELF = relative(REPO_ROOT, fileURLToPath(import.meta.url)).replaceAll('\\', '/');
 
@@ -87,7 +103,7 @@ function testFiles(): string[] {
  *
  * The corpus is a snapshot of a mutable working tree and the reads happen after it. A file that
  * vanished in between is another test's untracked probe, and a probe that no longer exists has no
- * `launchBrowser(` call to be missing from the config. What stops this hiding a corpus that
+ * `launchBrowser` call to be missing from the config. What stops this hiding a corpus that
  * collapsed is the floor in the anti-vacuity arm, which counts the enumeration rather than what
  * survived the read.
  *
@@ -129,10 +145,7 @@ describe('the browser tests are isolated from the rest of the suite', () => {
   );
   const declared = declaredBrowserTestFiles(configSource);
   const everyTestFile = testFiles();
-  const launchesABrowser = everyTestFile
-    .filter((path) => path !== SELF)
-    .filter((path) => readOrSkip(path).includes('launchBrowser('))
-    .sort();
+  const launchesABrowser = everyTestFile.filter((path) => readOrSkip(path).includes(MARKER)).sort();
 
   it('found a corpus to check (anti-vacuity)', () => {
     // Without this, every assertion below is satisfied by a walker that returned nothing — the
@@ -142,27 +155,37 @@ describe('the browser tests are isolated from the rest of the suite', () => {
     expect(everyTestFile.length).toBeGreaterThan(50);
     expect(launchesABrowser.length).toBeGreaterThan(1);
     expect(declared.length).toBeGreaterThan(1);
-    // The self-exclusion must be excluding something real: if this file stopped being found by
-    // the walker, the arm above would be scanning a corpus that silently omits a directory.
+    // The corpus must contain this file: it is the anchor every "does not contain X" arm below is
+    // measured against, and an enumeration that lost it would satisfy those arms by being empty.
     expect(everyTestFile).toContain(SELF);
+  });
+
+  it('does not classify itself — an exemption that only this scanner honours is not one', () => {
+    // The claim is about the *text*, because that is what every other scanner in the repository
+    // reads. `scripts/test-phases.mjs` classified this file as a browser spec while it carried a
+    // bare literal and a local self-exclusion; see MARKER. Asserted here so that reintroducing
+    // the literal — in code or in prose — fails at the moment of the edit rather than by quietly
+    // removing this guard from the `windows-latest` leg.
+    expect(launchesABrowser).not.toContain(SELF);
+    expect(readOrSkip(SELF)).not.toContain(MARKER);
   });
 
   it('names every browser-launching test file, and nothing else', () => {
     expect(
       launchesABrowser,
-      'A test file calls launchBrowser( but is not in BROWSER_TEST_FILES in vitest.config.ts, so ' +
-        'vitest will schedule it beside the other ~70 files of this suite. On a 4-vCPU runner ' +
-        'that is the exact contention that made thirteen consecutive windows-latest legs red — ' +
-        'and it will run green here and on ubuntu-latest, so nothing else will tell you. Add it ' +
-        'to that list.',
+      'A test file makes a launchBrowser call but is not in BROWSER_TEST_FILES in ' +
+        'vitest.config.ts, so vitest will schedule it beside the other ~70 files of this suite. ' +
+        'On a 4-vCPU runner that is the exact contention that made thirteen consecutive ' +
+        'windows-latest legs red — and it will run green here and on ubuntu-latest, so nothing ' +
+        'else will tell you. Add it to that list.',
     ).toEqual([...declared].sort());
   });
 
   it('the scan can answer both ways', () => {
-    // Control. A reader that reported "contains launchBrowser(" for every input would satisfy the
-    // arm above while proving nothing, and one that reported it for none would satisfy it too.
+    // Control. A reader that reported a match for every input would satisfy the arm above while
+    // proving nothing, and one that reported it for none would satisfy it too.
     const notABrowserTest = join(REPO_ROOT, 'test', 'vitest-timeouts.test.ts');
-    expect(readFileSync(notABrowserTest, 'utf8')).not.toContain('launchBrowser(');
+    expect(readFileSync(notABrowserTest, 'utf8')).not.toContain(MARKER);
     expect(launchesABrowser.length).toBeLessThan(everyTestFile.length);
   });
 
@@ -192,7 +215,7 @@ describe('the browser tests are isolated from the rest of the suite', () => {
     mkdirSync(PROBE_DIR, { recursive: true });
     // Contains the marker too, so if it ever were enumerated it would also be misclassified as a
     // browser spec — the failure is loud in both arms rather than only in the count.
-    writeFileSync(join(PROBE_DIR, 'zz-planted.test.ts'), 'launchBrowser(\n', 'utf8');
+    writeFileSync(join(PROBE_DIR, 'zz-planted.test.ts'), MARKER + '\n', 'utf8');
 
     const corpus = testFiles();
     expect(
