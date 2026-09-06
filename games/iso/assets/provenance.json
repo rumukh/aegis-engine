@@ -4,7 +4,8 @@
   "author": "Aegis contributors",
   "license": "MIT",
   "source": "source/generate.mjs",
-  "recipe": "node games/iso/assets/source/generate.mjs",
+  "recipe": "npm run build && node games/iso/assets/source/generate.mjs",
+  "math": "@aegis/core/math fixed trigonometry and pinned sRGB transfer data",
   "conventions": {
     "units": "navigation cells",
     "up": "+Y",
@@ -91,8 +92,8 @@
     },
     {
       "file": "operative.gltf",
-      "bytes": 220537,
-      "sha256": "e7067fafb5bc75cff386175e6a2c360c25c356fd2e1abf64911910f40dd54c39",
+      "bytes": 223058,
+      "sha256": "943360ef667a20cce35be97b7c808dfe8ec622265e10457de4f2526171637ae8",
       "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
       "triangles": 1576,
       "primitives": 12,
@@ -100,8 +101,8 @@
     },
     {
       "file": "sentinel.gltf",
-      "bytes": 218996,
-      "sha256": "d73c5bf84dd2285bf24dc4c25627f59b4289ab6d6f26ff35c081002dd6cc8a65",
+      "bytes": 221517,
+      "sha256": "6c74b7254be0d7b75e234ee9784d5ac7abf2cdc8a6de14aae5cbf15b8245285d",
       "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
       "triangles": 1564,
       "primitives": 12,

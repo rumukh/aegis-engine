@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildAssets } from '../assets/source/generate.mjs';
+import { SRGB8_TO_LINEAR } from '../assets/source/srgb.mjs';
 
 const ROOT = fileURLToPath(new URL('../assets/', import.meta.url));
 const FILES = [
@@ -34,6 +35,8 @@ const FILES = [
   'vault-plinth.gltf',
   'vault-unseal.wav',
 ];
+
+type Vec3 = [number, number, number];
 
 interface Gltf {
   asset: { version: string };
@@ -75,7 +78,10 @@ function values(gltf: Gltf, id: number): number[] {
   );
 }
 
-function bounds(gltf: Gltf): { min: number[]; max: number[] } {
+function bounds(
+  gltf: Gltf,
+  transform: (point: Vec3) => Vec3 = (point) => point,
+): { min: number[]; max: number[] } {
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
   const visit = (index: number, parent: number[]): void => {
@@ -84,10 +90,16 @@ function bounds(gltf: Gltf): { min: number[]; max: number[] } {
     if (node.mesh !== undefined) {
       for (const primitive of gltf.meshes[node.mesh]!.primitives) {
         const points = values(gltf, primitive.attributes['POSITION']!);
-        for (let i = 0; i < points.length; i++) {
-          const axis = i % 3;
-          min[axis] = Math.min(min[axis]!, points[i]! + position[axis]!);
-          max[axis] = Math.max(max[axis]!, points[i]! + position[axis]!);
+        for (let i = 0; i < points.length; i += 3) {
+          const point = transform([
+            points[i]! + position[0]!,
+            points[i + 1]! + position[1]!,
+            points[i + 2]! + position[2]!,
+          ]);
+          for (let axis = 0; axis < 3; axis++) {
+            min[axis] = Math.min(min[axis]!, point[axis]!);
+            max[axis] = Math.max(max[axis]!, point[axis]!);
+          }
         }
       }
     }
@@ -98,6 +110,27 @@ function bounds(gltf: Gltf): { min: number[]; max: number[] } {
 }
 
 describe('Server Vault original presentation assets', () => {
+  it('cooks independently of host trigonometry and exponentiation', () => {
+    const unavailable = (): never => {
+      throw new Error('Host transcendental reached during asset cooking');
+    };
+    const spies = [
+      vi.spyOn(Math, 'sin').mockImplementation(unavailable),
+      vi.spyOn(Math, 'cos').mockImplementation(unavailable),
+      vi.spyOn(Math, 'pow').mockImplementation(unavailable),
+    ];
+    try {
+      expect([...buildAssets().keys()].sort()).toEqual(FILES);
+      expect(SRGB8_TO_LINEAR).toHaveLength(256);
+      expect(SRGB8_TO_LINEAR[0]).toBe(0);
+      expect(SRGB8_TO_LINEAR[64]).toBe(0.05126945837404324);
+      expect(SRGB8_TO_LINEAR[128]).toBe(0.21586050011389926);
+      expect(SRGB8_TO_LINEAR[255]).toBe(1);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
   it('reproduces the complete shipped kit byte for byte, with provenance and a bounded payload', () => {
     const generated = buildAssets();
     expect([...generated.keys()].sort()).toEqual(FILES);
@@ -253,6 +286,32 @@ describe('Server Vault original presentation assets', () => {
     const scale = values(pad, extract.samplers[0]!.output);
     expect(scale.slice(0, 3)).toEqual([0, 0, 0]);
     expect(scale.at(-2)).toBeGreaterThan(1);
+  });
+
+  it('keeps every authored death pose on the floor instead of burying the body', () => {
+    for (const file of ['operative.gltf', 'sentinel.gltf']) {
+      const gltf = model(file);
+      const death = gltf.animations!.find((clip) => clip.name === 'death')!;
+      const rotations = values(gltf, death.samplers[0]!.output);
+      const translations = values(gltf, death.samplers[1]!.output);
+      expect(rotations.length / 4).toBe(61);
+      for (let key = 0; key < rotations.length / 4; key++) {
+        const qx = rotations[key * 4]!;
+        const qy = rotations[key * 4 + 1]!;
+        const qz = rotations[key * 4 + 2]!;
+        const qw = rotations[key * 4 + 3]!;
+        const box = bounds(gltf, ([x, y, z]) => [
+          x,
+          2 * (qx * qy + qz * qw) * x +
+            (1 - 2 * (qx * qx + qz * qz)) * y +
+            2 * (qy * qz - qx * qw) * z +
+            translations[key * 3 + 1]!,
+          z,
+        ]);
+        expect(box.min[1], `${file} death key ${key} intersects the floor`).toBeGreaterThan(-0.001);
+        expect(box.min[1], `${file} death key ${key} floats above the floor`).toBeLessThan(0.015);
+      }
+    }
   });
 
   it('contains real decodable surface pixels and a visibly different active terminal state', () => {

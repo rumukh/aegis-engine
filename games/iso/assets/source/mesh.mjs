@@ -1,4 +1,6 @@
 import { Buffer } from 'node:buffer';
+import { cos, sin, sqrt, TAU } from '@aegis/core/math';
+import { SRGB8_TO_LINEAR } from './srgb.mjs';
 
 const STRUCTURE = {
   name: 'Ceramic and anodized alloy',
@@ -13,7 +15,7 @@ function normal(a, b, c) {
   const u = b.map((v, i) => v - a[i]);
   const v = c.map((n, i) => n - a[i]);
   const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-  const length = Math.sqrt(n.reduce((sum, value) => sum + value * value, 0));
+  const length = sqrt(n.reduce((sum, value) => sum + value * value, 0));
   if (length < 1e-10) throw new Error('Asset source contains a degenerate face');
   return n.map((value) => value / length);
 }
@@ -165,8 +167,8 @@ class Part {
     const [x, y, z] = center;
     const circle = (r, h) =>
       Array.from({ length: sides }, (_, i) => {
-        const angle = (i / sides) * Math.PI * 2;
-        return [x + Math.cos(angle) * r, y + h, z + Math.sin(angle) * r];
+        const angle = (i / sides) * TAU;
+        return [x + cos(angle) * r, y + h, z + sin(angle) * r];
       });
     const bottom = circle(radius, -height / 2);
     const top = circle(radius, height / 2);
@@ -201,10 +203,11 @@ class Part {
 }
 
 export function rgb(hex) {
-  return [1, 3, 5].map((offset) => {
-    const srgb = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
-    return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
-  });
+  if (!/^#[0-9a-f]{6}$/i.test(hex))
+    throw new Error(`Expected an authored #rrggbb color, got "${hex}"`);
+  return [1, 3, 5].map(
+    (offset) => SRGB8_TO_LINEAR[Number.parseInt(hex.slice(offset, offset + 2), 16)],
+  );
 }
 
 export class Model {

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { sin, TAU } from '@aegis/core/math';
 
 const RATE = 22050;
 
@@ -33,8 +34,11 @@ function wav(seconds, sample) {
   return buffer;
 }
 
-const tone = (hz, t) => Math.sin(Math.PI * 2 * hz * t);
-const fade = (progress, attack = 0.05) => Math.min(1, progress / attack) * (1 - progress) ** 2;
+const tone = (hz, t) => sin(TAU * hz * t);
+const fade = (progress, attack = 0.05) => {
+  const remaining = 1 - progress;
+  return Math.min(1, progress / attack) * (remaining * remaining);
+};
 
 function phrase(frequencies, noteSeconds) {
   const phase = [0];
@@ -42,7 +46,7 @@ function phrase(frequencies, noteSeconds) {
   return (t) => {
     const note = Math.min(frequencies.length - 1, Math.floor(t / noteSeconds));
     // Pitch changes keep their accumulated phase instead of inserting an audible click.
-    return Math.sin(Math.PI * 2 * (phase[note] + frequencies[note] * (t - note * noteSeconds)));
+    return sin(TAU * (phase[note] + frequencies[note] * (t - note * noteSeconds)));
   };
 }
 
