@@ -9,6 +9,12 @@ layer, Aegis is a **library with a machine-readable world model** and an _option
 The simulation is pure, deterministic computation over plain data; pixels are an output adapter
 bolted on afterwards. Everything below serves the nine principles in [`CHARTER.md`](../CHARTER.md).
 
+This document describes the current TypeScript reference backend. The authorized
+[production roadmap](./production-roadmap.md) targets eventual AAA capability without claiming
+it today. Text is the authoring and observation contract, not a ban on original binary media,
+cooked runtime assets, compact storage or binary transport. Future native hot paths require
+measurement and behavioral equivalence, not speculative replacements for working code.
+
 ## 1. Package graph
 
 Eight packages in an npm-workspaces monorepo, wired with TypeScript project references. The
@@ -107,7 +113,7 @@ sequenceDiagram
     Sys->>W: spawn / mutate components / emit events
   end
   Sim->>W: tick += 1, swap event buffers
-  Note over Sim,W: state is now fully determined by (scene, script, seed, tick)
+  Note over Sim,W: state is now fully determined by (scene, script, seed, tickRate, tick)
 ```
 
 Key invariants of the loop:
@@ -194,9 +200,12 @@ graph LR
 
 ## 5. Threading and timing model
 
-**Single-threaded and synchronous, by design.** The tick loop contains no `async`, no
-`await`, no timers, no worker messages — introducing any of them would make tick order depend on
-the event loop and destroy determinism (ADR-0001, principle 3).
+**The authoritative reference tick is single-threaded and synchronous.** Its order must not
+depend on `async` completion, timers or worker-message arrival (ADR-0001, principle 3).
+Asynchronous asset loading, decoding, display, audio and view-only animation are permitted
+outside that boundary. Future native/parallel hot paths must provide deterministic scheduling
+and equivalence proofs; the current execution model is a reference, not a claim that all
+engine work must forever occupy one thread.
 
 - **Fixed timestep only.** `dt` is a constant `1 / tickRate` for the whole run. There is no
   variable-delta update and no wall-clock accumulator inside the simulation. Wall-clock pacing
@@ -204,7 +213,9 @@ the event loop and destroy determinism (ADR-0001, principle 3).
   real-time host — and is strictly a presentation detail layered on top of `step()`.
 - **Async lives only at the edges.** `runScene(path, …)` is `async` solely because it may read a
   scene file from disk; once loaded, stepping is synchronous. The dev server is async because it
-  binds a socket. The core simulation is a pure function of `(scene, script, seed, ticks)`.
+  binds a socket. The authoritative run is a pure function of `(scene, script, seed, tickRate,
+ticks)` for the same engine/content revision. Async presentation may observe it but cannot
+  silently commit gameplay changes based on completion timing.
 - **No shared mutable global state.** All state lives in the `World`. Two simulations can run in
   the same process (or the same test file) without interfering, which is what lets Vitest run
   package suites in parallel.
@@ -371,8 +382,9 @@ recording boundaries and CLI flags, including rejection of rates whose reciproca
 Flagged here and to the PM because five sessions build against them in parallel:
 
 - **`ModePlugin`** (`harness/plugin.ts`) — the mode ⇄ harness seam. If a mode needs to contribute
-  something beyond `components() / systems() / view()` (e.g. per-run resources or a custom input
-  binding), this interface grows first.
+  something beyond `components() / resources() / prefabs() / init() / systems() / view()`,
+  coordinate this interface or an explicit adjacent host boundary first; do not infer new
+  contracts from ambient globals.
 - **`ViewProvider` / `SemanticFrame`** (`harness/view.ts`) — the fps semantic frame is the least
   certain: `bounds`, `visibleFraction` and `occluded` may need refinement once real perspective
   projection exists.
@@ -395,6 +407,19 @@ All optional, all backwards compatible — no renames, no required fields, no re
 `SemanticFrame.totalEntities`/`excludedEntities` where they cull more precisely than the harness's
 default, and `AsciiView.overlaps` where they rasterise by drawing entities in priority order —
 `harness/testing/fake-mode.ts` is the reference implementation of both.
+
+### 8.2 Production milestone contract changes
+
+The M1 changes are explicitly authorized beyond the earlier freeze. `createSceneContext` and
+`bootstrapScene` unify content initialization. `ModePlugin.resources()`/`prefabs()` are optional
+declarations, but authored resources are checked on every shipped run path; legacy plugins
+must declare their IDs or receive an explicit caller registry. Prefab descendants now expand
+with qualified IDs, and conflicting authored Name values fail with migration diagnostics.
+Recordings add optional-for-legacy `tickRate`, while new results/captures always expose it.
+`World.restore` rejects inconsistent snapshots before replacing any prior state.
+
+These changes repair the existing engine contracts; they do not implement the roadmap's
+streaming, native runtime, skeletal animation or platform-integration milestones.
 
 ## 9. Where the ADRs live
 
