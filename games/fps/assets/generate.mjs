@@ -730,10 +730,10 @@ function environment() {
   model.sign(zones[2], [0, 3.4, 11.48], 2.8, 0.35, 2);
   model.sign(zones[3], [0, 3.05, 19.488], 3.5, 0.44, 3);
   for (const x of [-3.5, 3.5]) {
-    model.bevel(zones[3], 'dark', [x, 1.5, 19.4], [1.3, 3, 0.18], 0.12);
+    model.bevel(zones[3], 'dark', [x, 1.5, 19.53], [1.3, 3, 0.1], 0.12);
     for (let y = 0.5; y < 2.8; y += 0.4) {
-      model.box(zones[3], 'edge', [x, y, 19.28], [0.95, 0.22, 0.06]);
-      model.box(zones[3], 'cyan', [x + 0.35, y, 19.244], [0.055, 0.075, 0.012]);
+      model.box(zones[3], 'edge', [x, y, 19.47], [0.95, 0.22, 0.03]);
+      model.box(zones[3], 'cyan', [x + 0.35, y, 19.443], [0.055, 0.075, 0.012]);
     }
   }
   // Arrival-bay service stacks occupy the already-solid upper wall, never walkable floor.
