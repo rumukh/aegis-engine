@@ -5,6 +5,9 @@ package's `src/`. Each public interface, function and type carries semantics doc
 each barrel file (`src/index.ts`) has a `@packageDocumentation` overview. This document is the
 index into that surface; read it alongside [`../architecture.md`](../architecture.md).
 
+For plugin vocabulary discovery and bounded headless observations, see the
+[Agent workbench CLI guide](./agent-workbench.md).
+
 The contracts are type-only: function bodies are `notImplemented()` stubs (or, where trivial and
 non-gameplay, real plumbing). Implementation sessions fill in behaviour **without changing the
 exported signatures** — the whole point is that five sessions can build against these in parallel.

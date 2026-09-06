@@ -1,5 +1,5 @@
 /**
- * The command contract. Each of the seven subcommands is a {@link Command}; the dispatcher in
+ * The command contract. Each subcommand is a {@link Command}; the dispatcher in
  * `./cli.ts` selects one by name and runs it.
  * @packageDocumentation
  */
@@ -32,6 +32,18 @@ export interface Command {
    * `--help`) are added automatically.
    */
   readonly flags: FlagSpec;
+  /** Enumerated flag values, when the implementation publishes its actual choice arrays. */
+  readonly choices?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Format support declared at command registration and exposed by `describe`.
+   * `reads`/`writes` describe primary file formats; `stdout` names response formats.
+   * Unversioned names (e.g. `input-script`) are format labels, not versioned schemas.
+   */
+  readonly formats?: {
+    readonly reads: readonly string[];
+    readonly writes: readonly string[];
+    readonly stdout: readonly string[];
+  };
   /**
    * Execute the command. Resolves to a process exit code: `0` for success, non-zero for
    * failure. Must not call `process.exit` itself.
