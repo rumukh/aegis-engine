@@ -67,12 +67,12 @@
     {
       "file": "guard-alert.wav",
       "bytes": 21212,
-      "sha256": "3e89406c0ced265ba38469d0c7603f201e287cc68ab5e3784899ccc34e20d52b"
+      "sha256": "0f2a8fcb726c6fb30376df459e0bfd23154c9c76b354d1ff64baee08322188fb"
     },
     {
       "file": "access-granted.wav",
       "bytes": 27386,
-      "sha256": "3f76c1bd7af0fc8805002ff4f92be503b9eebe9f02366c28006cc0ea3e451cbb"
+      "sha256": "687e6d2e37dcfbad25a641e2d3c1319d2c4734b1279d3750e63f70bed623d837"
     },
     {
       "file": "vault-unseal.wav",
