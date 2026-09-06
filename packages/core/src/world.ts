@@ -83,7 +83,7 @@ export interface World {
 
   /** Capture the full world state as a plain-JSON snapshot. */
   snapshot(): WorldSnapshot;
-  /** Replace this world's state with a snapshot's. */
+  /** Replace this world's state with a snapshot's; invalid snapshots leave it unchanged. */
   restore(snapshot: WorldSnapshot): void;
   /** Deterministic digest of the current state. Equal iff snapshots are equal. */
   hash(): StateHash;
@@ -235,6 +235,23 @@ function isUint32(v: unknown): boolean {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 0xffffffff;
 }
 
+function isPlainRecord(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function cloneSnapshotValue(value: unknown, path: string): unknown {
+  try {
+    return deepCloneSerialisable(value);
+  } catch (err) {
+    if (!(err instanceof UnserialisableValueError)) throw err;
+    const at = err.path === '' ? path : `${path}.${err.path}`;
+    const explained = explainUnserialisable(err.reason, err.detail);
+    throw invalidSnapshot(at, `${at} holds ${explained.what}. ${explained.why}`, explained.fix);
+  }
+}
+
 /**
  * Structurally validate a snapshot before it is allowed to become world state.
  *
@@ -243,7 +260,7 @@ function isUint32(v: unknown): boolean {
  * used to produce a world that hashed successfully while containing `"id": "NaN"`.
  */
 function validateSnapshot(snap: WorldSnapshot): void {
-  if (snap === null || typeof snap !== 'object') {
+  if (!isPlainRecord(snap)) {
     throw invalidSnapshot('<root>', 'snapshot is not an object.', 'Pass a WorldSnapshot.');
   }
   if (snap.version !== 1) {
@@ -253,24 +270,30 @@ function validateSnapshot(snap: WorldSnapshot): void {
       'Re-capture the snapshot with this engine version.',
     );
   }
-  if (!Number.isInteger(snap.tick) || snap.tick < 0) {
+  if (!Number.isSafeInteger(snap.tick) || snap.tick < 0) {
     throw invalidSnapshot(
       'tick',
-      `tick must be a non-negative integer, got ${String(snap.tick)}.`,
-      'Ticks are whole numbers counted from 0.',
+      `tick must be a non-negative safe integer, got ${String(snap.tick)}.`,
+      'Ticks are exactly representable whole numbers counted from 0.',
     );
   }
-  if (snap.prng === null || typeof snap.prng !== 'object' || !Array.isArray(snap.prng.s)) {
+  if (!isPlainRecord(snap.prng) || !Array.isArray(snap.prng.s)) {
     throw invalidSnapshot(
       'prng.s',
       'PRNG state is missing or is not an array of words.',
       'Capture the snapshot with World.snapshot() rather than assembling it by hand.',
     );
   }
+  if (snap.prng.s.length !== 4) {
+    throw invalidSnapshot(
+      'prng.s',
+      `PRNG state must contain exactly 4 words, got ${snap.prng.s.length}.`,
+      'Version 1 snapshots store the four unsigned 32-bit words of sfc32.',
+    );
+  }
   const allocator = snap.allocator;
   if (
-    allocator === null ||
-    typeof allocator !== 'object' ||
+    !isPlainRecord(allocator) ||
     !Array.isArray(allocator.slots) ||
     !Array.isArray(allocator.free)
   ) {
@@ -290,6 +313,7 @@ function validateSnapshot(snap: WorldSnapshot): void {
       );
     }
   }
+  const freeSlots = new Set<number>();
   for (let i = 0; i < allocator.free.length; i++) {
     const f = allocator.free[i];
     if (typeof f !== 'number' || !Number.isInteger(f) || f < 0 || f >= allocator.slots.length) {
@@ -299,6 +323,14 @@ function validateSnapshot(snap: WorldSnapshot): void {
         'The free list holds indices into `allocator.slots`.',
       );
     }
+    if (freeSlots.has(f)) {
+      throw invalidSnapshot(
+        `allocator.free[${i}]`,
+        `slot ${f} occurs more than once on the free list.`,
+        'Each free slot must appear exactly once, or future spawns would reuse a live handle.',
+      );
+    }
+    freeSlots.add(f);
   }
   if (!Array.isArray(snap.entities)) {
     throw invalidSnapshot('entities', 'entities must be an array.', 'Use World.snapshot().');
@@ -308,7 +340,7 @@ function validateSnapshot(snap: WorldSnapshot): void {
   for (let i = 0; i < snap.entities.length; i++) {
     const ent = snap.entities[i] as EntitySnapshot | undefined;
     const at = `entities[${i}]`;
-    if (ent === null || typeof ent !== 'object') {
+    if (ent === undefined || !isPlainRecord(ent)) {
       throw invalidSnapshot(at, 'entity entry is not an object.', 'Use World.snapshot().');
     }
     if (typeof ent.id !== 'string' || ent.id === '') {
@@ -319,11 +351,11 @@ function validateSnapshot(snap: WorldSnapshot): void {
       );
     }
     const handle = Number(ent.id);
-    if (!Number.isSafeInteger(handle) || handle <= 0) {
+    if (!Number.isSafeInteger(handle) || handle <= 0 || String(handle) !== ent.id) {
       throw invalidSnapshot(
         `${at}.id`,
-        `entity id "${ent.id}" is not a positive safe integer, so it cannot be an entity handle.`,
-        'A NULL/NaN id here is the signature of a hand-edited or truncated save file.',
+        `entity id "${ent.id}" is not the canonical decimal form of a positive safe integer.`,
+        'Use the exact decimal entity handle emitted by World.snapshot().',
       );
     }
     const slot = entityIndex(handle as Entity);
@@ -352,14 +384,14 @@ function validateSnapshot(snap: WorldSnapshot): void {
       );
     }
     seen.add(slot);
-    if (allocator.free.includes(slot)) {
+    if (freeSlots.has(slot)) {
       throw invalidSnapshot(
         `${at}.id`,
         `slot ${slot} is both live and on the free list.`,
         'A free slot has no live entity.',
       );
     }
-    if (ent.components === null || typeof ent.components !== 'object') {
+    if (!isPlainRecord(ent.components)) {
       throw invalidSnapshot(
         `${at}.components`,
         'components must be an object keyed by component id.',
@@ -368,7 +400,17 @@ function validateSnapshot(snap: WorldSnapshot): void {
     }
   }
 
-  if (snap.resources === null || typeof snap.resources !== 'object') {
+  for (let slot = 0; slot < allocator.slots.length; slot++) {
+    if (!seen.has(slot) && !freeSlots.has(slot)) {
+      throw invalidSnapshot(
+        `allocator.slots[${slot}]`,
+        `slot ${slot} is neither live nor on the free list.`,
+        'Every allocated slot must have one live entity or exactly one free-list entry.',
+      );
+    }
+  }
+
+  if (!isPlainRecord(snap.resources)) {
     throw invalidSnapshot(
       'resources',
       'resources must be an object keyed by resource id.',
@@ -395,14 +437,14 @@ export function createWorld(config: WorldConfig): World {
   const events = createEventBus({ record: recordEvents });
 
   // Entity allocator.
-  const generations: number[] = []; // slot index → current generation
-  const alive: boolean[] = []; // slot index → live?
-  const free: number[] = []; // free slot indices, popped from the end
+  let generations: number[] = []; // slot index → current generation
+  let alive: boolean[] = []; // slot index → live?
+  let free: number[] = []; // free slot indices, popped from the end
   let liveCount = 0;
 
   // Component + resource stores.
-  const stores = new Map<string, ComponentStore>();
-  const resources = new Map<string, unknown>();
+  let stores = new Map<string, ComponentStore>();
+  let resources = new Map<string, unknown>();
   /**
    * `stores` keys, sorted, cached until a new component type appears. `snapshot()` needs them in
    * a canonical order and runs once per `hash()` — every tick, in the harness — so re-sorting per
@@ -816,38 +858,44 @@ export function createWorld(config: WorldConfig): World {
    */
   function restore(snap: WorldSnapshot): void {
     validateSnapshot(snap);
-    tick = snap.tick;
+    const nextGenerations = snap.allocator.slots.slice();
+    const nextFree = snap.allocator.free.slice();
+    const nextAlive = nextGenerations.map(() => false);
+    const nextStores = new Map<string, ComponentStore>();
+    const nextResources = new Map<string, unknown>();
 
-    // Rebuild the allocator exactly so future entity ids match an uninterrupted run.
-    generations.length = 0;
-    alive.length = 0;
-    for (let i = 0; i < snap.allocator.slots.length; i++) {
-      generations[i] = snap.allocator.slots[i] as number;
-      alive[i] = false;
-    }
-    free.length = 0;
-    for (const f of snap.allocator.free) free.push(f);
-
-    stores.clear();
-    sortedComponentIds = null;
-    resources.clear();
-    liveCount = 0;
-
-    for (const ent of snap.entities) {
+    // Stage every fallible copy before replacing anything, including the allocator and PRNG.
+    for (const [i, ent] of snap.entities.entries()) {
       const handle = Number(ent.id) as Entity;
       const slot = entityIndex(handle);
-      alive[slot] = true;
-      liveCount++;
+      nextAlive[slot] = true;
       for (const id of Object.keys(ent.components)) {
-        storeSet(store(id), slot, deepClone(ent.components[id]));
+        let target = nextStores.get(id);
+        if (target === undefined) {
+          target = makeStore();
+          nextStores.set(id, target);
+        }
+        storeSet(
+          target,
+          slot,
+          cloneSnapshotValue(ent.components[id], `entities[${i}].components.${id}`),
+        );
       }
     }
 
     for (const id of Object.keys(snap.resources)) {
-      resources.set(id, deepClone(snap.resources[id]));
+      nextResources.set(id, cloneSnapshotValue(snap.resources[id], `resources.${id}`));
     }
 
     random.load(snap.prng);
+    tick = snap.tick;
+    generations = nextGenerations;
+    free = nextFree;
+    alive = nextAlive;
+    stores = nextStores;
+    resources = nextResources;
+    liveCount = snap.entities.length;
+    sortedComponentIds = null;
     // A restored world is a *replacement*, not a continuation: keeping the previous world's
     // recorded events would double-count every assertion made against the log.
     (events as ManagedEventBus)[RESET_LOG]();
