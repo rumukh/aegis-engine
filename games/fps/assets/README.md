@@ -8,7 +8,8 @@ source are released under the repository's MIT license.
 Rebuild from the repository root with `node games/fps/assets/generate.mjs`. Only Node's
 standard library is required. `generate.mjs` is the editable source of truth; the committed
 GLBs and PNGs are delivery artifacts. `generated/manifest.json` records dimensions, counts,
-source-scene fingerprint and SHA-256s. The generator uses fixed parameters and a seeded
+canonical-JSON source-scene fingerprint and SHA-256s (independent of checkout line endings).
+The generator uses fixed parameters and a seeded
 integer texture-grain sequence, not time or unseeded randomness.
 
 ## Art direction
