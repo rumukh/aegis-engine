@@ -1069,7 +1069,7 @@ hash      : ff0c3d6ee3f19d81
 ```
 
 The recording is readable JSON, and the input round-trips back to canonical DSL text — a
-recording _is_ a script (first 9 lines; `tickHashes` continues for 120 entries):
+recording _is_ a script (`tickHashes` is truncated here; the file contains all 120 entries):
 
 <!-- template-exempt: transcript — truncated output of `aegis record` -->
 
@@ -1079,6 +1079,7 @@ recording _is_ a script (first 9 lines; `tickHashes` continues for 120 entries):
   "scene": "ledge-hop/ledge-hop.scene.json",
   "seed": "ledge-hop",
   "ticks": 120,
+  "tickRate": 60,
   "input": "hold Right 0..120\npress Jump @48",
   "finalHash": "ff0c3d6ee3f19d81",
   "tickHashes": ["8401946d29bc194b", "ddb1bfaefd12782a", "33d6f2bb3c89c37b"]
@@ -1097,9 +1098,23 @@ actual    : ff0c3d6ee3f19d81
 match     : yes
 ```
 
-Verification is **on by default**; `--no-verify` reports a mismatch without failing. A mismatch is
-never "flaky" — it is a determinism bug (a clock, an unseeded random, an unordered iteration), and
-the harness names the first divergent tick.
+Verification is **on by default**; `--no-verify` reports a mismatch without failing. Check that
+the scene, plugin, rate and intended revision match the recording before blaming determinism.
+For identical inputs, a mismatch is a determinism defect (a clock, an unseeded random, an
+unordered iteration), not a flaky result. The harness names the first divergent recorded tick.
+
+New recordings also pin the fixed `tickRate`: `aegis record --tick-rate 30 ...` records a
+30 Hz run, and replay uses that rate automatically. Rates must be finite and positive and
+produce a finite timestep; fractional rates are valid. `SimResult.tickRate` reports the rate
+actually used. Verification compares a recorded rate even when two runs happen to end at the
+same world hash.
+
+Old `recording/1` files remain readable. Missing `tickRate` means replay defaults to 60 Hz;
+the report explicitly says the original rate was not pinned. Parsing/serialization preserve
+that absence rather than inventing historical evidence. For an old recording known to have
+used another rate, supply `aegis replay --tick-rate 30 ...` or `replayRecording(...,
+{ plugin, ticks: 0, tickRate: 30 })`. A conflicting override on a new, rate-pinned recording
+is a verification failure, not a silently accepted equivalent run.
 
 ### 5.6 Going beyond the CLI
 
