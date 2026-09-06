@@ -183,6 +183,12 @@ graph LR
   and a resolver. Unknown resource IDs are errors, including for legacy plugins that omit
   declarations. Resource-free legacy plugins remain valid. Runtime-created resources do
   not need an authoring declaration.
+- **Prefab expansion precedes world writes.** `content.expandScene` resolves reusable child
+  hierarchies once per prefab per operation. Inherited descendants have instance-qualified
+  IDs, with escaped local segments; scene-authored child IDs stay unchanged. Explicit child
+  lists replace defaults, components shallow-merge, and tags union. Cycles, duplicate IDs
+  and conflicting authored `Name.value` are errors. Positions are translated to world space
+  only during instantiation; arbitrary named component references are not rewritten.
 - **Tilemaps store their grid as ASCII rows** with a glyph legend, so a level is human-readable
   and diffs line-by-line.
 

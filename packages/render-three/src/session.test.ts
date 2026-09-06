@@ -190,6 +190,7 @@ describe('live session', () => {
       aegis: 'prefab/1',
       name: 'actor',
       components: { Transform: { position: { x: 7, y: 0, z: 0 } } },
+      children: [{ id: 'child', components: { Transform: { position: { x: 1, y: 0, z: 0 } } } }],
     });
     const resources = createResourceRegistry('game.config');
     const options = { scene, plugin: platformerPlugin, resources, prefabs };
@@ -198,9 +199,10 @@ describe('live session', () => {
     expect(
       session.world
         .query({ has: [Transform] })
-        .one()
-        .get(Transform).position.x,
-    ).toBe(7);
+        .views()
+        .map((v) => v.get(Transform).position.x),
+    ).toEqual([7, 8]);
+    expect(session.snapshot().entities.map((e) => e.name)).toEqual(['instance', 'instance/child']);
     session.step();
     session.restart();
     expect(session.hash()).toBe(initial);

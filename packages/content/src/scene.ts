@@ -17,7 +17,12 @@ export type ComponentData = Readonly<Record<string, unknown>>;
 
 /** One entity declared in a scene or prefab. */
 export interface EntityDecl {
-  /** Stable id, unique within the document. Becomes the entity's `Name`. */
+  /**
+   * Scene-authored IDs are globally unique and unchanged, including nested scene children.
+   * IDs inherited from a prefab are local to their parent and become
+   * `<instance-id>/<local-id>` recursively (`~` escapes to `~0`, `/` to `~1` in local
+   * segments). The resolved ID owns `Name`; conflicting authored Name.value is an error.
+   */
   id: string;
   /** Optional prefab to instantiate first; this decl's fields then override it. */
   prefab?: string;
@@ -25,12 +30,16 @@ export interface EntityDecl {
   tags?: readonly string[];
   /**
    * Component id → partial component data. Values are merged over the component's defaults
-   * (and over the prefab, if any). Unknown ids are a validation error.
+   * (and over the prefab, if any), one level deep per component; nested objects replace
+   * wholesale. Unknown ids are a validation error. Arbitrary string references in component
+   * data are not rewritten: author fully qualified IDs when referring to inherited children.
    */
   components?: Readonly<Record<string, ComponentData>>;
   /**
-   * Nested children. By convention a child's `Transform` is authored relative to its parent
-   * and resolved to world space at load time.
+   * Omitted: inherit the prefab's children. Present (including []): replace the entire
+   * default child list; no append or by-ID merge. Scene-authored children keep their IDs.
+   * A child's Transform.position is translated by its parent's world position at load time;
+   * rotation/scale remain as authored. Nodes without Transform pass the parent position on.
    */
   children?: readonly EntityDecl[];
 }
@@ -63,7 +72,7 @@ export interface PrefabFile {
   tags?: readonly string[];
   /** Default component data for instances. */
   components?: Readonly<Record<string, ComponentData>>;
-  /** Default children for instances. */
+  /** Default children, expanded with instance-qualified IDs unless the instance replaces them. */
   children?: readonly EntityDecl[];
 }
 

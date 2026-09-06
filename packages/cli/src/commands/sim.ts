@@ -8,7 +8,7 @@
  * refused before tick 0 rather than silently instantiated with those components missing.
  * @packageDocumentation
  */
-import { parseScene, validateScene } from '@aegis/content';
+import { expandScene, parseScene, validateScene } from '@aegis/content';
 import type { ComponentRegistry, EntityDecl, SceneFile } from '@aegis/content';
 import { DiagnosticError } from '@aegis/core';
 import type { Diagnostic, EventReader, World } from '@aegis/core';
@@ -284,9 +284,13 @@ function sceneTags(scene: SceneFile): Set<string> {
 
 /** Describe what will really run, so "which systems executed" is data rather than an assumption. */
 export function composeRun(scene: SceneFile, plugin: ModePlugin): RunComposition {
-  const registry = registryFor(plugin);
+  const context = createSceneContext(plugin);
+  const expanded = expandScene(scene, context);
+  if (!expanded.ok || expanded.value === undefined) throw new DiagnosticError(expanded.diagnostics);
   const systems = plugin.systems().resolved();
-  const unregisteredMarkers = [...sceneTags(scene)].filter((tag) => !registry.has(tag)).sort();
+  const unregisteredMarkers = [...sceneTags(expanded.value)]
+    .filter((tag) => !context.registry.has(tag))
+    .sort();
   return {
     systemCount: systems.length,
     systemNames: systems.map((s) => s.name),

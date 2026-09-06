@@ -217,7 +217,9 @@ describe('shared authored resource and prefab contracts', () => {
         `export default { ...platformerPlugin,`,
         `  resources: () => [...platformerPlugin.resources(), 'game.settings'],`,
         `  prefabs: () => [{ aegis: 'prefab/1', name: 'template',`,
-        `    components: { Transform: { position: { x: 10, y: 0, z: 0 } } } }],`,
+        `    components: { Transform: { position: { x: 10, y: 0, z: 0 } } },`,
+        `    children: [{ id: 'child', tags: ['InheritedMarker'],`,
+        `      components: { Transform: { position: { x: 1, y: 0, z: 0 } } } }] }],`,
         `};`,
       ].join('\n'),
     );
@@ -229,14 +231,66 @@ describe('shared authored resource and prefab contracts', () => {
       entities: { name: string; components: { Transform: { position: { x: number } } } }[];
       resources: Record<string, unknown>;
     };
-    expect(data.entities.map((entity) => entity.name)).toEqual(['actor']);
+    expect(data.entities.map((entity) => entity.name)).toEqual(['actor', 'actor/child']);
     expect(data.entities[0]?.components.Transform.position.x).toBe(10);
+    expect(data.entities[1]?.components.Transform.position.x).toBe(11);
+    expect(inspect.err).toContain('InheritedMarker');
     expect(data.resources['game.settings']).toEqual({ difficulty: 2 });
     expect(
       (await cli(['record', 'level.scene.json', '--ticks', '2', '--out', 'catalog.replay'], dir))
         .code,
     ).toBe(0);
     expect((await cli(['replay', 'catalog.replay'], dir)).code).toBe(0);
+  });
+
+  it('semantically validates standalone prefabs with the selected plugin and source filename', async () => {
+    const dir = makeDir();
+    const prefab = {
+      aegis: 'prefab/1',
+      name: 'guard',
+      children: [{ id: 'body', components: { Patrol: { minX: 1, maxX: 3 } } }],
+    };
+    writeFileSync(join(dir, 'guard.prefab.json'), JSON.stringify(prefab));
+    const missing = await cli(['validate', 'guard.prefab.json', '--json'], dir);
+    expect(missing.code).toBe(2);
+    expect(missing.out).toContain('AEG-CONTENT-0005');
+    expect(missing.out).toContain('guard.prefab.json');
+    expect(
+      (
+        await cli(
+          ['validate', 'guard.prefab.json', '--plugin', './game-plugin.mjs#gamePlugin'],
+          dir,
+        )
+      ).code,
+    ).toBe(0);
+    writeFileSync(
+      join(dir, 'guard.prefab.json'),
+      JSON.stringify({
+        ...prefab,
+        children: [{ id: 'body', components: { Patrol: { minX: 'fast' } } }],
+      }),
+    );
+    const invalid = await cli(
+      ['validate', 'guard.prefab.json', '--json', '--plugin', './game-plugin.mjs#gamePlugin'],
+      dir,
+    );
+    expect(invalid.code).toBe(2);
+    expect(invalid.out).toContain('children[0].components.Patrol.minX');
+  });
+
+  it('reports a standalone recursive prefab instead of validating only its JSON syntax', async () => {
+    const dir = makeDir();
+    writeFileSync(
+      join(dir, 'loop.prefab.json'),
+      JSON.stringify({
+        aegis: 'prefab/1',
+        name: 'loop',
+        children: [{ id: 'child', prefab: 'loop' }],
+      }),
+    );
+    const result = await cli(['validate', 'loop.prefab.json', '--json'], dir);
+    expect(result.code).toBe(2);
+    expect(result.out).toContain('AEG-CONTENT-0018');
   });
 });
 
