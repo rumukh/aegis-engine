@@ -14,8 +14,8 @@ node games\iso\assets\source\generate.mjs
 The source uses only Node built-ins. An optional output-directory argument produces the same
 kit elsewhere without touching the shipped files. Raster textures use an original tiny pixel
 alphabet and deterministic grain; sound effects are bounded PCM synthesis, not sampled media.
-glTF buffers are embedded, with local PNG references for rack faces, console screens, and
-partition tops. Keep those relative dependencies beside the models when packaging.
+glTF buffers are embedded, with local PNG references for rack faces, console screens,
+partition tops, and the vault identity plate. Keep those dependencies beside the models.
 
 ## Art and placement
 
@@ -33,11 +33,17 @@ Meshes are appearance only. They must never replace the simulation's navigation/
 | `operative.gltf`, `sentinel.gltf` | Actor body anchors, preserving cell picking and health                           |
 | `server-rack.gltf`                | Tall rear-perimeter equipment only; never in front of a navigable cell           |
 | `service-partition.gltf`          | Instanced low walls on blocked cells; top stays below 0.45 units                 |
+| `vault-plinth.gltf`               | Center at grid (5.5, 4); all structural layers stay below the walking plane      |
 | `access-console.gltf`             | Security-switch cell; screen uses `terminal-locked.png` or `terminal-active.png` |
 | `vault-door.gltf`                 | Blocking door cell; `leaf-left`/`leaf-right` retract into neighboring wall cells |
 | `extraction-pad.gltf`             | Exit cell; low rim and four uplink nodes keep the operative visible              |
 | `deck-panel.png`                  | Tileable non-emissive walking surface with seams, fasteners, and service marks   |
 | `vault-icons.svg`                 | Four original 64-pixel UI symbols: operative, lock, console, extraction          |
+
+The props carry event-driven clips: `activate` reveals the console's active screen, `unseal`
+retracts the shutter leaves, and `extract` raises a restrained translucent uplink column.
+Play once and hold their final pose through the shared presentation runtime. They convey
+simulation events; they never decide whether a switch, door, or extraction succeeded.
 
 Interior and foreground partitions stay below the existing tactical visibility ceiling.
 Tall architecture belongs behind the maze, not on arbitrary walls. The source deliberately

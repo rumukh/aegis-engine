@@ -30,6 +30,8 @@ const FILES = [
   'vault-air.wav',
   'vault-door.gltf',
   'vault-icons.svg',
+  'vault-mark.png',
+  'vault-plinth.gltf',
   'vault-unseal.wav',
 ];
 
@@ -113,7 +115,7 @@ describe('Server Vault original presentation assets', () => {
       assets: { file: string; bytes: number; sha256: string }[];
     };
     expect(provenance.license).toBe('MIT');
-    expect(provenance.assets).toHaveLength(22);
+    expect(provenance.assets).toHaveLength(24);
     for (const asset of provenance.assets) {
       const bytes = readFileSync(join(ROOT, asset.file));
       expect(bytes.length).toBe(asset.bytes);
@@ -220,14 +222,51 @@ describe('Server Vault original presentation assets', () => {
     }
   });
 
+  it('keeps the structural plinth below the walk plane and authors actual interaction transitions', () => {
+    const plinth = bounds(model('vault-plinth.gltf'));
+    expect(plinth.max[1]).toBeLessThan(-0.08);
+    expect(plinth.min[1]).toBeLessThan(-0.7);
+    expect(plinth.max[0]! - plinth.min[0]!).toBeGreaterThan(12);
+    expect(plinth.max[0]! - plinth.min[0]!).toBeLessThan(13);
+
+    const door = model('vault-door.gltf');
+    const unseal = door.animations!.find((clip) => clip.name === 'unseal')!;
+    expect(unseal.channels.map((channel) => door.nodes[channel.target.node]!.name)).toEqual([
+      'leaf-left',
+      'leaf-right',
+    ]);
+    for (const [index, sign] of [-1, 1].entries()) {
+      const positions = values(door, unseal.samplers[index]!.output);
+      expect(positions[0]).toBeCloseTo(sign * 0.197);
+      expect(positions.at(-3)).toBeCloseTo(sign * 0.62);
+    }
+    const console = model('access-console.gltf');
+    const activate = console.animations!.find((clip) => clip.name === 'activate')!;
+    expect(activate.channels.map((channel) => console.nodes[channel.target.node]!.name)).toEqual([
+      'screen-locked',
+      'screen-active',
+    ]);
+    expect(values(console, activate.samplers[0]!.output).slice(-3)).toEqual([0, 0, 0]);
+    expect(values(console, activate.samplers[1]!.output).slice(-3)).toEqual([1, 1, 1]);
+    const pad = model('extraction-pad.gltf');
+    const extract = pad.animations!.find((clip) => clip.name === 'extract')!;
+    const scale = values(pad, extract.samplers[0]!.output);
+    expect(scale.slice(0, 3)).toEqual([0, 0, 0]);
+    expect(scale.at(-2)).toBeGreaterThan(1);
+  });
+
   it('contains real decodable surface pixels and a visibly different active terminal state', () => {
     for (const file of FILES.filter((name) => name.endsWith('.png'))) {
       const bytes = readFileSync(join(ROOT, file));
       expect([...bytes.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
       const width = bytes.readUInt32BE(16);
       const height = bytes.readUInt32BE(20);
-      expect(width).toBe(256);
-      expect([256, 512]).toContain(height);
+      if (file === 'vault-mark.png') {
+        expect([width, height]).toEqual([512, 128]);
+      } else {
+        expect(width).toBe(256);
+        expect([256, 512]).toContain(height);
+      }
       const data: Buffer[] = [];
       for (let offset = 8; offset < bytes.length;) {
         const length = bytes.readUInt32BE(offset);

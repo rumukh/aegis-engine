@@ -198,6 +198,11 @@ function consoleModel() {
     'terminal-locked.png',
     'terminal-locked.png',
   );
+  const activeScreen = model.texture(
+    'Active access screen',
+    'terminal-active.png',
+    'terminal-active.png',
+  );
   const glow = model.glow('Console status', '#ffc777');
   const base = model.part('console').shape;
   base.bevel([0, 0.055, 0], [0.49, 0.11, 0.36], 0.035, P.ink);
@@ -205,18 +210,42 @@ function consoleModel() {
   base.box([0, 0.245, 0.031], [0.045, 0.22, 0.014], P.white, glow);
   const display = model.part('screen', [0, 0.48, -0.025]);
   display.shape.bevel([0, 0, 0], [0.52, 0.105, 0.36], 0.025, P.ink);
-  display.shape.face(
-    [
-      [-0.226, 0.055, 0.14],
-      [0.226, 0.055, 0.14],
-      [0.226, 0.055, -0.14],
-      [-0.226, 0.055, -0.14],
-    ],
-    P.white,
-    screen,
-    [0, 1, 0],
-  );
+  const face = [
+    [-0.226, 0.055, 0.14],
+    [0.226, 0.055, 0.14],
+    [0.226, 0.055, -0.14],
+    [-0.226, 0.055, -0.14],
+  ];
+  const locked = model.part('screen-locked', [0, 0, 0], display.index);
+  locked.shape.face(face, P.white, screen, [0, 1, 0]);
+  const active = model.part('screen-active', [0, 0, 0], display.index);
+  active.shape.face(face, P.white, activeScreen, [0, 1, 0]);
+  model.nodes[active.index].scale = [0, 0, 0];
   model.nodes[display.index].rotation = quaternion(0, 0.44);
+  model.animation('activate', [
+    {
+      node: locked.index,
+      path: 'scale',
+      times: [0, 0.06, 0.4],
+      values: [
+        [1, 1, 1],
+        [0, 0, 0],
+        [0, 0, 0],
+      ],
+      interpolation: 'STEP',
+    },
+    {
+      node: active.index,
+      path: 'scale',
+      times: [0, 0.06, 0.4],
+      values: [
+        [0, 0, 0],
+        [1, 1, 1],
+        [1, 1, 1],
+      ],
+      interpolation: 'STEP',
+    },
+  ]);
   return model.encode();
 }
 
@@ -225,6 +254,7 @@ function door() {
   const glow = model.glow('Sealed door warning', '#f8b966');
   const frame = model.part('frame').shape;
   frame.bevel([0, 0.025, 0], [0.98, 0.05, 0.88], 0.014, P.ink);
+  const tracks = [];
   for (const sign of [-1, 1]) {
     frame.bevel([sign * 0.438, 0.22, 0], [0.104, 0.42, 0.36], 0.016, P.steel);
     frame.box([sign * 0.442, 0.428, 0], [0.07, 0.008, 0.27], P.white, glow);
@@ -235,7 +265,18 @@ function door() {
       leaf.shape.box([sign * 0.066, y, 0.153], [0.14, 0.034, 0.012], P.brass);
     }
     leaf.shape.box([-sign * 0.173, 0.21, 0.15], [0.018, 0.26, 0.01], P.white, glow);
+    tracks.push({
+      node: leaf.index,
+      path: 'translation',
+      times: [0, 0.12, 0.82],
+      values: [
+        [sign * 0.197, 0, 0],
+        [sign * 0.197, 0, 0],
+        [sign * 0.62, 0, 0],
+      ],
+    });
   }
+  model.animation('unseal', tracks);
   return model.encode();
 }
 
@@ -256,6 +297,43 @@ function extraction() {
     pad.bevel([x, 0.11, z], [0.105, 0.17, 0.105], 0.018, P.edge);
     pad.box([x, 0.2, z], [0.065, 0.014, 0.065], P.white, glow);
   }
+  const beamMaterial = model.materials.length;
+  model.materials.push({
+    name: 'Translucent uplink column',
+    pbrMetallicRoughness: {
+      baseColorFactor: [0.12, 0.7, 0.6, 0.14],
+      metallicFactor: 0,
+      roughnessFactor: 0.5,
+    },
+    emissiveFactor: [0.08, 0.5, 0.4],
+    alphaMode: 'BLEND',
+    doubleSided: true,
+  });
+  const beam = model.part('uplink-column', [0, 0.45, 0]);
+  beam.shape.prism([0, 0, 0], 0.18, 0.9, P.white, beamMaterial, 16);
+  model.nodes[beam.index].scale = [0, 0, 0];
+  model.animation('extract', [
+    {
+      node: beam.index,
+      path: 'scale',
+      times: [0, 0.25, 1.1],
+      values: [
+        [0, 0, 0],
+        [1, 1, 1],
+        [0.82, 1.3, 0.82],
+      ],
+    },
+    {
+      node: beam.index,
+      path: 'translation',
+      times: [0, 0.25, 1.1],
+      values: [
+        [0, 0.45, 0],
+        [0, 0.45, 0],
+        [0, 0.6, 0],
+      ],
+    },
+  ]);
   return model.encode();
 }
 
@@ -283,6 +361,49 @@ function partition() {
   return model.encode();
 }
 
+function plinth() {
+  const model = new Model('Server Vault layered structural plinth');
+  const mark = model.texture('Original vault identity plate', 'vault-mark.png');
+  const glow = model.glow('Underdeck service power', '#3dbbbf', 0.65);
+  const base = model.part('plinth').shape;
+  base.bevel([0, -0.42, 0], [12.34, 0.66, 9.34], 0.16, P.ink);
+  base.bevel([0, -0.145, 0], [12.16, 0.09, 9.16], 0.035, P.steel);
+  base.bevel([0, -0.76, 0], [11.85, 0.09, 8.85], 0.035, P.dark);
+  for (const sign of [-1, 1]) {
+    base.box([0, -0.21, sign * 4.654], [11.7, 0.026, 0.014], P.teal);
+    base.box([sign * 6.154, -0.21, 0], [0.014, 0.026, 8.7], P.teal);
+    for (const x of [-5.8, 5.8]) {
+      base.bevel([x, -0.46, sign * 4.39], [0.42, 0.55, 0.43], 0.045, P.steel);
+      base.box([x, -0.29, sign * 4.616], [0.23, 0.035, 0.014], P.white, glow);
+    }
+  }
+  for (const x of [-4.7, -3.35, -2, -0.65, 0.7]) {
+    base.bevel([x, -0.455, 4.641], [1.08, 0.32, 0.055], 0.02, P.dark);
+    for (const y of [-0.36, -0.43, -0.5, -0.57]) {
+      base.box([x, y, 4.676], [0.86, 0.025, 0.018], P.steel);
+    }
+  }
+  for (const z of [-3.2, -1.8, -0.4, 1, 2.4]) {
+    base.bevel([6.146, -0.455, z], [0.055, 0.32, 1.07], 0.02, P.dark);
+    for (const y of [-0.36, -0.43, -0.5, -0.57]) {
+      base.box([6.181, y, z], [0.018, 0.025, 0.84], P.steel);
+    }
+  }
+  base.bevel([3.58, -0.425, 4.682], [3.68, 0.54, 0.075], 0.022, P.edge);
+  base.face(
+    [
+      [1.79, -0.655, 4.723],
+      [5.37, -0.655, 4.723],
+      [5.37, -0.195, 4.723],
+      [1.79, -0.195, 4.723],
+    ],
+    P.white,
+    mark,
+    [0, 0, 1],
+  );
+  return model.encode();
+}
+
 const ICONS = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="64" viewBox="0 0 256 64">
   <g fill="none" stroke="#a6e6e1" stroke-width="2.5" stroke-linejoin="round">
     <path d="M20 13h24l8 10v22l-20 9-20-9V23zM20 26h24v12H20zM26 32h12"/>
@@ -303,6 +424,7 @@ export function buildAssets() {
     ['vault-door.gltf', door()],
     ['extraction-pad.gltf', extraction()],
     ['service-partition.gltf', partition()],
+    ['vault-plinth.gltf', plinth()],
   ]);
   for (const [name, model] of models)
     files.set(name, Buffer.from(`${JSON.stringify(model, null, 2)}\n`));

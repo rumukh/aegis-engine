@@ -340,7 +340,7 @@ export class Model {
       samplers: tracks.map((track) => ({
         input: append(track.times, 1, 5126),
         output: append(track.values.flat(), track.path === 'rotation' ? 4 : 3, 5126),
-        interpolation: 'LINEAR',
+        interpolation: track.interpolation ?? 'LINEAR',
       })),
       channels: tracks.map((track, sampler) => ({
         sampler,
