@@ -20,6 +20,13 @@ import {
   json,
 } from '../format.js';
 import { describeQuery, parseQuery } from '../query.js';
+import {
+  formatResources,
+  inspectionOptions,
+  pageEntities,
+  projectResources,
+  RESOURCE_MODES,
+} from '../inspection.js';
 import type { Command, CommandContext } from '../command.js';
 import { describePluginSource } from '../plugin.js';
 import {
@@ -83,13 +90,22 @@ const USAGE = [
   '  --view <kind>     world | frame | ascii (default: world).',
   '  --offscreen       Include entities outside the viewport in the frame view.',
   '  --query <expr>    Filter the world dump, e.g. "has:Player none:Dead" (world view).',
+  '  --limit <n>       Return at most n matching entities (world only; default: all).',
+  '  --offset <n>      Skip n matches in ascending entity-index order (world only; default: 0).',
+  '  --resources <k>   all | summary | none (world only; default: all full values).',
+  '  --resource <id>   Select one runtime resource ID (world only; all or summary).',
   '  --json            Emit as JSON.',
+  '',
+  'Limits/offsets are nonnegative safe integers. --limit 0 returns only counts/resources.',
+  'Output bounds do not reduce simulation, hashing or snapshot costs. --tick still runs',
+  'every preceding tick; entity bounds do not trim component values or resource values.',
   '',
   'Examples:',
   '  aegis inspect level1.scene.json --tick 60',
   '  aegis inspect level1.scene.json --tick 60 --query "has:Enemy" --json',
   '  aegis inspect level1.scene.json --tick 60 --view ascii',
   '  aegis inspect level1.scene.json --view frame --json',
+  '  aegis inspect level1.scene.json --limit 20 --offset 40 --resources summary --json',
 ].join('\n');
 
 /** `aegis inspect` — dump world/frame/entity state at a given tick for debugging. */
@@ -97,6 +113,7 @@ export const inspectCommand: Command = {
   name: 'inspect',
   summary: 'Inspect world, semantic frame or ASCII view at a tick.',
   usage: USAGE,
+  choices: { view: VIEWS, resources: RESOURCE_MODES },
   flags: {
     tick: 'value',
     mode: 'value',
@@ -107,12 +124,17 @@ export const inspectCommand: Command = {
     view: 'value',
     offscreen: 'boolean',
     query: 'value',
+    limit: 'value',
+    offset: 'value',
+    resources: 'value',
+    resource: 'value',
   },
   async run(ctx: CommandContext): Promise<number> {
     const { args, io } = ctx;
     const sceneArg = requirePositional(args, 0, 'scene', 'aegis inspect <scene>');
     const tick = flagTicks(args, 'tick', false);
     const view = flagChoice(args, 'view', VIEWS, 'world');
+    const outputOptions = inspectionOptions(args, view);
     const loaded = loadScene(ctx, sceneArg);
     const resolved = await resolveRunPlugin(ctx, loaded.scene, loaded.abs);
     assertSceneRunnable(loaded.scene, loaded.ref, resolved);
@@ -131,7 +153,7 @@ export const inspectCommand: Command = {
     const wantJson = flagBool(args, 'json');
     // The frame/ascii views print nothing but the view itself, so the warning goes to stderr —
     // it must never be silently dropped just because the caller asked for a picture.
-    if (warning !== undefined && (view !== 'world' || wantJson)) io.err(warning + '\n');
+    if (warning !== undefined && view !== 'world') io.err(warning + '\n');
 
     if (view === 'frame') {
       // `--offscreen` is the acted-on half of the frame's census line. What it recovers is
@@ -167,9 +189,12 @@ export const inspectCommand: Command = {
         .entities()
         .map((e) => Number(e)),
     );
-    const entities = snapshot.entities.filter((e) => selected.has(Number(e.id)));
+    const matches = snapshot.entities.filter((e) => selected.has(Number(e.id)));
+    const { entities, page } = pageEntities(matches, outputOptions);
+    const resources = projectResources(snapshot.resources, outputOptions);
 
     if (wantJson) {
+      if (warning !== undefined) io.err(warning + '\n');
       const jsonEntities = entities.map((e) => ({ ...e, ...entityParts(Number(e.id)) }));
       io.out(
         json({
@@ -185,10 +210,13 @@ export const inspectCommand: Command = {
           seed: result.seed,
           hash: result.hash,
           query: flagString(args, 'query') ?? null,
-          matched: entities.length,
+          matched: matches.length,
           total: snapshot.entities.length,
+          ...(page !== undefined ? { page } : {}),
           entities: jsonEntities,
-          resources: snapshot.resources,
+          ...(resources.values !== undefined ? { resources: resources.values } : {}),
+          ...(resources.summary !== undefined ? { resourceSummary: resources.summary } : {}),
+          ...(resources.selection !== undefined ? { resourceSelection: resources.selection } : {}),
         }),
       );
       return Exit.Ok;
@@ -206,20 +234,22 @@ export const inspectCommand: Command = {
       ]),
       ...(warning !== undefined ? [warning] : []),
       `query: ${describeQuery(descriptor)}`,
-      `entities: ${entities.length} of ${snapshot.entities.length}`,
+      page === undefined
+        ? `entities: ${matches.length} of ${snapshot.entities.length}`
+        : `entities: ${page.returned} returned of ${matches.length} matched (${snapshot.entities.length} total)`,
+      ...(page === undefined
+        ? []
+        : [
+            `page: offset=${page.offset} limit=${page.limit ?? 'all'} ` +
+              `truncated=${page.truncated ? 'yes' : 'no'} hasMore=${page.hasMore ? 'yes' : 'no'}`,
+          ]),
     ];
     for (const e of entities) {
       lines.push(`${formatEntity(Number(e.id))}${e.name !== undefined ? ` "${e.name}"` : ''}`);
       const ids = Object.keys(e.components).sort();
       for (const id of ids) lines.push(`  ${id} = ${canonicalStringify(e.components[id])}`);
     }
-    const resourceIds = Object.keys(snapshot.resources).sort();
-    if (resourceIds.length > 0) {
-      lines.push('resources:');
-      for (const id of resourceIds) {
-        lines.push(`  ${id} = ${canonicalStringify(snapshot.resources[id])}`);
-      }
-    }
+    lines.push(...formatResources(resources));
     io.out(lines.join('\n') + '\n');
     return Exit.Ok;
   },
