@@ -1,0 +1,57 @@
+# Sector Breach original asset kit
+
+All meshes, textures, lettering, animation and sounds in this directory are original
+procedural artwork authored for Aegis. No downloaded models, stock textures, sound samples,
+generated third-party images, proprietary fonts or external creative services are used. The assets and their
+source are released under the repository's MIT license.
+
+Rebuild from the repository root with `node games/fps/assets/generate.mjs`. Only Node's
+standard library is required. `generate.mjs` is the editable source of truth; the committed
+GLBs and PNGs are delivery artifacts. `generated/manifest.json` records dimensions, counts,
+source-scene fingerprint and SHA-256s. The generator uses fixed parameters and a seeded
+integer texture-grain sequence, not time or unseeded randomness.
+
+## Art direction
+
+Sector 09 is an orbital transfer station. Pale service panels, dark ribbed deck plates,
+copper thermal lines and machined graphite frames establish its industrial construction.
+Amber pressure-lock warnings contrast with cyan coolant and a green extraction pad.
+Lettering is an original hand-authored bitmap alphabet, rasterized into a shared atlas.
+
+The Kestrel K-09 sentry has distinct plated shoulders, an offset optical slit, exposed
+hydraulics, separated articulated legs and a forearm weapon. The Vaultline V-7 is an
+original compact coil rifle with a reflex sight, charging bolt, thermal coils, magazine
+and pressure-suit arms. Neither references an existing fictional weapon or character.
+
+## Integration contract
+
+| Asset                  | Origin / orientation                                             | Presentation controls                                                    |
+| ---------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `orbital-facility.glb` | World origin, Y up; built from the unchanged scene grid          | Static environment; replaces legacy floorplan drawing, not collision     |
+| `kestrel-security.glb` | Feet at origin, faces -Z; authored to the existing enemy hit box | `SentinelIdle`, `ReturnFire`, `Shutdown`; `EnemyMuzzle` anchor           |
+| `vaultline-rifle.glb`  | Camera-local origin, points -Z                                   | Attach to camera, offset in composition; `Fire` clip and `Muzzle` anchor |
+| `blast-door.glb`       | Bottom centre of a door cell; 1 x 4 x 1 closed                   | `Open` lifts `DoorLeaf`; driven by authoritative cell state              |
+| `breach-panel.glb`     | Entity origin; illuminated target faces -X                       | Fits the existing panel hit box; `LockStatus` node                       |
+| `extraction-pad.glb`   | Entity origin on the floor                                       | Non-obstructing markings inside the existing goal trigger                |
+
+GLBs embed their PNG images and need no sidecar fetches. Standalone PNGs are also provided
+for shared material descriptors. Albedo/signage maps use sRGB; normal maps use linear
+sampling. Largest image: 512 x 512. The four environment zones are merged by material:
+surface detail is mostly texture work rather than hundreds of independent draw calls.
+
+Audio is 22,050 Hz, mono, 16-bit PCM WAV with explicit headroom and click-free edges:
+a station-air loop, coil discharge, pressure-door servo, armor/suit impacts, sentry
+shutdown and airlock-ready cue. They are synthesized from fixed polynomial oscillators
+and seeded filtered noise. Playback, event dispatch, gain and gesture unlock belong to
+the shared audio service.
+
+The presentation layer must own geometry/material/texture disposal and animation mixers.
+Clone instances through the shared asset cache; do not duplicate loading or add assets to
+world snapshots. Audio, HUD, loading/error states and event binding use the shared
+presentation platform, not an asset-specific runtime.
+
+Opening the blast door is a visual transition after the collision cell becomes passable.
+Its 0.8-second rise completes before the existing route reaches it. A live player who
+reaches it sooner must never encounter an invisible collider or be blocked by rendering.
+Visual weapon recoil changes only its model; camera direction, `LookState`, crosshair and
+hitscan rays must remain identical. Mesh animation is not collision animation.
