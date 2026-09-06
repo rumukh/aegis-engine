@@ -29,10 +29,14 @@ export function initFloorplan(world: World): void {
   world.setResource(FPS_COLLISION, extrudeFloorplan(spec));
 }
 
+/** Authored resource vocabulary, shared by the mode and composed game plugins. */
+export const FPS_RESOURCES = [FPS_FLOORPLAN, FPS_COLLISION] as const;
+
 /** The FPS mode plugin. */
 export const fpsPlugin: ModePlugin = {
   mode: 'fps',
   components: () => FPS_COMPONENTS,
+  resources: () => FPS_RESOURCES,
   systems: () => fpsSchedule(),
   init: (world) => initFloorplan(world),
   view: () => new FpsViewProvider(),

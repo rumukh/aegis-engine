@@ -195,8 +195,18 @@ describe('simulation stepping', () => {
     expect(seenTicks).toEqual([0, 1, 2]);
   });
 
-  it('rejects a non-positive tickRate', () => {
+  it.each([0, -1, NaN, Infinity, -Infinity, Number.MIN_VALUE])(
+    'rejects invalid tickRate %s',
+    (tickRate) => {
+      const world = createWorld({ seed: 1 });
+      expect(() => createSimulation({ world, schedule: createSchedule(), tickRate })).toThrow();
+      expect(world.tick).toBe(0);
+    },
+  );
+
+  it('accepts finite positive fractional tick rates', () => {
     const world = createWorld({ seed: 1 });
-    expect(() => createSimulation({ world, schedule: createSchedule(), tickRate: 0 })).toThrow();
+    const simulation = createSimulation({ world, schedule: createSchedule(), tickRate: 59.94 });
+    expect(simulation.dt).toBe(1 / 59.94);
   });
 });

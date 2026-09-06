@@ -1,0 +1,75 @@
+{
+  "name": "Coyote Gap: The Amber Traverse",
+  "version": 1,
+  "authorship": "Original assets produced for rumukh/aegis-engine. No third-party characters, textures, models, fonts, or samples are incorporated.",
+  "license": "MIT",
+  "palette": {
+    "ink": "#101f2b",
+    "slate": "#284652",
+    "petrol": "#3c6b70",
+    "brass": "#d3a763",
+    "sunlight": "#f4d3a1",
+    "signal": "#a5f3e0",
+    "hazard": "#e76448"
+  },
+  "sources": [
+    {
+      "file": "canyon-vista.jpg",
+      "kind": "generated-original-background",
+      "tool": "Configured Azure OpenAI gpt-image-2 image generation skill",
+      "prompt": "source/canyon-vista.prompt.txt",
+      "request": {
+        "size": "1536x1024",
+        "quality": "high",
+        "background": "opaque",
+        "format": "jpeg"
+      },
+      "reproduction": "The committed image is the canonical output. The prompt documents the art direction; service regeneration is not bit-identical.",
+      "private-inputs": "None. Only the committed creative prompt was sent."
+    },
+    {
+      "files": [
+        "engineer.svg",
+        "critter.svg",
+        "terrain.svg",
+        "terrain-rock-0.svg",
+        "terrain-rock-1.svg",
+        "terrain-rock-2.svg",
+        "terrain-rock-3.svg",
+        "terrain-edge.svg",
+        "terrain-girder.svg",
+        "terrain-spikes.svg",
+        "terrain-lava.svg",
+        "terrain-panel.svg",
+        "terrain-warning.svg",
+        "terrain-grating.svg",
+        "terrain-waypoint.svg",
+        "ferry.svg",
+        "beacon.svg",
+        "machinery.svg",
+        "midground.svg",
+        "foreground.svg",
+        "effects.svg"
+      ],
+      "kind": "procedural-original-vector-art",
+      "source": "source/generate.mjs",
+      "reproduction": "node games/platformer/assets/source/generate.mjs",
+      "notes": "Deterministic authored paths and seeded surface detail, with no external images, fonts, or runtime network requests. SVG files have explicit intrinsic sizes and transparent backgrounds where appropriate. Standalone 128x128 terrain cells reuse the atlas source to permit ordinary material sampling/repeat without atlas-edge bleeding."
+    },
+    {
+      "files": [
+        "jump.wav",
+        "landing.wav",
+        "stomp.wav",
+        "ferry.wav",
+        "beacon.wav",
+        "fall.wav",
+        "canyon-air.wav"
+      ],
+      "kind": "procedural-original-audio",
+      "source": "source/generate-audio.mjs",
+      "reproduction": "node games/platformer/assets/source/generate-audio.mjs",
+      "notes": "Original restrained spring, impact, mechanical chime, signal, and air cues. Seeded noise and a polynomial oscillator; no samples or external audio. Mono 16-bit PCM WAV at 22050 Hz. Short attack/release envelopes and bounded output prevent clicks and clipping."
+    }
+  ]
+}
