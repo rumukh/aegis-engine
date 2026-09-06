@@ -14,13 +14,13 @@
  */
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { parseRecording, runScene, verifyReplay } from '@aegis/harness';
+import { parseRecording, recordingTickRate, runScene, verifyReplay } from '@aegis/harness';
 import type { RunOptions } from '@aegis/harness';
 import { AegisCliError, CliCode, Exit } from '../errors.js';
 import { formatAscii, formatDiagnostics, formatFields, formatFrame, json } from '../format.js';
 import type { Command, CommandContext } from '../command.js';
 import { describePluginSource } from '../plugin.js';
-import { flagBool, readText, requirePositional, resolvePath } from './shared.js';
+import { flagBool, flagTickRate, readText, requirePositional, resolvePath } from './shared.js';
 import {
   assertSceneRunnable,
   asciiOf,
@@ -40,6 +40,7 @@ const USAGE = [
   '',
   "  --mode <mode>     platformer | iso | fps (default: the scene's mode).",
   '  --plugin <spec>   Override the plugin recorded in the file (<module>#<export>).',
+  '  --tick-rate <hz>  Override the recorded rate (legacy files otherwise default to 60).',
   '  --no-verify       Replay without failing on a mismatch (still reports it).',
   '  --frame           Also print the final semantic frame.',
   '  --ascii           Also print the final ASCII view.',
@@ -94,6 +95,7 @@ export const replayCommand: Command = {
   flags: {
     mode: 'value',
     plugin: 'value',
+    'tick-rate': 'value',
     'no-verify': 'boolean',
     verify: 'boolean',
     frame: 'boolean',
@@ -105,6 +107,14 @@ export const replayCommand: Command = {
     const recordingAbs = resolvePath(io, recordingArg);
     const recordingText = readText(recordingAbs, io);
     const recording = parseRecording(recordingText);
+    const rateOverride = flagTickRate(args);
+    const tickRate = rateOverride ?? recordingTickRate(recording);
+    const tickRateSource =
+      rateOverride !== undefined
+        ? 'flag'
+        : recording.tickRate !== undefined
+          ? 'recording'
+          : 'legacy-default';
 
     const sceneAbs = resolveScenePath(io, recordingAbs, recording.scene);
     const parsedScene = parseScene(readText(sceneAbs, io), recording.scene);
@@ -127,6 +137,7 @@ export const replayCommand: Command = {
       plugin: resolved.plugin,
       ticks: recording.ticks,
       seed: recording.seed,
+      tickRate,
     };
     // A recording's script is the whole run, not a prefix of one, so a statement in it that has
     // no effect means the file was edited after it was written. `aegis run` deliberately stays
@@ -159,6 +170,8 @@ export const replayCommand: Command = {
           },
           unregisteredMarkers: composition.unregisteredMarkers,
           ticks: recording.ticks,
+          tickRate: result.tickRate,
+          tickRateSource,
           seed: recording.seed,
           expectedHash: recording.finalHash,
           actualHash: result.hash,
@@ -181,6 +194,7 @@ export const replayCommand: Command = {
           ['plugin', describePluginSource(resolved)],
           ['systems', String(composition.systemCount)],
           ['ticks', String(recording.ticks)],
+          ['tick rate', `${result.tickRate} (${tickRateSource})`],
           ['seed', String(recording.seed)],
           ['expected', recording.finalHash],
           ['actual', result.hash],

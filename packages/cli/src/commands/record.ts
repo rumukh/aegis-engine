@@ -23,6 +23,7 @@ import {
   flagBool,
   flagSeed,
   flagString,
+  flagTickRate,
   flagTicks,
   readText,
   requirePositional,
@@ -43,6 +44,7 @@ const USAGE = [
   '',
   '  --out <file>      Where to write the recording (required).',
   '  --ticks <n>       Number of ticks to record (required, >= 0).',
+  '  --tick-rate <hz>  Fixed ticks per second (default: 60); stored in the recording.',
   "  --mode <mode>     platformer | iso | fps (default: the scene's mode).",
   '  --plugin <spec>   Plugin to run: <module>#<export>, a package, or a mode name.',
   '                    Stored in the recording so `aegis replay` reuses it automatically.',
@@ -65,6 +67,7 @@ export const recordCommand: Command = {
   flags: {
     out: 'value',
     ticks: 'value',
+    'tick-rate': 'value',
     mode: 'value',
     plugin: 'value',
     input: 'value',
@@ -101,7 +104,11 @@ export const recordCommand: Command = {
     const composition = composeRun(loaded.scene, resolved.plugin);
     const modeName = resolved.plugin.mode;
 
-    const options: RunOptions = { plugin: resolved.plugin, ticks };
+    const options: RunOptions = {
+      plugin: resolved.plugin,
+      ticks,
+      tickRate: flagTickRate(args) ?? 60,
+    };
     const seed = flagSeed(args);
     if (seed !== undefined) options.seed = seed;
     const inputFile = flagString(args, 'input');
@@ -128,6 +135,7 @@ export const recordCommand: Command = {
           },
           unregisteredMarkers: composition.unregisteredMarkers,
           ticks: result.tick,
+          tickRate: result.tickRate,
           seed: result.seed,
           hash: result.hash,
         }),
@@ -143,6 +151,7 @@ export const recordCommand: Command = {
         ['plugin', describePluginSource(resolved)],
         ['systems', String(composition.systemCount)],
         ['ticks', String(result.tick)],
+        ['tick rate', String(result.tickRate)],
         ['seed', String(result.seed)],
         ['hash', result.hash],
       ]) +

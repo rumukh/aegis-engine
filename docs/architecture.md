@@ -357,7 +357,14 @@ able to tell "verified" from "didn't check".
 
 The object all of this reads from is `SimResult` (`harness/run.ts`): `world`, `hash`,
 per-tick `tickHashes`, the `events` reader, `query(...)`, `frame(tick, viewOptions?)`,
-`ascii(tick, viewOptions?)`, `at(tick)`, and `recording()`/`replay()`.
+`ascii(tick, viewOptions?)`, `at(tick)`, `tickRate`, and `recording()`/`replay()`.
+
+New `recording/1` documents pin the run's finite positive `tickRate` as well as its ticks,
+seed, input and hashes. Replay uses it by default and verifies the rate even when resting
+world hashes coincide. Old documents without the field default to 60 Hz; they preserve their
+missing metadata and report the original rate as unverified. An explicit legacy-rate override
+remains available. `core.isValidTickRate` supplies the shared validity rule for simulations,
+recording boundaries and CLI flags, including rejection of rates whose reciprocal overflows.
 
 ## 8. Contracts most likely to be renegotiated
 

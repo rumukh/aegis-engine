@@ -14,6 +14,7 @@ import {
   createWorld,
   DiagnosticError,
   EMPTY_INPUT_FRAME,
+  isValidTickRate,
   max,
 } from '@aegis/core';
 import type {
@@ -35,6 +36,7 @@ import { parseInputScript } from './input-script.js';
 import type { InputScript } from './input-script.js';
 import type { ModePlugin } from './plugin.js';
 import type { Recording } from './replay.js';
+import { recordingTickRate } from './replay.js';
 import { formatInputScript, scriptFromCommands } from './input-script.js';
 import { describeRun, renderValue, summariseWorld, toOutcome } from './report.js';
 import type { CheckResult } from './report.js';
@@ -71,7 +73,7 @@ export interface RunOptions extends SceneContentOptions {
   seed?: number | string;
   /** Input: DSL text, a parsed {@link InputScript}, or explicit per-tick frames. */
   input?: string | InputScript | readonly InputFrame[];
-  /** Fixed ticks per second. Defaults to `60`. */
+  /** Finite positive ticks per second, with a finite timestep. Defaults to `60`. */
   tickRate?: number;
   /** Record the full event log for assertions. Defaults to `true`. */
   recordEvents?: boolean;
@@ -119,6 +121,8 @@ export interface SimResult {
   readonly world: World;
   /** The final tick number (equals `ticks`). */
   readonly tick: number;
+  /** Fixed ticks per second actually used by this run. */
+  readonly tickRate: number;
   /** The seed actually used. */
   readonly seed: number | string;
   /** Final deterministic state hash. */
@@ -404,6 +408,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
   const self: SimResult = {
     world,
     tick: run.ticks,
+    tickRate: run.tickRate,
     seed: run.seed,
     hash: world.hash(),
     tickHashes,
@@ -472,6 +477,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
         scene: run.sceneRef,
         seed: run.seed,
         ticks: run.ticks,
+        tickRate: run.tickRate,
         input: formatInputScript(run.script),
         finalHash: world.hash(),
         ...(tickHashes.length > 0 ? { tickHashes } : {}),
@@ -516,6 +522,12 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
       `[aegis] runScene: ticks must be a non-negative integer, got ${options.ticks}`,
     );
   }
+  const tickRate = options.tickRate === undefined ? 60 : options.tickRate;
+  if (!isValidTickRate(tickRate)) {
+    throw new RangeError(
+      `[aegis] runScene: tickRate must be a finite positive number with a finite timestep, got ${tickRate}`,
+    );
+  }
   const seed = options.seed ?? scene.seed ?? 0;
   const ticks = options.ticks;
   const invariants = options.invariants ?? [];
@@ -550,7 +562,7 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
       ...(options.file !== undefined ? { file: options.file } : {}),
     },
     ticks,
-    tickRate: options.tickRate ?? 60,
+    tickRate,
     seed,
     frames,
     script,
@@ -612,11 +624,13 @@ export async function replayRecording(
   recording: Recording,
   options: RunOptions,
 ): Promise<SimResult> {
+  const recordedRate = recordingTickRate(recording);
   const result = await runScene(recording.scene, {
     ...options,
     ticks: recording.ticks,
     seed: recording.seed,
     input: recording.input,
+    tickRate: options.tickRate === undefined ? recordedRate : options.tickRate,
   });
   const verified = verifyReplay(recording, result);
   if (!verified.ok) {
@@ -726,6 +740,14 @@ export function verifyReplay(recording: Recording, result: SimResult): ReplayVer
   }
   const problems: string[] = [];
   const unverified: string[] = [];
+  const recordedRate = recordingTickRate(recording);
+  if (recording.tickRate === undefined) {
+    unverified.push(
+      'the original tick rate (legacy recording has no tickRate; replay defaults to 60 Hz unless explicitly overridden)',
+    );
+  } else if (result.tickRate !== recordedRate) {
+    problems.push(`tick rate: recorded ${recordedRate} Hz, replayed ${result.tickRate} Hz`);
+  }
   const finalHashMatched = result.hash === recording.finalHash;
   if (!finalHashMatched) {
     problems.push(

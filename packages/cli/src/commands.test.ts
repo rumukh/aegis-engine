@@ -292,6 +292,135 @@ describe('aegis validate', () => {
 });
 
 describe('aegis record / replay', () => {
+  it('reproduces the three-tick Coyote Gap recording at 30 Hz with no replay override', async () => {
+    const dir = makeDir();
+    const coyote = join(
+      PACKAGE_ROOT,
+      '..',
+      '..',
+      'games',
+      'platformer',
+      'levels',
+      'coyote-gap.scene.json',
+    );
+    writeFileSync(join(dir, 'level.scene.json'), readFileSync(coyote, 'utf8'));
+    writeFileSync(join(dir, 'walk.input'), 'hold Right 0..3');
+    const recorded = await cli(
+      [
+        'record',
+        'level.scene.json',
+        '--out',
+        'rate.replay.json',
+        '--ticks',
+        '3',
+        '--tick-rate',
+        '30',
+        '--input',
+        'walk.input',
+        '--plugin',
+        '@aegis/game-platformer#coyoteGapPlugin',
+        '--json',
+      ],
+      dir,
+    );
+    expect(recorded.code).toBe(0);
+    const file = JSON.parse(readFileSync(join(dir, 'rate.replay.json'), 'utf8')) as {
+      tickRate: number;
+      finalHash: string;
+    };
+    expect(file.tickRate).toBe(30);
+    // Captured from the pre-fix 30 Hz run; replay used to default to a different 60 Hz hash.
+    expect(file.finalHash).toBe('fc8a35e4d2c6c337');
+    const replayed = await cli(['replay', 'rate.replay.json', '--json'], dir);
+    expect(replayed.code).toBe(0);
+    expect(JSON.parse(replayed.out)).toMatchObject({
+      tickRate: 30,
+      tickRateSource: 'recording',
+      verified: true,
+      actualHash: 'fc8a35e4d2c6c337',
+      problems: [],
+      unverified: [],
+    });
+    const overridden = await cli(
+      ['replay', 'rate.replay.json', '--tick-rate', '60', '--no-verify', '--json'],
+      dir,
+    );
+    expect(overridden.code).toBe(0);
+    expect(JSON.parse(overridden.out)).toMatchObject({
+      tickRate: 60,
+      tickRateSource: 'flag',
+      verified: false,
+      problems: expect.arrayContaining(['tick rate: recorded 30 Hz, replayed 60 Hz']),
+    });
+  });
+
+  it('replays legacy files at 60 Hz and reports that the original rate was not pinned', async () => {
+    const dir = makeDir();
+    expect(
+      (await cli(['record', 'level.scene.json', '--out', 'old.replay.json', '--ticks', '3'], dir))
+        .code,
+    ).toBe(0);
+    const file = join(dir, 'old.replay.json');
+    const legacy = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    delete legacy.tickRate;
+    writeFileSync(file, JSON.stringify(legacy));
+    const replayed = await cli(['replay', 'old.replay.json', '--json'], dir);
+    expect(replayed.code).toBe(0);
+    const data = JSON.parse(replayed.out) as {
+      tickRate: number;
+      tickRateSource: string;
+      verified: boolean;
+      unverified: string[];
+    };
+    expect(data.tickRate).toBe(60);
+    expect(data.tickRateSource).toBe('legacy-default');
+    expect(data.verified).toBe(true);
+    expect(data.unverified.some((message) => message.includes('original tick rate'))).toBe(true);
+  });
+
+  it.each(['0', '-1', 'Infinity', 'NaN', '1e-324', ''])(
+    'rejects invalid --tick-rate %j before recording a file',
+    async (rate) => {
+      const dir = makeDir();
+      const result = await cli(
+        [
+          'record',
+          'level.scene.json',
+          '--out',
+          'invalid.replay.json',
+          '--ticks',
+          '1',
+          '--tick-rate',
+          rate,
+        ],
+        dir,
+      );
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('tick-rate');
+      expect(existsSync(join(dir, 'invalid.replay.json'))).toBe(false);
+    },
+  );
+
+  it('refuses invalid rate metadata instead of treating it as a legacy recording', async () => {
+    const dir = makeDir();
+    expect(
+      (
+        await cli(
+          ['record', 'level.scene.json', '--out', 'invalid.replay.json', '--ticks', '3'],
+          dir,
+        )
+      ).code,
+    ).toBe(0);
+    const file = join(dir, 'invalid.replay.json');
+    const recording = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    for (const tickRate of [null, 0, -1, '30']) {
+      writeFileSync(file, JSON.stringify({ ...recording, tickRate }));
+      const result = await cli(['replay', 'invalid.replay.json', '--tick-rate', '60'], dir);
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('tickRate');
+    }
+  });
+
   it('records a run and replays it to an identical hash', async () => {
     const dir = makeDir();
     const rec = await cli(
