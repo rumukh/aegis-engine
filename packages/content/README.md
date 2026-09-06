@@ -33,7 +33,7 @@ There is no second source of truth to fall out of sync with the runtime shape.
 | Incomplete **nested** object (the merge is one level deep)      | `AEG-CONTENT-0013` | `Trigger: { half: { x: 2 } }` — loses `y`/`z`          |
 | Value outside a declared closed set                             | `AEG-CONTENT-0015` | `Trigger: { shape: "spere" }`                          |
 | Unknown component id, with a did-you-mean                       | `AEG-CONTENT-0005` | `Helth` → _did you mean "Health"?_                     |
-| Unknown resource id, with a did-you-mean (opt-in — see below)   | `AEG-CONTENT-0014` | `platformer.tilemp`                                    |
+| Unknown resource id, with a did-you-mean                        | `AEG-CONTENT-0014` | `platformer.tilemp`                                    |
 | A schema declaration keyed against the wrong component object   | `AEG-CONTENT-0016` | warning; see [Declaring a schema](#declaring-a-schema) |
 
 Every diagnostic carries the JSON path of the offending field (and the file, when the caller
@@ -69,8 +69,9 @@ Each of these is a boundary, not an oversight — if you hit one, it is not a bu
   Only fields explicitly declared as closed sets are checked.
 - **Free-form maps.** A field declared `optional: { x: 'object' }`, or one whose default is an
   empty object (`{ bag: {} }`), declares no keys — its contents are not key-checked.
-- **Resource _values_.** Resources are applied wholesale with no merge, and some (an fps floorplan
-  legend) are legitimately free-form. Ids only.
+- **Resource value schemas.** Resources are applied wholesale with no merge, and some (an fps
+  floorplan legend) are legitimately free-form. Values are always checked for JSON storability;
+  their application-specific shape is not inferred.
 - **Components this package does not own.** Validation works for every registered component, but
   `describeComponent` declarations are made by each component's owner.
 
@@ -96,33 +97,29 @@ through to the undeclared path where optional fields become hard errors. `valida
 that as `AEG-CONTENT-0016` (warning) rather than letting it be discovered as a mysterious false
 positive. Keep the declaration beside the definition and it cannot happen.
 
-## Resource-id validation is implemented and **not wired up**
+## Resource IDs and shared initialization
 
 `ResourceRegistry` + `ValidateOptions.resources` are implemented and tested: supply a registry and
-an unknown resource id is an error with a did-you-mean. **`runScene` does not supply one**, so
-`aegis run` / `aegis test` do not report a typo'd resource id today. That is a PM ruling on
-proportionality (activating it touches a frozen contract plus three mode packages that other
-sessions are actively changing), deferred to v2 — not an oversight, and recorded here because an
-unwired capability that says so is fine while one that silently does nothing is not.
+an unknown resource id is an error with a did-you-mean. The harness exports
+`createSceneContext(plugin, options)` and `bootstrapScene(scene, options)`; headless runs, CLI
+validation and live sessions use the same declarations before `plugin.init`.
 
-Exactly two changes activate it:
+`ModePlugin.resources?()` returns resource types or string IDs. Compose the mode's exported
+`PLATFORMER_RESOURCES`, `ISO_RESOURCES` or `FPS_RESOURCES` with game-owned declarations.
+An omitted method means no authored resources, not unchecked resources. Legacy plugins must
+declare their accepted IDs, or their host must supply an explicit extra `ResourceRegistry`
+through the run/live `resources` option. Resources created by systems remain unrestricted.
 
-1. **`@aegis/harness`** — add an optional `resources?(): readonly ResourceType<unknown>[]` to
-   `ModePlugin`, and in `run.ts` pass
-   `resources: createResourceRegistry(...plugin.resources?.() ?? [])` into the `instantiateScene`
-   options.
-2. **each `@aegis/mode-*`** — implement `resources()`, returning what it already declares
-   (`PlatformerTilemap`, `IsoGrid`/`NavGrid`, `FPS_FLOORPLAN`/`FPS_COLLISION`).
-
-Until then it is opt-in for any caller that knows the legal ids:
+Low-level callers using content without a plugin can still supply the registry directly:
 
 ```ts
 validateScene(scene, { registry, resources: createResourceRegistry('platformer.tilemap') });
 ```
 
-Related, also outstanding and owned elsewhere: `aegis validate` does not pass
-`ValidateOptions.file`, so CLI diagnostics carry a JSON path but no filename. One line in
-`packages/cli/src/commands/validate.ts`.
+CLI validation supplies `ValidateOptions.file`, so diagnostics include filename and JSON path.
+`ModePlugin.prefabs?()` supplies a named prefab catalog on every run path; an explicit caller
+`prefabs: PrefabResolver` takes precedence. `createPrefabResolver(...documents)` rejects
+duplicate catalog names with `AEG-CONTENT-0007`.
 
 ## Public surface
 

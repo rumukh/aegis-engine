@@ -14,7 +14,7 @@
  * second half is what stops a level from loading clean and being unwinnable.
  * @packageDocumentation
  */
-import { defineTag, isGameMode, Name, Transform } from '@aegis/core';
+import { defineTag, DiagnosticError, isGameMode, Name, Transform } from '@aegis/core';
 import type {
   ComponentType,
   Diagnostic,
@@ -39,6 +39,24 @@ import type { ComponentRegistry, ResourceRegistry } from './registry.js';
 export interface PrefabResolver {
   /** Resolve a prefab by name, or `undefined` if unknown. */
   resolve(name: string): PrefabFile | undefined;
+}
+
+/** Build a deterministic prefab catalog, refusing ambiguous duplicate names. */
+export function createPrefabResolver(...prefabs: PrefabFile[]): PrefabResolver {
+  const catalog = new Map<string, PrefabFile>();
+  for (const prefab of prefabs) {
+    if (catalog.has(prefab.name)) {
+      throw new DiagnosticError([
+        diagnostic(ContentCode.DuplicateId, `Duplicate prefab name "${prefab.name}".`, {
+          location: { path: `prefabs[${JSON.stringify(prefab.name)}]` },
+          fix: 'Give every prefab in the plugin catalog a unique name.',
+          data: { prefab: prefab.name },
+        }),
+      ]);
+    }
+    catalog.set(prefab.name, prefab);
+  }
+  return { resolve: (name) => catalog.get(name) };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -392,9 +410,8 @@ export interface ValidateOptions {
    * checked at all**, because there is no way to tell an unknown id from one belonging to a
    * package the caller did not mention.
    *
-   * Note that `runScene` does not supply one today, so this is inert in the shipped run path
-   * — see {@link ResourceRegistry} for the two changes that activate it (a `ModePlugin`
-   * contract addition plus the three modes declaring their resources), deferred to v2.
+   * Shared harness/CLI/live initialization always supplies one from ModePlugin.resources()
+   * plus explicit caller declarations. Low-level content-only callers may still omit it.
    */
   resources?: ResourceRegistry;
   /**
@@ -604,8 +621,8 @@ function checkSchemaDeclarations(ctx: SemanticContext): void {
  * Validate the resource ids a scene sets (when the caller supplied a resource registry) and
  * every resource **value** (always).
  *
- * The two halves are deliberately independent. Id checking needs a registry, which `runScene`
- * does not supply, so it is inert in the shipped run path. Value checking needs nothing: a
+ * The two halves are deliberately independent. Id checking needs a registry, supplied by the
+ * shared scene bootstrap on all shipped run paths. Value checking needs nothing: a
  * resource value is written straight into the world with `setResource`, which rejects anything
  * it cannot serialise — and `1e999` in a scene file is `Infinity` the moment `JSON.parse`
  * touches it, which is how a document validated clean and then killed the run.
@@ -633,7 +650,7 @@ function validateResources(
         ContentCode.UnknownResource,
         `Scene sets unknown resource "${id}"${
           suggestion === undefined ? '' : ` - did you mean "${suggestion}"?`
-        } Nothing reads an unregistered resource, so whatever it configures keeps its default.`,
+        } The active plugin has not declared a consumer for this resource.`,
         {
           // Resource ids are dotted by convention ("platformer.tilemap"), so the bracket form
           // is the only unambiguous path: `resources.platformer.tilemp` reads as three steps.
@@ -645,7 +662,9 @@ function validateResources(
           },
           fix:
             suggestion === undefined
-              ? `Remove "${id}", or register the resource type. Known: ${known.ids().join(', ')}.`
+              ? `Declare "${id}" in ModePlugin.resources() (include both mode and game-owned IDs), ` +
+                `or supply an explicit resource registry to the run. Legacy plugins that omit ` +
+                `resources() accept only resource-free scenes. Known: ${known.ids().join(', ') || '(none)'}.`
               : `Rename "${id}" to "${suggestion}".`,
         },
       ),

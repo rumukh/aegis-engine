@@ -19,6 +19,7 @@ import {
   platformerInit,
   platformerView,
   PLATFORMER_COMPONENTS,
+  PLATFORMER_RESOURCES,
   PLATFORMER_SYSTEM_LIST,
 } from '@aegis/mode-platformer';
 import { COYOTE_GAP_COMPONENTS } from './components.js';
@@ -37,6 +38,7 @@ export function coyoteGapSchedule(): Schedule {
 export const coyoteGapPlugin: ModePlugin = {
   mode: 'platformer' as GameMode,
   components: () => [...PLATFORMER_COMPONENTS, ...COYOTE_GAP_COMPONENTS],
+  resources: () => PLATFORMER_RESOURCES,
   init: (world: World): void => platformerInit(world),
   systems: () => coyoteGapSchedule(),
   view: (): ViewProvider => platformerView(),
