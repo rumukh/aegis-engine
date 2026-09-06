@@ -15,6 +15,14 @@
     "./client/static-boot": {
       "types": "./dist/client/static-boot.d.ts",
       "import": "./dist/client/static-boot.js"
+    },
+    "./presentation/schema": {
+      "types": "./dist/presentation/schema.d.ts",
+      "import": "./dist/presentation/schema.js"
+    },
+    "./presentation/validate": {
+      "types": "./dist/presentation/validate.d.ts",
+      "import": "./dist/presentation/validate.js"
     }
   },
   "files": [
