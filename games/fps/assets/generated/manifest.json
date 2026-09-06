@@ -2,7 +2,7 @@
   "format": "aegis-original-assets/1",
   "generator": "games/fps/assets/generate.mjs",
   "license": "MIT",
-  "sceneSha256": "d37907a5dce1187068c95ded99c4fe68456c9107a194f8b71fc74244f6a74e8f",
+  "sceneSha256": "2a8d23a03b9d880acdf2515c77a80aef421a13c42c95d5748d422c910634e89f",
   "coordinates": "Y up; metres; facility uses the unchanged FPS collision grid; weapon points camera-local -Z.",
   "assets": [
     {

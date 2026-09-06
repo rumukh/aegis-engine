@@ -11,7 +11,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const OUTPUT = join(HERE, 'generated');
 const SCENE_PATH = join(HERE, '..', 'levels', 'sector-breach.scene.json');
 const sceneText = await readFile(SCENE_PATH, 'utf8');
-const floorplan = JSON.parse(sceneText).resources['fps.floorplan'];
+const sourceScene = JSON.parse(sceneText);
+const floorplan = sourceScene.resources['fps.floorplan'];
 await mkdir(OUTPUT, { recursive: true });
 
 const FONT = {
@@ -1099,7 +1100,7 @@ const manifest = {
   format: 'aegis-original-assets/1',
   generator: 'games/fps/assets/generate.mjs',
   license: 'MIT',
-  sceneSha256: createHash('sha256').update(sceneText).digest('hex'),
+  sceneSha256: createHash('sha256').update(JSON.stringify(sourceScene)).digest('hex'),
   coordinates:
     'Y up; metres; facility uses the unchanged FPS collision grid; weapon points camera-local -Z.',
   assets,
