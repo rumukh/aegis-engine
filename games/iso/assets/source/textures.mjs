@@ -217,6 +217,16 @@ function terminal(active) {
   return r.png();
 }
 
+function vaultMark() {
+  const r = new Raster(512, 128, '#132f41');
+  r.rect(4, 4, 504, 120, '#608694').rect(7, 7, 498, 114, '#132f41');
+  r.rect(24, 22, 4, 76, '#62d9d2');
+  r.text('SERVER VAULT', 46, 25, 5, '#c4dfe0');
+  r.text('SECURE / DATA / 07', 47, 79, 2, '#68a5b8');
+  for (let x = 438; x < 489; x += 10) r.rect(x, 29, 4, 60, '#739aa5');
+  return r.png();
+}
+
 export function textures() {
   return new Map([
     ['deck-panel.png', deck()],
@@ -225,5 +235,6 @@ export function textures() {
     ['server-emission.png', server(true)],
     ['terminal-locked.png', terminal(false)],
     ['terminal-active.png', terminal(true)],
+    ['vault-mark.png', vaultMark()],
   ]);
 }
