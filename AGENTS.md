@@ -28,8 +28,7 @@ directory while this guide was being checked; they are not files in the reposito
 probe is worth reproducing, its source is inline in the surrounding section.
 
 **What this guide does not cover.** Rendering and the browser dev server (`@aegis/render-three`) —
-you never need them to build or verify a game. Prefabs, beyond noting that they exist and that
-`AEG-CONTENT-0006` reports a bad reference. Authoring scenes through the typed
+you never need them to build or verify a game. Authoring scenes through the typed
 `createSceneBuilder` API rather than JSON. Writing a new **mode** (as opposed to a game on top of
 an existing one) — see [ADR-0006](./docs/adr/0006-mode-module-boundary.md). Multiplayer,
 networking and save games, which the engine does not have. If you need one of these, read the
@@ -397,6 +396,9 @@ Every content problem is a `Diagnostic { code, severity, message, location, fix?
 | `AEG-CONTENT-0009` | Tilemap rows inconsistent with declared width/height  |
 | `AEG-CONTENT-0010` | Tilemap cell uses an undefined legend key             |
 | `AEG-CONTENT-0011` | `mode` is not a supported game mode                   |
+| `AEG-CONTENT-0014` | Unknown authored resource id                          |
+| `AEG-CONTENT-0018` | Cyclic prefab-child inheritance                       |
+| `AEG-CONTENT-0019` | Authored Name conflicts with resolved entity identity |
 
 A real run against a deliberately broken document — a duplicate entity id, a string where a number
 belongs, and a misspelled component:
@@ -428,6 +430,39 @@ ok ledge-hop/ledge-hop.scene.json: no problems found
 Validation runs before instantiation everywhere — `parseScene` → `validateScene` →
 `instantiateScene`. A scene that fails validation never reaches the world, so `aegis run` will
 print the same diagnostics and refuse.
+
+### 2.8 Prefab instances and child identity
+
+Declare reusable documents in `plugin.prefabs()`, or supply `prefabs: PrefabResolver` to
+`runScene`/`bootstrapScene`/a live session. The explicit resolver wins; the plugin catalog is
+the fallback, including on CLI paths selected by `aegis.json` or `--plugin`. Catalog names
+must be unique. `aegis validate` uses that context for standalone prefab files too; without
+a plugin or mode, only core/content components and the prefab's own definition are available.
+
+An instance's components shallow-merge over the prefab's, per component. A nested object
+replaces the whole field, so its required coordinates must still be complete. Tags are a
+prefab-first union. **Children are replace-or-inherit:** omit `children` to inherit the default
+list; supply a list, including `[]`, to replace it completely. There is no append or by-ID merge.
+
+Scene-authored IDs, including nested scene children, stay unchanged. Inherited prefab children
+use `<instance-id>/<local-id>` recursively: two instances `left` and `right` get `left/child`
+and `right/child`. Each local segment escapes `~` as `~0` and `/` as `~1`, so a local
+`arm/tip` is distinct from a nested `arm` then `tip`. IDs must remain globally unique after
+expansion; a scene entity named `left/child` colliding with that inherited child is an error.
+The resolved ID becomes `Name`. Conflicting authored `Name.value` is `AEG-CONTENT-0019`:
+remove the Name component and let identity be derived, rather than using it as a display label.
+
+Expansion and spawning are depth-first in document order. Child positions are translated by
+the resolved parent position; nodes without Transform pass it through. Rotation and scale
+remain as authored. Component string references are **not** automatically rewritten: a
+camera or other named reference to an inherited entity must use its full qualified ID.
+Missing references, cycles and ID collisions are diagnosed before any resources or entities
+are written. A recursive default can be terminated explicitly with `children: []`.
+
+`expandScene(scene, createSceneContext(plugin))` exposes the effective tree without a world;
+its transforms are still local. The same expansion powers validation and instantiation,
+resolving each prefab once per operation. Literal examples and refusal cases are executable
+in [`packages/content/src/prefab.test.ts`](./packages/content/src/prefab.test.ts).
 
 ---
 

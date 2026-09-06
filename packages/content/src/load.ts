@@ -14,16 +14,15 @@
  * second half is what stops a level from loading clean and being unwinnable.
  * @packageDocumentation
  */
-import { defineTag, DiagnosticError, isGameMode, Name, Transform } from '@aegis/core';
-import type {
-  ComponentType,
-  Diagnostic,
-  Entity,
-  ResourceType,
-  Validated,
-  Vec3,
-  World,
+import {
+  defineTag,
+  DiagnosticError,
+  isGameMode,
+  MAX_SERIALISABLE_DEPTH,
+  Name,
+  Transform,
 } from '@aegis/core';
+import type { Diagnostic, Entity, ResourceType, Validated, Vec3, World } from '@aegis/core';
 import { ContentCode, diagnostic } from './diagnostics.js';
 import {
   componentSchema,
@@ -134,6 +133,7 @@ function validateEntityShape(
   path: string,
   diags: Diagnostic[],
   file: string | undefined,
+  ancestors: Set<object> = new Set(),
 ): void {
   if (!isPlainObject(decl)) {
     diags.push(
@@ -143,21 +143,73 @@ function validateEntityShape(
     );
     return;
   }
-  expectString(decl, 'id', diags, file);
-  if (decl['id'] !== undefined) {
-    // rewrite location path to include id for nested reads (best-effort)
-  }
-  if (decl['tags'] !== undefined && !Array.isArray(decl['tags'])) {
+  if (ancestors.has(decl) || ancestors.size >= MAX_SERIALISABLE_DEPTH) {
     diags.push(
-      diagnostic(ContentCode.TypeMismatch, `"${path}.tags" must be an array of strings.`, {
-        location: { file, path: `${path}.tags` },
+      diagnostic(
+        ContentCode.UnserialisableValue,
+        `Entity hierarchy at "${path}" is cyclic or too deep.`,
+        {
+          location: { file, path },
+          fix: `Use an acyclic entity tree with fewer than ${MAX_SERIALISABLE_DEPTH} nested levels.`,
+        },
+      ),
+    );
+    return;
+  }
+  if (typeof decl['id'] !== 'string' || decl['id'].length === 0) {
+    diags.push(
+      diagnostic(
+        decl['id'] === undefined ? ContentCode.MissingField : ContentCode.TypeMismatch,
+        `"${path}.id" must be a non-empty string.`,
+        {
+          location: { file, path: `${path}.id` },
+        },
+      ),
+    );
+  }
+  ancestors.add(decl);
+  validateEntityBody(decl, path, diags, file, ancestors);
+  ancestors.delete(decl);
+}
+
+/** The tags/components/children shape shared by scene entities and prefab roots. */
+function validateEntityBody(
+  decl: Record<string, unknown>,
+  path: string,
+  diags: Diagnostic[],
+  file: string | undefined,
+  ancestors: Set<object>,
+): void {
+  const at = (key: string) => (path === '' ? key : `${path}.${key}`);
+  if (
+    decl['prefab'] !== undefined &&
+    (typeof decl['prefab'] !== 'string' || decl['prefab'].length === 0)
+  ) {
+    diags.push(
+      diagnostic(ContentCode.TypeMismatch, `"${at('prefab')}" must be a non-empty string.`, {
+        location: { file, path: at('prefab') },
       }),
+    );
+  }
+  if (
+    decl['tags'] !== undefined &&
+    (!Array.isArray(decl['tags']) ||
+      decl['tags'].some((tag) => typeof tag !== 'string' || tag.length === 0))
+  ) {
+    diags.push(
+      diagnostic(
+        ContentCode.TypeMismatch,
+        `"${at('tags')}" must be an array of non-empty strings.`,
+        {
+          location: { file, path: at('tags') },
+        },
+      ),
     );
   }
   if (decl['components'] !== undefined && !isPlainObject(decl['components'])) {
     diags.push(
-      diagnostic(ContentCode.TypeMismatch, `"${path}.components" must be an object.`, {
-        location: { file, path: `${path}.components` },
+      diagnostic(ContentCode.TypeMismatch, `"${at('components')}" must be an object.`, {
+        location: { file, path: at('components') },
       }),
     );
   } else if (isPlainObject(decl['components'])) {
@@ -166,8 +218,8 @@ function validateEntityShape(
         diags.push(
           diagnostic(
             ContentCode.InvalidComponentData,
-            `Component "${cid}" data at "${path}.components.${cid}" must be an object.`,
-            { location: { file, path: `${path}.components.${cid}` } },
+            `Component "${cid}" data at "${at('components')}.${cid}" must be an object.`,
+            { location: { file, path: `${at('components')}.${cid}` } },
           ),
         );
       }
@@ -177,12 +229,27 @@ function validateEntityShape(
   if (children !== undefined) {
     if (!Array.isArray(children)) {
       diags.push(
-        diagnostic(ContentCode.TypeMismatch, `"${path}.children" must be an array.`, {
-          location: { file, path: `${path}.children` },
+        diagnostic(ContentCode.TypeMismatch, `"${at('children')}" must be an array.`, {
+          location: { file, path: at('children') },
         }),
       );
     } else {
-      children.forEach((c, i) => validateEntityShape(c, `${path}.children[${i}]`, diags, file));
+      const ids = new Set<string>();
+      children.forEach((c, i) => {
+        const childPath = `${at('children')}[${i}]`;
+        validateEntityShape(c, childPath, diags, file, ancestors);
+        if (isPlainObject(c) && typeof c['id'] === 'string') {
+          if (ids.has(c['id'])) {
+            diags.push(
+              diagnostic(ContentCode.DuplicateId, `Duplicate child id "${c['id']}".`, {
+                location: { file, path: childPath },
+                fix: 'Give each child within this parent a unique local id.',
+              }),
+            );
+          }
+          ids.add(c['id']);
+        }
+      });
     }
   }
 }
@@ -254,17 +321,7 @@ export function parsePrefab(text: string, file?: string): Validated<PrefabFile> 
     return { ok: false, diagnostics: diags };
   }
   expectString(obj, 'name', diags, file);
-  if (obj['components'] !== undefined && !isPlainObject(obj['components'])) {
-    diags.push(
-      diagnostic(ContentCode.TypeMismatch, '"components" must be an object.', {
-        location: { file, path: 'components' },
-      }),
-    );
-  }
-  const children = obj['children'];
-  if (children !== undefined && Array.isArray(children)) {
-    children.forEach((c, i) => validateEntityShape(c, `children[${i}]`, diags, file));
-  }
+  validateEntityBody(obj, '', diags, file, new Set([obj]));
 
   const ok = diags.every((d) => d.severity !== 'error');
   return ok
@@ -421,31 +478,6 @@ export interface ValidateOptions {
   file?: string;
 }
 
-function collectEntityIds(
-  decls: readonly EntityDecl[],
-  path: string,
-  diags: Diagnostic[],
-  seen: Set<string>,
-  file?: string,
-): void {
-  decls.forEach((decl, i) => {
-    const p = `${path}[${i}]`;
-    if (typeof decl.id === 'string') {
-      if (seen.has(decl.id)) {
-        diags.push(
-          diagnostic(ContentCode.DuplicateId, `Duplicate entity id "${decl.id}".`, {
-            location: { file, path: p },
-            fix: 'Give each entity a unique id within the document.',
-          }),
-        );
-      } else {
-        seen.add(decl.id);
-      }
-    }
-    if (decl.children) collectEntityIds(decl.children, `${p}.children`, diags, seen, file);
-  });
-}
-
 /** State threaded through the semantic pass (registry lookups, prefab expansion, diagnostics). */
 interface SemanticContext {
   options: ValidateOptions;
@@ -454,6 +486,23 @@ interface SemanticContext {
   /** Prefabs whose own component data has already been checked, so a prefab used by twenty
    * entities reports its problems once. */
   checkedPrefabs: Set<string>;
+  checkedMaps: Set<string>;
+  resolvedPrefabs: Map<string, PrefabFile | undefined>;
+  entityIds: Map<string, string>;
+  validate: boolean;
+}
+
+function semanticContext(options: ValidateOptions, validate = true): SemanticContext {
+  return {
+    options,
+    diags: [],
+    file: options.file,
+    checkedPrefabs: new Set(),
+    checkedMaps: new Set(),
+    resolvedPrefabs: new Map(),
+    entityIds: new Map(),
+    validate,
+  };
 }
 
 /** Where a `componentId -> data` map lives, and who owns it. */
@@ -499,6 +548,10 @@ function validateComponentMap(
 ): void {
   const { registry } = ctx.options;
   const { file, path, prefab } = scope;
+  if (prefab !== undefined) {
+    if (ctx.checkedMaps.has(path)) return;
+    ctx.checkedMaps.add(path);
+  }
   for (const cid of Object.keys(components)) {
     const type = registry.get(cid);
     if (type === undefined) {
@@ -528,6 +581,7 @@ function validateComponentMap(
       );
       continue;
     }
+    if (!ctx.validate) continue;
     // The id resolves, so the component's own schema can now check the authored data.
     const found = validateComponentData(type, components[cid], { path: `${path}.${cid}`, file });
     ctx.diags.push(
@@ -536,50 +590,202 @@ function validateComponentMap(
   }
 }
 
-function validateEntitySemantics(decls: readonly EntityDecl[], path: string, ctx: SemanticContext) {
-  decls.forEach((decl, i) => {
-    const p = `${path}[${i}]`;
-    if (decl.prefab !== undefined) {
-      const resolved = ctx.options.prefabs?.resolve(decl.prefab);
-      if (resolved === undefined) {
-        ctx.diags.push(
-          diagnostic(
-            ContentCode.UnknownPrefab,
-            `Entity "${decl.id}" references unknown prefab "${decl.prefab}".`,
-            {
-              location: { file: ctx.file, path: `${p}.prefab` },
-              fix: 'Provide a PrefabResolver that resolves this name, or fix the prefab reference.',
-            },
-          ),
-        );
-      } else if (!ctx.checkedPrefabs.has(decl.prefab)) {
-        // A prefab is authored content too, and its data is merged in ahead of the entity's:
-        // a typo there breaks every instance. Check it once, wherever it is first referenced,
-        // and stamp what comes back with that reference so the report names an entity that
-        // will visibly misbehave.
-        ctx.checkedPrefabs.add(decl.prefab);
-        if (resolved.components) {
-          validateComponentMap(
-            resolved.components,
-            {
-              path: `prefabs["${decl.prefab}"].components`,
-              subject: `Prefab "${decl.prefab}" (instantiated by entity "${decl.id}")`,
-              file: undefined,
-              prefab: { name: decl.prefab, instantiatedBy: decl.id },
-            },
-            ctx,
-          );
-        }
-      }
+interface ExpansionScope {
+  file: string | undefined;
+  /** Present only for declarations inherited from a prefab, never for scene-authored children. */
+  namespace?: string;
+  prefab?: { name: string; instantiatedBy: string };
+  inheritedFrom: readonly string[];
+  depth: number;
+}
+
+function validatePrefabShape(
+  prefab: PrefabFile,
+  path: string,
+  diags: Diagnostic[],
+  file?: string,
+): boolean {
+  const start = diags.length;
+  if (!isPlainObject(prefab)) {
+    diags.push(
+      diagnostic(ContentCode.TypeMismatch, 'A prefab must be a JSON object.', {
+        location: { file, path },
+      }),
+    );
+    return false;
+  }
+  const at = (key: string) => (path === '' ? key : `${path}.${key}`);
+  if (prefab.aegis !== 'prefab/1') {
+    diags.push(
+      diagnostic(ContentCode.UnknownFormat, 'Expected a "prefab/1" document.', {
+        location: { file, path: at('aegis') },
+      }),
+    );
+  }
+  if (typeof prefab.name !== 'string' || prefab.name.length === 0) {
+    diags.push(
+      diagnostic(ContentCode.MissingField, 'A prefab needs a non-empty name.', {
+        location: { file, path: at('name') },
+      }),
+    );
+  }
+  validateEntityBody(prefab, path, diags, file, new Set([prefab]));
+  return diags.length === start;
+}
+
+/** Resolve once per operation, so validation and instantiation cannot observe different content. */
+function resolvePrefab(
+  name: string,
+  id: string,
+  path: string,
+  scope: ExpansionScope,
+  ctx: SemanticContext,
+): PrefabFile | undefined {
+  if (!ctx.resolvedPrefabs.has(name)) {
+    const prefab = ctx.options.prefabs?.resolve(name);
+    const valid =
+      prefab !== undefined &&
+      validatePrefabShape(prefab, `prefabs[${JSON.stringify(name)}]`, ctx.diags);
+    ctx.resolvedPrefabs.set(name, valid ? prefab : undefined);
+    if (prefab === undefined) {
+      const problem = diagnostic(
+        ContentCode.UnknownPrefab,
+        `Entity "${id}" references unknown prefab "${name}".`,
+        {
+          location: { file: scope.file, path: `${path}.prefab` },
+          fix: 'Declare the prefab in ModePlugin.prefabs(), supply a PrefabResolver, or fix the reference.',
+          data: { prefab: name, instantiatedBy: id },
+        },
+      );
+      ctx.diags.push(
+        scope.prefab === undefined ? problem : withPrefabProvenance(problem, scope.prefab),
+      );
     }
-    if (decl.components) {
+  }
+  const prefab = ctx.resolvedPrefabs.get(name);
+  if (prefab !== undefined && !ctx.checkedPrefabs.has(name)) {
+    ctx.checkedPrefabs.add(name);
+    if (prefab.components !== undefined) {
       validateComponentMap(
-        decl.components,
-        { path: `${p}.components`, subject: `Entity "${decl.id}"`, file: ctx.file },
+        prefab.components,
+        {
+          path: `prefabs[${JSON.stringify(name)}].components`,
+          subject: `Prefab "${name}" (instantiated by entity "${id}")`,
+          file: undefined,
+          prefab: { name, instantiatedBy: id },
+        },
         ctx,
       );
     }
-    if (decl.children) validateEntitySemantics(decl.children, `${p}.children`, ctx);
+  }
+  return prefab;
+}
+
+function localId(id: string): string {
+  return id.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+/** Expand a hierarchy in preorder, validating the effective IDs before any world writes. */
+function expandEntities(
+  decls: readonly EntityDecl[],
+  path: string,
+  ctx: SemanticContext,
+  scope: ExpansionScope,
+): EntityDecl[] {
+  if (decls.length > 0 && scope.depth >= MAX_SERIALISABLE_DEPTH) {
+    ctx.diags.push(
+      diagnostic(ContentCode.UnserialisableValue, `Expanded hierarchy at "${path}" is too deep.`, {
+        location: { file: scope.file, path },
+        fix: `Keep prefab expansion below ${MAX_SERIALISABLE_DEPTH} nested entity levels.`,
+      }),
+    );
+    return [];
+  }
+  return decls.map((decl, i) => {
+    const at = `${path}[${i}]`;
+    const id = scope.namespace === undefined ? decl.id : `${scope.namespace}/${localId(decl.id)}`;
+    const firstPath = ctx.entityIds.get(id);
+    if (firstPath !== undefined) {
+      ctx.diags.push(
+        diagnostic(ContentCode.DuplicateId, `Duplicate entity id "${id}".`, {
+          location: { file: scope.file, path: at },
+          fix: 'Keep scene IDs globally unique and prefab child IDs unique within their parent. Avoid IDs colliding with an inherited instance path.',
+          data: { id, firstPath },
+        }),
+      );
+    } else {
+      ctx.entityIds.set(id, at);
+    }
+    const prefab =
+      decl.prefab === undefined ? undefined : resolvePrefab(decl.prefab, id, at, scope, ctx);
+    if (decl.components !== undefined) {
+      validateComponentMap(
+        decl.components,
+        {
+          path: `${at}.components`,
+          subject: `Entity "${id}"`,
+          file: scope.file,
+          ...(scope.prefab === undefined ? {} : { prefab: scope.prefab }),
+        },
+        ctx,
+      );
+    }
+    const tags = [...new Set([...(prefab?.tags ?? []), ...(decl.tags ?? [])])];
+    const components = mergeComponents(prefab?.components, decl.components);
+    const authoredName = components['Name']?.['value'];
+    if (authoredName !== undefined && authoredName !== id) {
+      const fromDecl = Object.hasOwn(decl.components?.['Name'] ?? {}, 'value');
+      ctx.diags.push(
+        diagnostic(
+          ContentCode.EntityNameMismatch,
+          `Entity "${id}" authors Name.value "${String(authoredName)}", which conflicts with its resolved identity.`,
+          {
+            location: {
+              file: fromDecl ? scope.file : undefined,
+              path: fromDecl
+                ? `${at}.components.Name.value`
+                : `prefabs[${JSON.stringify(decl.prefab)}].components.Name.value`,
+            },
+            fix: 'Remove the conflicting Name component from the entity or prefab. Scene initialization derives Name from the resolved entity id, including any prefab namespace.',
+            data: { entity: id, authoredName, expectedName: id },
+          },
+        ),
+      );
+    }
+    if (Object.hasOwn(components, 'Name')) components['Name'] = { value: id };
+    let children: EntityDecl[] = [];
+    if (decl.children !== undefined) {
+      children = expandEntities(decl.children, `${at}.children`, ctx, {
+        ...scope,
+        ...(scope.namespace === undefined ? {} : { namespace: id }),
+        depth: scope.depth + 1,
+      });
+    } else if (prefab?.children !== undefined && decl.prefab !== undefined) {
+      if (prefab.children.length > 0 && scope.inheritedFrom.includes(decl.prefab)) {
+        const cycle = [...scope.inheritedFrom, decl.prefab];
+        ctx.diags.push(
+          diagnostic(ContentCode.PrefabCycle, `Prefab expansion cycle: ${cycle.join(' -> ')}.`, {
+            location: { file: scope.file, path: `${at}.prefab` },
+            fix: 'Break the recursive prefab child reference, or replace its children with a finite explicit list.',
+            data: { cycle, entity: id },
+          }),
+        );
+      } else {
+        children = expandEntities(
+          prefab.children,
+          `prefabs[${JSON.stringify(decl.prefab)}].children`,
+          ctx,
+          {
+            file: undefined,
+            namespace: id,
+            prefab: { name: decl.prefab, instantiatedBy: id },
+            inheritedFrom: [...scope.inheritedFrom, decl.prefab],
+            depth: scope.depth + 1,
+          },
+        );
+      }
+    }
+    return { id, tags, components, children };
   });
 }
 
@@ -681,24 +887,26 @@ export function validatePrefab(
   prefab: PrefabFile,
   options: ValidateOptions,
 ): Validated<PrefabFile> {
-  const diags: Diagnostic[] = [];
-  const ctx: SemanticContext = {
-    options,
-    diags,
-    file: options.file,
-    checkedPrefabs: new Set<string>(),
-  };
-  if (prefab.components) {
-    // Validated as its own document here, so the location names the prefab's own file and no
-    // instantiating entity exists to attribute it to.
-    checkSchemaDeclarations(ctx);
-    validateComponentMap(
-      prefab.components,
-      { path: 'components', subject: `Prefab "${prefab.name}"`, file: options.file },
-      ctx,
-    );
+  const ctx = semanticContext(options);
+  const diags = ctx.diags;
+  if (validatePrefabShape(prefab, '', diags, options.file)) {
+    ctx.resolvedPrefabs.set(prefab.name, prefab);
+    ctx.checkedPrefabs.add(prefab.name);
+    if (prefab.components) {
+      checkSchemaDeclarations(ctx);
+      validateComponentMap(
+        prefab.components,
+        { path: 'components', subject: `Prefab "${prefab.name}"`, file: options.file },
+        ctx,
+      );
+    }
+    expandEntities(prefab.children ?? [], 'children', ctx, {
+      file: options.file,
+      namespace: prefab.name,
+      inheritedFrom: [prefab.name],
+      depth: 0,
+    });
   }
-  if (prefab.children) validateEntitySemantics(prefab.children, 'children', ctx);
 
   const ok = diags.every((d) => d.severity !== 'error');
   return ok ? { ok, value: prefab, diagnostics: diags } : { ok, diagnostics: diags };
@@ -711,7 +919,25 @@ export function validatePrefab(
  * holding a scene built in code (see the builder) can validate without re-serialising.
  */
 export function validateScene(scene: SceneFile, options: ValidateOptions): Validated<SceneFile> {
-  const diags: Diagnostic[] = [];
+  const expanded = expandScene(scene, options);
+  return expanded.ok ? { ok: true, value: scene, diagnostics: expanded.diagnostics } : expanded;
+}
+
+/**
+ * Resolve prefab inheritance into an explicit entity tree without writing a World.
+ * Transforms remain local. Inherited IDs are qualified; scene-authored IDs are unchanged.
+ */
+export function expandScene(scene: SceneFile, options: ValidateOptions): Validated<SceneFile> {
+  return prepareScene(scene, options, true);
+}
+
+function prepareScene(
+  scene: SceneFile,
+  options: ValidateOptions,
+  validate: boolean,
+): Validated<SceneFile> {
+  const ctx = semanticContext(options, validate);
+  const diags = ctx.diags;
   const file = options.file;
   if (scene.aegis !== 'scene/1') {
     diags.push(
@@ -736,22 +962,46 @@ export function validateScene(scene: SceneFile, options: ValidateOptions): Valid
       ),
     );
   }
-  const ctx: SemanticContext = { options, diags, file, checkedPrefabs: new Set<string>() };
-  const seen = new Set<string>();
-  checkSchemaDeclarations(ctx);
-  collectEntityIds(scene.entities ?? [], 'entities', diags, seen, file);
-  if (scene.resources) validateResources(scene.resources, ctx);
-  validateEntitySemantics(scene.entities ?? [], 'entities', ctx);
+  const shapeStart = diags.length;
+  if (!Array.isArray(scene.entities)) {
+    diags.push(
+      diagnostic(ContentCode.TypeMismatch, '"entities" must be an array.', {
+        location: { file, path: 'entities' },
+      }),
+    );
+  } else {
+    scene.entities.forEach((decl, i) => validateEntityShape(decl, `entities[${i}]`, diags, file));
+  }
+  if (scene.resources !== undefined && !isPlainObject(scene.resources)) {
+    diags.push(
+      diagnostic(ContentCode.TypeMismatch, '"resources" must be an object.', {
+        location: { file, path: 'resources' },
+      }),
+    );
+  }
+  if (diags.length > shapeStart) return { ok: false, diagnostics: diags };
+  if (validate) {
+    checkSchemaDeclarations(ctx);
+    if (scene.resources) validateResources(scene.resources, ctx);
+  }
+  const entities = expandEntities(scene.entities, 'entities', ctx, {
+    file,
+    inheritedFrom: [],
+    depth: 0,
+  });
 
   const ok = diags.every((d) => d.severity !== 'error');
-  return ok ? { ok, value: scene, diagnostics: diags } : { ok, diagnostics: diags };
+  return ok
+    ? { ok, value: { ...scene, entities }, diagnostics: diags }
+    : { ok, diagnostics: diags };
 }
 
 /** Options for {@link instantiateScene}. */
 export interface InstantiateOptions extends ValidateOptions {
   /**
-   * Validate before instantiating. Default `true`. Set `false` only when the scene was
-   * already validated, to avoid duplicate work.
+   * Check component/resource data before instantiating. Default `true`. Set `false` only
+   * for already-validated data. Structural, reference, cycle and expanded-ID checks always
+   * run because expansion cannot safely proceed without them.
    */
   validate?: boolean;
 }
@@ -762,7 +1012,7 @@ export interface InstantiateResult {
   ok: boolean;
   /** All diagnostics produced during validation/instantiation. */
   diagnostics: readonly Diagnostic[];
-  /** Map from scene entity id to the spawned {@link Entity} handle. */
+  /** Map from expanded entity id (qualified for inherited prefab children) to its handle. */
   entities: Readonly<Record<string, Entity>>;
 }
 
@@ -771,10 +1021,10 @@ function mergeComponents(
   base: Readonly<Record<string, ComponentData>> | undefined,
   over: Readonly<Record<string, ComponentData>> | undefined,
 ): Record<string, ComponentData> {
-  const out: Record<string, ComponentData> = {};
-  if (base) for (const [k, v] of Object.entries(base)) out[k] = { ...v };
-  if (over) for (const [k, v] of Object.entries(over)) out[k] = { ...(out[k] ?? {}), ...v };
-  return out;
+  const out = new Map<string, ComponentData>();
+  if (base) for (const [k, v] of Object.entries(base)) out.set(k, { ...v });
+  if (over) for (const [k, v] of Object.entries(over)) out.set(k, { ...out.get(k), ...v });
+  return Object.fromEntries(out);
 }
 
 /**
@@ -787,13 +1037,9 @@ export function instantiateScene(
   scene: SceneFile,
   options: InstantiateOptions,
 ): InstantiateResult {
-  const diags: Diagnostic[] = [];
-  if (options.validate !== false) {
-    const validated = validateScene(scene, options);
-    if (!validated.ok) {
-      return { ok: false, diagnostics: validated.diagnostics, entities: {} };
-    }
-    diags.push(...validated.diagnostics);
+  const prepared = prepareScene(scene, options, options.validate !== false);
+  if (!prepared.ok || prepared.value === undefined) {
+    return { ok: false, diagnostics: prepared.diagnostics, entities: {} };
   }
 
   // Apply resources first (a resource is a plain id→value singleton).
@@ -804,35 +1050,32 @@ export function instantiateScene(
     }
   }
 
-  const entities: Record<string, Entity> = {};
+  const entities = new Map<string, Entity>();
 
   const spawnDecl = (decl: EntityDecl, parentPos: Vec3 | null): Entity => {
-    let tags: string[] = [];
-    let components: Record<string, ComponentData> = {};
-    if (decl.prefab !== undefined) {
-      const prefab = options.prefabs?.resolve(decl.prefab);
-      if (prefab !== undefined) {
-        tags = [...(prefab.tags ?? [])];
-        components = mergeComponents(prefab.components, undefined);
-      }
-    }
-    for (const t of decl.tags ?? []) if (!tags.includes(t)) tags.push(t);
-    components = mergeComponents(components, decl.components);
-
     const entity = world.spawn();
-    // Every instantiated entity carries a Name equal to its authoring id (CHARTER principle 1).
-    world.add(entity, Name, { value: decl.id });
 
-    for (const [cid, data] of Object.entries(components)) {
-      const type = options.registry.get(cid) as ComponentType<unknown> | undefined;
-      if (type === undefined) continue; // already reported by validation
-      world.add(entity, type, data as Partial<unknown>);
+    for (const [cid, data] of Object.entries(decl.components ?? {})) {
+      const type = options.registry.get(cid);
+      if (type === undefined) {
+        throw new DiagnosticError([
+          diagnostic(
+            ContentCode.UnknownComponent,
+            `Component "${cid}" disappeared from the registry during instantiation.`,
+            {
+              fix: 'Keep the component registry unchanged for the duration of scene initialization.',
+            },
+          ),
+        ]);
+      }
+      world.add(entity, type, data);
     }
     // Tags: marker components. Use the registered type when present, else a synthesized marker.
-    for (const tag of tags) {
+    for (const tag of decl.tags ?? []) {
       const type = options.registry.get(tag) ?? defineTag(tag);
       world.add(entity, type, {});
     }
+    world.add(entity, Name, { value: decl.id });
 
     // Resolve this entity's world-space position by translating the authored (local) position
     // by the parent's resolved world position. Rotation/scale are left as authored.
@@ -851,13 +1094,12 @@ export function instantiateScene(
       worldPos = parentPos;
     }
 
-    entities[decl.id] = entity;
+    entities.set(decl.id, entity);
     for (const child of decl.children ?? []) spawnDecl(child, worldPos);
     return entity;
   };
 
-  for (const decl of scene.entities ?? []) spawnDecl(decl, null);
+  for (const decl of prepared.value.entities) spawnDecl(decl, null);
 
-  const ok = diags.every((d) => d.severity !== 'error');
-  return { ok, diagnostics: diags, entities };
+  return { ok: true, diagnostics: prepared.diagnostics, entities: Object.fromEntries(entities) };
 }
