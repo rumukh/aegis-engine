@@ -36,6 +36,19 @@ function wav(seconds, sample) {
 const tone = (hz, t) => Math.sin(Math.PI * 2 * hz * t);
 const fade = (progress, attack = 0.05) => Math.min(1, progress / attack) * (1 - progress) ** 2;
 
+function phrase(frequencies, noteSeconds) {
+  const phase = [0];
+  for (const frequency of frequencies) phase.push(phase.at(-1) + frequency * noteSeconds);
+  return (t) => {
+    const note = Math.min(frequencies.length - 1, Math.floor(t / noteSeconds));
+    // Pitch changes keep their accumulated phase instead of inserting an audible click.
+    return Math.sin(Math.PI * 2 * (phase[note] + frequencies[note] * (t - note * noteSeconds)));
+  };
+}
+
+const accessTone = phrase([660, 880, 1100], 0.18);
+const alertTone = phrase([440, 660], 0.24);
+
 export function audio() {
   return new Map([
     [
@@ -65,15 +78,12 @@ export function audio() {
       wav(
         0.48,
         (t, p) =>
-          (tone(t < 0.24 ? 440 : 660, t) * 0.22 + tone(220, t) * 0.08) *
+          (alertTone(t) * 0.22 + tone(220, t) * 0.08) *
           fade(p, 0.025) *
           (0.6 + tone(12.5, t) * 0.4),
       ),
     ],
-    [
-      'access-granted.wav',
-      wav(0.62, (t, p) => tone(t < 0.18 ? 660 : t < 0.36 ? 880 : 1100, t) * 0.3 * fade(p, 0.04)),
-    ],
+    ['access-granted.wav', wav(0.62, (t, p) => accessTone(t) * 0.3 * fade(p, 0.04))],
     [
       'vault-unseal.wav',
       wav(

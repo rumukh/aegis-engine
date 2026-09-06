@@ -309,4 +309,21 @@ describe('Server Vault original presentation assets', () => {
       expect(Math.abs(bytes.readInt16LE(bytes.length - 2))).toBeLessThan(20);
     }
   });
+
+  it('changes access and alert pitch without a waveform discontinuity', () => {
+    for (const file of ['access-granted.wav', 'guard-alert.wav']) {
+      const bytes = readFileSync(join(ROOT, file));
+      let previous = 0;
+      let largestStep = 0;
+      for (let offset = 44; offset < bytes.length; offset += 2) {
+        const sample = bytes.readInt16LE(offset) / 32768;
+        largestStep = Math.max(largestStep, Math.abs(sample - previous));
+        previous = sample;
+      }
+      expect(largestStep).toBeGreaterThan(0.005);
+      expect(largestStep, `${file}: a pitch change must not reset oscillator phase`).toBeLessThan(
+        0.08,
+      );
+    }
+  });
 });
