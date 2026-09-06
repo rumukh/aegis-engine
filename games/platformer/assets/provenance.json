@@ -32,6 +32,18 @@
         "engineer.svg",
         "critter.svg",
         "terrain.svg",
+        "terrain-rock-0.svg",
+        "terrain-rock-1.svg",
+        "terrain-rock-2.svg",
+        "terrain-rock-3.svg",
+        "terrain-edge.svg",
+        "terrain-girder.svg",
+        "terrain-spikes.svg",
+        "terrain-lava.svg",
+        "terrain-panel.svg",
+        "terrain-warning.svg",
+        "terrain-grating.svg",
+        "terrain-waypoint.svg",
         "ferry.svg",
         "beacon.svg",
         "machinery.svg",
@@ -42,7 +54,7 @@
       "kind": "procedural-original-vector-art",
       "source": "source/generate.mjs",
       "reproduction": "node games/platformer/assets/source/generate.mjs",
-      "notes": "Deterministic authored paths and seeded surface detail, with no external images, fonts, or runtime network requests. SVG files have explicit intrinsic sizes and transparent backgrounds where appropriate."
+      "notes": "Deterministic authored paths and seeded surface detail, with no external images, fonts, or runtime network requests. SVG files have explicit intrinsic sizes and transparent backgrounds where appropriate. Standalone 128x128 terrain cells reuse the atlas source to permit ordinary material sampling/repeat without atlas-edge bleeding."
     },
     {
       "files": [

@@ -75,6 +75,20 @@
         "warning": { "x": 128, "y": 256, "width": 128, "height": 128 },
         "grating": { "x": 256, "y": 256, "width": 128, "height": 128 },
         "waypoint": { "x": 384, "y": 256, "width": 128, "height": 128 }
+      },
+      "standalone": {
+        "rock-0": "terrain-rock-0.svg",
+        "rock-1": "terrain-rock-1.svg",
+        "rock-2": "terrain-rock-2.svg",
+        "rock-3": "terrain-rock-3.svg",
+        "edge": "terrain-edge.svg",
+        "girder": "terrain-girder.svg",
+        "spikes": "terrain-spikes.svg",
+        "lava": "terrain-lava.svg",
+        "panel": "terrain-panel.svg",
+        "warning": "terrain-warning.svg",
+        "grating": "terrain-grating.svg",
+        "waypoint": "terrain-waypoint.svg"
       }
     },
     "ferry": {

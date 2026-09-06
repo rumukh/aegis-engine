@@ -591,6 +591,21 @@ function effect(index) {
   return path('M64 14L73 49L108 58L76 70L67 112L56 77L18 66L52 54Z', signal);
 }
 
+const terrainNames = [
+  'rock-0',
+  'rock-1',
+  'rock-2',
+  'rock-3',
+  'edge',
+  'girder',
+  'spikes',
+  'lava',
+  'panel',
+  'warning',
+  'grating',
+  'waypoint',
+];
+
 const outputs = new Map([
   ['engineer.svg', svg(1280, 384, atlas(8, 160, 192, engineerPoses, engineer), gradients)],
   ['critter.svg', svg(640, 128, atlas(5, 128, 128, [0, 1, 2, 3, 4], critter), gradients)],
@@ -630,6 +645,10 @@ const outputs = new Map([
     ),
   ],
 ]);
+
+for (const [index, name] of terrainNames.entries()) {
+  outputs.set(`terrain-${name}.svg`, svg(128, 128, terrainCell(index), gradients));
+}
 
 const frames = (names, columns, width, height) =>
   Object.fromEntries(
@@ -686,25 +705,8 @@ const manifest = {
       frameWidth: 128,
       frameHeight: 128,
       columns: 4,
-      frames: frames(
-        [
-          'rock-0',
-          'rock-1',
-          'rock-2',
-          'rock-3',
-          'edge',
-          'girder',
-          'spikes',
-          'lava',
-          'panel',
-          'warning',
-          'grating',
-          'waypoint',
-        ],
-        4,
-        128,
-        128,
-      ),
+      frames: frames(terrainNames, 4, 128, 128),
+      standalone: Object.fromEntries(terrainNames.map((name) => [name, `terrain-${name}.svg`])),
     },
     ferry: { file: 'ferry.svg', width: 512, height: 192, deck: { left: 17, top: 35, right: 495 } },
     beacon: {
@@ -751,7 +753,9 @@ outputs.set(
 await mkdir(root, { recursive: true });
 for (const [name, content] of outputs) await writeFile(new URL(name, root), content, 'utf8');
 
-const previews = [...outputs.keys()].filter((name) => name.endsWith('.svg'));
+const previews = [...outputs.keys()].filter(
+  (name) => name.endsWith('.svg') && !name.startsWith('terrain-'),
+);
 await writeFile(
   new URL('contact-sheet.html', root),
   await format(
