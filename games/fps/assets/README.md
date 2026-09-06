@@ -12,6 +12,12 @@ canonical-JSON source-scene fingerprint and SHA-256s (independent of checkout li
 The generator uses fixed parameters and a seeded
 integer texture-grain sequence, not time or unseeded randomness.
 
+The existing Vitest gate runs `games/fps/test/assets.test.ts`: it regenerates into a
+temporary directory with `--out`, compares shipped bytes, checks payload/image/audio
+bounds, and independently probes the committed triangles against the level's 105 floor
+cells, 72 exposed wall boundaries, collision boxes and coolant surface. It also guards
+the upright wall UVs found necessary during the real browser asset preview.
+
 ## Art direction
 
 Sector 09 is an orbital transfer station. Pale service panels, dark ribbed deck plates,
