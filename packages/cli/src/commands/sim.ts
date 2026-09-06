@@ -8,22 +8,12 @@
  * refused before tick 0 rather than silently instantiated with those components missing.
  * @packageDocumentation
  */
-import {
-  createRegistry,
-  Dead,
-  Health,
-  Light,
-  Model,
-  parseScene,
-  Sprite,
-  Trigger,
-  Triggered,
-  validateScene,
-} from '@aegis/content';
+import { parseScene, validateScene } from '@aegis/content';
 import type { ComponentRegistry, EntityDecl, SceneFile } from '@aegis/content';
-import { DiagnosticError, Name, Transform } from '@aegis/core';
+import { DiagnosticError } from '@aegis/core';
 import type { Diagnostic, EventReader, World } from '@aegis/core';
 import type { AsciiView, ModePlugin, SemanticFrame, SimResult, ViewOptions } from '@aegis/harness';
+import { createBaseRegistry, createSceneContext } from '@aegis/harness';
 import { dirname } from 'node:path';
 import type { CommandContext } from '../command.js';
 import { AegisCliError, CliCode, messageOf } from '../errors.js';
@@ -49,14 +39,12 @@ export function loadScene(ctx: CommandContext, rel: string): LoadedScene {
 
 /** The base registry the harness always installs, before any plugin components. */
 export function baseRegistry(): ComponentRegistry {
-  return createRegistry(Transform, Name, Sprite, Model, Light, Health, Trigger, Dead, Triggered);
+  return createBaseRegistry();
 }
 
 /** The registry a run will actually have: base components plus the plugin's. */
 export function registryFor(plugin: ModePlugin): ComponentRegistry {
-  const registry = baseRegistry();
-  registry.registerAll(plugin.components());
-  return registry;
+  return createSceneContext(plugin).registry;
 }
 
 /** Reject a plugin whose mode disagrees with the scene (or with an explicit `--mode`). */
@@ -144,7 +132,7 @@ function assertComponentsRegistered(
   sceneRef: string,
   resolved: ResolvedPlugin,
 ): void {
-  const validated = validateScene(scene, { registry: registryFor(resolved.plugin) });
+  const validated = validateScene(scene, createSceneContext(resolved.plugin, { file: sceneRef }));
   const errors = validated.diagnostics.filter((d: Diagnostic) => d.severity === 'error');
   if (errors.length === 0) return;
 
@@ -155,6 +143,7 @@ function assertComponentsRegistered(
         .filter((c): c is string => typeof c === 'string'),
     ),
   ].sort();
+  if (unknown.length === 0) throw new DiagnosticError(errors);
 
   const detail = errors
     .slice(0, 5)
@@ -164,7 +153,7 @@ function assertComponentsRegistered(
   throw new AegisCliError(
     CliCode.SceneNotRunnable,
     `Scene "${sceneRef}" cannot run under plugin ${describePluginSource(resolved)} — ` +
-      `${errors.length} component(s) it uses are not registered by that plugin:\n${detail}`,
+      `${errors.length} content problem(s) prevent initialization:\n${detail}`,
     {
       fix:
         `A game ships a composed ModePlugin (the mode plugin plus its own components and systems); ` +

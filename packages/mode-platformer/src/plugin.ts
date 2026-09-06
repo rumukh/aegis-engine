@@ -54,10 +54,14 @@ export function platformerView(): ViewProvider {
   return createPlatformerView();
 }
 
+/** Authored resource vocabulary, shared by the mode and composed game plugins. */
+export const PLATFORMER_RESOURCES = [PlatformerTilemap, PlatformerCollision] as const;
+
 /** The platformer mode plugin. */
 export const platformerPlugin: ModePlugin = {
   mode: 'platformer' as GameMode,
   components: () => PLATFORMER_COMPONENTS,
+  resources: () => PLATFORMER_RESOURCES,
   init: platformerInit,
   systems: () => platformerSchedule(),
   view: () => platformerView(),

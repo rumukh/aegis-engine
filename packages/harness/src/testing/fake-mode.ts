@@ -371,6 +371,8 @@ export const fakeMode: ModePlugin = {
     return [Velocity, Player, Enemy, Platform];
   },
 
+  resources: () => [FakeReady],
+
   init(world: World): void {
     // Per-run setup: spawn a mode-owned platform entity and record it in a resource. This proves
     // init runs exactly once, after the scene is instantiated and before tick 0.

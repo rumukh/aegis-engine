@@ -20,13 +20,14 @@ import {
   validateScene,
 } from '@aegis/content';
 import type { Diagnostic } from '@aegis/core';
+import { createSceneContext } from '@aegis/harness';
 import { AegisCliError, CliCode, Exit } from '../errors.js';
 import { formatDiagnostics, hasErrors, json } from '../format.js';
 import { globAll, isGlob } from '../glob.js';
 import type { Command, CommandContext } from '../command.js';
 import { describePluginSource } from '../plugin.js';
 import { flagBool, flagString, readText, requirePositional, resolvePath } from './shared.js';
-import { baseRegistry, registryFor, resolveRunPlugin } from './sim.js';
+import { baseRegistry, resolveRunPlugin } from './sim.js';
 
 const USAGE = [
   'aegis validate <file...> [options]',
@@ -78,11 +79,11 @@ async function validateDocument(
       if (!parsed.ok || !parsed.value) return { diagnostics: parsed.diagnostics };
       const scene = parsed.value;
       if (!ctx.modes.has(scene.mode) && flagString(ctx.args, 'plugin') === undefined) {
-        const validated = validateScene(scene, { registry: baseRegistry() });
+        const validated = validateScene(scene, { registry: baseRegistry(), file });
         return { diagnostics: [...parsed.diagnostics, ...validated.diagnostics] };
       }
       const resolved = await resolveRunPlugin(ctx, scene, abs);
-      const validated = validateScene(scene, { registry: registryFor(resolved.plugin) });
+      const validated = validateScene(scene, createSceneContext(resolved.plugin, { file }));
       return {
         diagnostics: [...parsed.diagnostics, ...validated.diagnostics],
         plugin: describePluginSource(resolved),

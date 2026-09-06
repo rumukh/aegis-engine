@@ -175,6 +175,14 @@ graph LR
 - **Component identity is a stable string** (`"Transform"`, `"Velocity"`), never a GUID
   (principle 1). The `ComponentRegistry` maps ids → `ComponentType`; core, content-visual and the
   active mode contribute their component sets before a scene loads.
+- **Initialization is shared.** `harness/bootstrap.ts` exports `createSceneContext` (the
+  component/resource registries and prefab resolver) and `bootstrapScene` (validate,
+  instantiate, then `plugin.init` exactly once). Headless runs, CLI validation and live
+  sessions use this boundary. A plugin declares authored resource IDs via `resources()` and
+  reusable prefab documents via `prefabs()`; callers may supply explicit extra registries
+  and a resolver. Unknown resource IDs are errors, including for legacy plugins that omit
+  declarations. Resource-free legacy plugins remain valid. Runtime-created resources do
+  not need an authoring declaration.
 - **Tilemaps store their grid as ASCII rows** with a glyph legend, so a level is human-readable
   and diffs line-by-line.
 

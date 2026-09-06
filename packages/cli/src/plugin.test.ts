@@ -97,6 +97,7 @@ const NO_ASCII_PLUGIN = [
   `export const blindPlugin = {`,
   `  mode: 'platformer',`,
   `  components: () => fakeMode.components(),`,
+  `  resources: () => ['demo.collision'],`,
   `  systems: () => fakeMode.systems(),`,
   `  init: (world) => fakeMode.init?.(world),`,
   `  view: () => ({`,
@@ -135,6 +136,107 @@ describe('isModePlugin', () => {
       isModePlugin({ mode: 'nope', components: () => [], systems: () => ({}), view: () => ({}) }),
     ).toBe(false);
     expect(isModePlugin(null)).toBe(false);
+    expect(isModePlugin({ ...fakeMode, resources: [] })).toBe(false);
+    expect(isModePlugin({ ...fakeMode, prefabs: [] })).toBe(false);
+  });
+});
+
+describe('shared authored resource and prefab contracts', () => {
+  const pluginSpec = '@aegis/mode-platformer#platformerPlugin';
+  const tilemap = {
+    aegis: 'tilemap/1',
+    name: 'floor',
+    width: 4,
+    height: 2,
+    tileSize: 1,
+    legend: { '#': { solid: true } },
+    layers: [{ name: 'collision', data: ['....', '####'] }],
+  };
+  const scene = {
+    aegis: 'scene/1',
+    name: 'floor',
+    mode: 'platformer',
+    resources: { 'platformer.tilemap': tilemap },
+    entities: [
+      {
+        id: 'player',
+        components: {
+          Transform: { position: { x: 1.5, y: 1.5, z: 0 } },
+          Velocity: {},
+          PlatformerController: {},
+          BodyState: {},
+          TileCollider: { halfWidth: 0.4, halfHeight: 0.5 },
+        },
+      },
+    ],
+  };
+
+  it('keeps the registered floor solid and refuses its misspelling on all loading commands', async () => {
+    const dir = makeDir(scene);
+    const valid = await cli(
+      ['inspect', 'level.scene.json', '--tick', '30', '--json', '--plugin', pluginSpec],
+      dir,
+    );
+    expect(valid.code).toBe(0);
+    const state = JSON.parse(valid.out) as {
+      entities: { components: { Transform: { position: { y: number } } } }[];
+    };
+    expect(state.entities[0]?.components.Transform.position.y).toBe(1.5);
+    writeFileSync(
+      join(dir, 'level.scene.json'),
+      JSON.stringify({
+        ...scene,
+        resources: { 'platformer.tilemp': tilemap },
+      }),
+    );
+    for (const command of [
+      ['validate', 'level.scene.json'],
+      ['run', 'level.scene.json', '--ticks', '30'],
+      ['inspect', 'level.scene.json', '--tick', '30'],
+      ['record', 'level.scene.json', '--ticks', '30', '--out', 'refused.replay'],
+    ]) {
+      const invalid = await cli([...command, '--json', '--plugin', pluginSpec], dir);
+      expect(invalid.code).toBe(2);
+      expect(invalid.out + invalid.err).toContain('AEG-CONTENT-0014');
+      expect(invalid.out + invalid.err).toContain('platformer.tilemap');
+    }
+  });
+
+  it('uses the same plugin prefab catalog for validation, inspection and record/replay', async () => {
+    const dir = makeDir({
+      aegis: 'scene/1',
+      name: 'prefab-catalog',
+      mode: 'platformer',
+      resources: { 'game.settings': { difficulty: 2 } },
+      entities: [{ id: 'actor', prefab: 'template' }],
+    });
+    writeFileSync(
+      join(dir, 'catalog.mjs'),
+      [
+        `import { platformerPlugin } from '@aegis/mode-platformer';`,
+        `export default { ...platformerPlugin,`,
+        `  resources: () => [...platformerPlugin.resources(), 'game.settings'],`,
+        `  prefabs: () => [{ aegis: 'prefab/1', name: 'template',`,
+        `    components: { Transform: { position: { x: 10, y: 0, z: 0 } } } }],`,
+        `};`,
+      ].join('\n'),
+    );
+    writeFileSync(join(dir, 'aegis.json'), JSON.stringify({ plugin: './catalog.mjs' }));
+    expect((await cli(['validate', 'level.scene.json'], dir)).code).toBe(0);
+    const inspect = await cli(['inspect', 'level.scene.json', '--tick', '0', '--json'], dir);
+    expect(inspect.code).toBe(0);
+    const data = JSON.parse(inspect.out) as {
+      entities: { name: string; components: { Transform: { position: { x: number } } } }[];
+      resources: Record<string, unknown>;
+    };
+    expect(data.entities.map((entity) => entity.name)).toEqual(['actor']);
+    expect(data.entities[0]?.components.Transform.position.x).toBe(10);
+    expect(data.resources['game.settings']).toEqual({ difficulty: 2 });
+    expect(
+      (await cli(['record', 'level.scene.json', '--ticks', '2', '--out', 'catalog.replay'], dir))
+        .code,
+    ).toBe(0);
+    expect((await cli(['replay', 'catalog.replay'], dir)).code).toBe(0);
   });
 });
 
