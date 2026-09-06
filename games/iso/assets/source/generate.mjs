@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
+import { cos, sin, TAU } from '@aegis/core/math';
 import { audio } from './audio.mjs';
 import { Model, rgb } from './mesh.mjs';
 import { textures } from './textures.mjs';
@@ -20,20 +21,32 @@ const P = {
   white: [1, 1, 1],
 };
 const quaternion = (axis, angle) => {
-  const q = [0, 0, 0, Math.cos(angle / 2)];
-  q[axis] = Math.sin(angle / 2);
+  const q = [0, 0, 0, cos(angle / 2)];
+  q[axis] = sin(angle / 2);
   return q;
 };
 
 function actorClips(model, parts, guard) {
   const times = Array.from({ length: 9 }, (_, i) => i / 8);
+  const points = [];
+  const collect = (index, offset) => {
+    const node = model.nodes[index];
+    const at = offset.map((value, axis) => value + (node.translation?.[axis] ?? 0));
+    for (const batch of model.parts.get(index)?.batches.values() ?? []) {
+      for (let i = 0; i < batch.positions.length; i += 3) {
+        points.push([batch.positions[i] + at[0], batch.positions[i + 1] + at[1]]);
+      }
+    }
+    for (const child of node.children) collect(child, at);
+  };
+  collect(0, [0, 0, 0]);
   const rotate = (node, values, duration = 1, axis = 0) => ({
     node,
     path: 'rotation',
-    times: times.map((t) => t * duration),
+    times: values.map((_, i) => (i / (values.length - 1)) * duration),
     values: values.map((angle) => quaternion(axis, angle)),
   });
-  const wave = times.map((t) => Math.sin(t * Math.PI * 2));
+  const wave = times.map((t) => sin(t * TAU));
   model.animation('idle', [
     rotate(
       parts.head,
@@ -78,18 +91,26 @@ function actorClips(model, parts, guard) {
       0.28,
     ),
   ]);
+  const deathTimes = Array.from({ length: 61 }, (_, i) => i / 60);
   model.animation('death', [
     rotate(
       0,
-      times.map((t) => -t * 1.42),
+      deathTimes.map((t) => -t * 1.42),
       0.6,
       2,
     ),
     {
       node: 0,
       path: 'translation',
-      times: times.map((t) => t * 0.6),
-      values: times.map((t) => [t * 0.18, t * 0.15, 0]),
+      times: deathTimes.map((t) => t * 0.6),
+      values: deathTimes.map((t) => {
+        const angle = -t * 1.42;
+        const sine = sin(angle);
+        const cosine = cos(angle);
+        // Bake floor contact into the clip; leave clearance for interpolation between keys.
+        const lowest = Math.min(...points.map(([x, y]) => x * sine + y * cosine));
+        return [t * 0.18, 0.004 - lowest, 0];
+      }),
     },
   ]);
 }
@@ -435,7 +456,8 @@ export function buildAssets() {
     author: 'Aegis contributors',
     license: 'MIT',
     source: 'source/generate.mjs',
-    recipe: 'node games/iso/assets/source/generate.mjs',
+    recipe: 'npm run build && node games/iso/assets/source/generate.mjs',
+    math: '@aegis/core/math fixed trigonometry and pinned sRGB transfer data',
     conventions: {
       units: 'navigation cells',
       up: '+Y',

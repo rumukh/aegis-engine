@@ -8,11 +8,15 @@ All source and generated assets in this directory are MIT licensed; see `LICENSE
 Regenerate from the repository root:
 
 ```powershell
+npm run build
 node games\iso\assets\source\generate.mjs
 ```
 
-The source uses only Node built-ins. An optional output-directory argument produces the same
-kit elsewhere without touching the shipped files. Raster textures use an original tiny pixel
+The source uses Node built-ins and the normal workspace build of `@aegis/core/math`. Geometry,
+animation, and audio use the engine's fixed trigonometry, not host `Math.sin`/`Math.cos`;
+8-bit sRGB conversion uses pinned transfer data rather than host exponentiation.
+An optional output-directory argument produces the same kit elsewhere without touching
+the shipped files. Raster textures use an original tiny pixel
 alphabet and deterministic grain; sound effects are bounded PCM synthesis, not sampled media.
 glTF buffers are embedded, with local PNG references for rack faces, console screens,
 partition tops, and the vault identity plate. Keep those dependencies beside the models.
