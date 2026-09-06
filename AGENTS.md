@@ -58,14 +58,20 @@ A TypeScript monorepo containing a **deterministic ECS simulation library**, thr
 (`platformer`, `iso`, `fps`), a **test harness**, a **CLI**, and an optional three.js renderer
 nobody needs in order to build or verify a game.
 
+This is the current reference backend, not the limit of the engine's ambition. The
+[production roadmap](./docs/production-roadmap.md) targets eventual AAA capability through
+measured milestones on these same PoCs. Text authoring can coexist with cooked binary assets
+and asynchronous presentation; neither is allowed to make authoritative gameplay depend on
+load timing or display frame rate.
+
 Four properties define everything else:
 
-| Property                  | What it means for you                                                                                                         |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **Text is the substrate** | Scenes, tilemaps and input are JSON and plain-text files you can read, diff and write.                                        |
-| **Headless-first**        | The whole simulation runs in Node with no window. Rendering is an adapter that reads the world and never writes to it.        |
-| **Deterministic**         | Fixed timestep, seeded PRNG, no wall clock, no `Math.random`, stable iteration order. Same scene + script + seed → same hash. |
-| **Verified by assertion** | You prove a game works by running it and asserting on world state and events — never by looking at it.                        |
+| Property                  | What it means for you                                                                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Text is the substrate** | Scenes, tilemaps and input are JSON and plain-text files you can read, diff and write.                                                                                         |
+| **Headless-first**        | The whole simulation runs in Node with no window. Rendering is an adapter that reads the world and never writes to it.                                                         |
+| **Deterministic**         | Fixed timestep, seeded PRNG, no wall clock, no `Math.random`, stable iteration order. Same scene + script + seed + tick rate → same hash for the same engine/content revision. |
+| **Verified by assertion** | You prove a game works by running it and asserting on world state and events — never by looking at it.                                                                         |
 
 ### 1.2 What you can and cannot do
 
