@@ -246,7 +246,8 @@ function cloneSnapshotValue(value: unknown, path: string): unknown {
     return deepCloneSerialisable(value);
   } catch (err) {
     if (!(err instanceof UnserialisableValueError)) throw err;
-    const at = err.path === '' ? path : `${path}.${err.path}`;
+    const separator = err.path === '' || err.path.startsWith('[') ? '' : '.';
+    const at = `${path}${separator}${err.path}`;
     const explained = explainUnserialisable(err.reason, err.detail);
     throw invalidSnapshot(at, `${at} holds ${explained.what}. ${explained.why}`, explained.fix);
   }

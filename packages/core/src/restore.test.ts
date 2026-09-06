@@ -97,6 +97,11 @@ describe('World.restore atomic validation', () => {
       change: (s) => ({ ...s, resources: { invalid: undefined } }),
       path: 'resources.invalid',
     },
+    {
+      name: 'nonfinite array resource element',
+      change: (s) => ({ ...s, resources: { invalid: [NaN] } }),
+      path: 'resources.invalid[0]',
+    },
   ];
 
   it.each(invalid)('rejects $name without changing the previous world', ({ change, path }) => {
