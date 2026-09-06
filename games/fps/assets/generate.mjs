@@ -2,13 +2,17 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUTPUT = join(HERE, 'generated');
+const args = process.argv.slice(2);
+if (args.length !== 0 && (args.length !== 2 || args[0] !== '--out')) {
+  throw new Error('Usage: node games/fps/assets/generate.mjs [--out <directory>]');
+}
+const OUTPUT = args.length === 2 ? resolve(args[1]) : join(HERE, 'generated');
 const SCENE_PATH = join(HERE, '..', 'levels', 'sector-breach.scene.json');
 const sceneText = await readFile(SCENE_PATH, 'utf8');
 const sourceScene = JSON.parse(sceneText);
@@ -264,7 +268,8 @@ const MATERIALS = {
   },
   dark: { color: [0.055, 0.085, 0.115, 1], metal: 0.75, rough: 0.4 },
   edge: { color: [0.27, 0.35, 0.4, 1], metal: 0.8, rough: 0.32 },
-  armor: { color: [0.61, 0.67, 0.64, 1], metal: 0.4, rough: 0.44 },
+  armor: { color: [0.32, 0.36, 0.34, 1], metal: 0.4, rough: 0.44 },
+  weapon: { color: [0.095, 0.145, 0.19, 1], metal: 0.7, rough: 0.35 },
   black: { color: [0.016, 0.024, 0.033, 1], metal: 0.15, rough: 0.86 },
   copper: { color: [0.48, 0.22, 0.105, 1], metal: 0.8, rough: 0.34 },
   amber: { color: [0.85, 0.34, 0.035, 1], metal: 0.45, rough: 0.48 },
@@ -371,16 +376,31 @@ class Model {
       [x + w, y + h, z + d],
       [x - w, y + h, z + d],
     ];
-    for (const face of [
+    const faces = [
       [0, 3, 2, 1],
       [5, 6, 7, 4],
       [1, 2, 6, 5],
       [4, 7, 3, 0],
       [3, 7, 6, 2],
       [4, 0, 1, 5],
-    ]) {
-      this.quad(node, material, ...face.map((i) => p[i]));
-    }
+    ];
+    faces.forEach((face, index) => {
+      const uv =
+        index < 4
+          ? [
+              [1, 1],
+              [1, 0],
+              [0, 0],
+              [0, 1],
+            ]
+          : [
+              [0, 0],
+              [0, 1],
+              [1, 1],
+              [1, 0],
+            ];
+      this.quad(node, material, ...face.map((i) => p[i]), uv);
+    });
   }
   bevel(node, material, center, size, inset = 0.05) {
     const [x, y, z] = center;
@@ -867,7 +887,7 @@ function weapon() {
   const gun = m.node('WeaponBody');
   // Camera-local metres: muzzle points -Z, with no offset baked into the attachment root.
   m.bevel(gun, 'dark', [0, 0, 0], [0.17, 0.19, 0.57], 0.035);
-  m.bevel(gun, 'armor', [0, 0.053, -0.04], [0.19, 0.13, 0.49], 0.04);
+  m.bevel(gun, 'weapon', [0, 0.053, -0.04], [0.19, 0.13, 0.49], 0.04);
   m.bevel(gun, 'edge', [0, -0.025, -0.33], [0.145, 0.115, 0.21], 0.025);
   m.cylinder(gun, 'dark', [0, 0.008, -0.46], 0.054, 0.23, 2);
   m.cylinder(gun, 'edge', [0, 0.008, -0.54], 0.071, 0.055, 2);
@@ -879,7 +899,7 @@ function weapon() {
   m.bevel(gun, 'black', [0, -0.12, 0.1], [0.105, 0.2, 0.14], 0.027);
   m.bevel(gun, 'dark', [0, -0.135, -0.095], [0.112, 0.22, 0.18], 0.025);
   m.box(gun, 'amber', [0, -0.234, -0.095], [0.12, 0.027, 0.16]);
-  m.bevel(gun, 'armor', [0, -0.015, 0.33], [0.14, 0.17, 0.24], 0.035);
+  m.bevel(gun, 'weapon', [0, -0.015, 0.33], [0.14, 0.17, 0.24], 0.035);
   m.box(gun, 'black', [0, -0.015, 0.465], [0.16, 0.18, 0.035]);
   const sight = m.node('ReflexSight', gun, [0, 0.13, 0.075]);
   m.bevel(sight, 'dark', [0, 0, 0], [0.125, 0.07, 0.145], 0.017);

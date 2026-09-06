@@ -12,7 +12,7 @@
       "primitives": 34,
       "nodes": 5,
       "animations": [],
-      "sha256": "d0977b974cb1b0083c539ca199db7dc24531f2ef522e2befc6f771680658c573"
+      "sha256": "3b8338968e40961e75c69f3d049f3d07be369f959a516b6845d5e2bf7bb6d854"
     },
     {
       "file": "kestrel-security.glb",
@@ -34,11 +34,11 @@
           "channels": 3
         }
       ],
-      "sha256": "a1de837791aca77d34f45bdc7119926eadcf0be65ebda109d1db1c67f7f064f2"
+      "sha256": "31df5bef785c64d2567917b2e64fe3c5e6a1a021ae2e1e2d75154ce974e61b96"
     },
     {
       "file": "vaultline-rifle.glb",
-      "bytes": 83284,
+      "bytes": 83412,
       "triangles": 690,
       "primitives": 16,
       "nodes": 6,
@@ -48,7 +48,7 @@
           "channels": 2
         }
       ],
-      "sha256": "57f92f3fb91d3c942babef38dfbbb14c407480a8ca912ae72a840208d72997ae"
+      "sha256": "7c81673a6c7b1a957a056fd32ade7a9461b7aa1b19279384ea1782501e7aac1c"
     },
     {
       "file": "blast-door.glb",
@@ -62,7 +62,7 @@
           "channels": 1
         }
       ],
-      "sha256": "f4f6db301dc5cb90cb3ef5a9a2bca56a4bdcd121c3c00c950d5b478c24531fa0"
+      "sha256": "67a05895633eda6f4bdb39d3ea519142523a846d3ab61f1c7e5a2590532911ff"
     },
     {
       "file": "breach-panel.glb",
@@ -71,7 +71,7 @@
       "primitives": 8,
       "nodes": 2,
       "animations": [],
-      "sha256": "af286bf993e20b89a68751983b9308a2ee82999d7e75c3339bf8ab817ca4a0df"
+      "sha256": "9cb025aa48e0dcbd427399b588e2d9be59d138acf1193b7c599ec2e107024c1e"
     },
     {
       "file": "extraction-pad.glb",
@@ -80,7 +80,7 @@
       "primitives": 3,
       "nodes": 1,
       "animations": [],
-      "sha256": "18c242263f676219bd43eab38fdb1d05d74236d537e0728ac1674361b4dcc1ab"
+      "sha256": "78c2cc07b6607b8d18f134e49e2da283a0fa0b0f96263a33653150be03701d5c"
     }
   ],
   "audio": [
