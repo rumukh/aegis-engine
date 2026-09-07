@@ -914,6 +914,56 @@ describe('named visual nodes', () => {
 });
 
 describe('generation-aware event feedback', () => {
+  it('samples paused world steps without advancing on extra display frames and resets on remount', async () => {
+    const manifest = runtimeManifest();
+    const assets = own(await runtimeAssets(manifest));
+    const adapter = own(createRenderAdapter('platformer', { presentation: { manifest, assets } }));
+    const world = buildTestWorld(PLATFORMER_SCENE, platformerPlugin);
+    const simulation = createSimulation({
+      world,
+      schedule: platformerPlugin.systems(),
+      tickRate: 60,
+    });
+    adapter.mount(world);
+    const runtime = presentation(adapter);
+    const sampled: number[] = [];
+    runtime.addEffect({
+      update: (sample) => {
+        sampled.push(sample.tick);
+      },
+      reset: vi.fn(),
+      dispose: vi.fn(),
+    });
+
+    runtime.present(frame(0, { paused: true }));
+    runtime.present(frame(99, { paused: true }));
+    simulation.run(6);
+    adapter.sync(world);
+    expect(sampled).toEqual([0, 0]);
+    runtime.present(frame(6, { paused: true }));
+    adapter.sync(world);
+    runtime.present(frame(99, { paused: true }));
+    runtime.present(frame(3, { paused: true }));
+    simulation.run(3);
+    adapter.sync(world);
+    runtime.present(frame(9, { paused: true }));
+    expect(sampled).toEqual([0, 0, 6, 6, 6, 9]);
+
+    const nextWorld = buildTestWorld(PLATFORMER_SCENE, platformerPlugin);
+    const nextSimulation = createSimulation({
+      world: nextWorld,
+      schedule: platformerPlugin.systems(),
+      tickRate: 60,
+    });
+    adapter.mount(nextWorld);
+    runtime.present(frame(0, { paused: true, generation: 1 }));
+    runtime.present(frame(99, { paused: true, generation: 1 }));
+    nextSimulation.run(4);
+    adapter.sync(nextWorld);
+    runtime.present(frame(4, { paused: true, generation: 1 }));
+    expect(sampled).toEqual([0, 0, 6, 6, 6, 9, 0, 0, 4]);
+  });
+
   it('preserves two same-type/same-tick occurrences and payloads, deduplicates re-delivery, and rejects old generations', async () => {
     const manifest = runtimeManifest({
       effects: [

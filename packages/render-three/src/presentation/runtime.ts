@@ -219,6 +219,7 @@ export class PresentationRuntime {
   #reducedMotion = false;
   #generation?: number;
   #sampleTick?: number;
+  #syncedTick?: number;
   #cameraOrigin?: Vector3;
   #sequences: [number, number][] = [];
   #legacyEventTick = -1;
@@ -459,6 +460,7 @@ export class PresentationRuntime {
     this.#positionObjects();
     this.#validateTargets(true);
     checkLightBudget(this.#scene);
+    this.#syncedTick = world.tick;
   }
 
   #select(
@@ -699,9 +701,10 @@ export class PresentationRuntime {
       if (this.#generation !== undefined) this.reset();
       this.#generation = frame.generation;
     }
+    // Paused display frames freeze, but an explicitly stepped and synchronized world does not.
     const tick =
       frame.paused && this.#sampleTick !== undefined
-        ? this.#sampleTick
+        ? Math.max(this.#sampleTick, Math.min(frame.tick, this.#syncedTick ?? this.#sampleTick))
         : Math.max(frame.tick, this.#sampleTick ?? frame.tick);
     this.#sampleTick = tick;
     this.#restoreTransforms();
@@ -1045,6 +1048,7 @@ export class PresentationRuntime {
     this.#legacyEventTick = -1;
     this.#legacyEventCounts.clear();
     this.#sampleTick = undefined;
+    this.#syncedTick = undefined;
     this.#occurrences = 0;
     this.#stateOverrides.clear();
   }

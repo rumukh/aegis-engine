@@ -113,7 +113,8 @@ Event `burst`, `pulse`, `recoil`, `clip` and `frames` effects name their target 
 Clip/frame names belong in game data, not in engine code; `holdLast` supports a terminal pose.
 An optional effect target `node` addresses a named model anchor. Recoil moves a view object,
 never the aim camera. Effect timing derives from ticks; extra synchronization for picking cannot
-advance it. Payloads are preserved for extensions, but the renderer does not invent an exact
+advance it. An explicit authoritative step still advances presentation while paused; repeated
+display frames without a world step do not. Payloads are preserved for extensions, but the renderer does not invent an exact
 historic impact position when the event did not record one.
 
 Default collider-derived level and trigger visuals remain visible. A replacement environment may
