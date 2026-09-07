@@ -6,6 +6,7 @@
  */
 export * from './view.js';
 export * from './plugin.js';
+export * from './bootstrap.js';
 export * from './diagnostics.js';
 export * from './input-script.js';
 export * from './replay.js';

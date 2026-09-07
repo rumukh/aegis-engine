@@ -2,13 +2,14 @@
  * Session record & replay (CHARTER principle 5).
  *
  * A {@link Recording} is the complete, portable description of a run: the scene reference,
- * the seed, the tick count, and the input — stored as DSL text so the recording is itself a
+ * the seed, the tick count/rate, and the input — stored as DSL text so the recording is itself a
  * readable, diffable script. Replaying a recording re-runs the simulation and MUST produce
- * the same final {@link StateHash}; a mismatch is a determinism bug, and the recording pins
+ * the same final {@link StateHash}; a mismatch means changed inputs or a determinism bug, and the recording pins
  * the expected hash so the harness can assert it (see {@link "./run".replayRecording}).
  * @packageDocumentation
  */
 import type { StateHash } from '@aegis/core';
+import { isValidTickRate } from '@aegis/core';
 import { asError } from './report.js';
 
 /** A portable, human-readable recording of a run. */
@@ -21,12 +22,25 @@ export interface Recording {
   seed: number | string;
   /** Number of ticks simulated. */
   ticks: number;
+  /** Fixed ticks per second. New recordings always include this; legacy files omit it (60 Hz). */
+  tickRate?: number;
   /** The input, as canonical input-script DSL text. */
   input: string;
   /** The final state hash observed when the recording was captured. */
   finalHash: StateHash;
   /** Optional per-tick hashes, enabling pinpointing the first divergent tick on replay. */
   tickHashes?: readonly StateHash[];
+}
+
+/** Read and validate the recorded rate, using the historical 60 Hz default only when absent. */
+export function recordingTickRate(recording: { readonly tickRate?: unknown }): number {
+  const rate = recording.tickRate === undefined ? 60 : recording.tickRate;
+  if (!isValidTickRate(rate)) {
+    throw new RangeError(
+      `[aegis] recording tickRate must be a finite positive number with a finite timestep, got ${String(rate)}.`,
+    );
+  }
+  return rate;
 }
 
 /**
@@ -41,6 +55,7 @@ export function serializeRecording(recording: Recording): string {
     scene: recording.scene,
     seed: recording.seed,
     ticks: recording.ticks,
+    ...(recording.tickRate !== undefined ? { tickRate: recordingTickRate(recording) } : {}),
     input: recording.input,
     finalHash: recording.finalHash,
   };
@@ -84,6 +99,9 @@ export function parseRecording(text: string): Recording {
     input: require<string>('input', ['string']),
     finalHash: require<StateHash>('finalHash', ['string']),
   };
+  if (obj.tickRate !== undefined) {
+    recording.tickRate = recordingTickRate({ tickRate: obj.tickRate });
+  }
   if (Array.isArray(obj.tickHashes)) {
     recording.tickHashes = obj.tickHashes.map((h) => String(h));
   }

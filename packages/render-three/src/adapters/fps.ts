@@ -21,10 +21,11 @@ import { AmbientLight, Group, HemisphereLight, PerspectiveCamera, PointLight, Sc
 import type { Mesh } from 'three';
 import { Transform } from '@aegis/core';
 import type { GameMode, World } from '@aegis/core';
-import { Health, Model, Trigger } from '@aegis/content';
+import { Health, Model, Sprite, Trigger } from '@aegis/content';
 import type { TriggerData } from '@aegis/content';
 import {
   FPS_COLLISION,
+  CapsuleBody,
   FpsCamera,
   HitBox,
   LookState,
@@ -75,25 +76,35 @@ export class FpsAdapter extends BaseAdapter {
     this.#pool = new ObjectPool(this.#entities);
     this.camera = new PerspectiveCamera(FALLBACK_FOV, options.aspect ?? 16 / 9, 0.1, 1000);
     this.camera.name = 'camera';
+    this.configurePresentation(options);
+    this.presentation?.bindLevel(this.#level);
   }
 
   mount(world: World): void {
-    const ambient = new AmbientLight(0xffffff, 0.85);
-    ambient.name = 'light:ambient';
-    const sky = new HemisphereLight(0x9fb6ff, 0x1b2030, 0.7);
-    sky.name = 'light:hemisphere';
-    this.#eyeLight.name = 'light:eye';
-    this.scene.add(ambient, sky, this.#eyeLight);
+    this.prepareMount();
+    this.#cells.clear();
+    this.#pool.clear();
+    if (this.defaultLighting) {
+      const ambient = new AmbientLight(0xffffff, 0.85);
+      ambient.name = 'light:ambient';
+      const sky = new HemisphereLight(0x9fb6ff, 0x1b2030, 0.7);
+      sky.name = 'light:hemisphere';
+      this.#eyeLight.name = 'light:eye';
+      this.scene.add(ambient, sky, this.#eyeLight);
+    }
     this.sync(world);
   }
 
   sync(world: World): void {
+    this.presentation?.beginSync();
     this.#syncLevel(world);
     this.#pool.begin();
     this.#syncHitBoxes(world);
     this.#syncTriggers(world);
     this.#pool.sweep();
     this.#syncCamera(world);
+    this.#syncOtherAnchors(world);
+    this.finishPresentationSync(world);
   }
 
   resize(width: number, height: number): void {
@@ -102,6 +113,7 @@ export class FpsAdapter extends BaseAdapter {
   }
 
   override dispose(): void {
+    if (this.disposed) return;
     this.#cells.clear();
     this.#pool.clear();
     this.#primitives.dispose();
@@ -140,6 +152,8 @@ export class FpsAdapter extends BaseAdapter {
       ) as Mesh;
       wall.scale.set(size, height, size);
       wall.position.set(centre.x, cell.floor + height / 2, centre.z);
+      const material = this.#primitives.roleMaterial(role);
+      wall.material = this.presentation?.surface(role, material) ?? material;
       return;
     }
 
@@ -149,19 +163,23 @@ export class FpsAdapter extends BaseAdapter {
     ) as Mesh;
     ground.scale.set(size, GROUND_THICKNESS, size);
     ground.position.set(centre.x, cell.floor - GROUND_THICKNESS / 2, centre.z);
+    const groundMaterial = this.#primitives.roleMaterial(role);
+    ground.material = this.presentation?.surface(role, groundMaterial) ?? groundMaterial;
 
     const ceiling = this.#cells.claim(`ceiling:${col}:${row}`, () =>
       this.#primitives.boxMesh(resolveAppearance({ role: 'ceiling' })),
     ) as Mesh;
     ceiling.scale.set(size, CEILING_THICKNESS, size);
     ceiling.position.set(centre.x, cell.ceil + CEILING_THICKNESS / 2, centre.z);
+    ceiling.material = this.presentation?.surface('ceiling', ceiling.material) ?? ceiling.material;
   }
 
   /** Everything you can shoot, drawn exactly where the hitscan resolves it. */
   #syncHitBoxes(world: World): void {
     for (const view of world.query({ has: [HitBox, Transform] }).views()) {
       const box = view.get(HitBox);
-      const position = view.get(Transform).position;
+      const transform = view.get(Transform);
+      const position = transform.position;
       const role: VisualRole = view.has(Health) ? 'enemy' : 'switch';
       const mesh = this.#pool.claim(`hitbox:${view.entity}`, () =>
         this.#primitives.boxMesh(resolveAppearance({ role, model: view.tryGet(Model) })),
@@ -175,7 +193,34 @@ export class FpsAdapter extends BaseAdapter {
       // A dead grunt keeps its hit box; the corpse should stop looking like a live threat.
       const health = view.tryGet(Health);
       const dead = health !== undefined && health.current <= 0;
-      mesh.material = this.#primitives.roleMaterial(dead ? 'dead' : role);
+      const appearance = resolveAppearance({
+        role: dead ? 'dead' : role,
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+      });
+      mesh.material = this.#primitives.material(appearance);
+      mesh.visible = appearance.visible;
+      mesh.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      const body = view.tryGet(CapsuleBody);
+      const state = dead
+        ? 'dead'
+        : body !== undefined && !body.grounded && body.velocity.y > 0
+          ? 'rise'
+          : body !== undefined && !body.grounded && body.velocity.y < 0
+            ? 'fall'
+            : body !== undefined && Math.abs(body.velocity.x) + Math.abs(body.velocity.z) > 0.001
+              ? 'move'
+              : 'idle';
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `hitbox:${view.entity}`,
+        role,
+        origin: position,
+        bounds: { center: mesh.position, size: mesh.scale },
+        orientation: transform.rotation,
+        scale: transform.scale,
+        legacy: [mesh],
+        state,
+      });
     }
   }
 
@@ -183,7 +228,8 @@ export class FpsAdapter extends BaseAdapter {
   #syncTriggers(world: World): void {
     for (const view of world.query({ has: [Trigger, Transform] }).views()) {
       const trigger = view.get(Trigger) as TriggerData;
-      const position = view.get(Transform).position;
+      const transform = view.get(Transform);
+      const position = transform.position;
       const role = triggerRole(trigger.kind);
       const mesh = this.#pool.claim(`trigger:${view.entity}`, () =>
         this.#primitives.boxMesh(resolveAppearance({ role, opacity: 0.28 }), 'flat'),
@@ -194,6 +240,59 @@ export class FpsAdapter extends BaseAdapter {
           : trigger.half;
       mesh.scale.set(half.x * 2, half.y * 2, half.z * 2);
       mesh.position.set(position.x, position.y, position.z);
+      const appearance = resolveAppearance({
+        role,
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+        opacity: 0.28,
+      });
+      mesh.material = this.#primitives.material(appearance, 'flat');
+      mesh.visible = appearance.visible;
+      mesh.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `trigger:${view.entity}`,
+        role,
+        origin: position,
+        bounds: { center: mesh.position, size: mesh.scale },
+        orientation: transform.rotation,
+        scale: transform.scale,
+        legacy: [mesh],
+        trigger: true,
+      });
+    }
+  }
+
+  /** The eye-bearing player has no shootable HitBox, but remains a valid authored anchor. */
+  #syncOtherAnchors(world: World): void {
+    if (this.presentation === undefined) return;
+    for (const view of world.query({ has: [FpsCamera, Transform], none: [HitBox] }).views()) {
+      const transform = view.get(Transform);
+      const body = view.tryGet(CapsuleBody);
+      const height = body?.height ?? 1.8;
+      const width = (body?.radius ?? 0.4) * 2;
+      const velocity = body?.velocity;
+      const state =
+        (view.tryGet(Health)?.current ?? 1) <= 0
+          ? 'dead'
+          : body?.grounded === false && (velocity?.y ?? 0) > 0
+            ? 'rise'
+            : body?.grounded === false && (velocity?.y ?? 0) < 0
+              ? 'fall'
+              : Math.abs(velocity?.x ?? 0) + Math.abs(velocity?.z ?? 0) > 0.001
+                ? 'move'
+                : 'idle';
+      this.presentation.bindEntity(world, view.entity, {
+        key: `entity:${view.entity}`,
+        role: 'player',
+        origin: transform.position,
+        bounds: {
+          center: { ...transform.position, y: transform.position.y + height / 2 },
+          size: { x: width, y: height, z: width },
+        },
+        orientation: transform.rotation,
+        scale: transform.scale,
+        state,
+      });
     }
   }
 

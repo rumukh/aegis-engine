@@ -17,7 +17,13 @@ import { createSchedule } from '@aegis/core';
 import type { Schedule } from '@aegis/core';
 import { healthSystem } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
-import { FPS_COMPONENTS, FPS_SYSTEMS, FpsViewProvider, initFloorplan } from '@aegis/mode-fps';
+import {
+  FPS_COMPONENTS,
+  FPS_RESOURCES,
+  FPS_SYSTEMS,
+  FpsViewProvider,
+  initFloorplan,
+} from '@aegis/mode-fps';
 import { GAME_COMPONENTS } from './components.js';
 import { SECTOR_BREACH_SYSTEMS } from './systems.js';
 
@@ -35,6 +41,7 @@ export function sectorBreachSchedule(): Schedule {
 export const sectorBreachPlugin: ModePlugin = {
   mode: 'fps',
   components: () => [...FPS_COMPONENTS, ...GAME_COMPONENTS],
+  resources: () => FPS_RESOURCES,
   systems: () => sectorBreachSchedule(),
   init: (world) => initFloorplan(world),
   view: () => new FpsViewProvider(),

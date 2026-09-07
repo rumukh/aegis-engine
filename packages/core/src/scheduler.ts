@@ -308,11 +308,20 @@ export interface SimulationConfig {
   input?: InputSource;
 }
 
+/** A fixed rate must produce a finite, positive timestep as well as be finite itself. */
+export function isValidTickRate(value: unknown): value is number {
+  return (
+    typeof value === 'number' && Number.isFinite(value) && value > 0 && Number.isFinite(1 / value)
+  );
+}
+
 /** Create a simulation. */
 export function createSimulation(config: SimulationConfig): Simulation {
   const { world, schedule, input } = config;
-  if (!(config.tickRate > 0)) {
-    throw new Error(`[aegis] createSimulation: tickRate must be > 0, got ${config.tickRate}`);
+  if (!isValidTickRate(config.tickRate)) {
+    throw new RangeError(
+      `[aegis] createSimulation: tickRate must be a finite positive number with a finite timestep, got ${config.tickRate}`,
+    );
   }
   const dt = 1 / config.tickRate;
   const bus = world.events as ManagedEventBus;
