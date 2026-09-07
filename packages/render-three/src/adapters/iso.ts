@@ -30,7 +30,7 @@ import {
 import type { Mesh, Object3D } from 'three';
 import { DEG2RAD, Name, Transform, cos, sin } from '@aegis/core';
 import type { Entity, GameMode, World } from '@aegis/core';
-import { Health, Sprite, Trigger } from '@aegis/content';
+import { Health, Model, Sprite, Trigger } from '@aegis/content';
 import type { TriggerData } from '@aegis/content';
 import {
   AttackOrder,
@@ -130,20 +130,29 @@ export class IsoAdapter extends BaseAdapter {
     this.camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
     this.camera.name = 'camera';
     this.#applyFrustum(FALLBACK_VIEW_HEIGHT);
+    this.configurePresentation(options);
+    this.presentation?.bindLevel(this.#level);
   }
 
   mount(world: World): void {
-    const ambient = new AmbientLight(0xffffff, 1.1);
-    ambient.name = 'light:ambient';
-    const key = new DirectionalLight(0xffffff, 1.4);
-    key.name = 'light:key';
-    key.position.set(1, 2, 0.6);
-    this.scene.add(ambient, key);
+    this.prepareMount();
+    this.#pool.clear();
+    this.#level.clear();
+    this.#levelBuilt = false;
+    if (this.defaultLighting) {
+      const ambient = new AmbientLight(0xffffff, 1.1);
+      ambient.name = 'light:ambient';
+      const key = new DirectionalLight(0xffffff, 1.4);
+      key.name = 'light:key';
+      key.position.set(1, 2, 0.6);
+      this.scene.add(ambient, key);
+    }
     this.#buildLevel(world);
     this.sync(world);
   }
 
   sync(world: World): void {
+    this.presentation?.beginSync();
     if (!this.#levelBuilt) this.#buildLevel(world);
     this.#syncCamera(world);
     this.#pool.begin();
@@ -151,6 +160,8 @@ export class IsoAdapter extends BaseAdapter {
     this.#syncDoors(world);
     this.#syncActors(world);
     this.#pool.sweep();
+    this.#syncOtherAnchors(world);
+    this.finishPresentationSync(world);
   }
 
   resize(width: number, height: number): void {
@@ -184,8 +195,14 @@ export class IsoAdapter extends BaseAdapter {
     // the origin. Clicks are rare; refreshing here costs nothing and removes the assumption.
     this.scene.updateMatrixWorld(true);
     this.#raycaster.setFromCamera(new Vector2(ndcX, ndcY), this.camera);
-    const hits = this.#raycaster.intersectObjects([this.#level, this.#entities], true);
+    const hits = this.#raycaster.intersectObjects(
+      [this.#level, this.#entities, ...(this.presentation?.pickingRoots() ?? [])],
+      true,
+    );
     for (const hit of hits) {
+      const visualOwner = this.presentation?.pickOwner(hit.object);
+      if (visualOwner !== undefined)
+        return { x: Math.round(visualOwner.x), y: Math.round(visualOwner.z), z: 0 };
       const owner = this.#ownerOf(hit.object);
       if (owner === null) continue;
       const at = owner.getWorldPosition(new Vector3());
@@ -212,6 +229,7 @@ export class IsoAdapter extends BaseAdapter {
   }
 
   override dispose(): void {
+    if (this.disposed) return;
     this.#pool.clear();
     this.#primitives.dispose();
     super.dispose();
@@ -227,12 +245,14 @@ export class IsoAdapter extends BaseAdapter {
         const at = cellToWorld(x, y);
         if (blocked) {
           const wall = this.#primitives.boxMesh(resolveAppearance({ role: 'wall' }));
+          wall.material = this.presentation?.surface('wall', wall.material) ?? wall.material;
           wall.name = `wall:${x}:${y}`;
           wall.scale.set(nav.tileSize, WALL_HEIGHT, nav.tileSize);
           wall.position.set(at.x, WALL_HEIGHT / 2, at.z);
           this.#level.add(wall);
         } else {
           const floor = this.#primitives.boxMesh(resolveAppearance({ role: 'floor' }));
+          floor.material = this.presentation?.surface('floor', floor.material) ?? floor.material;
           floor.name = `floor:${x}:${y}`;
           floor.scale.set(nav.tileSize * 0.94, 0.08, nav.tileSize * 0.94);
           floor.position.set(at.x, -0.04, at.z);
@@ -247,7 +267,8 @@ export class IsoAdapter extends BaseAdapter {
   #syncTriggers(world: World): void {
     for (const view of world.query({ has: [Trigger, Transform] }).views()) {
       const trigger = view.get(Trigger) as TriggerData;
-      const position = view.get(Transform).position;
+      const transform = view.get(Transform);
+      const position = transform.position;
       const role = triggerRole(trigger.kind);
       const pad = this.#pool.claim(`trigger:${view.entity}`, () =>
         this.#primitives.boxMesh(resolveAppearance({ role, opacity: 0.85 }), 'flat'),
@@ -256,6 +277,25 @@ export class IsoAdapter extends BaseAdapter {
       const at = cellToWorld(position.x, position.y);
       pad.scale.set(0.8, 0.12, 0.8);
       pad.position.set(at.x, 0.06, at.z);
+      const appearance = resolveAppearance({
+        role,
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+        opacity: 0.85,
+      });
+      pad.material = this.#primitives.material(appearance, 'flat');
+      pad.visible = appearance.visible;
+      pad.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `trigger:${view.entity}`,
+        role,
+        origin: { x: at.x, y: position.z, z: at.z },
+        bounds: { center: pad.position, size: pad.scale },
+        orientation: transform.rotation,
+        scale: transform.scale,
+        legacy: [pad],
+        trigger: true,
+      });
     }
   }
 
@@ -269,6 +309,21 @@ export class IsoAdapter extends BaseAdapter {
       ) as Mesh;
       door.scale.set(0.94, WALL_HEIGHT * 0.9, 0.94);
       door.position.set(at.x, (WALL_HEIGHT * 0.9) / 2, at.z);
+      const appearance = resolveAppearance({
+        role: 'door',
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+      });
+      door.material = this.#primitives.material(appearance);
+      door.visible = appearance.visible;
+      door.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `door:${view.entity}`,
+        role: 'door',
+        origin: { x: at.x, y: 0, z: at.z },
+        bounds: { center: door.position, size: door.scale },
+        legacy: [door],
+      });
     }
   }
 
@@ -309,7 +364,15 @@ export class IsoAdapter extends BaseAdapter {
       const fraction = health.max > 0 ? Math.min(Math.max(health.current / health.max, 0), 1) : 0;
       // A corpse stops looking like a live threat: it goes grey and lies down.
       const body = group.getObjectByName('body') as Mesh;
-      body.material = this.#primitives.roleMaterial(fraction > 0 ? role : 'dead');
+      const appearance = resolveAppearance({
+        role: fraction > 0 ? role : 'dead',
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+      });
+      body.material = this.#primitives.material(appearance);
+      body.visible = appearance.visible;
+      body.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      group.visible = appearance.visible;
       body.scale.set(0.5, fraction > 0 ? 1.1 : 0.35, 0.5);
       body.position.y = fraction > 0 ? 0.55 : 0.18;
 
@@ -321,6 +384,46 @@ export class IsoAdapter extends BaseAdapter {
       const back = group.getObjectByName('bar:back') as Mesh;
       back.quaternion.copy(this.camera.quaternion);
       fill.quaternion.copy(this.camera.quaternion);
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `actor:${view.entity}`,
+        role,
+        origin: group.position,
+        bounds: {
+          center: { x: group.position.x, y: 0.55, z: group.position.z },
+          size: { x: 0.5, y: 1.1, z: 0.5 },
+        },
+        legacy: [body],
+        state: fraction <= 0 ? 'dead' : next !== undefined ? 'move' : 'idle',
+        orientation: view.tryGet(Transform)?.rotation,
+        scale: view.tryGet(Transform)?.scale,
+      });
+    }
+  }
+
+  /** Grid entities without a drawn collider still provide named attachment/replacement origins. */
+  #syncOtherAnchors(world: World): void {
+    if (this.presentation === undefined) return;
+    for (const view of world.query({ has: [GridPosition], none: [Health, Blocking] }).views()) {
+      const grid = view.get(GridPosition);
+      const from = cellToWorld(grid.cellX, grid.cellY);
+      const next = nextPathCell(world, view.entity);
+      const to = next === undefined ? from : cellToWorld(next.x, next.y);
+      const progress = next === undefined ? 0 : Math.min(Math.max(grid.progress, 0), 1);
+      const origin = {
+        x: from.x + (to.x - from.x) * progress,
+        y: 0,
+        z: from.z + (to.z - from.z) * progress,
+      };
+      this.presentation.bindEntity(world, view.entity, {
+        key: `entity:${view.entity}`,
+        role: 'neutral',
+        origin,
+        bounds: {
+          center: { ...origin, y: 0.5 },
+          size: { x: 1, y: 1, z: 1 },
+        },
+        state: next === undefined ? 'idle' : 'move',
+      });
     }
   }
 

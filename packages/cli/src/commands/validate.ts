@@ -17,16 +17,20 @@ import {
   parsePrefab,
   parseScene,
   parseTilemap,
+  validatePrefab,
   validateScene,
 } from '@aegis/content';
 import type { Diagnostic } from '@aegis/core';
+import { createSceneContext } from '@aegis/harness';
+import { dirname } from 'node:path';
 import { AegisCliError, CliCode, Exit } from '../errors.js';
 import { formatDiagnostics, hasErrors, json } from '../format.js';
 import { globAll, isGlob } from '../glob.js';
 import type { Command, CommandContext } from '../command.js';
-import { describePluginSource } from '../plugin.js';
+import { describePluginSource, discoverPluginSpec, loadPlugin } from '../plugin.js';
+import type { ResolvedPlugin } from '../plugin.js';
 import { flagBool, flagString, readText, requirePositional, resolvePath } from './shared.js';
-import { baseRegistry, registryFor, resolveRunPlugin } from './sim.js';
+import { baseRegistry, resolveRunPlugin } from './sim.js';
 
 const USAGE = [
   'aegis validate <file...> [options]',
@@ -37,6 +41,8 @@ const USAGE = [
   '',
   "  --plugin <spec>   Validate scenes against this plugin's components (<module>#<export>).",
   "  --mode <mode>     Validate scenes against this mode instead of the scene's own.",
+  '                    Prefabs use the chosen plugin too; without one, only core/content',
+  '                    components are available. Named prefab references require its catalog.',
   '  --json            Emit diagnostics as JSON (stable error codes).',
   '  --strict          Treat warnings as errors (affects exit code).',
   '',
@@ -55,6 +61,35 @@ interface FileReport {
   ok: boolean;
   plugin?: string;
   diagnostics: readonly Diagnostic[];
+}
+
+/** Prefabs have no mode field to infer; use an explicit plugin/mode or nearby config. */
+async function prefabPlugin(ctx: CommandContext, abs: string): Promise<ResolvedPlugin | undefined> {
+  const flagSpec = flagString(ctx.args, 'plugin');
+  const mode = flagString(ctx.args, 'mode');
+  const config = flagSpec === undefined ? discoverPluginSpec(dirname(abs)) : undefined;
+  const spec = flagSpec ?? config?.spec ?? mode;
+  if (spec === undefined) return undefined;
+  const resolved: ResolvedPlugin = {
+    plugin: await loadPlugin(
+      spec,
+      [flagSpec === undefined ? (config?.baseDir ?? ctx.io.cwd) : ctx.io.cwd],
+      ctx.modes,
+    ),
+    spec,
+    source: flagSpec !== undefined ? 'flag' : config !== undefined ? 'config' : 'mode',
+    ...(config !== undefined ? { configFile: config.file } : {}),
+  };
+  if (mode !== undefined && resolved.plugin.mode !== mode) {
+    throw new AegisCliError(
+      CliCode.PluginModeMismatch,
+      `Plugin ${describePluginSource(resolved)} is a "${resolved.plugin.mode}" plugin, but --mode ${mode} was given.`,
+      {
+        fix: 'Use a plugin for the requested mode, or omit the mismatching --mode.',
+      },
+    );
+  }
+  return resolved;
 }
 
 /** Validate a single already-read document; scenes resolve their plugin's components first. */
@@ -78,18 +113,30 @@ async function validateDocument(
       if (!parsed.ok || !parsed.value) return { diagnostics: parsed.diagnostics };
       const scene = parsed.value;
       if (!ctx.modes.has(scene.mode) && flagString(ctx.args, 'plugin') === undefined) {
-        const validated = validateScene(scene, { registry: baseRegistry() });
+        const validated = validateScene(scene, { registry: baseRegistry(), file });
         return { diagnostics: [...parsed.diagnostics, ...validated.diagnostics] };
       }
       const resolved = await resolveRunPlugin(ctx, scene, abs);
-      const validated = validateScene(scene, { registry: registryFor(resolved.plugin) });
+      const validated = validateScene(scene, createSceneContext(resolved.plugin, { file }));
       return {
         diagnostics: [...parsed.diagnostics, ...validated.diagnostics],
         plugin: describePluginSource(resolved),
       };
     }
-    case 'prefab/1':
-      return { diagnostics: parsePrefab(text, file).diagnostics };
+    case 'prefab/1': {
+      const parsed = parsePrefab(text, file);
+      if (!parsed.ok || parsed.value === undefined) return { diagnostics: parsed.diagnostics };
+      const resolved = await prefabPlugin(ctx, abs);
+      const context =
+        resolved === undefined
+          ? { registry: baseRegistry(), file }
+          : createSceneContext(resolved.plugin, { file });
+      const validated = validatePrefab(parsed.value, context);
+      return {
+        diagnostics: [...parsed.diagnostics, ...validated.diagnostics],
+        ...(resolved !== undefined ? { plugin: describePluginSource(resolved) } : {}),
+      };
+    }
     case 'tilemap/1':
       return { diagnostics: parseTilemap(text, file).diagnostics };
     default:

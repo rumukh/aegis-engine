@@ -91,14 +91,14 @@ describe('dev server', () => {
   it('serves a landing page linking every game', async () => {
     const html = await (await fetch(server.url)).text();
     for (const game of GAMES) {
-      expect(html).toContain(`/play/${game.id}`);
+      expect(html).toContain(`href="play/${game.id}/"`);
       expect(html).toContain(escapeHtml(game.title));
     }
   });
 
   it('serves a play page with the import map and the boot script', async () => {
     const html = await (await fetch(`${server.url}/play/iso`)).text();
-    expect(html).toContain('<canvas id="stage">');
+    expect(html).toMatch(/<canvas\b[^>]*\bid="stage"(?:\s|>)/);
     expect(html).toContain('importmap');
     expect(html).toContain('/vendor/@aegis/render-three/dist/client/boot.js');
     expect(html).toContain('"mode":"iso"');
@@ -116,6 +116,8 @@ describe('dev server', () => {
     const map = JSON.parse(importMap()) as { imports: Record<string, string> };
     for (const specifier of [
       'three',
+      'three/addons/loaders/GLTFLoader.js',
+      'three/addons/utils/SkeletonUtils.js',
       '@aegis/core',
       '@aegis/core/math',
       '@aegis/content',
@@ -123,7 +125,7 @@ describe('dev server', () => {
       '@aegis/mode-iso',
       '@aegis/mode-fps',
     ]) {
-      expect(map.imports[specifier], specifier).toMatch(/^\/vendor\//);
+      expect(map.imports[specifier], specifier).toMatch(/^\.\.\/\.\.\/vendor\//);
     }
   });
 

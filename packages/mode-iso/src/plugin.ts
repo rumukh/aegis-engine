@@ -45,10 +45,14 @@ export function isoSchedule(): Schedule {
   return createSchedule().addAll(isoSystems());
 }
 
+/** Authored resource vocabulary, shared by the mode and composed game plugins. */
+export const ISO_RESOURCES = [IsoGrid, NavGrid] as const;
+
 /** The isometric mode plugin. */
 export const isoPlugin: ModePlugin = {
   mode: 'iso',
   components: (): readonly ComponentType<unknown>[] => ISO_COMPONENTS,
+  resources: () => ISO_RESOURCES,
   systems: (): Schedule => isoSchedule(),
   init: (world: World): void => isoInit(world),
   view: (): ViewProvider => new IsoViewProvider(),

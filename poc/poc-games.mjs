@@ -16,9 +16,9 @@
 // transpiled, stripped or resolved by hand.
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { coyoteGapPlugin } from '@aegis/game-platformer';
-import { serverVaultPlugin } from '@aegis/game-iso';
-import { sectorBreachPlugin } from '@aegis/game-fps';
+import { platformer } from './platformer.mjs';
+import { iso } from './iso.mjs';
+import { fps } from './fps.mjs';
 import { BINDINGS } from '../packages/render-three/dist/bindings.js';
 import { findRepoRoot, loadInputScript, loadScene } from '../packages/render-three/dist/catalog.js';
 
@@ -39,57 +39,7 @@ import { findRepoRoot, loadInputScript, loadScene } from '../packages/render-thr
  * module `poc/play.mjs` does. `test/pages-site.test.ts` asserts the string and the value agree, so
  * the two spellings cannot drift apart.
  */
-export const POC = [
-  {
-    id: 'platformer',
-    title: 'Coyote Gap',
-    blurb: 'Side-on platformer: coyote time, jump buffering, a moving platform and a critter.',
-    objective: 'Cross the gaps and reach the goal volume on the far right.',
-    plugin: coyoteGapPlugin,
-    pluginModule: '@aegis/game-platformer',
-    pluginExport: 'coyoteGapPlugin',
-    packageDir: 'games/platformer',
-    scene: 'games/platformer/levels/coyote-gap.scene.json',
-    script: 'games/platformer/play/coyote-gap.input',
-    // The tick count the game's own acceptance test runs, so the replay covers the same run.
-    scriptTicks: 400,
-    acceptance: { winEvent: 'level.completed', playerName: 'player' },
-  },
-  {
-    id: 'iso',
-    title: 'The Server Vault',
-    blurb: 'Isometric infiltration: click-to-move A*, a patrolling guard, a switch and a door.',
-    objective: 'Flip the switch to unseal the vault door, then reach the exit pad.',
-    plugin: serverVaultPlugin,
-    pluginModule: '@aegis/game-iso',
-    pluginExport: 'serverVaultPlugin',
-    packageDir: 'games/iso',
-    scene: 'games/iso/levels/server-vault.scene.json',
-    script: 'games/iso/play/server-vault.input',
-    scriptTicks: 960,
-    acceptance: { winEvent: 'mission.completed', playerName: 'operative' },
-  },
-  {
-    id: 'fps',
-    title: 'Sector Breach',
-    blurb: 'First person: hitscan weapon, a blast door, a coolant pit and a security grunt.',
-    objective: 'Shoot the panel, jump the coolant pit, kill the grunt, reach the exit.',
-    plugin: sectorBreachPlugin,
-    pluginModule: '@aegis/game-fps',
-    pluginExport: 'sectorBreachPlugin',
-    packageDir: 'games/fps',
-    scene: 'games/fps/levels/sector-breach.scene.json',
-    script: 'games/fps/play/sector-breach.input',
-    scriptTicks: 600,
-    // Sector Breach wins by standing in a dead-end doorway, so the frame worth keeping is the
-    // firefight. The tick still comes from the run's own event log.
-    acceptance: {
-      winEvent: 'level.completed',
-      playerName: 'player',
-      photoEvent: 'enemy.damaged',
-    },
-  },
-];
+export const POC = [platformer, iso, fps];
 
 /** Resolve a repo-relative POSIX path against the repository root. */
 function at(root, relative) {
@@ -111,6 +61,7 @@ export async function pocGames() {
       script: await loadInputScript(at(root, entry.script)),
       scriptTicks: entry.scriptTicks,
       acceptance: entry.acceptance,
+      presentation: entry.presentation,
       bindings: BINDINGS[entry.plugin.mode],
     })),
   );
@@ -137,6 +88,7 @@ export async function pocStaticGames() {
       sceneText: await readFile(at(root, entry.scene), 'utf8'),
       pluginModule: entry.pluginModule,
       pluginExport: entry.pluginExport,
+      presentation: entry.presentation,
     })),
   );
 }

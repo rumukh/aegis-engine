@@ -20,7 +20,7 @@
  * @packageDocumentation
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { createWorld, hashString } from '@aegis/core';
+import { createWorld } from '@aegis/core';
 import { platformerPlugin } from '@aegis/mode-platformer';
 import { isoPlugin } from '@aegis/mode-iso';
 import { fpsPlugin, LookState } from '@aegis/mode-fps';
@@ -32,6 +32,7 @@ import { createLiveSession } from './session.js';
 import { BINDINGS } from './bindings.js';
 import type { GameDefinition } from './catalog.js';
 import { FPS_SCENE, PLATFORMER_SCENE } from './testing/scenes.js';
+import { frozenHashControl } from './testing/frozen-hash-control.js';
 import {
   FPS_BUDGET_SCENE,
   ISO_BUDGET_SCENE,
@@ -195,8 +196,10 @@ describe('one displayed frame of rendering work, without a browser', () => {
    * workload measured in the same loop cancels the machine out — which is the only form that
    * means the same thing on a 2-vCPU runner as on this box.
    *
-   * `hashString` is core's frozen FNV-1a: no allocation, no I/O, no dependency on anything in
-   * this package, so nothing a change to `restore` or `sync` does can move it.
+   * `frozenHashControl` keeps the pre-optimization BigInt FNV-1a kernel and its exact 200
+   * inputs. Calling core's live `hashString` here would let a semantics-preserving hash
+   * optimization shrink the denominator without changing any rendering work. The independent
+   * workload's correctness answers are pinned beside its helper; its cost must stay frozen too.
    *
    * Measured across three baseline runs on the same box — twice alone, once inside a 67-file
    * `vitest run` — and then against the frame loop doing its work 2×, 3× and 4× per frame:
@@ -223,7 +226,7 @@ describe('one displayed frame of rendering work, without a browser', () => {
    * twice for reasons that had nothing to do with the adapter.
    */
   function machineSpeedControl(): void {
-    for (let i = 0; i < 200; i++) hashString(`aegis-frame-pacing-control-${i}`);
+    for (let i = 0; i < 200; i++) frozenHashControl(`aegis-frame-pacing-control-${i}`);
   }
 
   const CASES = [

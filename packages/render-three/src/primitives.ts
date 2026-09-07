@@ -11,6 +11,7 @@ import { BoxGeometry, Mesh, PlaneGeometry } from 'three';
 import type { BufferGeometry, Material } from 'three';
 import { flatMaterial, litMaterial, resolveAppearance } from './appearance.js';
 import type { Appearance, VisualRole } from './appearance.js';
+import { sharedResource } from './resources.js';
 
 /** How a surface reacts to light. */
 export type Shading = 'lit' | 'flat';
@@ -21,9 +22,9 @@ export type Shading = 'lit' | 'flat';
  */
 export class Primitives {
   /** A 1x1x1 box centred on the origin. Scale it to size. */
-  readonly box: BoxGeometry = new BoxGeometry(1, 1, 1);
+  readonly box: BoxGeometry = sharedResource(new BoxGeometry(1, 1, 1));
   /** A 1x1 quad in the XY plane, centred on the origin. */
-  readonly plane: PlaneGeometry = new PlaneGeometry(1, 1);
+  readonly plane: PlaneGeometry = sharedResource(new PlaneGeometry(1, 1));
   readonly #materials = new Map<string, Material>();
 
   /** A cached material for `appearance` under `shading`. */
@@ -32,7 +33,7 @@ export class Primitives {
     const cached = this.#materials.get(key);
     if (cached !== undefined) return cached;
     const created = shading === 'flat' ? flatMaterial(appearance) : litMaterial(appearance);
-    this.#materials.set(key, created);
+    this.#materials.set(key, sharedResource(created));
     return created;
   }
 
