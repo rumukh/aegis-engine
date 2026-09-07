@@ -16,6 +16,14 @@
       "types": "./dist/client/static-boot.d.ts",
       "import": "./dist/client/static-boot.js"
     },
+    "./client/boot": {
+      "types": "./dist/client/boot.d.ts",
+      "import": "./dist/client/boot.js"
+    },
+    "./presentation": {
+      "types": "./dist/presentation/index.d.ts",
+      "import": "./dist/presentation/index.js"
+    },
     "./presentation/schema": {
       "types": "./dist/presentation/schema.d.ts",
       "import": "./dist/presentation/schema.js"
@@ -23,6 +31,10 @@
     "./presentation/validate": {
       "types": "./dist/presentation/validate.d.ts",
       "import": "./dist/presentation/validate.js"
+    },
+    "./presentation/node": {
+      "types": "./dist/presentation/files.d.ts",
+      "import": "./dist/presentation/files.js"
     }
   },
   "files": [

@@ -37,6 +37,8 @@ export interface InputCollector {
   take(): InputPacket;
   /** Whether the pointer is currently locked to the canvas (fps look). */
   readonly pointerLocked: boolean;
+  /** Clear held input and pending edges when a run is restarted. */
+  clear(): void;
   /** Detach every listener. */
   dispose(): void;
 }
@@ -75,6 +77,15 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (
+      typeof Element !== 'undefined' &&
+      event.target instanceof Element &&
+      event.target.closest(
+        'button,input,select,textarea,summary,a,[contenteditable="true"],[tabindex]:not(canvas)',
+      ) !== null
+    )
+      return;
     const command = COMMAND_KEYS[event.code];
     if (command !== undefined && !event.repeat) {
       event.preventDefault();
@@ -182,6 +193,16 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
       lookDy = 0;
       pointer = null;
       return packet;
+    },
+
+    clear(): void {
+      heldCodes.clear();
+      heldActions.clear();
+      pressed = [];
+      released = [];
+      lookDx = 0;
+      lookDy = 0;
+      pointer = null;
     },
 
     dispose(): void {

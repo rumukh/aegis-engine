@@ -28,7 +28,7 @@ function chunk(type: string, bytes: Buffer): Buffer {
 }
 
 /** Original two-color RGBA tiles; one transparent corner also exercises alpha decoding. */
-export function fixturePng(): Buffer {
+export function fixturePng(palette: 'surface' | 'rig' = 'surface'): Buffer {
   const size = 32;
   const header = Buffer.alloc(13);
   header.writeUInt32BE(size, 0);
@@ -40,7 +40,16 @@ export function fixturePng(): Buffer {
     for (let x = 0; x < size; x++) {
       const at = y * (size * 4 + 1) + 1 + x * 4;
       const stripe = ((x >> 2) + (y >> 2)) % 2 === 0;
-      pixels.set(stripe ? [255, 168, 42, 255] : [38, 190, 225, 255], at);
+      pixels.set(
+        palette === 'rig'
+          ? stripe
+            ? [230, 255, 255, 255]
+            : [35, 105, 185, 255]
+          : stripe
+            ? [255, 168, 42, 255]
+            : [38, 190, 225, 255],
+        at,
+      );
       if (x < 2 && y < 2) pixels[at + 3] = 0;
     }
   return Buffer.concat([
@@ -122,7 +131,7 @@ export function fixtureGltf(withTexture = true): string {
         },
       },
     ],
-    ...(withTexture ? { textures: [{ source: 0 }], images: [{ uri: 'surface.png' }] } : {}),
+    ...(withTexture ? { textures: [{ source: 0 }], images: [{ uri: 'rig.png' }] } : {}),
     buffers: [
       {
         byteLength: bytes.length,
@@ -209,6 +218,7 @@ export const FIXTURE_MANIFEST: PresentationManifest = {
 export function writePresentationFixture(root: string): PresentationSource {
   mkdirSync(root, { recursive: true });
   writeFileSync(join(root, 'surface.png'), fixturePng());
+  writeFileSync(join(root, 'rig.png'), fixturePng('rig'));
   writeFileSync(join(root, 'rig.gltf'), fixtureGltf());
   writeFileSync(join(root, 'tone.wav'), fixtureWav());
   return { assetRoot: root, manifest: structuredClone(FIXTURE_MANIFEST) };

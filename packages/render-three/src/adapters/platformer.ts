@@ -19,7 +19,7 @@ import { AmbientLight, DirectionalLight, Group, OrthographicCamera, Scene } from
 import type { Mesh } from 'three';
 import { Transform } from '@aegis/core';
 import type { GameMode, World } from '@aegis/core';
-import { Health, Sprite, Trigger } from '@aegis/content';
+import { Health, Model, Sprite, Trigger } from '@aegis/content';
 import type { TriggerData } from '@aegis/content';
 import {
   BodyState,
@@ -28,6 +28,7 @@ import {
   PlatformerCollision,
   PlatformerController,
   TileCollider,
+  Velocity,
 } from '@aegis/mode-platformer';
 import { BaseAdapter, ObjectPool, aspectOf, createModeScene } from '../adapter.js';
 import type { RenderAdapterOptions } from '../adapter.js';
@@ -71,20 +72,29 @@ export class PlatformerAdapter extends BaseAdapter {
     this.camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     this.camera.name = 'camera';
     this.#applyFrustum(FALLBACK_VIEW_HEIGHT);
+    this.configurePresentation(options);
+    this.presentation?.bindLevel(this.#level);
   }
 
   mount(world: World): void {
-    const ambient = new AmbientLight(0xffffff, 1.6);
-    ambient.name = 'light:ambient';
-    const key = new DirectionalLight(0xffffff, 1.1);
-    key.name = 'light:key';
-    key.position.set(0.4, 0.8, 1);
-    this.scene.add(ambient, key);
+    this.prepareMount();
+    this.#pool.clear();
+    this.#level.clear();
+    this.#levelBuilt = false;
+    if (this.defaultLighting) {
+      const ambient = new AmbientLight(0xffffff, 1.6);
+      ambient.name = 'light:ambient';
+      const key = new DirectionalLight(0xffffff, 1.1);
+      key.name = 'light:key';
+      key.position.set(0.4, 0.8, 1);
+      this.scene.add(ambient, key);
+    }
     this.#buildLevel(world);
     this.sync(world);
   }
 
   sync(world: World): void {
+    this.presentation?.beginSync();
     if (!this.#levelBuilt) this.#buildLevel(world);
     this.#pool.begin();
     this.#syncPlatforms(world);
@@ -92,6 +102,7 @@ export class PlatformerAdapter extends BaseAdapter {
     this.#syncTriggers(world);
     this.#pool.sweep();
     this.#syncCamera(world);
+    this.finishPresentationSync(world);
   }
 
   resize(width: number, height: number): void {
@@ -100,6 +111,7 @@ export class PlatformerAdapter extends BaseAdapter {
   }
 
   override dispose(): void {
+    if (this.disposed) return;
     this.#pool.clear();
     this.#primitives.dispose();
     super.dispose();
@@ -119,6 +131,8 @@ export class PlatformerAdapter extends BaseAdapter {
         const mesh = this.#primitives.boxMesh(
           resolveAppearance({ role: hazard ? 'hazard' : 'wall' }),
         );
+        mesh.material =
+          this.presentation?.surface(hazard ? 'hazard' : 'wall', mesh.material) ?? mesh.material;
         mesh.name = `tile:${col}:${row}`;
         // A tile at (col, row) spans x in [col, col+1] and y in [H-1-row, H-row] (mode convention).
         const bottom = grid.height - 1 - row;
@@ -135,7 +149,8 @@ export class PlatformerAdapter extends BaseAdapter {
   #syncPlatforms(world: World): void {
     for (const view of world.query({ has: [KinematicPlatform, Transform] }).views()) {
       const platform = view.get(KinematicPlatform);
-      const position = view.get(Transform).position;
+      const transform = view.get(Transform);
+      const position = transform.position;
       const mesh = this.#pool.claim(`platform:${view.entity}`, () =>
         this.#primitives.boxMesh(
           resolveAppearance({ role: 'platform', sprite: view.tryGet(Sprite) }),
@@ -143,6 +158,23 @@ export class PlatformerAdapter extends BaseAdapter {
       ) as Mesh;
       mesh.scale.set(platform.halfWidth * 2, platform.halfHeight * 2, 1);
       mesh.position.set(position.x, position.y, position.z);
+      const appearance = resolveAppearance({
+        role: 'platform',
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+      });
+      mesh.material = this.#primitives.material(appearance);
+      mesh.visible = appearance.visible;
+      mesh.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `platform:${view.entity}`,
+        role: 'platform',
+        origin: position,
+        bounds: { center: mesh.position, size: mesh.scale },
+        orientation: transform.rotation,
+        scale: transform.scale,
+        legacy: [mesh],
+      });
     }
   }
 
@@ -152,7 +184,8 @@ export class PlatformerAdapter extends BaseAdapter {
       .query({ has: [Transform, TileCollider], none: [KinematicPlatform] })
       .views()) {
       const collider = view.get(TileCollider);
-      const position = view.get(Transform).position;
+      const transform = view.get(Transform);
+      const position = transform.position;
       const isPlayer = view.has(PlatformerController);
       const role: VisualRole = isPlayer ? 'player' : view.has(Health) ? 'enemy' : 'neutral';
       const group = this.#pool.claim(`actor:${view.entity}`, () => {
@@ -180,6 +213,39 @@ export class PlatformerAdapter extends BaseAdapter {
         position.y + collider.offsetY,
         position.z + 0.5,
       );
+      const dead = (view.tryGet(Health)?.current ?? 1) <= 0;
+      const appearance = resolveAppearance({
+        role: dead ? 'dead' : role,
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+      });
+      body.material = this.#primitives.material(appearance);
+      body.visible = appearance.visible;
+      body.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      pip.visible = appearance.visible;
+      group.visible = appearance.visible;
+      const velocity = view.tryGet(Velocity);
+      const grounded = view.tryGet(BodyState)?.grounded ?? true;
+      const state = dead
+        ? 'dead'
+        : !grounded && (velocity?.dy ?? 0) > 0
+          ? 'rise'
+          : !grounded && (velocity?.dy ?? 0) < 0
+            ? 'fall'
+            : Math.abs(velocity?.dx ?? 0) > 0.001
+              ? 'move'
+              : 'idle';
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `actor:${view.entity}`,
+        role,
+        origin: position,
+        bounds: { center: group.position, size: body.scale },
+        orientation: transform.rotation,
+        scale: transform.scale,
+        legacy: [body, pip],
+        facing,
+        state,
+      });
     }
   }
 
@@ -187,7 +253,8 @@ export class PlatformerAdapter extends BaseAdapter {
   #syncTriggers(world: World): void {
     for (const view of world.query({ has: [Trigger, Transform] }).views()) {
       const trigger = view.get(Trigger) as TriggerData;
-      const position = view.get(Transform).position;
+      const transform = view.get(Transform);
+      const position = transform.position;
       const role = triggerRole(trigger.kind);
       const mesh = this.#pool.claim(`trigger:${view.entity}`, () =>
         this.#primitives.boxMesh(resolveAppearance({ role, opacity: 0.3 }), 'flat'),
@@ -196,6 +263,25 @@ export class PlatformerAdapter extends BaseAdapter {
         trigger.shape === 'sphere' ? { x: trigger.radius, y: trigger.radius } : trigger.half;
       mesh.scale.set(half.x * 2, half.y * 2, 0.6);
       mesh.position.set(position.x, position.y, position.z + 1);
+      const appearance = resolveAppearance({
+        role,
+        sprite: view.tryGet(Sprite),
+        model: view.tryGet(Model),
+        opacity: 0.3,
+      });
+      mesh.material = this.#primitives.material(appearance, 'flat');
+      mesh.visible = appearance.visible;
+      mesh.renderOrder = view.tryGet(Sprite)?.z ?? 0;
+      this.presentation?.bindEntity(world, view.entity, {
+        key: `trigger:${view.entity}`,
+        role,
+        origin: position,
+        bounds: { center: mesh.position, size: mesh.scale },
+        orientation: transform.rotation,
+        scale: transform.scale,
+        legacy: [mesh],
+        trigger: true,
+      });
     }
   }
 
