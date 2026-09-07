@@ -847,7 +847,7 @@ function robot() {
       ],
     },
   ]);
-  m.animation('Shutdown', [
+  const shutdown = [
     {
       node: body,
       path: 'translation',
@@ -855,7 +855,7 @@ function robot() {
       values: [
         [0, 1.1, 0],
         [0, 0.92, 0.02],
-        [0, 0.66, 0.08],
+        [0, 0.66, -0.02],
       ],
     },
     {
@@ -878,7 +878,18 @@ function robot() {
         [0.24, 0, 0, 0.970773],
       ],
     },
-  ]);
+  ];
+  m.animation('Shutdown', shutdown);
+  // A dead snapshot can arrive without its event; do not loop the collapse from that state.
+  m.animation(
+    'Offline',
+    shutdown.map(({ node, path, values }) => ({
+      node,
+      path,
+      times: [0, 1],
+      values: [values.at(-1), values.at(-1)],
+    })),
+  );
   return m;
 }
 
@@ -984,11 +995,33 @@ function panel() {
   m.bevel(0, 'edge', [-0.25, 1.6, 0], [0.04, 1.48, 1.07], 0.035);
   m.box(0, 'black', [-0.278, 1.75, 0], [0.016, 0.83, 0.9]);
   m.sign(0, [-0.29, 1.94, 0], 0.86, 0.11, 1, 'west');
-  m.box(0, 'amber', [-0.289, 1.51, 0], [0.012, 0.26, 0.29]);
-  m.box(0, 'warm', [-0.297, 1.51, 0], [0.006, 0.18, 0.2]);
+  const indicator = m.node('LockIndicator', 0, [0, 1.51, 0]);
+  m.box(indicator, 'amber', [-0.289, 0, 0], [0.012, 0.26, 0.29]);
+  m.box(indicator, 'warm', [-0.297, 0, 0], [0.006, 0.18, 0.2]);
   for (const z of [-0.4, 0.4]) m.box(0, 'hazard', [-0.28, 1.05, z], [0.018, 0.22, 0.13]);
-  const status = m.node('LockStatus');
-  m.box(status, 'cyan', [-0.292, 1.25, 0], [0.013, 0.04, 0.54]);
+  const status = m.node('LockStatus', 0, [0, 1.25, 0]);
+  m.nodes[status].scale = [0, 0, 0];
+  m.box(status, 'green', [-0.292, 0, 0], [0.013, 0.04, 0.54]);
+  m.animation('Unlock', [
+    {
+      node: indicator,
+      path: 'scale',
+      times: [0, 0.2],
+      values: [
+        [1, 1, 1],
+        [0, 0, 0],
+      ],
+    },
+    {
+      node: status,
+      path: 'scale',
+      times: [0, 0.2],
+      values: [
+        [0, 0, 0],
+        [1, 1, 1],
+      ],
+    },
+  ]);
   return m;
 }
 

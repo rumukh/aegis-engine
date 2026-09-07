@@ -32,14 +32,14 @@ and pressure-suit arms. Neither references an existing fictional weapon or chara
 
 ## Integration contract
 
-| Asset                  | Origin / orientation                                             | Presentation controls                                                    |
-| ---------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `orbital-facility.glb` | World origin, Y up; built from the unchanged scene grid          | Static environment; replaces legacy floorplan drawing, not collision     |
-| `kestrel-security.glb` | Feet at origin, faces -Z; authored to the existing enemy hit box | `SentinelIdle`, `ReturnFire`, `Shutdown`; `EnemyMuzzle` anchor           |
-| `vaultline-rifle.glb`  | Camera-local origin, points -Z                                   | Attach to camera, offset in composition; `Fire` clip and `Muzzle` anchor |
-| `blast-door.glb`       | Bottom centre of a door cell; 1 x 4 x 1 closed                   | `Open` lifts `DoorLeaf`; driven by authoritative cell state              |
-| `breach-panel.glb`     | Entity origin; illuminated target faces -X                       | Fits the existing panel hit box; `LockStatus` node                       |
-| `extraction-pad.glb`   | Entity origin on the floor                                       | Non-obstructing markings inside the existing goal trigger                |
+| Asset                  | Origin / orientation                                             | Presentation controls                                                                       |
+| ---------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `orbital-facility.glb` | World origin, Y up; built from the unchanged scene grid          | Static environment; replaces legacy floorplan drawing, not collision                        |
+| `kestrel-security.glb` | Feet at origin, faces -Z; authored to the existing enemy hit box | `SentinelIdle`, `ReturnFire`, `Shutdown`, terminal `Offline`; `EnemyMuzzle` anchor          |
+| `vaultline-rifle.glb`  | Camera-local origin, points -Z                                   | Attach to camera, offset in composition; `Fire` clip and `Muzzle` anchor                    |
+| `blast-door.glb`       | Bottom centre of a door cell; 1 x 4 x 1 closed                   | `Open` lifts `DoorLeaf`; driven by authoritative cell state                                 |
+| `breach-panel.glb`     | Entity origin; illuminated target faces -X                       | Fits the existing panel hit box; `Unlock` changes the amber indicator to green `LockStatus` |
+| `extraction-pad.glb`   | Entity origin on the floor                                       | Non-obstructing markings inside the existing goal trigger                                   |
 
 GLBs embed their PNG images and need no sidecar fetches. Standalone PNGs are also provided
 for shared material descriptors. Albedo/signage maps use sRGB; normal maps use linear
@@ -62,3 +62,25 @@ Its 0.8-second rise completes before the existing route reaches it. A live playe
 reaches it sooner must never encounter an invisible collider or be blocked by rendering.
 Visual weapon recoil changes only its model; camera direction, `LookState`, crosshair and
 hitscan rays must remain identical. Mesh animation is not collision animation.
+
+## Playable composition
+
+`poc/fps.mjs` owns the typed shared presentation manifest and host-only asset directory.
+It binds the robot, control panel and extraction pad at their authored entity origins,
+the facility and pressure door in world space, and the rifle in camera-local metres.
+The inspected starting rifle pose is `[0.31, -0.31, -0.9]` at scale `0.85`; recoil adds
+only `0.035` metres to the visual wrapper, in addition to its short authored fire clip.
+The camera and collision meshes are never displaced.
+
+The shared runtime plays `Open`, `Unlock`, `Fire`, `ReturnFire` and `Shutdown` from
+existing simulation events. `Offline` is a constant terminal pose derived from the end
+of `Shutdown`, so reconstructing a dead actor without its historic event cannot loop the
+collapse. Impact feedback is a color-only flash on the target, not a fabricated world
+hit position: existing hitscan events do not contain a historic ray origin/direction.
+The shared audio service supplies gesture unlock, mute, pause and restart behavior.
+
+The legacy environment and trigger rendering is explicitly replaced, not deleted.
+The existing collision-debug toggle still reveals the original level, hit boxes and
+hazard volumes. The scene, plugin, 600-tick winning input, 300-tick pit-death route,
+200-tick wall-sliding probe and final/trajectory golden literals remain authoritative.
+The normal `npm run play` and `npm run build:site` composition paths use the same manifest.
