@@ -61,23 +61,50 @@ function actorClips(model, parts, guard) {
       values: wave.map((v) => [0, 0.68 + v * 0.008, 0]),
     },
   ]);
+  const walkTimes = Array.from({ length: 61 }, (_, i) => i / 60);
+  const walkWave = walkTimes.map((t) => sin(t * TAU));
+  const legPoints = [parts.leftLeg, parts.rightLeg].map((node) => ({
+    y: model.nodes[node].translation[1],
+    points: [...model.parts.get(node).batches.values()].flatMap((batch) =>
+      Array.from({ length: batch.positions.length / 3 }, (_, i) => [
+        batch.positions[i * 3 + 1],
+        batch.positions[i * 3 + 2],
+      ]),
+    ),
+  }));
   model.animation('walk', [
     rotate(
       parts.leftLeg,
-      wave.map((v) => v * 0.42),
+      walkWave.map((v) => v * 0.42),
     ),
     rotate(
       parts.rightLeg,
-      wave.map((v) => -v * 0.42),
+      walkWave.map((v) => -v * 0.42),
     ),
     rotate(
       parts.leftArm,
-      wave.map((v) => -v * 0.18),
+      walkWave.map((v) => -v * 0.18),
     ),
     rotate(
       parts.rightArm,
-      wave.map((v) => v * 0.12),
+      walkWave.map((v) => v * 0.12),
     ),
+    {
+      node: 0,
+      path: 'translation',
+      times: walkTimes,
+      values: walkWave.map((wave) => {
+        const lowest = Math.min(
+          ...legPoints.map((leg, index) => {
+            const angle = wave * (index === 0 ? 0.42 : -0.42);
+            const sine = sin(angle);
+            const cosine = cos(angle);
+            return leg.y + Math.min(...leg.points.map(([y, z]) => y * cosine - z * sine));
+          }),
+        );
+        return [0, 0.004 - lowest, 0];
+      }),
+    },
   ]);
   model.animation('attack', [
     rotate(

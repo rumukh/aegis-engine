@@ -28,8 +28,8 @@ import {
   Vector3,
 } from 'three';
 import type { Mesh, Object3D } from 'three';
-import { DEG2RAD, Name, Transform, cos, sin } from '@aegis/core';
-import type { Entity, GameMode, World } from '@aegis/core';
+import { DEG2RAD, Name, Transform, atan2, cos, sin } from '@aegis/core';
+import type { Entity, GameMode, Quat, World } from '@aegis/core';
 import { Health, Model, Sprite, Trigger } from '@aegis/content';
 import type { TriggerData } from '@aegis/content';
 import {
@@ -47,6 +47,7 @@ import type { PickedPoint, RenderAdapterOptions } from '../adapter.js';
 import { resolveAppearance } from '../appearance.js';
 import type { VisualRole } from '../appearance.js';
 import { Primitives } from '../primitives.js';
+import type { SpriteState } from '../presentation/schema.js';
 
 /** Elevation of a true 2:1 isometric camera, in degrees (`atan(1/sqrt(2))`). */
 const ISO_ELEVATION_DEG = 35.264389682754654;
@@ -80,6 +81,22 @@ const WALL_HEIGHT = 0.45;
 
 /** The ground plane the pointer is projected onto. */
 const GROUND = new Plane(new Vector3(0, 1, 0), 0);
+const STEP_BLEND_TICKS = 8;
+
+interface ActorPose {
+  cellX: number;
+  cellY: number;
+  tick: number;
+  movedAt: number;
+  from: Vector3;
+  position: Vector3;
+  orientation: Quat;
+  state: SpriteState;
+  next?: Cell;
+  target?: number;
+  directionX: number;
+  directionZ: number;
+}
 
 /** The visual role of a trigger volume, by its authored `kind`. */
 function triggerRole(kind: string): VisualRole {
@@ -116,6 +133,9 @@ export class IsoAdapter extends BaseAdapter {
   readonly #entities = new Group();
   readonly #pool: ObjectPool;
   readonly #raycaster = new Raycaster();
+  readonly #actorPoses = new Map<number, ActorPose>();
+  readonly #pickCells = new Map<Object3D, PickedPoint>();
+  readonly #pickProxies = new Set<Object3D>();
   #aspect: number;
   #levelBuilt = false;
 
@@ -138,6 +158,9 @@ export class IsoAdapter extends BaseAdapter {
     this.prepareMount();
     this.#pool.clear();
     this.#level.clear();
+    this.#actorPoses.clear();
+    this.#pickCells.clear();
+    this.#pickProxies.clear();
     this.#levelBuilt = false;
     if (this.defaultLighting) {
       const ambient = new AmbientLight(0xffffff, 1.1);
@@ -153,7 +176,10 @@ export class IsoAdapter extends BaseAdapter {
 
   sync(world: World): void {
     this.presentation?.beginSync();
+    this.#pickCells.clear();
+    this.#pickProxies.clear();
     if (!this.#levelBuilt) this.#buildLevel(world);
+    this.#updateActorPoses(world);
     this.#syncCamera(world);
     this.#pool.begin();
     this.#syncTriggers(world);
@@ -200,6 +226,11 @@ export class IsoAdapter extends BaseAdapter {
       true,
     );
     for (const hit of hits) {
+      if (!this.#pickVisible(hit.object)) continue;
+      for (let node: Object3D | null = hit.object; node !== null; node = node.parent) {
+        const cell = this.#pickCells.get(node);
+        if (cell !== undefined) return { ...cell };
+      }
       const visualOwner = this.presentation?.pickOwner(hit.object);
       if (visualOwner !== undefined)
         return { x: Math.round(visualOwner.x), y: Math.round(visualOwner.z), z: 0 };
@@ -212,6 +243,23 @@ export class IsoAdapter extends BaseAdapter {
     const ground = this.#raycaster.ray.intersectPlane(GROUND, new Vector3());
     if (ground === null) return null;
     return { x: Math.round(ground.x), y: Math.round(ground.z), z: 0 };
+  }
+
+  #pickVisible(object: Object3D): boolean {
+    for (let node: Object3D | null = object; node !== null; node = node.parent) {
+      // Explicit replacement levels retain their collision proxies for logical cell picking.
+      if (node === this.#level) return true;
+      if (!node.visible && !this.#pickProxies.has(node)) return false;
+    }
+    return true;
+  }
+
+  #bindPickCell(world: World, entity: Entity, x: number, y: number, legacy?: Object3D): void {
+    const cell = { x: Math.round(x), y: Math.round(y), z: 0 };
+    if (legacy !== undefined) this.#pickCells.set(legacy, cell);
+    const name = world.get(entity, Name)?.value ?? String(entity);
+    const visual = this.presentation?.entity(name);
+    if (visual !== undefined) this.#pickCells.set(visual.root, cell);
   }
 
   /**
@@ -231,8 +279,94 @@ export class IsoAdapter extends BaseAdapter {
   override dispose(): void {
     if (this.disposed) return;
     this.#pool.clear();
+    this.#actorPoses.clear();
+    this.#pickCells.clear();
+    this.#pickProxies.clear();
     this.#primitives.dispose();
     super.dispose();
+  }
+
+  override resetPresentation(): void {
+    this.#actorPoses.clear();
+    super.resetPresentation();
+  }
+
+  /** Smooth only observed adjacent cell steps; never predict a patrol or change its logical cell. */
+  #updateActorPoses(world: World): void {
+    const claimed = new Set<number>();
+    for (const view of world.query({ has: [GridPosition, Health] }).views()) {
+      const grid = view.get(GridPosition);
+      const alive = view.get(Health).current > 0;
+      const next = nextPathCell(world, view.entity);
+      const progress = next === undefined ? 0 : Math.min(Math.max(grid.progress, 0), 1);
+      const x = grid.cellX + ((next?.x ?? grid.cellX) - grid.cellX) * progress;
+      const z = grid.cellY + ((next?.y ?? grid.cellY) - grid.cellY) * progress;
+      let pose = this.#actorPoses.get(view.entity);
+      if (pose === undefined || world.tick < pose.tick) {
+        pose = {
+          cellX: grid.cellX,
+          cellY: grid.cellY,
+          tick: world.tick,
+          movedAt: -Infinity,
+          from: new Vector3(x, 0, z),
+          position: new Vector3(x, 0, z),
+          orientation: { x: 0, y: 0, z: 0, w: 1 },
+          state: 'idle',
+          directionX: 0,
+          directionZ: 0,
+        };
+        this.#actorPoses.set(view.entity, pose);
+      } else if (grid.cellX !== pose.cellX || grid.cellY !== pose.cellY) {
+        const dx = grid.cellX - pose.cellX;
+        const dz = grid.cellY - pose.cellY;
+        const adjacent = Math.abs(dx) + Math.abs(dz) === 1;
+        const stepped =
+          this.presentation !== undefined &&
+          alive &&
+          adjacent &&
+          next === undefined &&
+          pose.next === undefined &&
+          world.tick > pose.tick;
+        pose.from.copy(pose.position);
+        pose.movedAt = stepped ? world.tick : -Infinity;
+        pose.directionX = dx;
+        pose.directionZ = dz;
+        pose.cellX = grid.cellX;
+        pose.cellY = grid.cellY;
+      }
+      pose.tick = world.tick;
+      pose.next = next;
+      pose.target = view.tryGet(AttackOrder)?.target;
+      const blending = alive && next === undefined && world.tick - pose.movedAt < STEP_BLEND_TICKS;
+      pose.position.set(x, 0, z);
+      if (blending) {
+        const amount = Math.max(0, (world.tick - pose.movedAt) / STEP_BLEND_TICKS);
+        pose.position.lerpVectors(pose.from, pose.position, amount);
+      }
+      pose.state = !alive ? 'dead' : next !== undefined || blending ? 'move' : 'idle';
+      claimed.add(view.entity);
+    }
+    for (const id of this.#actorPoses.keys()) if (!claimed.has(id)) this.#actorPoses.delete(id);
+    for (const pose of this.#actorPoses.values()) {
+      if (pose.state === 'dead') continue;
+      const target = pose.target === undefined ? undefined : this.#actorPoses.get(pose.target);
+      const dx =
+        pose.next !== undefined
+          ? pose.next.x - pose.cellX
+          : target !== undefined
+            ? target.cellX - pose.cellX
+            : pose.directionX;
+      const dz =
+        pose.next !== undefined
+          ? pose.next.y - pose.cellY
+          : target !== undefined
+            ? target.cellY - pose.cellY
+            : pose.directionZ;
+      if (dx === 0 && dz === 0) continue;
+      const yaw = atan2(dx, dz);
+      pose.orientation.y = sin(yaw / 2);
+      pose.orientation.w = cos(yaw / 2);
+    }
   }
 
   /** Floor plates and wall columns from the baked nav grid. Static for the run. */
@@ -296,6 +430,7 @@ export class IsoAdapter extends BaseAdapter {
         legacy: [pad],
         trigger: true,
       });
+      this.#bindPickCell(world, view.entity, position.x, position.y, pad);
     }
   }
 
@@ -324,6 +459,7 @@ export class IsoAdapter extends BaseAdapter {
         bounds: { center: door.position, size: door.scale },
         legacy: [door],
       });
+      this.#bindPickCell(world, view.entity, grid.cellX, grid.cellY, door);
     }
   }
 
@@ -343,27 +479,28 @@ export class IsoAdapter extends BaseAdapter {
         body.name = 'body';
         body.scale.set(0.5, 1.1, 0.5);
         body.position.y = 0.55;
+        const meter = new Group();
+        meter.name = 'health-meter';
+        meter.position.y = 1.45;
         const barBack = this.#primitives.boxMesh(resolveAppearance({ role: 'dead' }), 'flat');
         barBack.name = 'bar:back';
-        barBack.scale.set(0.9, 0.12, 0.02);
-        barBack.position.y = 1.45;
+        barBack.scale.set(0.76, 0.09, 0.02);
         const barFill = this.#primitives.boxMesh(resolveAppearance({ role }), 'flat');
         barFill.name = 'bar:fill';
-        barFill.position.y = 1.45;
-        container.add(body, barBack, barFill);
+        barFill.position.z = 0.015;
+        meter.add(barBack, barFill);
+        container.add(body, meter);
         return container;
       }) as Group;
 
-      // Sub-cell interpolation toward the next path cell: smooth pixels, integer simulation.
-      const from = cellToWorld(grid.cellX, grid.cellY);
-      const next = nextPathCell(world, view.entity);
-      const to = next === undefined ? from : cellToWorld(next.x, next.y);
-      const t = next === undefined ? 0 : Math.min(Math.max(grid.progress, 0), 1);
-      group.position.set(from.x + (to.x - from.x) * t, 0, from.z + (to.z - from.z) * t);
+      const pose = this.#actorPoses.get(view.entity)!;
+      group.position.copy(pose.position);
 
       const fraction = health.max > 0 ? Math.min(Math.max(health.current / health.max, 0), 1) : 0;
       // A corpse stops looking like a live threat: it goes grey and lies down.
       const body = group.getObjectByName('body') as Mesh;
+      // A narrow model limb must not punch a hole in the actor's logical click target.
+      this.#pickProxies.add(body);
       const appearance = resolveAppearance({
         role: fraction > 0 ? role : 'dead',
         sprite: view.tryGet(Sprite),
@@ -377,13 +514,15 @@ export class IsoAdapter extends BaseAdapter {
       body.position.y = fraction > 0 ? 0.55 : 0.18;
 
       const fill = group.getObjectByName('bar:fill') as Mesh;
-      fill.scale.set(0.86 * fraction, 0.08, 0.03);
-      fill.position.x = -0.43 * (1 - fraction);
+      fill.scale.set(0.7 * fraction, 0.05, 0.02);
+      fill.position.x = -0.35 * (1 - fraction);
+      fill.material =
+        this.presentation?.surface(role, this.#primitives.roleMaterial(role, 'flat')) ??
+        this.#primitives.roleMaterial(role, 'flat');
       fill.visible = fraction > 0;
-      // Billboard the bars so they stay readable under the fixed isometric camera.
-      const back = group.getObjectByName('bar:back') as Mesh;
-      back.quaternion.copy(this.camera.quaternion);
-      fill.quaternion.copy(this.camera.quaternion);
+      const meter = group.getObjectByName('health-meter')!;
+      meter.quaternion.copy(this.camera.quaternion);
+      meter.visible = fraction > 0;
       this.presentation?.bindEntity(world, view.entity, {
         key: `actor:${view.entity}`,
         role,
@@ -393,10 +532,11 @@ export class IsoAdapter extends BaseAdapter {
           size: { x: 0.5, y: 1.1, z: 0.5 },
         },
         legacy: [body],
-        state: fraction <= 0 ? 'dead' : next !== undefined ? 'move' : 'idle',
-        orientation: view.tryGet(Transform)?.rotation,
+        state: pose.state,
+        orientation: view.tryGet(Transform)?.rotation ?? pose.orientation,
         scale: view.tryGet(Transform)?.scale,
       });
+      this.#bindPickCell(world, view.entity, grid.cellX, grid.cellY, group);
     }
   }
 
@@ -424,6 +564,7 @@ export class IsoAdapter extends BaseAdapter {
         },
         state: next === undefined ? 'idle' : 'move',
       });
+      this.#bindPickCell(world, view.entity, grid.cellX, grid.cellY);
     }
   }
 
@@ -457,6 +598,8 @@ export class IsoAdapter extends BaseAdapter {
     if (target !== '') {
       for (const view of world.query({ has: [GridPosition] }).views()) {
         if (world.get(view.entity, Name)?.value !== target) continue;
+        const pose = this.#actorPoses.get(view.entity);
+        if (pose !== undefined) return pose.position;
         const grid = view.get(GridPosition);
         return cellToWorld(grid.cellX, grid.cellY);
       }

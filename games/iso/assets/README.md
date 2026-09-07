@@ -27,7 +27,8 @@ The operative is a slim, pale-helmeted infiltration suit with a cyan slit visor 
 shoulder equipment. The sentinel is a broader rust-armored security robot with amber optics,
 a reinforced crown, and a heavier torso. Both have named articulated parts and `idle`, `walk`,
 `attack`, and `death` clips. Geometry is combined by material within each articulated part,
-not emitted as one runtime object per armor plate.
+not emitted as one runtime object per armor plate. Walk and death clips bake their floor contact
+into the authored keys, so rotated boots and falling bodies do not penetrate the deck.
 
 One asset unit is one navigation cell: right-handed coordinates, +Y up, +Z forward, feet at Y=0.
 Meshes are appearance only. They must never replace the simulation's navigation/collision data.
@@ -59,3 +60,24 @@ does not bake presentation into the authoritative scene or change the 960-tick w
 alert, access, unseal, route-denied, and extraction cues. All are mono 22,050 Hz signed 16-bit PCM,
 with unclipped peaks and tapered envelopes. Playback, user-gesture unlock, mute, event delivery,
 voice limits, and disposal belong to the shared presentation audio system.
+
+## Playable composition
+
+[`poc/iso.mjs`](../../../poc/iso.mjs) binds these assets through the shared
+`presentation/1` manifest, for both the dev server and the static exporter. The scene,
+plugin, input route, final-state hash, and trajectory are unchanged.
+
+The rendered deck and low partition batches derive from the game's `WALL_ROWS`, the same
+collision source checked against the authoritative scene. `legacy.level: false` explicitly
+replaces the primitive level; the original geometry remains available to diagnostics and
+logical cell picking. Rear server banks, service conduits, and the structural plinth are
+static instances or authored props, not additional collision or navigable rooms.
+
+Actor and interaction bindings use `fit: 'authored'`: one unit remains one cell and actor
+roots remain at the floor. The generic iso adapter faces resolved paths and opponents,
+briefly interpolates observed adjacent cell steps, and keeps clicks tied to the logical
+actor rather than rounding a partially interpolated position into a neighboring cell.
+
+Game event mappings select the attack and held terminal clips, shared bounded feedback,
+audio cues, and HUD objectives. Materials and textures are borrowed from the shared asset
+library; restart/disposal releases visual instances, never another instance's cached resources.

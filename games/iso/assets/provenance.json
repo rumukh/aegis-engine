@@ -92,8 +92,8 @@
     },
     {
       "file": "operative.gltf",
-      "bytes": 223058,
-      "sha256": "943360ef667a20cce35be97b7c808dfe8ec622265e10457de4f2526171637ae8",
+      "bytes": 230759,
+      "sha256": "585a16c902278ebd7f1b53e6267f0176f3192a880f036d2749167b41d3c21d00",
       "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
       "triangles": 1576,
       "primitives": 12,
@@ -101,8 +101,8 @@
     },
     {
       "file": "sentinel.gltf",
-      "bytes": 221517,
-      "sha256": "6c74b7254be0d7b75e234ee9784d5ac7abf2cdc8a6de14aae5cbf15b8245285d",
+      "bytes": 229218,
+      "sha256": "cd4f4b2b191969e147cba0f76d879aa6bfd3d4b1f9213cabec7c2f004a758a7c",
       "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
       "triangles": 1564,
       "primitives": 12,
