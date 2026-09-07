@@ -16,7 +16,7 @@
     },
     {
       "file": "kestrel-security.glb",
-      "bytes": 165292,
+      "bytes": 166504,
       "triangles": 1446,
       "primitives": 30,
       "nodes": 9,
@@ -32,9 +32,13 @@
         {
           "name": "Shutdown",
           "channels": 3
+        },
+        {
+          "name": "Offline",
+          "channels": 3
         }
       ],
-      "sha256": "31df5bef785c64d2567917b2e64fe3c5e6a1a021ae2e1e2d75154ce974e61b96"
+      "sha256": "15cace4671b34c89387b7ba353d12fbd4b46b4f386b13506c418426f444a847d"
     },
     {
       "file": "vaultline-rifle.glb",
@@ -66,12 +70,17 @@
     },
     {
       "file": "breach-panel.glb",
-      "bytes": 32772,
+      "bytes": 33696,
       "triangles": 114,
       "primitives": 8,
-      "nodes": 2,
-      "animations": [],
-      "sha256": "9cb025aa48e0dcbd427399b588e2d9be59d138acf1193b7c599ec2e107024c1e"
+      "nodes": 3,
+      "animations": [
+        {
+          "name": "Unlock",
+          "channels": 2
+        }
+      ],
+      "sha256": "06260e4ae03232e4e02b16c95b6a122ec2958a739943b89795c9eee92531f6f9"
     },
     {
       "file": "extraction-pad.glb",

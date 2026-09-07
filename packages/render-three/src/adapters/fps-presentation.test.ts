@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import type { Mesh } from 'three';
-import { Transform } from '@aegis/core';
-import { fpsPlugin } from '@aegis/mode-fps';
+import { createSchedule, createSimulation, Transform } from '@aegis/core';
+import { FPS_COLLISION, fpsPlugin } from '@aegis/mode-fps';
 import { buildTestWorld } from '../testing/world.js';
 import { FPS_SCENE } from '../testing/scenes.js';
 import {
@@ -120,6 +120,103 @@ describe('fps presentation bindings', () => {
         /camera-anchored presentation object, never the camera/,
       );
     } finally {
+      assets.dispose();
+    }
+  });
+
+  it('keeps replaced floorplan and trigger geometry available at its authoritative debug bounds', async () => {
+    const manifest = runtimeManifest({
+      legacy: { level: false, triggers: false },
+      entities: [
+        {
+          target: { name: 'panel' },
+          fit: 'authored',
+          visual: { kind: 'model', mesh: 'rig' },
+        },
+      ],
+      objects: [{ id: 'environment', visual: { kind: 'model', mesh: 'rig' } }],
+    });
+    const assets = await runtimeAssets(manifest);
+    const adapter = createFpsAdapter({ presentation: { manifest, assets } });
+    try {
+      const world = buildTestWorld(FPS_SCENE, fpsPlugin);
+      adapter.mount(world);
+      const runtime = adapter.presentation!;
+      const level = adapter.scene.getObjectByName('level')!;
+      const panel = adapter.scene.getObjectByName(`hitbox:${entityNamed(world, 'panel')}`)!;
+      const position = panel.position.toArray();
+      const size = panel.scale.toArray();
+      expect(level.visible).toBe(false);
+      expect(panel.visible).toBe(false);
+      expect(runtime.stats().legacy.retainedMeshes).toBeGreaterThan(0);
+
+      const grid = world.getResource(FPS_COLLISION)!;
+      grid.cells[3 * grid.width + 2]!.solid = false;
+      const before = world.snapshot();
+      adapter.sync(world);
+      expect(adapter.scene.getObjectByName('wall:2:3')).toBeUndefined();
+      expect(adapter.scene.getObjectByName('ground:2:3')).toBeDefined();
+      expect(level.visible).toBe(false);
+
+      runtime.setDebugGeometry(true);
+      adapter.sync(world);
+      expect(level.visible).toBe(true);
+      expect(panel.visible).toBe(true);
+      expect(panel.position.toArray()).toEqual(position);
+      expect(panel.scale.toArray()).toEqual(size);
+      expect(runtime.stats().legacy.visibleMeshes).toBe(runtime.stats().legacy.retainedMeshes);
+      runtime.setDebugGeometry(false);
+      expect(level.visible).toBe(false);
+      expect(panel.visible).toBe(false);
+      expect(world.snapshot()).toEqual(before);
+    } finally {
+      adapter.dispose();
+      assets.dispose();
+    }
+  });
+
+  it('advances door clips when an explicit simulation step changes a paused world', async () => {
+    const manifest = runtimeManifest({
+      objects: [{ id: 'gate', visual: { kind: 'model', mesh: 'rig' } }],
+      effects: [
+        {
+          event: 'open',
+          kind: 'clip',
+          target: { object: 'gate' },
+          clip: 'lift',
+          durationTicks: 30,
+          holdLast: true,
+        },
+      ],
+    });
+    const assets = await runtimeAssets(manifest);
+    const adapter = createFpsAdapter({ presentation: { manifest, assets } });
+    try {
+      const world = buildTestWorld(FPS_SCENE, fpsPlugin);
+      const simulation = createSimulation({ world, schedule: createSchedule(), tickRate: 60 });
+      adapter.mount(world);
+      adapter.present(presentationFrame(0, { paused: true }));
+      const fin = adapter.presentation!.object('gate')!.object.getObjectByName('fin')!;
+
+      simulation.run(11);
+      adapter.sync(world);
+      adapter.present(
+        presentationFrame(world.tick, {
+          paused: true,
+          events: [{ type: 'open', tick: 10, sequence: 0 }],
+        }),
+      );
+      expect(fin.position.y).toBeCloseTo(1.1 + 1 / 30);
+
+      simulation.run(30);
+      adapter.sync(world);
+      const before = world.snapshot();
+      adapter.present(presentationFrame(world.tick, { paused: true }));
+      expect(fin.position.y).toBeCloseTo(2.1);
+      expect(adapter.presentation!.stats().effects.active).toBe(0);
+      expect(world.snapshot()).toEqual(before);
+    } finally {
+      adapter.dispose();
       assets.dispose();
     }
   });
