@@ -1,0 +1,7 @@
+*.svg text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.mjs text eol=lf
+*.txt text eol=lf
+*.jpg binary
+*.wav binary

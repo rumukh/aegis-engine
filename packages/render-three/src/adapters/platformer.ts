@@ -18,7 +18,7 @@
 import { AmbientLight, DirectionalLight, Group, OrthographicCamera, Scene } from 'three';
 import type { Mesh } from 'three';
 import { Transform } from '@aegis/core';
-import type { GameMode, World } from '@aegis/core';
+import type { Entity, GameMode, World } from '@aegis/core';
 import { Health, Model, Sprite, Trigger } from '@aegis/content';
 import type { TriggerData } from '@aegis/content';
 import {
@@ -41,6 +41,13 @@ const FALLBACK_VIEW_HEIGHT = 12;
 /** How far in front of the level the camera sits. 2D depth is cosmetic. */
 const CAMERA_Z = 20;
 
+interface ActorMotion {
+  tick: number;
+  x: number;
+  dx: number;
+  facing: -1 | 1;
+}
+
 /** The visual role of a trigger volume, by its authored `kind`. */
 function triggerRole(kind: string): VisualRole {
   if (kind === 'hazard') return 'hazard';
@@ -58,6 +65,7 @@ export class PlatformerAdapter extends BaseAdapter {
   readonly #level = new Group();
   readonly #entities = new Group();
   readonly #pool: ObjectPool;
+  readonly #actorMotion = new Map<Entity, ActorMotion>();
   #aspect: number;
   #levelBuilt = false;
 
@@ -79,6 +87,7 @@ export class PlatformerAdapter extends BaseAdapter {
   mount(world: World): void {
     this.prepareMount();
     this.#pool.clear();
+    this.#actorMotion.clear();
     this.#level.clear();
     this.#levelBuilt = false;
     if (this.defaultLighting) {
@@ -113,8 +122,26 @@ export class PlatformerAdapter extends BaseAdapter {
   override dispose(): void {
     if (this.disposed) return;
     this.#pool.clear();
+    this.#actorMotion.clear();
     this.#primitives.dispose();
     super.dispose();
+  }
+
+  override resetPresentation(): void {
+    this.#actorMotion.clear();
+    super.resetPresentation();
+  }
+
+  /** Transform-driven actors need no Velocity component; repeated syncs must not erase motion. */
+  #sampleActorMotion(entity: Entity, tick: number, x: number): ActorMotion {
+    const previous = this.#actorMotion.get(entity);
+    if (previous?.tick === tick) return previous;
+    const advancing = previous !== undefined && tick > previous.tick;
+    const dx = advancing ? (x - previous.x) / (tick - previous.tick) : 0;
+    const facing = dx < -1e-8 ? -1 : dx > 1e-8 ? 1 : advancing ? previous.facing : 1;
+    const sample: ActorMotion = { tick, x, dx, facing };
+    this.#actorMotion.set(entity, sample);
+    return sample;
   }
 
   /** Extrude the baked collision grid into blocks. Static: the grid never changes at runtime. */
@@ -180,12 +207,17 @@ export class PlatformerAdapter extends BaseAdapter {
 
   /** The player and any other damageable body, sized from its collider. */
   #syncActors(world: World): void {
+    const actors = new Set<Entity>();
     for (const view of world
       .query({ has: [Transform, TileCollider], none: [KinematicPlatform] })
       .views()) {
       const collider = view.get(TileCollider);
       const transform = view.get(Transform);
       const position = transform.position;
+      actors.add(view.entity);
+      const motion = this.#sampleActorMotion(view.entity, world.tick, position.x);
+      const velocity = view.tryGet(Velocity);
+      const bodyState = view.tryGet(BodyState);
       const isPlayer = view.has(PlatformerController);
       const role: VisualRole = isPlayer ? 'player' : view.has(Health) ? 'enemy' : 'neutral';
       const group = this.#pool.claim(`actor:${view.entity}`, () => {
@@ -205,7 +237,13 @@ export class PlatformerAdapter extends BaseAdapter {
       const body = group.getObjectByName('body') as Mesh;
       body.scale.set(width, height, width);
       const pip = group.getObjectByName('facing') as Mesh;
-      const facing = view.tryGet(BodyState)?.facing ?? 1;
+      const facing =
+        bodyState?.facing ??
+        (velocity !== undefined && Math.abs(velocity.dx) > 0.001
+          ? velocity.dx < 0
+            ? -1
+            : 1
+          : motion.facing);
       pip.scale.set(width * 0.28, height * 0.28, width * 1.05);
       pip.position.set(facing * collider.halfWidth * 0.55, collider.halfHeight * 0.3, 0);
       group.position.set(
@@ -224,15 +262,17 @@ export class PlatformerAdapter extends BaseAdapter {
       body.renderOrder = view.tryGet(Sprite)?.z ?? 0;
       pip.visible = appearance.visible;
       group.visible = appearance.visible;
-      const velocity = view.tryGet(Velocity);
-      const grounded = view.tryGet(BodyState)?.grounded ?? true;
+      const grounded = bodyState?.grounded ?? true;
+      // A carried body's explicit zero velocity remains idle even though its position advances.
+      const moving =
+        velocity === undefined ? Math.abs(motion.dx) > 1e-8 : Math.abs(velocity.dx) > 0.001;
       const state = dead
         ? 'dead'
         : !grounded && (velocity?.dy ?? 0) > 0
           ? 'rise'
           : !grounded && (velocity?.dy ?? 0) < 0
             ? 'fall'
-            : Math.abs(velocity?.dx ?? 0) > 0.001
+            : moving
               ? 'move'
               : 'idle';
       this.presentation?.bindEntity(world, view.entity, {
@@ -247,6 +287,8 @@ export class PlatformerAdapter extends BaseAdapter {
         state,
       });
     }
+    for (const entity of this.#actorMotion.keys())
+      if (!actors.has(entity)) this.#actorMotion.delete(entity);
   }
 
   /** Goal and hazard volumes, translucent so the level reads through them. */
