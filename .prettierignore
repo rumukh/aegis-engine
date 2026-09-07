@@ -6,6 +6,9 @@ coverage
 package-lock.json
 CHANGELOG.md
 
+# Cooked glTF bytes are reproduced and checked by asset tests; format their recipe sources.
+games/*/assets/**/*.gltf
+
 # Binding project documents — owned by the PM, never reformat.
 CHARTER.md
 ENVIRONMENT.md

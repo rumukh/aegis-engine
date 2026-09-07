@@ -5,7 +5,8 @@
  * interface, never on a concrete mode.
  * @packageDocumentation
  */
-import type { ComponentType, GameMode, Schedule, World } from '@aegis/core';
+import type { ComponentType, GameMode, ResourceType, Schedule, World } from '@aegis/core';
+import type { PrefabFile } from '@aegis/content';
 import type { ViewProvider } from './view.js';
 
 /** Everything a mode contributes to a simulation. */
@@ -17,6 +18,18 @@ export interface ModePlugin {
    * registers these — together with the core and content components — before loading a scene.
    */
   components(): readonly ComponentType<unknown>[];
+  /**
+   * Resource IDs this plugin accepts in authored scenes, including game-owned resources.
+   * Compose the mode's declarations with the game's. Omitted means no authored resources;
+   * legacy callers may instead supply an explicit resource registry to the bootstrap/run.
+   * Runtime resources created by systems do not need registration to be stored in a World.
+   */
+  resources?(): readonly (ResourceType<unknown> | string)[];
+  /**
+   * Reusable prefab documents, keyed by unique `name`. Available to every run path, including
+   * CLI and live sessions. A caller-supplied PrefabResolver takes precedence over this catalog.
+   */
+  prefabs?(): readonly PrefabFile[];
   /**
    * Build the ordered systems for one simulation of this mode (movement, collision, camera).
    * Called once per run; must be pure with respect to global state.

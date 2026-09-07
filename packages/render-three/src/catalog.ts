@@ -19,6 +19,7 @@ import { parseScene } from '@aegis/content';
 import type { SceneFile } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
 import type { ModeBindings } from './bindings.js';
+import type { PresentationSource } from './presentation/schema.js';
 
 /** What a completed playthrough must look like, so a capture can refuse to ship a failed one. */
 export interface GameAcceptance {
@@ -67,6 +68,8 @@ export interface GameDefinition {
   bindings: ModeBindings;
   /** What "winning" looks like, shown in the HUD. */
   objective: string;
+  /** Optional render-only assets and authored presentation. Never enters the simulation. */
+  presentation?: PresentationSource;
   /**
    * The game's own `.input` script (DSL text) — the same one its acceptance test runs. The
    * screenshot capture replays it through real browser events, so a capture can never drift from

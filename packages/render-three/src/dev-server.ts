@@ -19,7 +19,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import type { GameEvent } from '@aegis/core';
+import { DiagnosticError } from '@aegis/core';
+import type { Diagnostic, GameEvent } from '@aegis/core';
 import { createLiveSession } from './session.js';
 import type { LiveSession } from './session.js';
 import { findRepoRoot } from './catalog.js';
@@ -27,6 +28,13 @@ import type { GameDefinition } from './catalog.js';
 import { renderIndexPage, renderPlayPage } from './pages.js';
 import { MAX_CATCHUP_SECONDS, systemClock } from './loop.js';
 import type { Clock } from './loop.js';
+import {
+  preparePresentation,
+  presentationMimeType,
+  readPreparedPresentationFile,
+} from './presentation/files.js';
+import type { PreparedPresentation } from './presentation/files.js';
+import { isAssetPath } from './presentation/diagnostics.js';
 import type {
   ControlRequest,
   EventLine,
@@ -47,16 +55,20 @@ export interface DevServerOptions {
   repoRoot?: string;
   /** Wall clock used by the fixed-step accumulator. Injectable for tests. */
   clock?: Clock;
+  /** Optional deployment prefix, e.g. `/preview/aegis/`. Normalized on startup. */
+  basePath?: string;
 }
 
 /** A running dev server. */
 export interface DevServer {
-  /** The URL it is listening on. */
+  /** Origin plus the normalized deployment prefix, without a trailing slash. */
   readonly url: string;
   /** The port actually bound. */
   readonly port: number;
   /** The catalogue being served. */
   readonly games: readonly GameDefinition[];
+  /** Nonfatal preflight notes, including names that require mounted-world confirmation. */
+  readonly diagnostics?: readonly Diagnostic[];
   /** The live session for `gameId`, if one has been opened. */
   session(gameId: string): LiveSession | undefined;
   /** Stop the server and release the port. */
@@ -88,8 +100,22 @@ const MIME: Readonly<Record<string, string>> = {
 interface GameRuntime {
   game: GameDefinition;
   session: LiveSession;
-  lastFrameAt: number;
+  lastFrameAt: number | undefined;
   eventCursor: number;
+  generation: number;
+  presentation?: PreparedPresentation;
+}
+
+/** Normalize a deployment prefix without accepting URL escapes or filesystem traversal. */
+export function normalizeBasePath(value = ''): string {
+  const path = value
+    .split('/')
+    .filter((part) => part !== '')
+    .join('/');
+  if (path === '') return '';
+  if (!isAssetPath(path))
+    throw new Error('[aegis:render-three] basePath must contain only portable local URL segments');
+  return `/${path}`;
 }
 
 /** Send a JSON body. */
@@ -134,7 +160,12 @@ async function readJsonBody<T>(request: IncomingMessage): Promise<T | undefined>
  * `/vendor/three/*` maps to the installed package; `/vendor/@aegis/<pkg>/*` to `packages/<pkg>`.
  */
 export function resolveVendorPath(repoRoot: string, urlPath: string): string | undefined {
-  const relative = decodeURIComponent(urlPath.replace(/^\/vendor\//, ''));
+  let relative: string;
+  try {
+    relative = decodeURIComponent(urlPath.replace(/^\/vendor\//, ''));
+  } catch {
+    return undefined;
+  }
   if (relative === '' || relative.includes('\0')) return undefined;
 
   const parts = normalize(relative)
@@ -162,8 +193,12 @@ export function resolveVendorPath(repoRoot: string, urlPath: string): string | u
 }
 
 /** Flatten recorded events into the HUD feed shape. */
-function toEventLines(events: readonly GameEvent[]): EventLine[] {
-  return events.map((event) => ({ type: event.type, tick: event.tick }));
+function toEventLines(events: readonly GameEvent[], presentation = false, offset = 0): EventLine[] {
+  return events.map((event, index) => ({
+    type: event.type,
+    tick: event.tick,
+    ...(presentation ? { data: event.data, sequence: offset + index } : {}),
+  }));
 }
 
 /** Start the dev server. Resolves once it is listening. */
@@ -174,14 +209,39 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const repoRoot = options.repoRoot ?? findRepoRoot();
   const clock = options.clock ?? systemClock;
   const host = options.host ?? '127.0.0.1';
+  const basePath = normalizeBasePath(options.basePath);
+  const ids = new Set<string>();
+  const presentations = new Map<string, PreparedPresentation>();
+  const diagnostics: Diagnostic[] = [];
+  for (const game of options.games) {
+    if (!/^[A-Za-z0-9_-]+$/.test(game.id) || ids.has(game.id.toLowerCase()))
+      throw new Error(
+        `[aegis:render-three] duplicate or invalid game id "${game.id}"; use unique letters, digits, "_" and "-"`,
+      );
+    ids.add(game.id.toLowerCase());
+    if (game.presentation !== undefined) {
+      const prepared = preparePresentation(game.presentation, game.scene);
+      presentations.set(game.id, prepared);
+      for (const diagnostic of prepared.diagnostics ?? [])
+        diagnostics.push({
+          ...diagnostic,
+          data: { ...diagnostic.data, gameId: game.id },
+        });
+    }
+  }
+  for (const diagnostic of diagnostics)
+    console.warn(
+      `[aegis:render-three] ${diagnostic.data?.gameId} ${diagnostic.code}: ${diagnostic.message}\n  fix: ${diagnostic.fix}`,
+    );
   const byId = new Map(options.games.map((game) => [game.id, game]));
   const runtimes = new Map<string, GameRuntime>();
 
-  const runtimeFor = (gameId: string): GameRuntime | undefined => {
+  const runtimeFor = (gameId: string, primeLegacyClock = true): GameRuntime | undefined => {
     const existing = runtimes.get(gameId);
     if (existing !== undefined) return existing;
     const game = byId.get(gameId);
     if (game === undefined) return undefined;
+    const presentation = presentations.get(game.id);
     const created: GameRuntime = {
       game,
       session: createLiveSession({
@@ -190,8 +250,12 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         ...(game.seed !== undefined ? { seed: game.seed } : {}),
         ...(game.tickRate !== undefined ? { tickRate: game.tickRate } : {}),
       }),
-      lastFrameAt: clock(),
+      // Asset loading may follow API inspection or scripted steps as well as opening HTML.
+      // Only /frame starts a presentation clock; legacy API priming remains unchanged.
+      lastFrameAt: primeLegacyClock && presentation === undefined ? clock() : undefined,
       eventCursor: 0,
+      generation: 0,
+      presentation,
     };
     runtimes.set(gameId, created);
     return created;
@@ -215,6 +279,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
     options: { drainEvents?: boolean; withHash?: boolean } = {},
   ): FrameResponse => {
     let fresh: readonly GameEvent[] = [];
+    const offset = runtime.eventCursor;
     if (options.drainEvents === true) {
       const history = runtime.session.world.events.history();
       fresh = history.slice(runtime.eventCursor);
@@ -226,7 +291,8 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       paused: runtime.session.paused,
       ...(options.withHash === true ? { hash: runtime.session.hash() } : {}),
       snapshot: runtime.session.snapshot(),
-      events: toEventLines(fresh),
+      events: toEventLines(fresh, runtime.presentation !== undefined, offset),
+      ...(runtime.presentation === undefined ? {} : { generation: runtime.generation }),
     };
   };
 
@@ -291,7 +357,19 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', `http://${host}`);
-    const path = url.pathname;
+    let path = url.pathname;
+    if (basePath !== '') {
+      if (path === basePath && request.method === 'GET') {
+        response.writeHead(308, { location: `${basePath}/${url.search}` });
+        response.end();
+        return;
+      }
+      if (!path.startsWith(`${basePath}/`)) {
+        sendJson(response, 404, { error: `not found: ${path}` });
+        return;
+      }
+      path = path.slice(basePath.length);
+    }
 
     if (path === '/favicon.ico') {
       response.writeHead(204);
@@ -304,15 +382,66 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       return;
     }
 
-    if (request.method === 'GET' && path.startsWith('/play/')) {
-      const game = byId.get(path.slice('/play/'.length));
+    const play = /^\/play\/([A-Za-z0-9_-]+)(\/(?:index\.html)?)?$/.exec(path);
+    if (request.method === 'GET' && play !== null) {
+      const game = byId.get(play[1] as string);
       if (game === undefined) {
         sendHtml(response, 404, renderIndexPage(options.games));
         return;
       }
+      if (play[2] !== '/') {
+        response.writeHead(308, { location: `${basePath}/play/${game.id}/${url.search}` });
+        response.end();
+        return;
+      }
       // Opening the page creates the session, so a screenshot run never races the first frame.
-      runtimeFor(game.id);
-      sendHtml(response, 200, renderPlayPage(game));
+      runtimeFor(game.id, false);
+      const prepared = presentations.get(game.id);
+      sendHtml(
+        response,
+        200,
+        renderPlayPage(
+          game,
+          prepared === undefined
+            ? undefined
+            : {
+                manifest: prepared.manifest,
+                baseUrl: `../../assets/${game.id}/`,
+                files: prepared.files.map((file) => file.path),
+              },
+        ),
+      );
+      return;
+    }
+
+    const asset = /^\/assets\/([A-Za-z0-9_-]+)\/(.+)$/.exec(path);
+    if (asset !== null) {
+      const file = presentations
+        .get(asset[1] as string)
+        ?.files.find((entry) => entry.path === asset[2]);
+      if (file === undefined) {
+        sendJson(response, 404, { error: `no prepared asset: ${path}` });
+        return;
+      }
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        sendJson(response, 405, { error: `method ${request.method} not allowed on ${path}` });
+        return;
+      }
+      let bytes: Buffer;
+      try {
+        bytes = readPreparedPresentationFile(file);
+      } catch (error) {
+        if (!(error instanceof DiagnosticError)) throw error;
+        sendJson(response, 409, { error: error.message, diagnostics: error.diagnostics });
+        return;
+      }
+      response.writeHead(200, {
+        'content-type': presentationMimeType(file.path),
+        'content-length': bytes.length,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      response.end(request.method === 'HEAD' ? undefined : bytes);
       return;
     }
 
@@ -349,7 +478,11 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         // frame, so an observer that shared it would race the page and see an arbitrary suffix.
         const body: EventLog = {
           tick: runtime.session.tick,
-          events: toEventLines(runtime.session.world.events.history()),
+          events: toEventLines(
+            runtime.session.world.events.history(),
+            runtime.presentation !== undefined,
+          ),
+          ...(runtime.presentation === undefined ? {} : { generation: runtime.generation }),
         };
         sendJson(response, 200, body);
         return;
@@ -360,7 +493,10 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         if (body?.input !== undefined) runtime.session.input.submit(body.input);
         // Wall-clock in, whole fixed ticks out. The simulation never sees a variable dt.
         const now = clock();
-        const elapsed = Math.min(Math.max(now - runtime.lastFrameAt, 0), MAX_FRAME_SECONDS);
+        const elapsed =
+          runtime.lastFrameAt === undefined
+            ? 0
+            : Math.min(Math.max(now - runtime.lastFrameAt, 0), MAX_FRAME_SECONDS);
         runtime.lastFrameAt = now;
         const steps = runtime.session.advance(elapsed);
         sendJson(response, 200, frameBody(runtime, steps, { drainEvents: true }));
@@ -382,8 +518,11 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
         } else if (command === 'restart') {
           runtime.session.restart();
           runtime.eventCursor = 0;
+          runtime.generation++;
+          if (runtime.presentation !== undefined) runtime.lastFrameAt = undefined;
         }
-        runtime.lastFrameAt = clock();
+        if (runtime.lastFrameAt !== undefined || runtime.presentation === undefined)
+          runtime.lastFrameAt = clock();
         sendJson(response, 200, frameBody(runtime, 0, { withHash: true }));
         return;
       }
@@ -401,9 +540,10 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       const address = server.address();
       const port = typeof address === 'object' && address !== null ? address.port : 0;
       resolveServer({
-        url: `http://${host}:${port}`,
+        url: `http://${host}:${port}${basePath}`,
         port,
         games: options.games,
+        ...(diagnostics.length === 0 ? {} : { diagnostics }),
         session(gameId: string): LiveSession | undefined {
           return runtimes.get(gameId)?.session;
         },

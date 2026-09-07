@@ -14,12 +14,10 @@ import {
   createWorld,
   DiagnosticError,
   EMPTY_INPUT_FRAME,
+  isValidTickRate,
   max,
-  Name,
-  Transform,
 } from '@aegis/core';
 import type {
-  ComponentType,
   Diagnostic,
   EventReader,
   InputFrame,
@@ -30,23 +28,15 @@ import type {
   World,
   WorldSnapshot,
 } from '@aegis/core';
-import {
-  createRegistry,
-  Dead,
-  Health,
-  instantiateScene,
-  Light,
-  Model,
-  parseScene,
-  Sprite,
-  Trigger,
-  Triggered,
-} from '@aegis/content';
-import type { ComponentRegistry, SceneFile } from '@aegis/content';
+import { parseScene } from '@aegis/content';
+import type { SceneFile } from '@aegis/content';
+import { bootstrapScene } from './bootstrap.js';
+import type { SceneContentOptions, SceneContext } from './bootstrap.js';
 import { parseInputScript } from './input-script.js';
 import type { InputScript } from './input-script.js';
 import type { ModePlugin } from './plugin.js';
 import type { Recording } from './replay.js';
+import { recordingTickRate } from './replay.js';
 import { formatInputScript, scriptFromCommands } from './input-script.js';
 import { describeRun, renderValue, summariseWorld, toOutcome } from './report.js';
 import type { CheckResult } from './report.js';
@@ -74,7 +64,7 @@ export interface Invariant {
 }
 
 /** Options for {@link runScene}. */
-export interface RunOptions {
+export interface RunOptions extends SceneContentOptions {
   /** The mode module supplying systems, components and the view provider. Required. */
   plugin: ModePlugin;
   /** How many ticks to simulate. Required. */
@@ -83,9 +73,7 @@ export interface RunOptions {
   seed?: number | string;
   /** Input: DSL text, a parsed {@link InputScript}, or explicit per-tick frames. */
   input?: string | InputScript | readonly InputFrame[];
-  /** Extra components to register beyond core, content-visual and the plugin's set. */
-  registry?: ComponentRegistry;
-  /** Fixed ticks per second. Defaults to `60`. */
+  /** Finite positive ticks per second, with a finite timestep. Defaults to `60`. */
   tickRate?: number;
   /** Record the full event log for assertions. Defaults to `true`. */
   recordEvents?: boolean;
@@ -133,6 +121,8 @@ export interface SimResult {
   readonly world: World;
   /** The final tick number (equals `ticks`). */
   readonly tick: number;
+  /** Fixed ticks per second actually used by this run. */
+  readonly tickRate: number;
   /** The seed actually used. */
   readonly seed: number | string;
   /** Final deterministic state hash. */
@@ -271,25 +261,12 @@ function checkAt(
   }
 }
 
-/** Core + content component types the harness always registers before a scene loads. */
-const BASE_COMPONENTS: readonly ComponentType<unknown>[] = [
-  Transform,
-  Name,
-  Sprite,
-  Model,
-  Light,
-  Health,
-  Trigger,
-  Dead,
-  Triggered,
-];
-
 /** A fully-resolved run description, sufficient to execute (and re-execute) deterministically. */
 interface ResolvedRun {
   scene: SceneFile;
   sceneRef: string;
   plugin: ModePlugin;
-  registry: ComponentRegistry;
+  content: SceneContentOptions;
   ticks: number;
   tickRate: number;
   seed: number | string;
@@ -300,19 +277,6 @@ interface ResolvedRun {
   captureTickHashes: boolean;
   view?: ViewOptions;
   invariants: readonly Invariant[];
-}
-
-/** Build the component registry spanning core, content, the plugin and any caller extras. */
-function buildRegistry(plugin: ModePlugin, extra?: ComponentRegistry): ComponentRegistry {
-  const registry = createRegistry(...BASE_COMPONENTS);
-  registry.registerAll(plugin.components());
-  if (extra) {
-    for (const id of extra.ids()) {
-      const type = extra.get(id);
-      if (type) registry.register(type);
-    }
-  }
-  return registry;
 }
 
 /** Turn the `input` option into a concrete frame list of length `ticks`, plus its diagnostics. */
@@ -355,6 +319,7 @@ function frameSource(frames: readonly InputFrame[]): InputSource {
 /** The raw, replayable output of stepping a resolved run. */
 interface RunTrace {
   world: World;
+  context: SceneContext;
   tickHashes: StateHash[];
   history: WorldSnapshot[];
 }
@@ -365,18 +330,12 @@ interface RunTrace {
  * resolved description). Any live invariant failure throws {@link InvariantError}.
  */
 function executeRun(run: ResolvedRun): RunTrace {
-  const world = createWorld({ seed: run.seed, recordEvents: run.recordEvents });
-
-  // Instantiate from a deep copy of the scene. Core's `type.create` shallow-merges provided
-  // component data, so the world would otherwise alias (and then mutate in place) the caller's
-  // scene objects — corrupting any reuse, including `replay()` and callers who run the same
-  // SceneFile twice. Cloning here makes every run start from pristine, isolated state.
-  const scene = structuredClone(run.scene);
-  const result = instantiateScene(world, scene, { registry: run.registry });
-  if (!result.ok) throw new DiagnosticError(result.diagnostics);
-
-  // Per-run mode setup (fps geometry, iso nav grid, platformer platforms) — before tick 0.
-  run.plugin.init?.(world);
+  const { world, context } = bootstrapScene(run.scene, {
+    ...run.content,
+    plugin: run.plugin,
+    seed: run.seed,
+    recordEvents: run.recordEvents,
+  });
 
   // Compose the schedule from the plugin's systems.
   const schedule = createSchedule();
@@ -409,7 +368,7 @@ function executeRun(run: ResolvedRun): RunTrace {
       });
     }
   }
-  return { world, tickHashes, history };
+  return { world, context, tickHashes, history };
 }
 
 /** Reconstruct a detached world from a captured snapshot. */
@@ -449,6 +408,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
   const self: SimResult = {
     world,
     tick: run.ticks,
+    tickRate: run.tickRate,
     seed: run.seed,
     hash: world.hash(),
     tickHashes,
@@ -517,6 +477,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
         scene: run.sceneRef,
         seed: run.seed,
         ticks: run.ticks,
+        tickRate: run.tickRate,
         input: formatInputScript(run.script),
         finalHash: world.hash(),
         ...(tickHashes.length > 0 ? { tickHashes } : {}),
@@ -527,7 +488,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
       return makeResult(run, executeRun(run));
     },
   };
-  registerKnownComponents(self, run.registry, world);
+  registerKnownComponents(self, trace.context.registry, world);
   registerEventLog(self, run.recordEvents);
   for (const inv of run.invariants) {
     recordAssertion(self, 'invariant', `"${inv.name}" held live on all ${run.ticks} ticks`);
@@ -554,53 +515,17 @@ function withEntityCensus(frame: SemanticFrame, world: World): SemanticFrame {
   };
 }
 
-/**
- * Reject anything that is not a live {@link ModePlugin} **before** the run touches it.
- *
- * `options.plugin` is typed, but the values that reach here at runtime are frequently untyped: a
- * `*.gametest.mjs` discovered from disk, a JSON-ish literal, a scaffolded template. Those name
- * their plugin as a **string** (`'platformer'`, `'./dist/game.js#gamePlugin'`) because only the
- * CLI can resolve one — the harness must not import a concrete `@aegis/mode-*`, which is the
- * package boundary ADR-0006 draws and `scripts/check-deps.mjs` enforces.
- *
- * Unguarded, a string got as far as `plugin.components()` and produced
- * `TypeError: plugin.components is not a function` with no mention of plugins, strings or who
- * resolves them. Naming the seam is the whole fix: the harness cannot resolve the string, and it
- * can say exactly who can.
- */
-function requirePlugin(plugin: ModePlugin): void {
-  if (
-    typeof plugin === 'object' &&
-    plugin !== null &&
-    typeof plugin.components === 'function' &&
-    typeof plugin.systems === 'function' &&
-    typeof plugin.view === 'function'
-  ) {
-    return;
-  }
-  const named = typeof plugin === 'string' ? ` (got the string ${JSON.stringify(plugin)})` : '';
-  const advice =
-    typeof plugin === 'string'
-      ? `A plugin *spec* string is resolved by the CLI — \`aegis test\`, \`--plugin ${plugin}\`, or ` +
-        `{ "plugin": ${JSON.stringify(plugin)} } in an aegis.json beside the scene. The harness ` +
-        `cannot resolve it itself: importing a concrete @aegis/mode-* would invert the package ` +
-        `graph (ADR-0006). To run this test in-process, import the plugin object yourself — a mode ` +
-        `package exports platformerPlugin / isoPlugin / fpsPlugin — and substitute it:\n` +
-        `  await runGameTest({ ...spec, options: { ...spec.options, plugin: myPlugin } });`
-      : `Pass the ModePlugin object itself — the value a mode package exports (platformerPlugin, ` +
-        `isoPlugin, fpsPlugin) or your game's composed plugin.`;
-  throw new TypeError(
-    `[aegis] runScene: options.plugin is not a ModePlugin${named}. A ModePlugin is an object with ` +
-      `components(), systems() and view() methods.\n${advice}`,
-  );
-}
-
 /** Resolve raw {@link RunOptions} + a scene into a fully-resolved, executable run. */
 function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): ResolvedRun {
-  requirePlugin(options.plugin);
   if (!Number.isInteger(options.ticks) || options.ticks < 0) {
     throw new RangeError(
       `[aegis] runScene: ticks must be a non-negative integer, got ${options.ticks}`,
+    );
+  }
+  const tickRate = options.tickRate === undefined ? 60 : options.tickRate;
+  if (!isValidTickRate(tickRate)) {
+    throw new RangeError(
+      `[aegis] runScene: tickRate must be a finite positive number with a finite timestep, got ${tickRate}`,
     );
   }
   const seed = options.seed ?? scene.seed ?? 0;
@@ -630,9 +555,14 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
     scene,
     sceneRef,
     plugin: options.plugin,
-    registry: buildRegistry(options.plugin, options.registry),
+    content: {
+      ...(options.registry !== undefined ? { registry: options.registry } : {}),
+      ...(options.resources !== undefined ? { resources: options.resources } : {}),
+      ...(options.prefabs !== undefined ? { prefabs: options.prefabs } : {}),
+      ...(options.file !== undefined ? { file: options.file } : {}),
+    },
     ticks,
-    tickRate: options.tickRate ?? 60,
+    tickRate,
     seed,
     frames,
     script,
@@ -682,7 +612,10 @@ async function loadSceneFromPath(path: string): Promise<SceneFile> {
 export async function runScene(scene: string | SceneFile, options: RunOptions): Promise<SimResult> {
   const resolvedScene = typeof scene === 'string' ? await loadSceneFromPath(scene) : scene;
   const sceneRef = typeof scene === 'string' ? scene : resolvedScene.name;
-  const run = resolveRun(resolvedScene, sceneRef, options);
+  const run = resolveRun(resolvedScene, sceneRef, {
+    ...options,
+    ...(typeof scene === 'string' ? { file: scene } : {}),
+  });
   return makeResult(run, executeRun(run));
 }
 
@@ -691,11 +624,13 @@ export async function replayRecording(
   recording: Recording,
   options: RunOptions,
 ): Promise<SimResult> {
+  const recordedRate = recordingTickRate(recording);
   const result = await runScene(recording.scene, {
     ...options,
     ticks: recording.ticks,
     seed: recording.seed,
     input: recording.input,
+    tickRate: options.tickRate === undefined ? recordedRate : options.tickRate,
   });
   const verified = verifyReplay(recording, result);
   if (!verified.ok) {
@@ -805,6 +740,14 @@ export function verifyReplay(recording: Recording, result: SimResult): ReplayVer
   }
   const problems: string[] = [];
   const unverified: string[] = [];
+  const recordedRate = recordingTickRate(recording);
+  if (recording.tickRate === undefined) {
+    unverified.push(
+      'the original tick rate (legacy recording has no tickRate; replay defaults to 60 Hz unless explicitly overridden)',
+    );
+  } else if (result.tickRate !== recordedRate) {
+    problems.push(`tick rate: recorded ${recordedRate} Hz, replayed ${result.tickRate} Hz`);
+  }
   const finalHashMatched = result.hash === recording.finalHash;
   if (!finalHashMatched) {
     problems.push(

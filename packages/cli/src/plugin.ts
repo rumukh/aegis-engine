@@ -81,7 +81,7 @@ function splitSpec(spec: string): { module: string; exportName?: string } {
   return { module: spec.slice(0, hash), exportName: spec.slice(hash + 1) };
 }
 
-/** Structural check that a value satisfies the frozen {@link ModePlugin} contract. */
+/** Structural check that a value satisfies the {@link ModePlugin} contract. */
 export function isModePlugin(value: unknown): value is ModePlugin {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -91,7 +91,9 @@ export function isModePlugin(value: unknown): value is ModePlugin {
     typeof v['components'] === 'function' &&
     typeof v['systems'] === 'function' &&
     typeof v['view'] === 'function' &&
-    (v['init'] === undefined || typeof v['init'] === 'function')
+    (v['init'] === undefined || typeof v['init'] === 'function') &&
+    (v['resources'] === undefined || typeof v['resources'] === 'function') &&
+    (v['prefabs'] === undefined || typeof v['prefabs'] === 'function')
   );
 }
 

@@ -9,6 +9,8 @@
  */
 import type { StateHash, WorldSnapshot } from '@aegis/core';
 import type { InputPacket } from './live-input.js';
+import type { ModeBindings } from './bindings.js';
+import type { ResolvedPresentation } from './presentation/schema.js';
 
 /** POST body sent once per displayed frame. */
 export interface FrameRequest {
@@ -22,6 +24,10 @@ export interface EventLine {
   type: string;
   /** Tick it was emitted on. */
   tick: number;
+  /** Immutable simulation payload, sent only for presentation-enabled games. */
+  data?: unknown;
+  /** Original index in this generation's immutable event history. */
+  sequence?: number;
 }
 
 /** The world as the page should draw it. */
@@ -48,6 +54,8 @@ export interface FrameResponse {
   snapshot: WorldSnapshot;
   /** Events emitted since the previous frame response. */
   events: readonly EventLine[];
+  /** Render-only restart generation, present only when presentation is configured. */
+  generation?: number;
 }
 
 /** Session commands that are not gameplay input. */
@@ -67,6 +75,8 @@ export interface EventLog {
   tick: number;
   /** Every event emitted since the session started (or since the last restart). */
   events: readonly EventLine[];
+  /** Matches frame responses when presentation is configured. */
+  generation?: number;
 }
 
 /** Everything the page needs to boot, embedded in the served HTML. */
@@ -79,6 +89,12 @@ export interface BootConfig {
   title: string;
   /** What winning looks like. */
   objective: string;
-  /** API prefix, e.g. `"/api/iso"`. */
+  /** Page-relative API prefix, e.g. `"../../api/iso"`. */
   api: string;
+  /** Game-authored controls; defaults to the mode's bindings. */
+  bindings?: ModeBindings;
+  /** Fixed ticks per second. Defaults to `60`. */
+  tickRate?: number;
+  /** Local asset URLs and manifest only; never the host's filesystem directory. */
+  presentation?: ResolvedPresentation;
 }
