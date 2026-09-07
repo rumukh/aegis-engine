@@ -46,6 +46,39 @@ controls; actual rendered review; and comparable runtime measurements. Browser-h
 coordinated rather than raced on one machine. Do not disable assertions, weaken budgets, hide
 omissions or re-pin goldens without explaining the behavioral change.
 
+### Consolidated source checkpoint (2026-09-07)
+
+The recovery checkpoint brings together the engine contracts, output-compatible hashing,
+capability discovery and structural presentation validation, shared presentation platform,
+original asset recipes, and all three games' asset-backed composition profiles. The previously
+uncommitted Sector Breach composition-test draft is retained as a root integration test, where
+it does not introduce a game-to-renderer package dependency.
+
+This is a saved work-in-progress, not completed M1 acceptance or a claim of AAA readiness.
+The paused-step regression is repaired: presentation follows explicitly advanced world ticks
+without advancing on repeated paused display or picking updates. Existing simulation oracles
+are not re-pinned.
+
+The shared-platform review also identified these follow-ups, deliberately kept visible for the
+next recovery pass rather than mistaken for completed work:
+
+| Area                        | Remaining correctness work                                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Dev-client restart ordering | A delayed restart acknowledgement must not reset newer same-generation feedback or restore an older snapshot.                            |
+| Named sprite overrides      | A replacement sprite's explicit frame must take precedence over the overridden component's old atlas frame.                              |
+| glTF instance disposal      | Release clone-owned `InstancedMesh` buffers without disposing borrowed geometry, materials or textures.                                  |
+| Dev-client reload           | Hydrate terminal visual state and HUD progress from generation-aware event history without replaying historical audio or transient cues. |
+
+Final showcase review still needs representative dev and prefixed-static playthrough images,
+human input and narrow-viewport review, trusted audio unlock/mute, restart/resource behavior and
+performance acceptance on the composed games. Earlier asset-only previews and headless profile
+probes do not establish that acceptance.
+
+The later local-observation performance work completed measurement/design only: avoidable
+snapshot/restore work was found on unchanged static-client frames. Caching by tick and restart
+generation remains a proposed optimization, subject to detached-mirror isolation and hostile
+mutation regressions; it is not part of the delivered hashing optimization.
+
 ## M2: scalable runtime and content
 
 Enter after M1's integrated acceptance. Use the expanded PoCs and representative stress scenes
