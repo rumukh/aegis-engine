@@ -37,6 +37,7 @@ import {
   Controlled,
   GridPosition,
   ISO_COMPONENTS,
+  ISO_RESOURCES,
   IsoViewProvider,
   isoInit,
   isoSystems,
@@ -302,6 +303,7 @@ export const SERVER_VAULT_SYSTEMS: readonly System[] = [
 export const serverVaultPlugin: ModePlugin = {
   mode: 'iso',
   components: (): readonly ComponentType<unknown>[] => [...ISO_COMPONENTS, ...GAME_COMPONENTS],
+  resources: () => ISO_RESOURCES,
   systems: (): Schedule => createSchedule().addAll([...isoSystems(), ...SERVER_VAULT_SYSTEMS]),
   init: (world: World): void => isoInit(world),
   view: (): ViewProvider => new IsoViewProvider(),

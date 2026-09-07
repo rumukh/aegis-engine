@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import { isValidTickRate } from '@aegis/core';
 import type { ParsedArgs } from '../args.js';
 import type { CliIO } from '../io.js';
 import { AegisCliError, CliCode, errnoOf, messageOf } from '../errors.js';
@@ -79,6 +80,21 @@ export function flagInt(
     );
   }
   return n;
+}
+
+/** Read a finite positive tick rate; fractional rates are supported by the simulation. */
+export function flagTickRate(args: ParsedArgs): number | undefined {
+  const raw = flagString(args, 'tick-rate');
+  if (raw === undefined) return undefined;
+  const rate = Number(raw);
+  if (!isValidTickRate(rate)) {
+    throw new AegisCliError(
+      CliCode.InvalidFlagValue,
+      `Flag --tick-rate must be a finite positive number with a finite timestep, got "${raw}".`,
+      { fix: 'Use --tick-rate 30, --tick-rate 60, or another finite positive rate.' },
+    );
+  }
+  return rate;
 }
 
 /** Read a flag whose value must be one of `choices`. */

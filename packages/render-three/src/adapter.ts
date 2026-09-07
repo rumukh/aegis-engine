@@ -13,10 +13,16 @@
  * job of {@link "./view".RenderView}, which hosts a `WebGLRenderer` in a browser.
  * @packageDocumentation
  */
-import { Scene, Color } from 'three';
+import { Scene, Color, Light } from 'three';
 import type { Camera, Object3D } from 'three';
 import type { GameMode, World } from '@aegis/core';
 import { MODE_BACKGROUNDS } from './appearance.js';
+import { isSharedResource } from './resources.js';
+import { PresentationRuntime } from './presentation/runtime.js';
+import type { PresentationFrame } from './presentation/runtime.js';
+import type { PresentationAssets } from './presentation/assets.js';
+import type { PresentationManifest, QualityTier } from './presentation/schema.js';
+import { ContentLights, checkLightBudget } from './presentation/runtime-lights.js';
 
 /** Options for constructing a {@link RenderAdapter}. */
 export interface RenderAdapterOptions {
@@ -24,6 +30,12 @@ export interface RenderAdapterOptions {
   aspect?: number;
   /** Clear colour as `#rrggbb`. Defaults to the mode's convention. */
   background?: string;
+  /** Optional, already-loaded visual content. Asset loading stays outside the adapter. */
+  presentation?: {
+    manifest: PresentationManifest;
+    assets: PresentationAssets;
+    quality?: QualityTier;
+  };
 }
 
 /** A logical point the adapter resolved a pointer to, in the coordinates the mode reads. */
@@ -45,6 +57,8 @@ export interface RenderAdapter {
   readonly scene: Scene;
   /** The active camera, driven from the mode's camera rig. */
   readonly camera: Camera;
+  /** Owned render-local runtime, absent on the legacy primitive path. */
+  readonly presentation?: PresentationRuntime | undefined;
   /** Build the static scene graph (level geometry, lights) for `world`. Call once. */
   mount(world: World): void;
   /**
@@ -53,6 +67,10 @@ export interface RenderAdapter {
    * world.
    */
   sync(world: World): void;
+  /** Sample animation and consume events once per display, separately from pick/project sync. */
+  present?(frame: PresentationFrame): void;
+  /** Reset transient presentation state, retaining shared assets. */
+  resetPresentation?(): void;
   /** Update the camera projection for a new viewport size. */
   resize(width: number, height: number): void;
   /**
@@ -67,15 +85,21 @@ export interface RenderAdapter {
 
 /** Dispose every geometry and material under `root`, including `root` itself. */
 export function disposeTree(root: Object3D): void {
+  const disposed = new Set<object>();
+  const release = (resource: { dispose(): void }): void => {
+    if (disposed.has(resource) || isSharedResource(resource)) return;
+    disposed.add(resource);
+    resource.dispose();
+  };
   root.traverse((node) => {
     const holder = node as {
       geometry?: { dispose(): void };
       material?: { dispose(): void } | { dispose(): void }[];
     };
-    holder.geometry?.dispose();
+    if (holder.geometry !== undefined) release(holder.geometry);
     const material = holder.material;
-    if (Array.isArray(material)) for (const m of material) m.dispose();
-    else material?.dispose();
+    if (Array.isArray(material)) for (const m of material) release(m);
+    else if (material !== undefined) release(material);
   });
 }
 
@@ -169,6 +193,59 @@ export abstract class BaseAdapter implements RenderAdapter {
   abstract readonly mode: GameMode;
   abstract readonly scene: Scene;
   abstract readonly camera: Camera;
+  #presentation?: PresentationRuntime;
+  #contentLights?: ContentLights;
+  #disposed = false;
+
+  get presentation(): PresentationRuntime | undefined {
+    return this.#presentation;
+  }
+
+  protected get disposed(): boolean {
+    return this.#disposed;
+  }
+
+  protected get defaultLighting(): boolean {
+    return this.#presentation?.manifest.environment === undefined;
+  }
+
+  protected configurePresentation(options: RenderAdapterOptions): void {
+    if (options.presentation !== undefined) {
+      this.#presentation = new PresentationRuntime({
+        ...options.presentation,
+        scene: this.scene,
+        camera: this.camera,
+        mode: this.mode,
+      });
+    } else this.#contentLights = new ContentLights(this.scene, this.mode);
+  }
+
+  protected prepareMount(): void {
+    if (this.#disposed) throw new Error('[aegis] Cannot mount a disposed render adapter.');
+    this.#presentation?.remount();
+    this.#contentLights?.dispose();
+    for (const child of [...this.scene.children]) {
+      if (!(child instanceof Light) || !child.name.startsWith('light:')) continue;
+      child.removeFromParent();
+      child.dispose();
+    }
+  }
+
+  protected finishPresentationSync(world: World): void {
+    if (this.#presentation !== undefined) this.#presentation.endSync(world);
+    else {
+      this.#contentLights?.sync(world);
+      if ((this.#contentLights?.size ?? 0) > 0) checkLightBudget(this.scene);
+    }
+  }
+
+  present(frame: PresentationFrame): void {
+    this.#presentation?.present(frame);
+  }
+
+  resetPresentation(): void {
+    this.#presentation?.reset();
+  }
 
   abstract mount(world: World): void;
   abstract sync(world: World): void;
@@ -180,6 +257,10 @@ export abstract class BaseAdapter implements RenderAdapter {
   }
 
   dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#presentation?.dispose();
+    this.#contentLights?.dispose();
     disposeTree(this.scene);
     this.scene.clear();
   }

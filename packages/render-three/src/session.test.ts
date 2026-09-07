@@ -8,9 +8,13 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
-import { Transform } from '@aegis/core';
+import { DiagnosticError, Transform } from '@aegis/core';
 import type { StateHash } from '@aegis/core';
-import { runScene } from '@aegis/harness';
+import { ContentCode, createPrefabResolver, createResourceRegistry } from '@aegis/content';
+import type { SceneFile } from '@aegis/content';
+import { createSceneContext, runScene } from '@aegis/harness';
+import { isoPlugin } from '@aegis/mode-iso';
+import { fpsPlugin } from '@aegis/mode-fps';
 import {
   PlatformerCollision,
   PlatformerController,
@@ -18,7 +22,7 @@ import {
 } from '@aegis/mode-platformer';
 import { createLiveSession } from './session.js';
 import type { LiveSession } from './session.js';
-import { PLATFORMER_SCENE } from './testing/scenes.js';
+import { FPS_SCENE, ISO_SCENE, PLATFORMER_SCENE } from './testing/scenes.js';
 
 const TICKS = 60;
 
@@ -48,6 +52,37 @@ describe('live session', () => {
     expect(session.world.query({ has: [PlatformerController] }).count()).toBe(1);
     // `platformerInit` bakes the tilemap; without it the physics has nothing to stand on.
     expect(session.world.getResource(PlatformerCollision)?.width).toBe(12);
+  });
+
+  it.each([0, -1, NaN, Infinity, Number.MIN_VALUE])(
+    'rejects invalid live-session tick rate %s',
+    (tickRate) => {
+      expect(() =>
+        createLiveSession({
+          scene: PLATFORMER_SCENE,
+          plugin: platformerPlugin,
+          tickRate,
+        }),
+      ).toThrow(/tickRate/);
+    },
+  );
+
+  it('uses the same nondefault rate as a headless run', async () => {
+    const session = createLiveSession({
+      scene: PLATFORMER_SCENE,
+      plugin: platformerPlugin,
+      tickRate: 30,
+    });
+    session.input.submit({ seq: 1, axes: { MoveX: 1 } });
+    for (let i = 0; i < 3; i++) session.step();
+    const run = await runScene(PLATFORMER_SCENE, {
+      plugin: platformerPlugin,
+      ticks: 3,
+      tickRate: 30,
+      input: 'axis MoveX 1 0..3',
+    });
+    expect(session.dt).toBe(1 / 30);
+    expect(session.hash()).toBe(run.hash);
   });
 
   it('reaches the same state hash as the headless harness for the same input', async () => {
@@ -140,5 +175,70 @@ describe('live session', () => {
     const snapshot = session.snapshot();
     expect(snapshot.tick).toBe(session.tick);
     expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
+  });
+
+  it.each([
+    {
+      plugin: platformerPlugin,
+      scene: PLATFORMER_SCENE,
+      id: 'platformer.tilemap',
+      ids: ['platformer.collision', 'platformer.tilemap'],
+    },
+    { plugin: isoPlugin, scene: ISO_SCENE, id: 'IsoGrid', ids: ['IsoGrid', 'NavGrid'] },
+    {
+      plugin: fpsPlugin,
+      scene: FPS_SCENE,
+      id: 'fps.floorplan',
+      ids: ['fps.collision', 'fps.floorplan'],
+    },
+  ])(
+    'validates $id identically in headless and live initialization',
+    async ({ plugin, scene, id, ids }) => {
+      expect(createSceneContext(plugin).resources.ids()).toEqual(ids);
+      const run = await runScene(scene, { plugin, ticks: 0 });
+      const live = createLiveSession({ scene, plugin });
+      expect(live.hash()).toBe(run.hash);
+      const typo: SceneFile = {
+        ...scene,
+        resources: { [`${id}x`]: scene.resources?.[id] },
+      };
+      expect(() => createLiveSession({ scene: typo, plugin })).toThrow(DiagnosticError);
+      await expect(runScene(typo, { plugin, ticks: 1 })).rejects.toMatchObject({
+        diagnostics: [expect.objectContaining({ code: ContentCode.UnknownResource })],
+      });
+    },
+  );
+
+  it('preserves explicit prefab and game-resource declarations across restart', async () => {
+    const scene: SceneFile = {
+      aegis: 'scene/1',
+      name: 'live-prefab',
+      mode: 'platformer',
+      resources: { 'game.config': { difficulty: 2 } },
+      entities: [{ id: 'instance', prefab: 'actor' }],
+    };
+    const prefabs = createPrefabResolver({
+      aegis: 'prefab/1',
+      name: 'actor',
+      components: { Transform: { position: { x: 7, y: 0, z: 0 } } },
+      children: [{ id: 'child', components: { Transform: { position: { x: 1, y: 0, z: 0 } } } }],
+    });
+    const resources = createResourceRegistry('game.config');
+    const options = { scene, plugin: platformerPlugin, resources, prefabs };
+    const session = createLiveSession(options);
+    const initial = session.hash();
+    expect(
+      session.world
+        .query({ has: [Transform] })
+        .views()
+        .map((v) => v.get(Transform).position.x),
+    ).toEqual([7, 8]);
+    expect(session.snapshot().entities.map((e) => e.name)).toEqual(['instance', 'instance/child']);
+    session.step();
+    session.restart();
+    expect(session.hash()).toBe(initial);
+    expect(session.snapshot().resources['game.config']).toEqual({ difficulty: 2 });
+    const run = await runScene(scene, { ...options, ticks: 0 });
+    expect(run.hash).toBe(initial);
   });
 });

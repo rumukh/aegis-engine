@@ -12,8 +12,7 @@
  * differently: this one can be wrong about the repository, the second can be wrong about what a
  * browser does with the bytes, and only the third runs the game.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, resolve, win32 } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BINDINGS } from './bindings.js';
@@ -281,7 +280,8 @@ describe('isInside', () => {
 describe('exportStaticSite refuses to delete something that matters', () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'aegis-site-guard-'));
+    dir = resolve(`.aegis-site-guard-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });

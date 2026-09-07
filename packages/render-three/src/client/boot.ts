@@ -10,16 +10,15 @@
  * else: the tick rate, the ordering and the state hash are identical to a headless run.
  * @packageDocumentation
  */
-import { Vector3, WebGLRenderer } from 'three';
+import { Vector3 } from 'three';
 import { createWorld } from '@aegis/core';
 import type { GameMode, World, WorldSnapshot } from '@aegis/core';
-import { createRenderAdapter } from '../adapters/index.js';
 import type { RenderAdapter } from '../adapter.js';
 import { BINDINGS } from '../bindings.js';
 import type { BootConfig, ControlCommand, FrameResponse } from '../protocol.js';
 import { createInputCollector } from './input.js';
 import type { SessionCommand } from './input.js';
-import { createHud } from './hud.js';
+import { PresentationHost } from './presentation-host.js';
 
 /**
  * Where a displayed frame's wall-clock went, in milliseconds.
@@ -95,6 +94,9 @@ export interface FrameSamples {
  * an automated capture run) can ask "where is that on screen?" without a devtools breakpoint.
  */
 export interface AegisDebugHandle {
+  /** Resolves only after real assets and the first world snapshot have mounted. */
+  readonly ready: Promise<void>;
+  presentation(): object;
   /** The mirror world the renderer draws; a copy, never the simulation's world. */
   readonly world: World;
   /** The live adapter. */
@@ -150,7 +152,10 @@ async function postJson<T>(url: string, body: unknown): Promise<{ value: T; byte
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(FRAME_TIMEOUT_MS),
   });
-  if (!response.ok) throw new Error(`${url} responded ${response.status}`);
+  if (!response.ok)
+    throw new Error(
+      `${url} responded ${response.status}: ${(await response.text()).slice(0, 600)}`,
+    );
   // Read the text rather than `response.json()` so the payload size is a measured fact: the
   // whole world crosses this wire every frame, and nothing else in the page can see how big it is.
   const text = await response.text();
@@ -163,18 +168,27 @@ export function boot(config: BootConfig): void {
   if (canvas === null) throw new Error('[aegis:render-three] missing <canvas id="stage">');
 
   const mode = config.mode as GameMode;
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, 2));
-
-  const adapter: RenderAdapter = createRenderAdapter(mode);
+  const host = new PresentationHost({
+    canvas,
+    mode,
+    objective: config.objective,
+    ...(config.presentation === undefined ? {} : { presentation: config.presentation }),
+    ...(config.tickRate === undefined ? {} : { tickRate: config.tickRate }),
+    onCommand: sendCommand,
+  });
+  const renderer = host.renderer;
+  let adapter: RenderAdapter;
   // The renderer's own copy of the world, rebuilt from JSON every frame.
   const mirror: World = createWorld({ seed: 0 });
-  const hud = createHud();
+  const hud = host.hud;
 
   let mounted = false;
   let lastTick = -1;
   let paused = false;
   let inFlight = false;
+  let generation = 0;
+  let stopped = false;
+  let animationFrame = 0;
   let framesThisSecond = 0;
   let fps = 0;
   let fpsWindowStart = performance.now();
@@ -224,9 +238,28 @@ export function boot(config: BootConfig): void {
     adapter.resize(width, height);
   };
 
+  function sendCommand(command: SessionCommand): void {
+    // Keep the current loading/failure explanation intact until a real world exists.
+    if (!mounted) return;
+    void postJson<FrameResponse>(`${config.api}/control`, { command: COMMANDS[command] })
+      .then(({ value: response }) => {
+        if (stopped) return;
+        if (command === 'restart') {
+          collector.clear();
+          generation = response.generation ?? generation + 1;
+          host.reset(generation);
+        }
+        if ((response.generation ?? generation) < generation) return;
+        paused = response.paused;
+        if (response.tick >= lastTick || command === 'restart') applySnapshot(response.snapshot);
+        host.connection();
+      })
+      .catch((error: unknown) => host.connection(error));
+  }
+
   const collector = createInputCollector({
     canvas,
-    bindings: BINDINGS[mode],
+    bindings: config.bindings ?? BINDINGS[mode],
     pick: (x, y) => {
       // Aim the camera at the mirror's current state before unprojecting through it — the same
       // freshness `AegisDebugHandle.project` needs, in the opposite direction. `applySnapshot`
@@ -249,25 +282,33 @@ export function boot(config: BootConfig): void {
       //
       // The cost of closing it is one sync per click: `pick` is invoked only from the
       // collector's mousedown handler, never on pointer movement.
-      if (mounted) adapter.sync(mirror);
+      if (!mounted) return null;
+      adapter.sync(mirror);
       return adapter.pick(x, y);
     },
-    onCommand: (command) => {
-      void postJson(`${config.api}/control`, { command: COMMANDS[command] }).catch(() => undefined);
-    },
+    onCommand: sendCommand,
   });
 
   const applySnapshot = (snapshot: WorldSnapshot): void => {
     const t0 = performance.now();
-    mirror.restore(snapshot);
-    timings.restore = performance.now() - t0;
-    timings.snapshots++;
-    if (!mounted) {
-      adapter.mount(mirror);
-      mounted = true;
-      resize();
+    try {
+      mirror.restore(snapshot);
+      timings.restore = performance.now() - t0;
+      timings.snapshots++;
+      if (!mounted) {
+        host.validateWorld(mirror);
+        adapter.mount(mirror);
+        mounted = true;
+        resize();
+        host.mounted();
+      }
+      lastTick = snapshot.tick;
+    } catch (error) {
+      stopped = true;
+      globalThis.cancelAnimationFrame(animationFrame);
+      host.fail(error);
+      throw error;
     }
-    lastTick = snapshot.tick;
   };
 
   const exchange = async (): Promise<void> => {
@@ -279,16 +320,20 @@ export function boot(config: BootConfig): void {
       const { value: response, bytes } = await postJson<FrameResponse>(`${config.api}/frame`, {
         input: collector.take(),
       });
+      if (stopped || (response.generation ?? generation) < generation) return;
       timings.exchange = performance.now() - started;
       record(exchangeSamples, timings.exchange);
       timings.exchangeBytes = bytes;
       paused = response.paused;
+      generation = response.generation ?? generation;
+      host.receive(response.events, generation);
       applySnapshot(response.snapshot);
-      hud.pushEvents(response.events);
+      host.connection();
       for (const resolve of settling) resolve();
     } catch (error) {
       timings.exchange = performance.now() - started;
       timings.exchangeErrors++;
+      host.connection(error);
       // A failed exchange never delivered the input, so put the waiters back rather than
       // resolving them — otherwise automation would step on input the server never saw.
       syncWaiters.push(...settling);
@@ -297,7 +342,8 @@ export function boot(config: BootConfig): void {
   };
 
   const frame = (): void => {
-    globalThis.requestAnimationFrame(frame);
+    if (stopped) return;
+    animationFrame = globalThis.requestAnimationFrame(frame);
     const frameStart = performance.now();
     if (lastFrameAt !== 0) {
       timings.gap = frameStart - lastFrameAt;
@@ -322,9 +368,24 @@ export function boot(config: BootConfig): void {
     if (!mounted) return;
 
     const t1 = performance.now();
-    adapter.sync(mirror);
+    try {
+      adapter.sync(mirror);
+      host.present(lastTick, paused);
+    } catch (error) {
+      stopped = true;
+      globalThis.cancelAnimationFrame(animationFrame);
+      host.fail(error);
+      return;
+    }
     const t2 = performance.now();
-    renderer.render(adapter.scene, adapter.camera);
+    try {
+      renderer.render(adapter.scene, adapter.camera);
+    } catch (error) {
+      stopped = true;
+      globalThis.cancelAnimationFrame(animationFrame);
+      host.fail(error);
+      return;
+    }
     const t3 = performance.now();
     timings.sync = t2 - t1;
     timings.render = t3 - t2;
@@ -353,14 +414,20 @@ export function boot(config: BootConfig): void {
 
   globalThis.addEventListener('resize', resize);
   globalThis.addEventListener('beforeunload', () => {
+    stopped = true;
+    globalThis.cancelAnimationFrame(animationFrame);
+    globalThis.removeEventListener('resize', resize);
     collector.dispose();
-    adapter.dispose();
-    renderer.dispose();
+    host.dispose();
   });
 
   const debug: AegisDebugHandle = {
+    ready: host.ready,
+    presentation: () => host.stats(),
     world: mirror,
-    adapter,
+    get adapter() {
+      return host.adapter;
+    },
     tick: () => lastTick,
     timings: () => ({ ...timings }),
     samples: () => ({
@@ -409,6 +476,9 @@ export function boot(config: BootConfig): void {
   };
   (globalThis as unknown as { aegis: AegisDebugHandle }).aegis = debug;
 
-  resize();
-  globalThis.requestAnimationFrame(frame);
+  host.start(() => {
+    adapter = host.adapter;
+    resize();
+    animationFrame = globalThis.requestAnimationFrame(frame);
+  });
 }

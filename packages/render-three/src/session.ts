@@ -12,52 +12,18 @@
  * The session owns the world. Rendering is not mentioned here at all — that is the point.
  * @packageDocumentation
  */
-import {
-  DiagnosticError,
-  Name,
-  Transform,
-  createSchedule,
-  createSimulation,
-  createWorld,
-} from '@aegis/core';
-import type { ComponentType, Simulation, StateHash, World, WorldSnapshot } from '@aegis/core';
-import {
-  Dead,
-  Health,
-  Light,
-  Model,
-  Sprite,
-  Trigger,
-  Triggered,
-  createRegistry,
-  instantiateScene,
-} from '@aegis/content';
-import type { ComponentRegistry, SceneFile } from '@aegis/content';
-import type { ModePlugin } from '@aegis/harness';
+import { createSchedule, createSimulation } from '@aegis/core';
+import type { Simulation, StateHash, World, WorldSnapshot } from '@aegis/core';
+import type { SceneFile } from '@aegis/content';
+import { bootstrapScene } from '@aegis/harness';
+import type { ModePlugin, SceneContentOptions } from '@aegis/harness';
 import { createFixedStepLoop } from './loop.js';
 import type { FixedStepLoop } from './loop.js';
 import { createLiveInput } from './live-input.js';
 import type { LiveInput } from './live-input.js';
 
-/**
- * The core + content components the harness always registers before a scene loads. Mirrors
- * `@aegis/harness`'s private `BASE_COMPONENTS` so a live session and a headless run instantiate
- * a scene identically; every entry is a normal export of an allowed dependency.
- */
-const BASE_COMPONENTS: readonly ComponentType<unknown>[] = [
-  Transform,
-  Name,
-  Sprite,
-  Model,
-  Light,
-  Health,
-  Trigger,
-  Dead,
-  Triggered,
-];
-
 /** Options for {@link createLiveSession}. */
-export interface LiveSessionOptions {
+export interface LiveSessionOptions extends SceneContentOptions {
   /** The parsed scene document to instantiate. */
   scene: SceneFile;
   /** The composed game plugin (mode systems **plus** the game's own). */
@@ -66,8 +32,6 @@ export interface LiveSessionOptions {
   seed?: number | string;
   /** Fixed ticks per second. Defaults to `60`. */
   tickRate?: number;
-  /** Extra components to register beyond the base and plugin sets. */
-  registry?: ComponentRegistry;
   /** Maximum simulation steps per `advance` call. Defaults to the loop's own cap. */
   maxStepsPerFrame?: number;
 }
@@ -104,24 +68,7 @@ function buildWorld(options: Required<Pick<LiveSessionOptions, 'plugin'>> & Live
   simulation: Simulation;
   input: LiveInput;
 } {
-  const seed = options.seed ?? options.scene.seed ?? 0;
-  const world = createWorld({ seed, recordEvents: true });
-
-  const registry = createRegistry(...BASE_COMPONENTS);
-  registry.registerAll(options.plugin.components());
-  if (options.registry !== undefined) {
-    for (const id of options.registry.ids()) {
-      const type = options.registry.get(id);
-      if (type) registry.register(type);
-    }
-  }
-
-  // Instantiate from a deep copy: `type.create` shallow-merges, so a shared SceneFile would be
-  // aliased (and then mutated) by the world — exactly the trap `runScene` guards against.
-  const result = instantiateScene(world, structuredClone(options.scene), { registry });
-  if (!result.ok) throw new DiagnosticError(result.diagnostics);
-
-  options.plugin.init?.(world);
+  const { world } = bootstrapScene(options.scene, options);
 
   const schedule = createSchedule();
   schedule.addAll(options.plugin.systems().resolved());
@@ -130,7 +77,7 @@ function buildWorld(options: Required<Pick<LiveSessionOptions, 'plugin'>> & Live
   const simulation = createSimulation({
     world,
     schedule,
-    tickRate: options.tickRate ?? 60,
+    tickRate: options.tickRate === undefined ? 60 : options.tickRate,
     input,
   });
   return { world, simulation, input };
@@ -140,7 +87,7 @@ function buildWorld(options: Required<Pick<LiveSessionOptions, 'plugin'>> & Live
 export function createLiveSession(options: LiveSessionOptions): LiveSession {
   let built = buildWorld(options);
   const loop: FixedStepLoop = createFixedStepLoop({
-    tickRate: options.tickRate ?? 60,
+    tickRate: options.tickRate === undefined ? 60 : options.tickRate,
     ...(options.maxStepsPerFrame !== undefined
       ? { maxStepsPerFrame: options.maxStepsPerFrame }
       : {}),
