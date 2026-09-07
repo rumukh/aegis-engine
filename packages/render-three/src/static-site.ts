@@ -29,10 +29,20 @@
  */
 import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
-import type { GameMode } from '@aegis/core';
-import { SESSION_CONTROLS } from './bindings.js';
+import { DiagnosticError } from '@aegis/core';
+import type { Diagnostic, GameMode } from '@aegis/core';
+import { parseScene } from '@aegis/content';
 import type { ModeBindings } from './bindings.js';
-import { escapeHtml, PAGE_STYLE } from './pages.js';
+import { escapeHtml, presentationCover, scriptJson } from './pages.js';
+import { PAGE_STYLE, renderCatalogBody, renderGameChrome } from './page-chrome.js';
+import { preparePresentation, readPreparedPresentationFile } from './presentation/files.js';
+import type { PreparedPresentation } from './presentation/files.js';
+import { renderDiagnostic, RenderCode } from './presentation/diagnostics.js';
+import type {
+  PresentationSource,
+  Provenance,
+  ResolvedPresentation,
+} from './presentation/schema.js';
 
 // ---------------------------------------------------------------------------------------------
 // The module table
@@ -88,6 +98,18 @@ const ENGINE_MODULE_PATHS: readonly {
     entry: 'node_modules/three/build/three.module.js',
   },
   {
+    specifier: 'three/addons/loaders/GLTFLoader.js',
+    name: 'three',
+    root: 'node_modules/three',
+    entry: 'node_modules/three/examples/jsm/loaders/GLTFLoader.js',
+  },
+  {
+    specifier: 'three/addons/utils/SkeletonUtils.js',
+    name: 'three',
+    root: 'node_modules/three',
+    entry: 'node_modules/three/examples/jsm/utils/SkeletonUtils.js',
+  },
+  {
     specifier: '@aegis/core',
     name: '@aegis/core',
     root: 'packages/core',
@@ -134,6 +156,24 @@ const ENGINE_MODULE_PATHS: readonly {
     name: '@aegis/render-three',
     root: 'packages/render-three',
     entry: 'packages/render-three/dist/client/static-boot.js',
+  },
+  {
+    specifier: '@aegis/render-three/presentation',
+    name: '@aegis/render-three',
+    root: 'packages/render-three',
+    entry: 'packages/render-three/dist/presentation/index.js',
+  },
+  {
+    specifier: '@aegis/render-three/presentation/schema',
+    name: '@aegis/render-three',
+    root: 'packages/render-three',
+    entry: 'packages/render-three/dist/presentation/schema.js',
+  },
+  {
+    specifier: '@aegis/render-three/presentation/validate',
+    name: '@aegis/render-three',
+    root: 'packages/render-three',
+    entry: 'packages/render-three/dist/presentation/validate.js',
   },
 ];
 
@@ -414,6 +454,8 @@ export interface StaticGame {
   seed?: number | string;
   /** Fixed ticks per second. Defaults to `60`. */
   tickRate?: number;
+  /** Optional render-only local assets and presentation. */
+  presentation?: PresentationSource;
 }
 
 /** A JS identifier, so a generated `import { X }` cannot be anything but an import. */
@@ -438,11 +480,34 @@ export function staticImportMap(base: string, modules: readonly StaticModule[]):
       .filter((part) => part !== '');
     imports[module.specifier] = base + posix.join('vendor', module.name, ...rel);
   }
-  return JSON.stringify({ imports }, null, 2);
+  return scriptJson({ imports });
+}
+
+function prepareStaticPresentation(game: StaticGame): PreparedPresentation | undefined {
+  if (game.presentation === undefined) return undefined;
+  const parsed = parseScene(game.sceneText, `${game.id}.scene.json`);
+  if (!parsed.ok || parsed.value === undefined) throw new DiagnosticError(parsed.diagnostics);
+  return preparePresentation(game.presentation, parsed.value);
+}
+
+function resolvedPresentation(
+  id: string,
+  prepared: PreparedPresentation | undefined,
+): ResolvedPresentation | undefined {
+  return prepared === undefined
+    ? undefined
+    : {
+        manifest: prepared.manifest,
+        baseUrl: `${PLAY_DEPTH}assets/${id}/`,
+        files: prepared.files.map((file) => file.path),
+      };
 }
 
 /** The generated ES module that boots one game. This is the page's entry into the graph. */
-export function renderStaticBootModule(game: StaticGame): string {
+export function renderStaticBootModule(
+  game: StaticGame,
+  presentation = resolvedPresentation(game.id, prepareStaticPresentation(game)),
+): string {
   if (!IDENTIFIER.test(game.pluginExport)) {
     throw new StaticGraphError(
       `[aegis:static-site] "${game.pluginExport}" is not a JavaScript identifier, so it cannot ` +
@@ -452,9 +517,14 @@ export function renderStaticBootModule(game: StaticGame): string {
   const config = {
     gameId: game.id,
     mode: game.mode,
+    title: game.title,
+    objective: game.objective,
+    bindings: game.bindings,
     ...(game.seed !== undefined ? { seed: game.seed } : {}),
     ...(game.tickRate !== undefined ? { tickRate: game.tickRate } : {}),
+    ...(presentation === undefined ? {} : { presentation }),
   };
+  const pluginModule = scriptJson(game.pluginModule).slice(1, -1).replace(/'/g, '\\u0027');
   return `// Generated by @aegis/render-three's static-site exporter. Do not edit.
 //
 // The simulation runs HERE, in your browser. There is no server: this module builds the same
@@ -462,12 +532,12 @@ export function renderStaticBootModule(game: StaticGame): string {
 // document, and \`bootStatic\` steps it on the same fixed timestep a headless run uses.
 import { parseScene } from '@aegis/content';
 import { bootStatic } from '${STATIC_BOOT_SPECIFIER}';
-import { ${game.pluginExport} } from '${game.pluginModule}';
+import { ${game.pluginExport} } from '${pluginModule}';
 
 /** The scene document, verbatim. Text is the substrate (CHARTER principle 1). */
-const SCENE_TEXT = ${JSON.stringify(game.sceneText)};
+const SCENE_TEXT = ${scriptJson(game.sceneText)};
 
-const parsed = parseScene(SCENE_TEXT, '${game.id}.scene.json');
+const parsed = parseScene(SCENE_TEXT, ${scriptJson(`${game.id}.scene.json`)});
 if (!parsed.ok || parsed.value === undefined) {
   throw new Error(
     '[aegis] the embedded scene failed validation:\\n' +
@@ -475,7 +545,7 @@ if (!parsed.ok || parsed.value === undefined) {
   );
 }
 
-bootStatic({ ...${JSON.stringify(config)}, plugin: ${game.pluginExport}, scene: parsed.value });
+bootStatic({ ...${scriptJson(config)}, plugin: ${game.pluginExport}, scene: parsed.value });
 `;
 }
 
@@ -498,46 +568,21 @@ const FAVICON_SVG =
   '</svg>';
 const FAVICON = `data:image/svg+xml;base64,${Buffer.from(FAVICON_SVG, 'utf8').toString('base64')}`;
 
-/** Extra chrome the exported site needs and the dev server does not. */
-const SITE_STYLE = `
-  /* The HUD panels must not eat clicks meant for the world.
-   *
-   * Measured, at 640x360: \`document.elementFromPoint(288, 198)\` — a point in the middle of the
-   * iso level — answers \`controls\`, because the control list is 340px wide and ~150px tall in the
-   * bottom-left corner. Every click there was delivered to a \`<section>\` and never reached the
-   * canvas, so a third of the playable area was dead. It cost the browser spec two failing cases
-   * before anything was suspected, because a click that lands on a panel looks exactly like a
-   * click the simulation ignored.
-   *
-   * The panels are read-outs, so nothing is lost by making them transparent to the pointer; the
-   * one interactive element inside them opts back in. The dev server's own pages
-   * (\`./pages.ts\`, same \`.panel\` class) have the same defect and are left alone here — that is
-   * the renderer session's file to change, and this is reported rather than fixed in passing. */
-  .panel { pointer-events: none; }
-  .panel a, .panel button { pointer-events: auto; }
-  .index .foot { color: var(--dim); margin-top: 28px; border-top: 1px solid var(--edge);
-                 padding-top: 14px; }
-  .index .note { color: var(--dim); }
-  .index code { color: #7dd3fc; }
-  .keys { color: var(--dim); margin-top: 6px; font-size: 12px; }
-  .keys b { color: var(--ink); font-weight: 600; }
-`;
-
 /** The landing page: what this is, and one card per game. */
 export function renderStaticIndexPage(games: readonly StaticGame[]): string {
-  const cards = games
-    .map((game) => {
-      const keys = [...game.bindings.help, ...SESSION_CONTROLS]
-        .map((line) => `<b>${escapeHtml(line.keys)}</b> ${escapeHtml(line.does)}`)
-        .join(' &nbsp;·&nbsp; ');
-      return `    <a class="card" href="play/${escapeHtml(game.id)}/">
-      <span class="mode">${escapeHtml(game.mode)}</span>
-      <h2>${escapeHtml(game.title)}</h2>
-      <p>${escapeHtml(game.blurb)}</p>
-      <div class="keys">${keys}</div>
-    </a>`;
-    })
-    .join('\n');
+  const body = renderCatalogBody({
+    games: games.map((game) => ({
+      id: game.id,
+      title: game.title,
+      blurb: game.blurb,
+      mode: game.mode,
+      bindings: game.bindings,
+      ...(game.presentation === undefined ? {} : { manifest: game.presentation.manifest }),
+      coverUrl: presentationCover(game.presentation?.manifest, `assets/${game.id}/`),
+    })),
+    gameHref: (id: string) => `play/${id}/`,
+    staticSite: true,
+  });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -547,28 +592,10 @@ export function renderStaticIndexPage(games: readonly StaticGame[]): string {
   <title>Aegis — play the proof-of-concept games</title>
   <meta name="description" content="Three playable proof-of-concept games from Aegis, an
     agent-first, deterministic, headless-first game engine. The simulation runs in your browser." />
-  <style>${PAGE_STYLE}${SITE_STYLE}</style>
+  <style>${PAGE_STYLE}</style>
 </head>
 <body>
-  <main class="index">
-    <h1>Aegis</h1>
-    <p class="lede">
-      An agent-first game engine: the world is data, input is a script, and the whole simulation
-      runs headlessly and deterministically. Rendering is an optional adapter that reads world
-      state and never writes to it.
-    </p>
-    <p class="note">
-      These pages are static. There is no server behind them — each game builds its own
-      deterministic simulation in your browser from the same composed plugin and the same scene
-      document the headless acceptance tests run, and steps it on the same fixed timestep. Pick
-      one and play it with a keyboard and mouse.
-    </p>
-${cards}
-    <p class="foot">
-      Built from the repository's own <code>dist/</code> output by
-      <code>npm run build:site</code>. No bundler.
-    </p>
-  </main>
+${body}
 </body>
 </html>
 `;
@@ -576,14 +603,14 @@ ${cards}
 
 /** The play page for one game. */
 export function renderStaticPlayPage(game: StaticGame, modules: readonly StaticModule[]): string {
-  const controls = [...game.bindings.help, ...SESSION_CONTROLS]
-    .map(
-      (line) =>
-        `      <div><span>${escapeHtml(line.keys)}</span><span>${escapeHtml(line.does)}</span></div>`,
-    )
-    .join('\n');
-  const crosshair = game.mode === 'fps' ? '  <div id="crosshair"></div>\n' : '';
-
+  const body = renderGameChrome({
+    title: game.title,
+    objective: game.objective,
+    mode: game.mode,
+    bindings: game.bindings,
+    backHref: PLAY_DEPTH,
+    ...(game.presentation === undefined ? {} : { manifest: game.presentation.manifest }),
+  });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -591,28 +618,13 @@ export function renderStaticPlayPage(game: StaticGame, modules: readonly StaticM
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="${FAVICON}" />
   <title>${escapeHtml(game.title)} — Aegis</title>
-  <style>${PAGE_STYLE}${SITE_STYLE}</style>
+  <style>${PAGE_STYLE}</style>
   <script type="importmap">
 ${staticImportMap(PLAY_DEPTH, modules)}
   </script>
 </head>
 <body>
-  <canvas id="stage"></canvas>
-${crosshair}  <section class="panel" id="hud">
-    <h1>${escapeHtml(game.title)}</h1>
-    <div class="obj">${escapeHtml(game.objective)}</div>
-    <div class="row"><span id="hud-tick">tick 0</span><span id="hud-status">starting…</span></div>
-    <div id="hud-stats"></div>
-  </section>
-  <section class="panel" id="events">
-    <b>simulation events</b>
-    <div id="hud-events"></div>
-  </section>
-  <section class="panel" id="controls">
-    <b>controls</b>
-${controls}
-      <div><span>← back</span><span><a href="${PLAY_DEPTH}">all games</a></span></div>
-  </section>
+${body}
   <script type="module" src="./boot.js"></script>
 </body>
 </html>
@@ -627,7 +639,7 @@ ${controls}
 export interface ExportOptions {
   /** The catalogue to publish. Must not be empty. */
   games: readonly StaticGame[];
-  /** Absolute path of the directory to write. Deleted first. */
+  /** Absolute output directory. Replaced only after asset and module preflight succeeds. */
   outDir: string;
   /** Repository root, used to resolve the engine module table. */
   repoRoot: string;
@@ -647,8 +659,25 @@ export interface ExportResult {
   modules: number;
   /** Total bytes written. */
   bytes: number;
+  /** Prepared presentation file count (including glTF image/buffer dependencies). */
+  assetFiles: number;
+  /** Bytes copied from the prepared presentation closures. */
+  assetBytes: number;
+  /** Public provenance inventory. Host source paths are deliberately absent. */
+  assets: ExportedPresentationFile[];
   /** Deferred specifiers the graph named but the artifact does not serve. See {@link ModuleGraph}. */
   deferred: string[];
+  /** Nonfatal preflight notes; deferred names still require initialized-world validation. */
+  diagnostics?: readonly Diagnostic[];
+}
+
+export interface ExportedPresentationFile {
+  gameId: string;
+  /** Site-relative path, including assets/<gameId>/. */
+  path: string;
+  bytes: number;
+  sha256: string;
+  provenance?: Provenance;
 }
 
 /** Write `text` to `file`, creating parents. Returns the byte length. */
@@ -682,7 +711,7 @@ export function exportStaticSite(options: ExportOptions): ExportResult {
   const modules = [...engineModules(options.repoRoot), ...(options.modules ?? [])];
   const outDir = resolve(options.outDir);
 
-  // The first thing this function does is delete `outDir`, so it had better not be somewhere that
+  // This function replaces `outDir` after preflight, so it had better not be somewhere that
   // matters. Two refusals, and the pair is deliberate: an ancestor check alone would still let
   // someone point this at a sibling checkout, and a marker-file check alone would not stop
   // `--out ..`. A directory that *contains* the repository, or that holds a `package.json` or a
@@ -701,26 +730,66 @@ export function exportStaticSite(options: ExportOptions): ExportResult {
     );
   }
 
-  // Generate the per-game boot modules first: they are the graph's entry points, and they have to
-  // exist on disk for the crawler to read them the same way it reads everything else. Writing them
-  // into the artifact and crawling from there means the thing crawled is the thing shipped.
-  rmSync(outDir, { recursive: true, force: true });
-  mkdirSync(outDir, { recursive: true });
-
-  const written: { path: string; bytes: number }[] = [];
-  const pages: string[] = [];
+  const ids = new Set<string>();
+  const assetCopies: { inventory: ExportedPresentationFile; contents: Buffer }[] = [];
+  const boots = new Map<string, string>();
+  const diagnostics: Diagnostic[] = [];
   for (const game of options.games) {
-    const bootPath = join(outDir, 'play', game.id, 'boot.js');
-    written.push({
-      path: `play/${game.id}/boot.js`,
-      bytes: write(bootPath, renderStaticBootModule(game)),
-    });
+    if (!/^[A-Za-z0-9_-]+$/.test(game.id) || ids.has(game.id.toLowerCase()))
+      throw new StaticGraphError(
+        `[aegis:static-site] duplicate or invalid game id "${game.id}"; use unique letters, digits, "_" and "-"`,
+      );
+    ids.add(game.id.toLowerCase());
+    const presentation = prepareStaticPresentation(game);
+    if (presentation !== undefined) {
+      for (const diagnostic of presentation.diagnostics ?? [])
+        diagnostics.push({
+          ...diagnostic,
+          data: { ...diagnostic.data, gameId: game.id },
+        });
+      for (const file of presentation.files) {
+        if (isInside(outDir, file.source))
+          throw new DiagnosticError([
+            renderDiagnostic(
+              RenderCode.Path,
+              'assetRoot',
+              `Output "${outDir}" contains source asset "${file.path}" for game "${game.id}".`,
+              'Choose an output directory separate from the authored asset directory.',
+            ),
+          ]);
+        assetCopies.push({
+          inventory: {
+            gameId: game.id,
+            path: `assets/${game.id}/${file.path}`,
+            bytes: file.bytes,
+            sha256: file.sha256,
+            ...(file.provenance === undefined ? {} : { provenance: file.provenance }),
+          },
+          contents: readPreparedPresentationFile(file),
+        });
+      }
+    }
+    boots.set(
+      join(outDir, 'play', game.id, 'boot.js'),
+      renderStaticBootModule(game, resolvedPresentation(game.id, presentation)),
+    );
   }
 
+  // Preflight the exact boot strings and asset bytes before replacing any previous export.
+  // Generated entries live in memory; the rest of the crawler still reads the real module graph.
   const graph = collectModuleGraph({
-    entries: options.games.map((game) => join(outDir, 'play', game.id, 'boot.js')),
+    entries: [...boots.keys()],
     modules,
     siteRoot: outDir,
+    read: (file) => boots.get(file) ?? readFileSync(file, 'utf8'),
+    exists: (file) => {
+      if (boots.has(file)) return true;
+      try {
+        return statSync(file).isFile();
+      } catch {
+        return false;
+      }
+    },
   });
 
   // Only the specifiers the graph actually used reach the import map. A map entry pointing at a
@@ -729,21 +798,37 @@ export function exportStaticSite(options: ExportOptions): ExportResult {
   const used = modules.filter((module) => graph.usedSpecifiers.includes(module.specifier));
 
   for (const file of graph.files) {
+    if (!file.target.startsWith('vendor/') && !boots.has(file.source))
+      throw new StaticGraphError(
+        `[aegis:static-site] ${file.source} was reached at site path "${file.target}", which is ` +
+          'neither a vendored module nor a generated boot module.',
+      );
+  }
+  for (const diagnostic of diagnostics)
+    console.warn(
+      `[aegis:static-site] ${diagnostic.data?.gameId} ${diagnostic.code}: ${diagnostic.message}\n  fix: ${diagnostic.fix}`,
+    );
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+  const written: { path: string; bytes: number }[] = [];
+  const pages: string[] = [];
+  for (const [path, source] of boots)
+    written.push({ path: relative(outDir, path).split(sep).join('/'), bytes: write(path, source) });
+
+  for (const file of graph.files) {
     if (!file.target.startsWith('vendor/')) {
-      // The only graph members outside `vendor/` are the boot modules written above. Anything else
-      // reached the artifact without being copied there, which would ship a file nobody placed.
-      if (!/^play\/[^/]+\/boot\.js$/.test(file.target)) {
-        throw new StaticGraphError(
-          `[aegis:static-site] ${file.source} was reached at site path "${file.target}", which is ` +
-            'neither a vendored module nor a generated boot module.',
-        );
-      }
       continue;
     }
     const target = join(outDir, ...file.target.split('/'));
     mkdirSync(dirname(target), { recursive: true });
     copyFileSync(file.source, target);
     written.push({ path: file.target, bytes: statSync(file.source).size });
+  }
+  for (const { inventory, contents } of assetCopies) {
+    const target = join(outDir, ...inventory.path.split('/'));
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, contents);
+    written.push({ path: inventory.path, bytes: contents.length });
   }
 
   const index = renderStaticIndexPage(options.games);
@@ -771,6 +856,12 @@ export function exportStaticSite(options: ExportOptions): ExportResult {
     pages: pages.sort(),
     modules: graph.files.length,
     bytes: written.reduce((total, entry) => total + entry.bytes, 0),
+    assetFiles: assetCopies.length,
+    assetBytes: assetCopies.reduce((total, entry) => total + entry.contents.length, 0),
+    assets: assetCopies
+      .map((entry) => entry.inventory)
+      .sort((a, b) => a.path.localeCompare(b.path)),
     deferred: graph.deferred,
+    ...(diagnostics.length === 0 ? {} : { diagnostics }),
   };
 }

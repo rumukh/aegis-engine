@@ -26,6 +26,159 @@ Then open <http://127.0.0.1:5173> and pick a game. Flags: `--port <n>`, `--host 
 Every game also takes `P` (pause/resume), `.` (single-step one tick while paused) and `R`
 (restart at tick 0).
 
+## Presentation is a separate document
+
+`GameDefinition.presentation` and `StaticGame.presentation` accept
+`{ manifest, assetRoot? }`. The manifest has discriminator `aegis: 'presentation/1'`; `assetRoot`
+is an absolute host directory and is required when the manifest declares files. Only the
+manifest, a page-relative asset base URL, and the prepared file inventory reach the browser.
+Nothing is added to the simulation's scene, resources, components or hash.
+
+The actual contract lives in `src/presentation/schema.ts`. For example, in a game's composition:
+
+```js
+presentation: {
+  assetRoot: fileURLToPath(new URL('../games/my-game/assets/', import.meta.url)),
+  manifest: {
+    aegis: 'presentation/1',
+    assets: [
+      {
+        id: 'operative',
+        kind: 'gltf',
+        src: 'operative.glb',
+        provenance: { author: 'Your team', license: 'MIT', source: 'generate-assets.mjs' },
+      },
+      {
+        id: 'deck',
+        kind: 'texture',
+        src: 'deck.png',
+        provenance: { author: 'Your team', license: 'MIT', source: 'generate-assets.mjs' },
+      },
+    ],
+    materials: [
+      { id: 'deck-metal', shading: 'standard', map: 'deck', roughness: 0.7, metalness: 0.3 },
+    ],
+    surfaces: { floor: 'deck-metal' },
+    entities: [
+      {
+        target: { name: 'operative' },
+        visual: {
+          kind: 'model',
+          mesh: 'operative',
+          animations: { idle: 'idle', move: 'walk', dead: 'death' },
+        },
+        fit: 'authored',
+      },
+    ],
+    hud: {
+      playerName: 'operative',
+      winEvent: 'mission.completed',
+      loseEvents: ['player.died'],
+      steps: [{ id: 'switch', label: 'Activate the switch', event: 'switch.activated' }],
+    },
+  },
+}
+```
+
+Absent presentation data retains the primitive mode. With a manifest, selected asset IDs must
+resolve: a missing texture, model, frame or clip is an actionable `AEG-RENDER-*` diagnostic, not
+a colored-box substitute. Explicit entity bindings override authored Sprite/Model fields, then
+role bindings and the primitive palette provide defaults. Empty legacy appearance IDs remain legal.
+
+The loader uses the installed three.js texture/glTF facilities, with no CDN or runtime asset service.
+Supported assets are PNG/JPEG/WebP, self-contained SVG, uncompressed glTF 2.0/GLB, and
+WAV/OGG/MP3. glTF buffer/image dependencies must be embedded or within the declared local root.
+Required compression-decoder extensions and external dependencies fail preflight. Asset provenance,
+sizes and digests are carried in the prepared inventory. Author sources and licenses with the game.
+
+The browser must support `createImageBitmap` for required image assets. Readiness includes a real
+pixel decode: an image load event, and even Chromium's `image.decode()`, can succeed on a PNG whose
+compressed pixels later fail WebGL upload. That corrupt-image case is a browser regression test,
+separate from the server's refusal to serve files changed after preflight.
+
+Textures preserve alpha, sRGB/linear sampling and nearest/linear filtering. Atlas rectangles are
+normalized `[u0,v0,u1,v1]` in **top-left image coordinates**. The shared helper converts UVs and
+caches frame variants. Sprite animation lists use arbitrary authored frame names, selected by the
+generic `idle`, `move`, `rise`, `fall`, `dead` states, with a positive `frameTicks`. Material maps
+may repeat; use separate terrain images rather than repeating an atlas rectangle across its neighbors.
+
+glTF instances preserve named nodes and animation clips, have independent transforms/skeletons,
+and borrow cached geometry/materials. `fit: 'bounds'` is the default for an entity body;
+`fit: 'authored'` preserves world units at its entity origin, with an optional presentation pose.
+Use +Y up and actor feet at Y=0; iso maps grid Y to renderer Z. Poses use degree-based XYZ Euler
+rotations. Camera-anchored objects provide viewmodels without modifying the gameplay camera.
+
+World/entity/camera decoration, parallax, static instancing, fog and lights are declarative.
+Event `burst`, `pulse`, `recoil`, `clip` and `frames` effects name their target and duration.
+Clip/frame names belong in game data, not in engine code; `holdLast` supports a terminal pose.
+An optional effect target `node` addresses a named model anchor. Recoil moves a view object,
+never the aim camera. Effect timing derives from ticks; extra synchronization for picking cannot
+advance it. Payloads are preserved for extensions, but the renderer does not invent an exact
+historic impact position when the event did not record one.
+
+Default collider-derived level and trigger visuals remain visible. A replacement environment may
+explicitly opt out with `legacy: { level: false, triggers: false }` only alongside declared
+replacement objects. The diagnostic collision toggle retains the original geometry. Game owners
+must still prove wall/deck/hazard coverage, hitbox alignment and navigation readability.
+
+### Headless validation and ownership
+
+```ts
+import { validatePresentation } from '@aegis/render-three/presentation/validate';
+import { preparePresentation } from '@aegis/render-three/presentation/node';
+```
+
+The validator returns the core `Validated<PresentationManifest>` diagnostic envelope and needs
+neither a filesystem nor a GPU. Node preparation checks the closed file graph. The
+`@aegis/render-three/presentation` entry exports the browser-safe asset/runtime APIs; it does not
+import the Node preparer. Adapters remain synchronous and GPU-independent when given loaded
+resources. Default image/audio decoding belongs to the browser, not to headless simulation.
+Both clients also validate named bindings against the initialized mirror before the first mount,
+so qualified prefab children and plugin-created entities are checked where their effective Names
+actually exist. Later despawning does not rerun that initial-name check.
+
+Adapter extensions can borrow `adapter.presentation.assets`, or call
+`adapter.presentation.createVisual(spec)` for an authored-unit `{ root, clips, dispose }` handle.
+The caller controls parenting and placement; the runtime cleans remaining handles on remount or
+disposal. This is the shared path for a mode-specific wall replacement or view object, not a
+reason to duplicate loaders. `entity(name)`, `object(id)`, `setEntityState(name, state)` and
+`addEffect(effect)` expose existing instances and view-only behavior without hard-coded game names.
+
+The asset library owns textures, materials and geometry. A model instance's `dispose()` releases
+that instance, not another actor's shared geometry. Restart clears animation/effect/audio state
+and reuses loaded assets; page disposal releases the library after its instances. Do not call
+`dispose()` on a borrowed material or texture. Load errors, cancellation, same-tick duplicate
+events, stale restart generations and repeat disposal have explicit coverage.
+
+### Audio, UI and bounded quality
+
+The two browser transports share a compact objective/health/progress HUD, loading/error states,
+pause/restart/mute/quality controls and collapsible diagnostics. Existing debug handles and
+readouts remain available. `aegis.ready` resolves only when real assets and the first world have
+mounted; `aegis.presentation()` exposes status and resource/effect/audio counters. Outcome panels
+report game events without changing simulation stepping.
+
+Audio bytes preload with assets. A trusted gesture unlocks the shared AudioContext; locked,
+muted, unavailable and error states are explicit. Unlock/unmute never replays old cues.
+Pause/restart stop voices and reset cue state without duplicating ambient loops.
+
+| Tier                 | Pixel-ratio ceiling | Transient effects | Audio voices |
+| -------------------- | ------------------- | ----------------- | ------------ |
+| `standard` (default) | 2                   | 128               | 16           |
+| `low`                | 1                   | 32                | 8            |
+
+Both retain collision readability and input semantics. This milestone has no dynamic shadows,
+postprocessing, decoder services or streaming. The manifest caps individual decoration objects
+at 256, total static instances at 4,096, and point lights at 8. Suppressed transient effects and
+voice evictions are counted. Existing draw-call, payload and frame-work guards remain unchanged.
+The browser's reduced-motion preference suppresses decorative parallax, bob/spin, sparks and
+recoil while retaining essential actor/state and door clip transitions. Preference listeners
+are removed on disposal.
+
+`poc/platformer.mjs`, `poc/iso.mjs` and `poc/fps.mjs` are independent game composition roots.
+`poc/poc-games.mjs` only aggregates and loads them. Game art, asset sources and event mappings
+belong there and under the respective game, never as game-specific branches in engine code.
+
 ## Ship them as a static site
 
 ```
@@ -132,9 +285,9 @@ Node (dev-server process)                    Browser page
 
 ## What each adapter draws
 
-All of it is read straight from world state; appearance components (`Sprite`/`Model`/`Light` from
-`@aegis/content`) are honoured when authored, and a role palette (`appearance.ts`) fills in when
-they are not. Crude on purpose — legibility over beauty (CHARTER §5).
+Collision-derived geometry is read straight from world state. The table describes the compatible
+primitive representation; optional presentation data replaces surfaces/actor visuals and adds
+view-only dressing without altering those mechanical coordinates.
 
 | Mode       | Camera                                                                                                                      | Geometry                                                                                                                                                                                                                                                                                                                                                          |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
