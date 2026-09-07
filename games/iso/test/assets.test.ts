@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
+import { rotateByQuat } from '@aegis/core/math';
 import { buildAssets } from '../assets/source/generate.mjs';
 import { SRGB8_TO_LINEAR } from '../assets/source/srgb.mjs';
 
@@ -239,6 +240,7 @@ describe('Server Vault original presentation assets', () => {
         'leg-right',
         'arm-left',
         'arm-right',
+        'root',
       ]);
       for (const clip of gltf.animations!) {
         for (const sampler of clip.samplers) {
@@ -310,6 +312,48 @@ describe('Server Vault original presentation assets', () => {
         ]);
         expect(box.min[1], `${file} death key ${key} intersects the floor`).toBeGreaterThan(-0.001);
         expect(box.min[1], `${file} death key ${key} floats above the floor`).toBeLessThan(0.015);
+      }
+    }
+  });
+
+  it('keeps both walking boots above the deck throughout the authored gait', () => {
+    for (const file of ['operative.gltf', 'sentinel.gltf']) {
+      const gltf = model(file);
+      const walk = gltf.animations!.find((clip) => clip.name === 'walk')!;
+      const root = walk.channels.find((channel) => channel.target.node === 0);
+      expect(root, 'walking has a cooked floor-contact track').toBeDefined();
+      const lift = values(gltf, walk.samplers[root!.sampler]!.output);
+      expect(lift.length / 3).toBe(61);
+      for (let key = 0; key < 61; key++) {
+        let floor = Infinity;
+        for (const name of ['leg-left', 'leg-right']) {
+          const nodeIndex = gltf.nodes.findIndex((node) => node.name === name);
+          const node = gltf.nodes[nodeIndex]!;
+          const channel = walk.channels.find((channel) => channel.target.node === nodeIndex)!;
+          const rotations = values(gltf, walk.samplers[channel.sampler]!.output);
+          const rotation = {
+            x: rotations[key * 4]!,
+            y: rotations[key * 4 + 1]!,
+            z: rotations[key * 4 + 2]!,
+            w: rotations[key * 4 + 3]!,
+          };
+          for (const primitive of gltf.meshes[node.mesh!]!.primitives) {
+            const positions = values(gltf, primitive.attributes['POSITION']!);
+            for (let i = 0; i < positions.length; i += 3) {
+              const vertex = rotateByQuat(
+                {
+                  x: positions[i]!,
+                  y: positions[i + 1]!,
+                  z: positions[i + 2]!,
+                },
+                rotation,
+              );
+              floor = Math.min(floor, vertex.y + node.translation![1]! + lift[key * 3 + 1]!);
+            }
+          }
+        }
+        expect(floor, `${file} walk key ${key} penetrates the deck`).toBeGreaterThan(0);
+        expect(floor, `${file} walk key ${key} floats above the deck`).toBeLessThan(0.015);
       }
     }
   });
