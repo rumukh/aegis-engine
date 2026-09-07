@@ -1,0 +1,171 @@
+{
+  "aegis": "asset-provenance/1",
+  "name": "Server Vault original diorama kit",
+  "author": "Aegis contributors",
+  "license": "MIT",
+  "source": "source/generate.mjs",
+  "recipe": "npm run build && node games/iso/assets/source/generate.mjs",
+  "math": "@aegis/core/math fixed trigonometry and pinned sRGB transfer data",
+  "conventions": {
+    "units": "navigation cells",
+    "up": "+Y",
+    "forward": "+Z",
+    "origin": "feet for actors, ground centre for props",
+    "interiorWallCeiling": 0.45,
+    "tallEquipmentPlacement": "Rear perimeter only; never in front of a passable cell."
+  },
+  "assets": [
+    {
+      "file": "deck-panel.png",
+      "bytes": 34907,
+      "sha256": "eee086d4072149e13181afdff03039299be191ab07a64fb2e439662c06be34ae"
+    },
+    {
+      "file": "partition-panel.png",
+      "bytes": 35049,
+      "sha256": "a13a47b659870c4601934a4f9688a6cde758646ef0455a1265141f7c029100b2"
+    },
+    {
+      "file": "server-face.png",
+      "bytes": 52859,
+      "sha256": "1c13b60785c83b73c1404708ab143c25914596c9b916728eec67c0079a5737a7"
+    },
+    {
+      "file": "server-emission.png",
+      "bytes": 574,
+      "sha256": "13e82b1ecb7de7c68fb712eac33dbc6e6c80111c38f44dc3d2c22a125e2b0a08"
+    },
+    {
+      "file": "terminal-locked.png",
+      "bytes": 1435,
+      "sha256": "c5bc7743342fa7d362a3267cc0cb9dedcefb1a03d8af7fc12d5c91733b11c1ce"
+    },
+    {
+      "file": "terminal-active.png",
+      "bytes": 1461,
+      "sha256": "9ff45993662a846ea2814465f357e1ea1d83d2d99dcb6e592aa76900cbd672cc"
+    },
+    {
+      "file": "vault-mark.png",
+      "bytes": 1037,
+      "sha256": "497cb243c0cb3f499d229efe0b4ab3651253326e670ae9fdf61002a46737ce35"
+    },
+    {
+      "file": "vault-air.wav",
+      "bytes": 176444,
+      "sha256": "c1199d9dfc08374631bba4bb8a7cb1f939384387be93863422be0a8636530440"
+    },
+    {
+      "file": "pulse-shot.wav",
+      "bytes": 8864,
+      "sha256": "5edcf83c7cb307d54f5e4eead3e95bb53bbd6584f4546e9041baa1c2903da5c6"
+    },
+    {
+      "file": "armor-hit.wav",
+      "bytes": 11510,
+      "sha256": "73494dfaf22cee47347e572e048a34b96b7c522848fa65e8bd63dd78668cfb58"
+    },
+    {
+      "file": "guard-alert.wav",
+      "bytes": 21212,
+      "sha256": "0f2a8fcb726c6fb30376df459e0bfd23154c9c76b354d1ff64baee08322188fb"
+    },
+    {
+      "file": "access-granted.wav",
+      "bytes": 27386,
+      "sha256": "687e6d2e37dcfbad25a641e2d3c1319d2c4734b1279d3750e63f70bed623d837"
+    },
+    {
+      "file": "vault-unseal.wav",
+      "bytes": 41940,
+      "sha256": "18f0257a741bf7ec8aa539745f7c52f2ef779d5c130653a200b070b7d042aeee"
+    },
+    {
+      "file": "route-denied.wav",
+      "bytes": 10628,
+      "sha256": "8f87ce10eb65c13ab82722865fc3be6d81c1a8f5cfa9be4cc3b30b52ab41af3b"
+    },
+    {
+      "file": "extraction.wav",
+      "bytes": 52964,
+      "sha256": "0ee443ae20969d5717b4dec177e5e80acb96b989ab893e3ac3e506265b4ad380"
+    },
+    {
+      "file": "operative.gltf",
+      "bytes": 223058,
+      "sha256": "943360ef667a20cce35be97b7c808dfe8ec622265e10457de4f2526171637ae8",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 1576,
+      "primitives": 12,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "sentinel.gltf",
+      "bytes": 221517,
+      "sha256": "6c74b7254be0d7b75e234ee9784d5ac7abf2cdc8a6de14aae5cbf15b8245285d",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 1564,
+      "primitives": 12,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "server-rack.gltf",
+      "bytes": 47202,
+      "sha256": "aba3f0eed5ac88224592889635332f25234ccdfd3b90844b5e852456215a9992",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 350,
+      "primitives": 3,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "access-console.gltf",
+      "bytes": 37472,
+      "sha256": "ae16f445530acd81deebc580adc5bdd494f49f1e8f92f743355d6439fe23d2ea",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 196,
+      "primitives": 5,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "vault-door.gltf",
+      "bytes": 79037,
+      "sha256": "812242afff25ec39545c087d42a4b233b517f684bb020e73be42a1942a23d596",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 540,
+      "primitives": 6,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "extraction-pad.gltf",
+      "bytes": 99110,
+      "sha256": "5e5a8a09402869fca115eefcb5d9c2ae441f2e6a9b92c8aa8dd8d7d703eb7dbe",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 756,
+      "primitives": 3,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "service-partition.gltf",
+      "bytes": 19982,
+      "sha256": "55f4de56707ed2d6763ddc04ce8f8cbbf3f4daee00701f2b2f0de5b03a1c9492",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 122,
+      "primitives": 2,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "vault-plinth.gltf",
+      "bytes": 206759,
+      "sha256": "75983121569d4800056829ec0b0fb4093dbbff973659792945fab0a55f8c040c",
+      "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
+      "triangles": 1658,
+      "primitives": 3,
+      "source": "source/generate.mjs"
+    },
+    {
+      "file": "vault-icons.svg",
+      "bytes": 496,
+      "sha256": "a5cb0b6b98625dab50a9bebd1fb3156ba1cc3e723247a978634f10965ca169dd"
+    }
+  ]
+}

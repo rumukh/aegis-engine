@@ -54,6 +54,37 @@ describe('live session', () => {
     expect(session.world.getResource(PlatformerCollision)?.width).toBe(12);
   });
 
+  it.each([0, -1, NaN, Infinity, Number.MIN_VALUE])(
+    'rejects invalid live-session tick rate %s',
+    (tickRate) => {
+      expect(() =>
+        createLiveSession({
+          scene: PLATFORMER_SCENE,
+          plugin: platformerPlugin,
+          tickRate,
+        }),
+      ).toThrow(/tickRate/);
+    },
+  );
+
+  it('uses the same nondefault rate as a headless run', async () => {
+    const session = createLiveSession({
+      scene: PLATFORMER_SCENE,
+      plugin: platformerPlugin,
+      tickRate: 30,
+    });
+    session.input.submit({ seq: 1, axes: { MoveX: 1 } });
+    for (let i = 0; i < 3; i++) session.step();
+    const run = await runScene(PLATFORMER_SCENE, {
+      plugin: platformerPlugin,
+      ticks: 3,
+      tickRate: 30,
+      input: 'axis MoveX 1 0..3',
+    });
+    expect(session.dt).toBe(1 / 30);
+    expect(session.hash()).toBe(run.hash);
+  });
+
   it('reaches the same state hash as the headless harness for the same input', async () => {
     const reference = await scriptedHash();
     const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
@@ -190,6 +221,7 @@ describe('live session', () => {
       aegis: 'prefab/1',
       name: 'actor',
       components: { Transform: { position: { x: 7, y: 0, z: 0 } } },
+      children: [{ id: 'child', components: { Transform: { position: { x: 1, y: 0, z: 0 } } } }],
     });
     const resources = createResourceRegistry('game.config');
     const options = { scene, plugin: platformerPlugin, resources, prefabs };
@@ -198,9 +230,10 @@ describe('live session', () => {
     expect(
       session.world
         .query({ has: [Transform] })
-        .one()
-        .get(Transform).position.x,
-    ).toBe(7);
+        .views()
+        .map((v) => v.get(Transform).position.x),
+    ).toEqual([7, 8]);
+    expect(session.snapshot().entities.map((e) => e.name)).toEqual(['instance', 'instance/child']);
     session.step();
     session.restart();
     expect(session.hash()).toBe(initial);

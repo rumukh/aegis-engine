@@ -1,0 +1,195 @@
+{
+  "format": "aegis-original-assets/1",
+  "generator": "games/fps/assets/generate.mjs",
+  "license": "MIT",
+  "sceneSha256": "2a8d23a03b9d880acdf2515c77a80aef421a13c42c95d5748d422c910634e89f",
+  "coordinates": "Y up; metres; facility uses the unchanged FPS collision grid; weapon points camera-local -Z.",
+  "assets": [
+    {
+      "file": "orbital-facility.glb",
+      "bytes": 2370972,
+      "triangles": 13356,
+      "primitives": 34,
+      "nodes": 5,
+      "animations": [],
+      "sha256": "3b8338968e40961e75c69f3d049f3d07be369f959a516b6845d5e2bf7bb6d854"
+    },
+    {
+      "file": "kestrel-security.glb",
+      "bytes": 165292,
+      "triangles": 1446,
+      "primitives": 30,
+      "nodes": 9,
+      "animations": [
+        {
+          "name": "SentinelIdle",
+          "channels": 2
+        },
+        {
+          "name": "ReturnFire",
+          "channels": 1
+        },
+        {
+          "name": "Shutdown",
+          "channels": 3
+        }
+      ],
+      "sha256": "31df5bef785c64d2567917b2e64fe3c5e6a1a021ae2e1e2d75154ce974e61b96"
+    },
+    {
+      "file": "vaultline-rifle.glb",
+      "bytes": 83412,
+      "triangles": 690,
+      "primitives": 16,
+      "nodes": 6,
+      "animations": [
+        {
+          "name": "Fire",
+          "channels": 2
+        }
+      ],
+      "sha256": "7c81673a6c7b1a957a056fd32ade7a9461b7aa1b19279384ea1782501e7aac1c"
+    },
+    {
+      "file": "blast-door.glb",
+      "bytes": 39304,
+      "triangles": 190,
+      "primitives": 6,
+      "nodes": 2,
+      "animations": [
+        {
+          "name": "Open",
+          "channels": 1
+        }
+      ],
+      "sha256": "67a05895633eda6f4bdb39d3ea519142523a846d3ab61f1c7e5a2590532911ff"
+    },
+    {
+      "file": "breach-panel.glb",
+      "bytes": 32772,
+      "triangles": 114,
+      "primitives": 8,
+      "nodes": 2,
+      "animations": [],
+      "sha256": "9cb025aa48e0dcbd427399b588e2d9be59d138acf1193b7c599ec2e107024c1e"
+    },
+    {
+      "file": "extraction-pad.glb",
+      "bytes": 19668,
+      "triangles": 180,
+      "primitives": 3,
+      "nodes": 1,
+      "animations": [],
+      "sha256": "78c2cc07b6607b8d18f134e49e2da283a0fa0b0f96263a33653150be03701d5c"
+    }
+  ],
+  "audio": [
+    {
+      "file": "station-air.wav",
+      "seconds": 4,
+      "sampleRate": 22050,
+      "channels": 1,
+      "peak": 0.1475957906162344,
+      "bytes": 176444,
+      "sha256": "169fc73fce43f5474f7d95bf9c06e990b176d80a947b1d097d997e49246fbfc1"
+    },
+    {
+      "file": "coil-shot.wav",
+      "seconds": 0.28,
+      "sampleRate": 22050,
+      "channels": 1,
+      "peak": 0.619620013384,
+      "bytes": 12392,
+      "sha256": "0820c40e0ce40377d25f694e48c2cdfa6e5827dc5ed7a9b50be7115dc5141515"
+    },
+    {
+      "file": "pressure-open.wav",
+      "seconds": 0.95,
+      "sampleRate": 22050,
+      "channels": 1,
+      "peak": 0.2532240619163001,
+      "bytes": 41940,
+      "sha256": "e837fc029e9175f329c7638c7cd8d5aaed006ecf44ba2685f5fae697a7e85d56"
+    },
+    {
+      "file": "armor-impact.wav",
+      "seconds": 0.24,
+      "sampleRate": 22050,
+      "channels": 1,
+      "peak": 0.4287017345362527,
+      "bytes": 10628,
+      "sha256": "5c35efd0031c052f46d3cc2e8e6d3cbc5b53434993fb926b6338f177a6fd3852"
+    },
+    {
+      "file": "suit-impact.wav",
+      "seconds": 0.34,
+      "sampleRate": 22050,
+      "channels": 1,
+      "peak": 0.39406957915338714,
+      "bytes": 15038,
+      "sha256": "e286d7b6906be116938d47313086185ffda07e686ed18bc99b8795d49b34ca4e"
+    },
+    {
+      "file": "sentry-shutdown.wav",
+      "seconds": 0.6,
+      "sampleRate": 22050,
+      "channels": 1,
+      "peak": 0.2860713082380981,
+      "bytes": 26504,
+      "sha256": "101d5dff49f16429e6c0f3aec7786b3329ee04bf8d0232de82a1bc6d4c91bca4"
+    },
+    {
+      "file": "airlock-ready.wav",
+      "seconds": 0.9,
+      "sampleRate": 22050,
+      "channels": 1,
+      "peak": 0.145,
+      "bytes": 39734,
+      "sha256": "a9787a8bcede38e35103f0cced690e90483428083625984e4ae9c7b535825969"
+    }
+  ],
+  "textures": [
+    {
+      "file": "bulkhead-albedo.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 155518,
+      "sha256": "de04f8bc892f71891cea8431c58575cdb19ee8bd9a453103d6f28a770bc6195f"
+    },
+    {
+      "file": "bulkhead-normal.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 336098,
+      "sha256": "d6ad72ba7fc45875188637855a291be9d314ce9fcab4aca2967f0867ce53b0c1"
+    },
+    {
+      "file": "deck-albedo.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 165399,
+      "sha256": "7e4cf4545291504e3e97cb47700811b2af6bf70af5db55149027b4e1349dc30e"
+    },
+    {
+      "file": "deck-normal.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 394271,
+      "sha256": "bebf2c413428f4a1eac599490678736f9c0c0d3d3b20e703dd02e5a69340c561"
+    },
+    {
+      "file": "signage.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 5273,
+      "sha256": "ad537a5b9bf712819996772b25b2b72fd17c888890869e6170c41a15fecdea82"
+    },
+    {
+      "file": "hazard-stripes.png",
+      "width": 128,
+      "height": 128,
+      "bytes": 10279,
+      "sha256": "3bbd00c27cb7a7f4a61f8d633dbb1ca821caef31f76fe06885d00f1d9a9e10d6"
+    }
+  ]
+}

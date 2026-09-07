@@ -121,12 +121,33 @@ CLI validation supplies `ValidateOptions.file`, so diagnostics include filename 
 `prefabs: PrefabResolver` takes precedence. `createPrefabResolver(...documents)` rejects
 duplicate catalog names with `AEG-CONTENT-0007`.
 
+## Prefab inheritance and identity
+
+`expandScene(scene, options)` returns a validated explicit tree without writing a world.
+`validateScene` and `instantiateScene` share the same expansion and resolve each referenced
+prefab once per operation. Component overrides stay shallow per component; tags are a
+prefab-first union. Omitted `EntityDecl.children` inherits the prefab defaults; an explicit
+list (including `[]`) replaces them completely.
+
+Scene-authored IDs remain global and unchanged, even on nested children. Inherited prefab
+children use `<instance-id>/<local-id>` recursively, escaping `~` to `~0` and `/` to `~1`
+within local segments. `left` and `right` instances therefore have distinct `left/child`
+and `right/child` descendants. Expansion is depth-first in document order. Local child
+positions are translated by their parent's world position; rotation/scale are not composed.
+
+Expanded IDs own `Name`. A conflicting authored `Name.value` is `AEG-CONTENT-0019`, with a
+migration fix to remove it and use the derived identity. Arbitrary component string references
+are not rewritten; author fully qualified target IDs. Duplicate expanded IDs are
+`AEG-CONTENT-0007`, unresolved prefabs are `0006`, and cyclic inherited child lists are `0018`.
+An explicit finite child-list override may terminate a recursive reference. These failures
+occur before any world writes, even when optional component/resource data validation is disabled.
+
 ## Public surface
 
 `scene.ts` (document types) · `registry.ts` (`createRegistry`, `createResourceRegistry`) ·
 `schema.ts` (`validateComponentData`, `describeComponent`, `componentFields`, `suggestName`) ·
 `load.ts` (`parseScene`/`parsePrefab`/`parseTilemap`, `validateScene`/`validatePrefab`,
-`instantiateScene`) · `builder.ts` (`createSceneBuilder`) · `components/` (`Sprite`, `Model`,
+`createPrefabResolver`, `expandScene`, `instantiateScene`) · `builder.ts` (`createSceneBuilder`) · `components/` (`Sprite`, `Model`,
 `Light`, `Health`, `Trigger`, `Dead`, `Triggered`, `healthSystem`, `pointInTrigger`).
 
 The TSDoc in `src/` is the contract of record; see [`docs/api/README.md`](../../docs/api/README.md).

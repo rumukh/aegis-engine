@@ -141,4 +141,26 @@ describe('shared scene bootstrap', () => {
     expect(() => createSceneContext(duplicate)).toThrow(DiagnosticError);
     expect(() => createPrefabResolver(actor, actor)).toThrow('Duplicate prefab name "actor"');
   });
+
+  it('expands prefab children through public run and replay paths', async () => {
+    const composed: ModePlugin = {
+      ...legacy,
+      prefabs: () => [
+        {
+          ...actor,
+          children: [
+            { id: 'child', components: { Transform: { position: { x: 1, y: 0, z: 0 } } } },
+          ],
+        },
+      ],
+    };
+    const run = await runScene({ ...scene, resources: {} }, { plugin: composed, ticks: 1 });
+    const positions = run
+      .query({ has: [Transform] })
+      .views()
+      .map((v) => v.get(Transform).position.x);
+    expect(positions).toEqual([2, 3]);
+    expect(run.world.snapshot().entities.map((e) => e.name)).toEqual(['hero', 'hero/child']);
+    expect(run.replay().hash).toBe(run.hash);
+  });
 });

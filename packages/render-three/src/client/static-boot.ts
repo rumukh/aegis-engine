@@ -27,24 +27,30 @@
  * the simulation: it still only ever sees `dt = 1 / tickRate`.
  * @packageDocumentation
  */
-import { Vector3, WebGLRenderer } from 'three';
+import { Vector3 } from 'three';
 import { createWorld } from '@aegis/core';
 import type { GameEvent, GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
-import { createRenderAdapter } from '../adapters/index.js';
 import type { RenderAdapter } from '../adapter.js';
 import { BINDINGS } from '../bindings.js';
+import type { ModeBindings } from '../bindings.js';
 import { systemClock, MAX_CATCHUP_SECONDS } from '../loop.js';
 import type { Clock } from '../loop.js';
 import { createLiveSession } from '../session.js';
 import type { LiveSession } from '../session.js';
 import type { EventLine } from '../protocol.js';
 import { createInputCollector } from './input.js';
-import { createHud } from './hud.js';
+import type { SessionCommand } from './input.js';
+import type { ResolvedPresentation } from '../presentation/schema.js';
+import { PresentationHost } from './presentation-host.js';
 
 /** Everything the static page needs to start a game. Assembled by the generated play page. */
 export interface StaticBootConfig {
+  title?: string;
+  objective?: string;
+  bindings?: ModeBindings;
+  presentation?: ResolvedPresentation;
   /** URL slug of the game, e.g. `"iso"`. Used only for diagnostics. */
   gameId: string;
   /** The mode whose adapter draws it and whose bindings drive it. */
@@ -73,6 +79,8 @@ export interface StaticBootConfig {
  * perturb the thing it measures is worth less than one that cannot.
  */
 export interface StaticDebugHandle {
+  readonly ready: Promise<void>;
+  presentation(): object;
   /** The mirror world the renderer draws; a copy, never the simulation's world. */
   readonly world: World;
   /** The live adapter. */
@@ -106,8 +114,12 @@ export interface StaticDebugHandle {
 const MAX_FRAME_SECONDS = MAX_CATCHUP_SECONDS;
 
 /** Flatten recorded events into the HUD feed shape. */
-function toEventLines(events: readonly GameEvent[]): EventLine[] {
-  return events.map((event) => ({ type: event.type, tick: event.tick }));
+function toEventLines(events: readonly GameEvent[], withData = false, offset = 0): EventLine[] {
+  return events.map((event, index) => ({
+    type: event.type,
+    tick: event.tick,
+    ...(withData ? { data: event.data, sequence: offset + index } : {}),
+  }));
 }
 
 /**
@@ -124,20 +136,33 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
 
   const mode = config.mode;
   const clock = config.clock ?? systemClock;
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, 2));
-
-  const adapter: RenderAdapter = createRenderAdapter(mode);
+  const host = new PresentationHost({
+    canvas,
+    mode,
+    ...(config.objective === undefined ? {} : { objective: config.objective }),
+    ...(config.presentation === undefined ? {} : { presentation: config.presentation }),
+    ...(config.tickRate === undefined ? {} : { tickRate: config.tickRate }),
+    onCommand: sendCommand,
+  });
+  const renderer = host.renderer;
+  let adapter: RenderAdapter;
   // The renderer's own copy of the world, rebuilt from JSON every frame. Never the session's.
   const mirror: World = createWorld({ seed: 0 });
-  const hud = createHud();
+  const hud = host.hud;
 
-  const session: LiveSession = createLiveSession({
-    scene: config.scene,
-    plugin: config.plugin,
-    ...(config.seed !== undefined ? { seed: config.seed } : {}),
-    ...(config.tickRate !== undefined ? { tickRate: config.tickRate } : {}),
-  });
+  let session: LiveSession;
+  try {
+    session = createLiveSession({
+      scene: config.scene,
+      plugin: config.plugin,
+      ...(config.seed !== undefined ? { seed: config.seed } : {}),
+      ...(config.tickRate !== undefined ? { tickRate: config.tickRate } : {}),
+    });
+  } catch (error) {
+    host.fail(error);
+    host.dispose();
+    throw error;
+  }
 
   let mounted = false;
   let lastTick = -1;
@@ -145,6 +170,9 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   let frames = 0;
   let lastFrameAt = clock();
   let eventCursor = 0;
+  let generation = 0;
+  let stopped = false;
+  let animationFrame = 0;
   let lastSnapshot: WorldSnapshot | null = null;
   let framesThisSecond = 0;
   let fps = 0;
@@ -159,39 +187,46 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
     adapter.resize(width, height);
   };
 
+  function sendCommand(command: SessionCommand): void {
+    // Keep the current loading/failure explanation intact until a real world exists.
+    if (!mounted) return;
+    if (command === 'pause') session.paused = !session.paused;
+    else if (command === 'step') {
+      session.step();
+      steps++;
+    } else if (command === 'restart') {
+      session.restart();
+      collector.clear();
+      steps = 0;
+      eventCursor = 0;
+      host.reset(++generation);
+    }
+    lastFrameAt = clock();
+  }
+
   const collector = createInputCollector({
     canvas,
-    bindings: BINDINGS[mode],
+    bindings: config.bindings ?? BINDINGS[mode],
     pick: (x, y) => {
       // Aim the camera at the mirror's current state before unprojecting through it. See the
       // long note on the same call in `./boot.ts`: the iso camera follows an integer cell, and a
       // click resolved through a camera one tick stale lands on a different cell entirely.
-      if (mounted) adapter.sync(mirror);
+      if (!mounted) return null;
+      adapter.sync(mirror);
       return adapter.pick(x, y);
     },
-    onCommand: (command) => {
-      if (command === 'pause') session.paused = !session.paused;
-      else if (command === 'step') {
-        // `step()` advances regardless of `paused`, which is what single-stepping means.
-        session.step();
-        steps++;
-      } else if (command === 'restart') {
-        session.restart();
-        steps = 0;
-        eventCursor = 0;
-        hud.pushEvents([]);
-      }
-      lastFrameAt = clock();
-    },
+    onCommand: sendCommand,
   });
 
   const applySnapshot = (snapshot: WorldSnapshot): void => {
     mirror.restore(snapshot);
     lastSnapshot = snapshot;
     if (!mounted) {
+      host.validateWorld(mirror);
       adapter.mount(mirror);
       mounted = true;
       resize();
+      host.mounted();
     }
     lastTick = snapshot.tick;
   };
@@ -199,13 +234,15 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   /** Drain the events the session has emitted since the last frame, for the HUD feed. */
   const drainEvents = (): EventLine[] => {
     const history = session.world.events.history();
+    const offset = eventCursor;
     const fresh = history.slice(eventCursor);
     eventCursor = history.length;
-    return toEventLines(fresh);
+    return toEventLines(fresh, config.presentation !== undefined, offset);
   };
 
   const frame = (): void => {
-    globalThis.requestAnimationFrame(frame);
+    if (stopped) return;
+    animationFrame = globalThis.requestAnimationFrame(frame);
     frames++;
 
     // Claim the waiters registered before this collection: their events are in this packet.
@@ -221,11 +258,18 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
     lastFrameAt = now;
     steps += session.advance(elapsed);
 
-    applySnapshot(session.snapshot());
-    hud.pushEvents(drainEvents());
-
-    adapter.sync(mirror);
-    renderer.render(adapter.scene, adapter.camera);
+    try {
+      applySnapshot(session.snapshot());
+      host.receive(drainEvents(), generation);
+      adapter.sync(mirror);
+      host.present(lastTick, session.paused);
+      renderer.render(adapter.scene, adapter.camera);
+    } catch (error) {
+      stopped = true;
+      globalThis.cancelAnimationFrame(animationFrame);
+      host.fail(error);
+      return;
+    }
 
     framesThisSecond++;
     if (now - fpsWindowStart >= 0.5) {
@@ -239,20 +283,26 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
 
   globalThis.addEventListener('resize', resize);
   globalThis.addEventListener('beforeunload', () => {
+    stopped = true;
+    globalThis.cancelAnimationFrame(animationFrame);
+    globalThis.removeEventListener('resize', resize);
     collector.dispose();
-    adapter.dispose();
-    renderer.dispose();
+    host.dispose();
   });
 
   const debug: StaticDebugHandle = {
+    ready: host.ready,
+    presentation: () => host.stats(),
     world: mirror,
-    adapter,
+    get adapter() {
+      return host.adapter;
+    },
     tick: () => lastTick,
     steps: () => steps,
     frames: () => frames,
     paused: () => session.paused,
     snapshot: () => lastSnapshot,
-    events: () => toEventLines(session.world.events.history()),
+    events: () => toEventLines(session.world.events.history(), config.presentation !== undefined),
     project(x: number, y: number, z: number): { x: number; y: number } | null {
       if (mounted) adapter.sync(mirror);
       const ndc = new Vector3(x, y, z).project(adapter.camera);
@@ -269,7 +319,11 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   };
   (globalThis as unknown as { aegis: StaticDebugHandle }).aegis = debug;
 
-  resize();
-  globalThis.requestAnimationFrame(frame);
+  host.start(() => {
+    adapter = host.adapter;
+    lastFrameAt = clock();
+    resize();
+    animationFrame = globalThis.requestAnimationFrame(frame);
+  });
   return debug;
 }

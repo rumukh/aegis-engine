@@ -66,6 +66,10 @@ export const ContentCode = {
    * tool that exists to catch the problem says the problem is not there.
    */
   UnserialisableValue: 'AEG-CONTENT-0017',
+  /** Inheriting prefab child lists would recursively instantiate an active prefab again. */
+  PrefabCycle: 'AEG-CONTENT-0018',
+  /** Authored Name.value would erase an entity's resolved scene/prefab identity. */
+  EntityNameMismatch: 'AEG-CONTENT-0019',
 } as const;
 
 /** A content diagnostic code value. */

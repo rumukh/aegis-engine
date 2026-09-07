@@ -77,7 +77,7 @@ function buildWorld(options: Required<Pick<LiveSessionOptions, 'plugin'>> & Live
   const simulation = createSimulation({
     world,
     schedule,
-    tickRate: options.tickRate ?? 60,
+    tickRate: options.tickRate === undefined ? 60 : options.tickRate,
     input,
   });
   return { world, simulation, input };
@@ -87,7 +87,7 @@ function buildWorld(options: Required<Pick<LiveSessionOptions, 'plugin'>> & Live
 export function createLiveSession(options: LiveSessionOptions): LiveSession {
   let built = buildWorld(options);
   const loop: FixedStepLoop = createFixedStepLoop({
-    tickRate: options.tickRate ?? 60,
+    tickRate: options.tickRate === undefined ? 60 : options.tickRate,
     ...(options.maxStepsPerFrame !== undefined
       ? { maxStepsPerFrame: options.maxStepsPerFrame }
       : {}),
