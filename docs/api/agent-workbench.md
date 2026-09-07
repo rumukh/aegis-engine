@@ -1,7 +1,7 @@
 # Agent workbench
 
-Discover a game's vocabulary before authoring, then request explicit projections of its world.
-Both commands run headlessly. Their implementation lives in
+Discover a game's vocabulary, validate authored documents, then request explicit projections of
+its world. These commands run headlessly. Their implementation lives in
 [`packages/cli/src`](../../packages/cli/src).
 
 ## Discover a selected plugin
@@ -55,6 +55,53 @@ facts come from `componentFields`/`componentSchema`. In each component field:
 and calls declaration/default factories and schedule resolution. It does not create a world,
 call `init`, run systems, or call a view provider. A supplied scene is parsed for selection but
 is not semantically validated. Use `aegis validate` before running authored content.
+
+## Validate presentation structure
+
+```text
+aegis validate look.presentation.json --json
+aegis validate "*.presentation.json" --strict
+```
+
+The existing `validate` command accepts **`presentation/1`** alongside `scene/1`, `prefab/1`
+and `tilemap/1`. Selection uses the document's `aegis` discriminator, not its filename.
+It calls the published `@aegis/render-three/presentation/validate` `validatePresentation`
+function; its types come from `@aegis/render-three/presentation/schema`. The CLI does not
+maintain a second presentation schema.
+
+**This is structural validation only.** It checks manifest fields, declared intra-manifest
+references, asset path syntax and the pure validator's limits. It does not read asset files,
+decode textures/models/audio, verify provenance, compute inventories or digests, initialize
+a scene, or resolve identifiers against a world. A valid manifest can still refer to a
+missing local file, a nonexistent model clip, or an entity name that no world provides.
+Even `--strict` does not turn these unchecked properties into checks.
+
+Every presentation result identifies this scope. In JSON, its `files` entry includes:
+
+```json
+{
+  "validation": {
+    "format": "presentation/1",
+    "scope": "structural",
+    "notChecked": ["asset-files", "asset-decoding", "initialized-world-bindings"]
+  }
+}
+```
+
+This is an excerpt, not the whole report. Human output prints the same qualification before
+the usual diagnostics. Presentation problems retain the validator's `AEG-RENDER-####` codes,
+source file and field path; malformed JSON and unknown versions use the existing content
+diagnostics. Exit codes remain `0` for no reported problems, `2` for content/presentation
+errors (or warnings under `--strict`), and `1` for CLI/IO errors.
+
+`--plugin`, `--mode` and nearby `aegis.json` selection remain relevant to scenes/prefabs only.
+Presentation validation never imports a plugin or validates world bindings, including when
+files of multiple formats are validated in one command. Undeclared flags requesting asset
+preparation or a world-validation operation are rejected, not silently honored.
+
+`describe` reports `presentation/1` in the registered `validate` command's `formats.reads`,
+with the structural-only guarantee in its usage text. This is validation support, not a
+presentation-schema inventory, a new simulation resource, or a claim of asset readiness.
 
 ## Bound world output explicitly
 

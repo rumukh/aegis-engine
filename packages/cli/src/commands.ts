@@ -8,7 +8,7 @@ import type { Command } from './command.js';
 import { runCommand } from './commands/run.js';
 import { testCommand } from './commands/test.js';
 import { inspectCommand } from './commands/inspect.js';
-import { validateCommand } from './commands/validate.js';
+import { validateCommand, VALIDATION_FORMATS } from './commands/validate.js';
 import { recordCommand } from './commands/record.js';
 import { replayCommand } from './commands/replay.js';
 import { scaffoldCommand } from './commands/scaffold.js';
@@ -50,7 +50,7 @@ export const COMMANDS: readonly Command[] = [
   {
     ...validateCommand,
     formats: {
-      reads: ['scene/1', 'prefab/1', 'tilemap/1'],
+      reads: VALIDATION_FORMATS,
       writes: [],
       stdout: ['text', 'json'],
     },
