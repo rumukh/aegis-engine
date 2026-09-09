@@ -39,6 +39,8 @@ export class PresentationHost {
   #quality: QualityTier;
   #motionPreference: MediaQueryList | undefined;
   #generation = 0;
+  #hydrated = false;
+  #historyThrough = -1;
   #events: EventLine[] = [];
   #disposed = false;
   #ready = false;
@@ -195,12 +197,41 @@ export class PresentationHost {
   receive(events: readonly EventLine[], generation = this.#generation): void {
     if (generation < this.#generation) return;
     if (generation !== this.#generation) this.reset(generation);
-    this.#events.push(...events);
+    const fresh = events.filter(
+      (event) => event.sequence === undefined || event.sequence > this.#historyThrough,
+    );
+    this.#events.push(...fresh);
+    this.hud.pushEvents(fresh);
+  }
+
+  hydrate(events: readonly EventLine[], generation: number, tick: number): void {
+    if (generation < this.#generation) return;
+    if (generation !== this.#generation) this.reset(generation);
+    if (this.#hydrated) return;
+    const runtime = this.adapter.presentation;
+    if (runtime === undefined)
+      throw new Error('[aegis] Cannot hydrate event history without a presentation runtime.');
+    runtime.hydrate({
+      tick,
+      generation,
+      events,
+      paused: false,
+      tickRate: this.#options.tickRate ?? 60,
+    });
+    this.#historyThrough = events.length - 1;
+    this.#events = this.#events.filter(
+      (event) => event.sequence === undefined || event.sequence > this.#historyThrough,
+    );
+    this.hud.reset();
     this.hud.pushEvents(events);
+    this.hud.pushEvents(this.#events);
+    this.#hydrated = true;
   }
 
   reset(generation = this.#generation + 1): void {
     this.#generation = generation;
+    this.#hydrated = false;
+    this.#historyThrough = -1;
     this.#events.length = 0;
     this.hud.reset();
     this.#adapter?.resetPresentation?.();
@@ -222,6 +253,7 @@ export class PresentationHost {
   }
 
   mounted(): void {
+    if (this.#mounted) return;
     this.#mounted = true;
     this.hud.setLoading('ready', '');
     this.#resolveReady();

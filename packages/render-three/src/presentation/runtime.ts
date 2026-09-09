@@ -1,6 +1,6 @@
 /**
  * Tick-sampled, presentation-only scene ownership. `sync` binds authoritative positions;
- * `present` alone consumes events and samples animation. Neither operation writes to a World.
+ * `present` consumes live events; `hydrate` restores persistent history silently. None writes a World.
  */
 import {
   AmbientLight,
@@ -20,6 +20,7 @@ import { Health, Model, Sprite } from '@aegis/content';
 import type { ModelData, SpriteData } from '@aegis/content';
 import type { VisualRole } from '../appearance.js';
 import type { EventLine } from '../protocol.js';
+import { assertEventHistory } from '../protocol.js';
 import type { PresentationAssets, PresentationAssetStats } from './assets.js';
 import { ContentLights, checkLightBudget, lightStats, renderPosition } from './runtime-lights.js';
 import type { RenderPosition } from './runtime-lights.js';
@@ -693,6 +694,18 @@ export class PresentationRuntime {
 
   /** Called once per displayed frame, never from a pick/project sync. */
   present(frame: PresentationFrame): void {
+    this.#presentFrame(frame, false);
+  }
+
+  /** Restore held clip/frame state and deduplication without replaying audio or transient feedback. */
+  hydrate(frame: PresentationFrame): void {
+    if (this.#disposed || (this.#generation !== undefined && frame.generation < this.#generation))
+      return;
+    assertEventHistory(frame.events, frame.tick);
+    this.#presentFrame(frame, true);
+  }
+
+  #presentFrame(frame: PresentationFrame, historical: boolean): void {
     if (this.#disposed || (this.#generation !== undefined && frame.generation < this.#generation))
       return;
     if (!Number.isFinite(frame.tickRate) || frame.tickRate <= 0 || !Number.isFinite(frame.tick))
@@ -711,11 +724,23 @@ export class PresentationRuntime {
     const events = this.#freshEvents(frame.events);
     this.#expire(tick);
     const bursts: { spec: EventEffect; event: EventLine }[] = [];
-    for (const event of events) {
-      for (const spec of this.manifest.effects ?? []) {
-        if (spec.event !== event.type) continue;
-        if (spec.kind === 'burst') bursts.push({ spec, event });
-        else this.#cue(spec, event.tick, tick);
+    if (historical) {
+      const latest = new Map<string, { spec: EventEffect; event: EventLine }>();
+      for (const event of events)
+        for (const spec of this.manifest.effects ?? [])
+          if (spec.event === event.type && (spec.kind === 'clip' || spec.kind === 'frames'))
+            latest.set(targetKey(spec.target), { spec, event });
+      for (const { spec, event } of latest.values()) {
+        if (spec.holdLast) this.#cue(spec, event.tick, tick);
+        else this.#clearAnimation(spec.target, false);
+      }
+    } else {
+      for (const event of events) {
+        for (const spec of this.manifest.effects ?? []) {
+          if (spec.event !== event.type) continue;
+          if (spec.kind === 'burst') bursts.push({ spec, event });
+          else this.#cue(spec, event.tick, tick);
+        }
       }
     }
     this.#sampleVisuals(tick, frame.tickRate);
@@ -727,7 +752,7 @@ export class PresentationRuntime {
     for (const effect of this.#effects)
       if (effect.kind === 'particle') this.#sampleEffect(effect, tick, frame.tickRate);
     const sampled: PresentationFrame = { ...frame, tick, events };
-    for (const extension of [...this.#extensions]) extension.update(sampled);
+    if (!historical) for (const extension of [...this.#extensions]) extension.update(sampled);
   }
 
   #freshEvents(events: readonly EventLine[]): EventLine[] {
@@ -834,6 +859,22 @@ export class PresentationRuntime {
     return undefined;
   }
 
+  #clearAnimation(target: Target, countDropped: boolean): void {
+    const key = targetKey(target);
+    this.#held.delete(key);
+    this.#effects = this.#effects.filter((effect) => {
+      if (
+        effect.kind !== 'cue' ||
+        (effect.spec.kind !== 'clip' && effect.spec.kind !== 'frames') ||
+        targetKey(effect.spec.target) !== key
+      )
+        return true;
+      this.#removeEffect(effect);
+      if (countDropped) this.#dropped++;
+      return false;
+    });
+  }
+
   #cue(spec: EventEffect, start: number, tick: number): void {
     if (this.#reducedMotion && (spec.kind === 'pulse' || spec.kind === 'recoil')) {
       this.#dropped++;
@@ -844,19 +885,7 @@ export class PresentationRuntime {
       return;
     }
     if (spec.kind === 'clip' || spec.kind === 'frames') {
-      const key = targetKey(spec.target);
-      this.#held.delete(key);
-      this.#effects = this.#effects.filter((effect) => {
-        if (
-          effect.kind !== 'cue' ||
-          (effect.spec.kind !== 'clip' && effect.spec.kind !== 'frames') ||
-          targetKey(effect.spec.target) !== key
-        )
-          return true;
-        this.#removeEffect(effect);
-        this.#dropped++;
-        return false;
-      });
+      this.#clearAnimation(spec.target, true);
     }
     if (tick - start >= spec.durationTicks) {
       const animation = this.#animation(spec, spec.durationTicks);

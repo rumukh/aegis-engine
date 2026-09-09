@@ -121,6 +121,31 @@ beforeAll(async () => {
     bindings: BINDINGS[entry.id],
     presentation: forMode(entry.id),
   }));
+  const reloadPresentation = forMode('platformer');
+  reloadPresentation.manifest.hud = {
+    playerName: 'player',
+    winEvent: 'completed',
+    loseEvents: [],
+    steps: [{ id: 'gate', label: 'Open the gate', event: 'opened' }],
+  };
+  reloadPresentation.manifest.effects = [
+    {
+      event: 'opened',
+      kind: 'frames',
+      target: { object: 'atlas' },
+      frames: ['right'],
+      frameTicks: 1,
+      durationTicks: 1,
+      holdLast: true,
+    },
+    { event: 'ping', kind: 'burst', target: { object: 'atlas' }, durationTicks: 10, count: 2 },
+  ];
+  reloadPresentation.manifest.audio = {
+    cues: [
+      { event: 'opened', asset: 'tone' },
+      { event: 'ping', asset: 'tone' },
+    ],
+  };
   const broken = writePresentationFixture(join(temporary, 'broken'));
   const undecodable = writePresentationFixture(join(temporary, 'undecodable'));
   const invalidImage = fixturePng();
@@ -130,6 +155,7 @@ beforeAll(async () => {
   dev = await startDevServer({
     games: [
       ...games,
+      { ...games[0]!, id: 'reload', presentation: reloadPresentation },
       {
         id: 'broken',
         title: 'Broken required texture',
@@ -242,6 +268,89 @@ afterAll(async () => {
 });
 
 describe('real asset presentation in dev and static browsers', () => {
+  it('reloads a live session with its held visual and HUD progress but no historical audio or bursts', async () => {
+    const cdp = await openPage(browser.port, `${dev.url}/play/reload/`, VIEWPORT);
+    const control = async (command: string, ticks?: number): Promise<void> => {
+      const reply = await fetch(`${dev.url}/api/reload/control`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command, ticks }),
+      });
+      expect(reply.status).toBe(200);
+    };
+    const read = `(() => ({
+      tick: globalThis.aegis.tick(),
+      generation: globalThis.aegis.presentation().generation,
+      frame: globalThis.aegis.adapter.presentation.object('atlas').object.material.map.offset.x,
+      progress: document.getElementById('hud-progress').textContent,
+      outcome: document.getElementById('hud-outcome').textContent,
+      effects: globalThis.aegis.presentation().render.effects.active,
+      dropped: globalThis.aegis.presentation().audio.dropped,
+      hash: globalThis.aegis.world.hash(),
+    }))()`;
+    try {
+      await until<boolean>(
+        cdp,
+        "globalThis.aegis !== undefined && globalThis.aegis.presentation().status === 'ready'",
+        (ready) => ready,
+      );
+      await control('pause');
+      const session = dev.session('reload')!;
+      session.world.events.emit('opened', {});
+      session.world.events.emit('ping', {});
+      session.world.events.emit('completed', {});
+      await control('step', 45);
+      const targetTick = session.tick;
+      const first = await until<{
+        tick: number;
+        frame: number;
+        hash: string;
+        progress: string;
+        effects: number;
+      }>(
+        cdp,
+        read,
+        (value) =>
+          value.tick === targetTick &&
+          value.frame === 0.5 &&
+          value.progress === '1 / 1 complete' &&
+          value.effects === 0,
+      );
+      expect(first.frame).toBe(0.5);
+      const timeOrigin = await evaluate<number>(cdp, 'performance.timeOrigin');
+      await cdp.send('Page.reload', { ignoreCache: true });
+      await until<boolean>(
+        cdp,
+        `performance.timeOrigin !== ${timeOrigin} && globalThis.aegis !== undefined && globalThis.aegis.presentation().status === 'ready'`,
+        (ready) => ready,
+      );
+      await evaluate(cdp, 'globalThis.aegis.ready.then(() => true)');
+      expect(await evaluate(cdp, read)).toEqual({
+        tick: targetTick,
+        generation: 0,
+        frame: 0.5,
+        progress: '1 / 1 complete',
+        outcome: 'Objective complete',
+        effects: 0,
+        dropped: 0,
+        hash: first.hash,
+      });
+      session.world.events.emit('ping', {});
+      await until<number>(
+        cdp,
+        'globalThis.aegis.presentation().render.effects.active',
+        (count) => count === 2,
+      );
+      expect(await evaluate<number>(cdp, 'globalThis.aegis.presentation().audio.dropped')).toBe(1);
+    } finally {
+      try {
+        await cdp.send('Page.navigate', { url: 'about:blank' });
+      } finally {
+        cdp.close();
+      }
+    }
+  }, 180_000);
+
   for (const id of ['broken', 'undecodable'])
     it(`${id}: shows the required-asset failure instead of an empty ready game`, async () => {
       const cdp = await openPage(browser.port, `${dev.url}/play/${id}/`, VIEWPORT);

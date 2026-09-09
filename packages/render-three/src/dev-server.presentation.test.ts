@@ -58,11 +58,14 @@ async function start(basePath = '', definition = game()): Promise<DevServer> {
   games.push(server);
   return server;
 }
-async function frame(server: DevServer): Promise<FrameResponse> {
+async function frame(
+  server: DevServer,
+  presentationGeneration?: number | null,
+): Promise<FrameResponse> {
   const response = await fetch(`${server.url}/api/demo/frame`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ input: { seq: 1 } }),
+    body: JSON.stringify({ input: { seq: 1 }, presentationGeneration }),
   });
   expect(response.status).toBe(200);
   return response.json() as Promise<FrameResponse>;
@@ -293,6 +296,36 @@ describe('prefix-safe dev delivery', () => {
 });
 
 describe('presentation event transport and pacing', () => {
+  it('hydrates a new client from the full history atomically with the snapshot after the live cursor was drained', async () => {
+    const server = await start();
+    await state(server);
+    server.session('demo')!.world.events.emit('opened', { door: 'gate' });
+    const drained = await frame(server);
+    expect(drained.events).toEqual([
+      { type: 'opened', tick: 0, data: { door: 'gate' }, sequence: 0 },
+    ]);
+    const before = (await state(server)).hash;
+    const cold = await frame(server, null);
+    expect(cold.events).toEqual([]);
+    expect(cold.eventHistory).toEqual(drained.events);
+    expect(cold.snapshot.tick).toBe(cold.tick);
+    expect(cold.generation).toBe(0);
+    expect((await state(server)).hash).toBe(before);
+    expect((await frame(server, 0)).eventHistory).toBeUndefined();
+
+    await control(server, 'restart');
+    server.session('demo')!.world.events.emit('after', { value: 2 });
+    const changed = await frame(server, 0);
+    expect(changed.generation).toBe(1);
+    expect(changed.eventHistory).toEqual([
+      { type: 'after', tick: 0, data: { value: 2 }, sequence: 0 },
+    ]);
+    expect(changed.events).toEqual(changed.eventHistory);
+    expect((await frame(server, 1)).eventHistory).toBeUndefined();
+    const log = (await (await fetch(`${server.url}/api/demo/events`)).json()) as EventLog;
+    expect(log.events).toEqual(changed.eventHistory);
+  });
+
   it('preserves immutable payloads and original log indices; only /frame drains the cursor', async () => {
     const server = await start();
     await state(server);
@@ -316,6 +349,28 @@ describe('presentation event transport and pacing', () => {
     expect(next.events).toEqual([{ type: 'impact', tick: 0, data: { amount: 4 }, sequence: 2 }]);
     expect(next.hash).toBeUndefined();
     expect((await state(server)).hash).toEqual(expect.any(String));
+  });
+
+  it('rejects invalid hydration generations without advancing or draining the session', async () => {
+    const server = await start();
+    await state(server);
+    server.session('demo')!.world.events.emit('retained', {});
+    const before = (await state(server)).hash;
+    for (const presentationGeneration of [-1, 0.5, '0', Number.MAX_SAFE_INTEGER + 1]) {
+      const reply = await fetch(`${server.url}/api/demo/frame`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: { seq: 1 }, presentationGeneration }),
+      });
+      expect(reply.status).toBe(400);
+      expect(await reply.json()).toEqual({
+        error: 'presentationGeneration must be null or a nonnegative safe integer.',
+      });
+    }
+    expect((await state(server)).hash).toBe(before);
+    expect((await frame(server)).events).toEqual([
+      { type: 'retained', tick: 0, data: {}, sequence: 0 },
+    ]);
   });
 
   it('increments generation on restart and restarts sequence indices without draining control reads', async () => {

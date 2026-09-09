@@ -16,6 +16,8 @@ import type { ResolvedPresentation } from './presentation/schema.js';
 export interface FrameRequest {
   /** The human's input since the previous frame. */
   input: InputPacket;
+  /** Last hydrated presentation generation; null requests initial history. Omit for legacy clients. */
+  presentationGeneration?: number | null;
 }
 
 /** One event the simulation emitted, flattened for the HUD feed. */
@@ -28,6 +30,30 @@ export interface EventLine {
   data?: unknown;
   /** Original index in this generation's immutable event history. */
   sequence?: number;
+}
+
+/** Hydration requires a complete ordered prefix, not a drained or future event suffix. */
+export function assertEventHistory(events: readonly EventLine[], tick: number): void {
+  if (!Array.isArray(events) || !Number.isSafeInteger(tick) || tick < 0)
+    throw new Error(
+      '[aegis] Presentation history requires an event array and a valid snapshot tick.',
+    );
+  let previousTick = 0;
+  for (const [index, event] of events.entries()) {
+    if (
+      event === null ||
+      typeof event !== 'object' ||
+      typeof event.type !== 'string' ||
+      event.sequence !== index ||
+      !Number.isSafeInteger(event.tick) ||
+      event.tick < previousTick ||
+      event.tick > tick
+    )
+      throw new Error(
+        `[aegis] Invalid presentation history at event ${index}: expected an ordered sequence prefix within snapshot tick ${tick}.`,
+      );
+    previousTick = event.tick;
+  }
 }
 
 /** The world as the page should draw it. */
@@ -56,6 +82,8 @@ export interface FrameResponse {
   events: readonly EventLine[];
   /** Render-only restart generation, present only when presentation is configured. */
   generation?: number;
+  /** Full sequenced history captured atomically with this snapshot, only on a hydration request. */
+  eventHistory?: readonly EventLine[];
 }
 
 /** Session commands that are not gameplay input. */

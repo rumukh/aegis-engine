@@ -2,7 +2,9 @@ import { setImmediate as settle } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { platformerPlugin } from '@aegis/mode-platformer';
 import type { EventLine, FrameResponse } from '../protocol.js';
-import type { PresentationManifest } from '../presentation/schema.js';
+import type { PresentationManifest, ResolvedPresentation } from '../presentation/schema.js';
+import type { AssetLoadOptions } from '../presentation/assets.js';
+import { runtimeLoaders, runtimeManifest } from '../presentation/runtime-test-utils.js';
 import { installFakeDom, keyEvent } from '../testing/dom.js';
 import type { FakeDom } from '../testing/dom.js';
 import { PLATFORMER_SCENE } from '../testing/scenes.js';
@@ -21,6 +23,17 @@ vi.mock('three', async (importOriginal) => ({
     dispose(): void {}
   },
 }));
+vi.mock('../presentation/assets.js', async (importOriginal) => {
+  const assets = await importOriginal<typeof import('../presentation/assets.js')>();
+  return {
+    ...assets,
+    loadPresentationAssets: (config: ResolvedPresentation, options?: AssetLoadOptions) =>
+      assets.loadPresentationAssets(config, {
+        ...options,
+        loaders: options?.loaders ?? runtimeLoaders(),
+      }),
+  };
+});
 
 class HudElement extends EventTarget {
   textContent = '';
@@ -64,10 +77,14 @@ beforeEach(() => {
   dom = installFakeDom();
   globalEvents = new EventTarget();
   elements = new Map(
-    ['hud-progress', 'hud-outcome', 'hud-step-0', 'hud-status', 'hud-events'].map((id) => [
-      id,
-      new HudElement(),
-    ]),
+    [
+      'hud-progress',
+      'hud-outcome',
+      'hud-step-0',
+      'hud-status',
+      'hud-events',
+      'loading-message',
+    ].map((id) => [id, new HudElement()]),
   );
   animationFrames = new Map();
   requests = [];
@@ -113,6 +130,7 @@ function response(
   generation: number | undefined,
   events: readonly EventLine[] = [],
   paused = false,
+  eventHistory: readonly EventLine[] | undefined = generation === undefined ? undefined : events,
 ): FrameResponse {
   const world = buildTestWorld(PLATFORMER_SCENE, platformerPlugin);
   return {
@@ -120,6 +138,7 @@ function response(
     generation,
     paused,
     events,
+    eventHistory,
     steps: 0,
     snapshot: { ...world.snapshot(), tick },
   };
@@ -144,22 +163,34 @@ async function display(): Promise<void> {
   await settle();
 }
 
-async function start(presentation = true): Promise<void> {
+async function launch(profile: PresentationManifest | undefined): Promise<void> {
   boot({
     gameId: 'demo',
     mode: 'platformer',
     title: 'Response ordering',
     objective: 'Open the gate',
     api: '../../api/demo',
-    ...(presentation ? { presentation: { manifest, baseUrl: '../../assets/demo/' } } : {}),
+    ...(profile === undefined
+      ? {}
+      : { presentation: { manifest: profile, baseUrl: '../../assets/demo/' } }),
   });
   await settle();
+}
+
+async function start(
+  presentation = true,
+  initial = response(0, presentation ? 0 : undefined),
+  profile = manifest,
+): Promise<void> {
+  await launch(presentation ? profile : undefined);
   await display();
-  await answer(takeRequest('frame'), response(0, presentation ? 0 : undefined));
+  const request = takeRequest('frame');
+  expect(JSON.parse(request.body!).presentationGeneration).toBe(presentation ? null : undefined);
+  await answer(request, initial);
   await debug().ready;
 }
 
-describe('dev-client response ordering', () => {
+describe('dev-client synchronization', () => {
   it('does not let a delayed restart acknowledgement erase a newer same-generation frame', async () => {
     await start();
     dom.dispatch('keydown', keyEvent('KeyR'));
@@ -183,6 +214,112 @@ describe('dev-client response ordering', () => {
     await answer(takeRequest('frame'), response(2, 1));
     await display();
     expect(JSON.parse(takeRequest('frame').body!).input.pressed).toContain('Jump');
+  });
+
+  describe('dev-client history hydration', () => {
+    it('restores a cold client at the current snapshot without replaying historical audio or transient effects', async () => {
+      const profile = runtimeManifest({
+        objects: [{ id: 'gate', visual: { kind: 'model', mesh: 'rig' } }],
+        effects: [
+          {
+            event: 'opened',
+            kind: 'clip',
+            target: { object: 'gate' },
+            clip: 'lift',
+            durationTicks: 30,
+            holdLast: true,
+          },
+          { event: 'ping', kind: 'burst', target: { object: 'gate' }, count: 3, durationTicks: 20 },
+        ],
+        audio: {
+          cues: [
+            { event: 'opened', asset: 'tone' },
+            { event: 'ping', asset: 'tone' },
+          ],
+        },
+        hud: manifest.hud,
+      });
+      const history = [
+        { type: 'opened', tick: 10, sequence: 0 },
+        { type: 'ping', tick: 11, sequence: 1 },
+        { type: 'completed', tick: 40, sequence: 2 },
+      ];
+      const initial = response(41, 3, [], false, history);
+      await start(true, initial, profile);
+      const runtime = debug().adapter.presentation!;
+      const fin = runtime.object('gate')!.object.getObjectByName('fin')!;
+      expect(elements.get('hud-progress')?.textContent).toBe('1 / 1 complete');
+      expect(elements.get('hud-outcome')?.textContent).toBe('Objective complete');
+      expect(fin.position.y).toBeCloseTo(2.1);
+      expect(debug().world.snapshot()).toEqual(initial.snapshot);
+      expect(runtime.stats().effects.active).toBe(0);
+      expect(debug().presentation()).toMatchObject({ audio: { dropped: 0, voices: 0 } });
+
+      await display();
+      const next = takeRequest('frame');
+      expect(JSON.parse(next.body!).presentationGeneration).toBe(3);
+      await answer(next, response(42, 3, [...history, { type: 'ping', tick: 41, sequence: 3 }]));
+      await display();
+      expect(fin.position.y).toBeCloseTo(2.1);
+      expect(runtime.stats().effects.active).toBe(3);
+      expect(debug().presentation()).toMatchObject({ audio: { dropped: 1, voices: 0 } });
+      expect(elements.get('hud-events')?.textContent.match(/opened/g)).toHaveLength(1);
+    });
+
+    it('does not announce readiness for missing or inconsistent history and retries the same hydration request', async () => {
+      await launch(manifest);
+      const ready = vi.fn();
+      void debug().ready.then(ready);
+      const missing = response(0, 0);
+      delete missing.eventHistory;
+      const badFrames = [
+        missing,
+        response(0, 0, [], false, [{ type: 'opened', tick: 0, sequence: 1 }]),
+        response(0, 0, [], false, [{ type: 'opened', tick: 1, sequence: 0 }]),
+        { ...response(0, 0), tick: 1 },
+      ];
+      for (const [index, invalid] of badFrames.entries()) {
+        await display();
+        const request = takeRequest('frame');
+        expect(JSON.parse(request.body!).presentationGeneration).toBeNull();
+        await answer(request, invalid);
+        expect(ready).not.toHaveBeenCalled();
+        expect(debug().tick()).toBe(-1);
+        expect(debug().timings().exchangeErrors).toBe(index + 1);
+        expect(elements.get('loading-message')?.textContent).toMatch(/history.*retry/i);
+      }
+      await display();
+      await answer(takeRequest('frame'), response(0, 0));
+      await debug().ready;
+      expect(ready).toHaveBeenCalledTimes(1);
+      expect(debug().tick()).toBe(0);
+    });
+
+    it('ignores stale-generation hydration after a newer restart and rehydrates only the accepted generation', async () => {
+      await start();
+      await display();
+      const stale = takeRequest('frame');
+      dom.dispatch('keydown', keyEvent('KeyR'));
+      await answer(takeRequest('control'), response(0, 2));
+      await answer(
+        stale,
+        response(50, 1, [], false, [
+          { type: 'opened', tick: 0, sequence: 0 },
+          { type: 'completed', tick: 1, sequence: 1 },
+        ]),
+      );
+      expect(debug().tick()).toBe(0);
+      expect(elements.get('hud-progress')?.textContent).toBe('0 / 1 complete');
+      expect(elements.get('hud-outcome')?.textContent).toBe('');
+      await display();
+      const current = takeRequest('frame');
+      expect(JSON.parse(current.body!).presentationGeneration).toBe(0);
+      await answer(current, response(2, 2));
+      expect(debug().tick()).toBe(2);
+      expect(debug().presentation()).toMatchObject({ generation: 2 });
+      await display();
+      expect(JSON.parse(takeRequest('frame').body!).presentationGeneration).toBe(2);
+    });
   });
 
   it('resets once when the restart response arrives first and ignores an earlier generation', async () => {

@@ -1341,6 +1341,172 @@ describe('generation-aware event feedback', () => {
   });
 });
 
+describe('silent persistent-history hydration', () => {
+  it('restores only the latest held state, seeds deduplication and never replays transient extension events', async () => {
+    const manifest = runtimeManifest({
+      objects: [
+        { id: 'gate', visual: { kind: 'model', mesh: 'rig' } },
+        { id: 'sign', visual: { kind: 'sprite', texture: 'surface', frame: 'left' } },
+      ],
+      effects: [
+        {
+          event: 'open',
+          kind: 'clip',
+          target: { object: 'gate' },
+          clip: 'lift',
+          durationTicks: 30,
+          holdLast: true,
+        },
+        {
+          event: 'mark',
+          kind: 'frames',
+          target: { object: 'sign' },
+          frames: ['right'],
+          frameTicks: 1,
+          durationTicks: 1,
+          holdLast: true,
+        },
+        {
+          event: 'clear',
+          kind: 'frames',
+          target: { object: 'sign' },
+          frames: ['left'],
+          frameTicks: 1,
+          durationTicks: 1,
+          holdLast: true,
+        },
+        { event: 'spark', kind: 'burst', target: { object: 'gate' }, count: 3, durationTicks: 80 },
+      ],
+    });
+    const assets = own(await runtimeAssets(manifest));
+    const world = buildTestWorld(PLATFORMER_SCENE, platformerPlugin);
+    const adapter = own(createRenderAdapter('platformer', { presentation: { manifest, assets } }));
+    adapter.mount(world);
+    const runtime = presentation(adapter);
+    const extension = { update: vi.fn(), reset: vi.fn(), dispose: vi.fn() };
+    runtime.addEffect(extension);
+    const before = world.snapshot();
+    const events = [
+      { type: 'open', tick: 10, sequence: 0 },
+      { type: 'mark', tick: 12, sequence: 1 },
+      { type: 'spark', tick: 14, sequence: 2 },
+      { type: 'clear', tick: 40, sequence: 3 },
+    ];
+    runtime.hydrate(frame(50, { events }));
+    const sign = runtime.object('sign')!.object as Mesh;
+    expect(runtime.object('gate')!.object.getObjectByName('fin')!.position.y).toBeCloseTo(2.1);
+    expect((sign.material as MeshBasicMaterial).map).toBe(assets.texture('surface', 'left'));
+    expect(runtime.stats().effects.active).toBe(0);
+    expect(runtime.stats().dropped).toBe(0);
+    expect(extension.update).not.toHaveBeenCalled();
+    runtime.present(frame(50, { events }));
+    expect(runtime.stats().effects.active).toBe(0);
+    expect(extension.update).toHaveBeenLastCalledWith(expect.objectContaining({ events: [] }));
+    runtime.present(frame(51, { events: [{ type: 'spark', tick: 50, sequence: 4 }] }));
+    expect(runtime.stats().effects.active).toBe(3);
+    expect(extension.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ events: [{ type: 'spark', tick: 50, sequence: 4 }] }),
+    );
+    expect(world.snapshot()).toEqual(before);
+  });
+
+  it('reconstructs an in-flight held clip at its current age and clears it on restart', async () => {
+    const manifest = runtimeManifest({
+      objects: [{ id: 'gate', visual: { kind: 'model', mesh: 'rig' } }],
+      effects: [
+        {
+          event: 'open',
+          kind: 'clip',
+          target: { object: 'gate' },
+          clip: 'lift',
+          durationTicks: 30,
+          holdLast: true,
+        },
+      ],
+    });
+    const assets = own(await runtimeAssets(manifest));
+    const adapter = own(createRenderAdapter('platformer', { presentation: { manifest, assets } }));
+    adapter.mount(buildTestWorld(PLATFORMER_SCENE, platformerPlugin));
+    const runtime = presentation(adapter);
+    const fin = runtime.object('gate')!.object.getObjectByName('fin')!;
+    runtime.setReducedMotion(true);
+    runtime.hydrate(frame(20, { events: [{ type: 'open', tick: 10, sequence: 0 }] }));
+    expect(fin.position.y).toBeCloseTo(1.1 + 10 / 30);
+    expect(runtime.stats().effects.active).toBe(1);
+    runtime.present(frame(40));
+    expect(fin.position.y).toBeCloseTo(2.1);
+    expect(runtime.stats().effects.active).toBe(0);
+    runtime.hydrate(frame(0, { generation: 1 }));
+    expect(fin.position.y).toBeCloseTo(1.1);
+    runtime.hydrate(
+      frame(100, { generation: 0, events: [{ type: 'open', tick: 10, sequence: 0 }] }),
+    );
+    expect(fin.position.y).toBeCloseTo(1.1);
+  });
+
+  it('does not revive an older held frame superseded by a later nonpersistent animation', async () => {
+    const manifest = runtimeManifest({
+      objects: [{ id: 'sign', visual: { kind: 'sprite', texture: 'surface', frame: 'left' } }],
+      effects: [
+        {
+          event: 'mark',
+          kind: 'frames',
+          target: { object: 'sign' },
+          frames: ['right'],
+          durationTicks: 2,
+          frameTicks: 2,
+          holdLast: true,
+        },
+        {
+          event: 'flash',
+          kind: 'frames',
+          target: { object: 'sign' },
+          frames: ['right'],
+          durationTicks: 2,
+          frameTicks: 2,
+        },
+      ],
+    });
+    const assets = own(await runtimeAssets(manifest));
+    const adapter = own(createRenderAdapter('platformer', { presentation: { manifest, assets } }));
+    adapter.mount(buildTestWorld(PLATFORMER_SCENE, platformerPlugin));
+    const runtime = presentation(adapter);
+    runtime.hydrate(
+      frame(50, {
+        events: [
+          { type: 'mark', tick: 0, sequence: 0 },
+          { type: 'flash', tick: 10, sequence: 1 },
+        ],
+      }),
+    );
+    expect(((runtime.object('sign')!.object as Mesh).material as MeshBasicMaterial).map).toBe(
+      assets.texture('surface', 'left'),
+    );
+    expect(runtime.stats().effects.active).toBe(0);
+  });
+
+  it('refuses incomplete or future history before changing presentation state', async () => {
+    const manifest = runtimeManifest();
+    const assets = own(await runtimeAssets(manifest));
+    const adapter = own(createRenderAdapter('platformer', { presentation: { manifest, assets } }));
+    adapter.mount(buildTestWorld(PLATFORMER_SCENE, platformerPlugin));
+    const runtime = presentation(adapter);
+    for (const events of [
+      [{ type: 'open', tick: 0, sequence: 1 }],
+      [{ type: 'open', tick: 0 }],
+      [{ type: 'open', tick: 5, sequence: 0 }],
+      [
+        { type: 'open', tick: 2, sequence: 0 },
+        { type: 'close', tick: 1, sequence: 1 },
+      ],
+    ]) {
+      expect(() => runtime.hydrate(frame(3, { events }))).toThrow(/Invalid presentation history/);
+    }
+    expect(runtime.stats().effects.active).toBe(0);
+    expect(runtime.stats().dropped).toBe(0);
+  });
+});
+
 describe('reduced-motion preference', () => {
   it('stops active decorative motion/feedback immediately, suppresses new feedback, and preserves door clips', async () => {
     const manifest = runtimeManifest({
