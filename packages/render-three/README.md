@@ -7,6 +7,22 @@ pixels; this package is the one place pixels matter, and it must not compromise 
 > never writes to it, never advances it, never influences it. `noninterference.test.ts` proves it
 > per tick, for all three modes.
 
+## Preview assets without running a game
+
+```powershell
+npx aegis preview games\iso\assets\operative.gltf --clip walk --time 0.25 --out captures\operative.png --json
+npx aegis preview games\iso\assets\access-console.gltf --serve --watch --out-dir captures --json
+```
+
+The standalone asset studio accepts direct local models/images or selected resources from a
+`presentation/1` descriptor. It reuses the production loader and materials, but does not create
+a world, initialize a plugin, or start a game. The persistent operator page supports orbit,
+clip sampling/playback, reload, and revision-aware PNG capture with a fingerprinted recipe.
+
+Use `@aegis/render-three/preview` for the warm Node API. See the
+[asset preview reference](../../docs/api/asset-preview.md) for selection, lifecycle, safe local
+automation, supported formats, freshness, and timing semantics.
+
 ## Play the three PoC games
 
 ```

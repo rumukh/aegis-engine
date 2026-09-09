@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PreviewServerState } from './types.js';
 
 const guards = vi.hoisted(() => ({
   world: vi.fn(() => {
@@ -76,6 +77,53 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function studioCanvas(): HTMLCanvasElement {
+  vi.stubGlobal('document', { baseURI: 'http://127.0.0.1:5000/' });
+  vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: false }));
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  return Object.assign(new EventTarget(), {
+    parentElement: null,
+    width: 640,
+    height: 360,
+    getBoundingClientRect: () => ({ width: 640, height: 360 }),
+  }) as HTMLCanvasElement;
+}
+
+function materialRevision(revision: number): PreviewServerState {
+  return {
+    aegis: 'asset-preview-state/1',
+    revision,
+    status: 'prepared',
+    lastPreparedRevision: revision,
+    diagnostics: [],
+    document: {
+      revision,
+      fingerprint: String(revision).repeat(64),
+      source: {
+        name: 'material.json',
+        format: 'presentation/1',
+        sha256: 'a'.repeat(64),
+        bytes: 123,
+      },
+      dependencies: [],
+      selection: { kind: 'material', id: 'matte' },
+      choices: [{ kind: 'material', id: 'matte' }],
+      prepareMs: 1,
+      presentation: {
+        baseUrl: `./assets/r${revision}/`,
+        files: [],
+        manifest: { aegis: 'presentation/1', materials: [{ id: 'matte', shading: 'standard' }] },
+      },
+    },
+  };
+}
+
 describe('no-game proof for both standalone preview entry points', () => {
   it('arms guards which really fail if a world or simulation is created', () => {
     expect(guards.world).toThrow('NO-GAME: world');
@@ -117,43 +165,8 @@ describe('no-game proof for both standalone preview entry points', () => {
 
   it('mounts, renders, reconfigures, and disposes the actual studio controller with the same no-game guards armed', async () => {
     const { AssetPreviewStudio } = await import('./studio.js');
-    vi.stubGlobal('document', { baseURI: 'http://127.0.0.1:5000/' });
-    vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: false }));
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    const canvas = Object.assign(new EventTarget(), {
-      parentElement: null,
-      width: 640,
-      height: 360,
-      getBoundingClientRect: () => ({ width: 640, height: 360 }),
-    }) as HTMLCanvasElement;
-    const studio = new AssetPreviewStudio(canvas);
-    await studio.accept({
-      aegis: 'asset-preview-state/1',
-      revision: 1,
-      status: 'prepared',
-      lastPreparedRevision: 1,
-      diagnostics: [],
-      document: {
-        revision: 1,
-        fingerprint: 'fixture',
-        source: { name: 'material.json', format: 'presentation/1', sha256: 'fixture', bytes: 123 },
-        dependencies: [],
-        selection: { kind: 'material', id: 'matte' },
-        choices: [{ kind: 'material', id: 'matte' }],
-        prepareMs: 1,
-        presentation: {
-          baseUrl: './assets/r1/',
-          files: [],
-          manifest: { aegis: 'presentation/1', materials: [{ id: 'matte', shading: 'standard' }] },
-        },
-      },
-    });
+    const studio = new AssetPreviewStudio(studioCanvas());
+    await studio.accept(materialRevision(1));
     expect(studio.state().status).toBe('ready');
     expect(studio.state().stats?.triangles).toBeGreaterThan(100);
     studio.configure({ view: 'left' });
@@ -163,5 +176,49 @@ describe('no-game proof for both standalone preview entry points', () => {
     expect(guards.simulation).not.toHaveBeenCalled();
     studio.dispose();
     expect(studio.state()).toMatchObject({ status: 'disposed', stats: null });
+  });
+
+  it('refuses capture while reloading, commits only the newest load, and aborts work on disposal', async () => {
+    const { AssetPreviewStudio } = await import('./studio.js');
+    const studio = new AssetPreviewStudio(studioCanvas());
+    await studio.accept(materialRevision(1));
+    const second = studio.accept(materialRevision(2));
+    expect(studio.state()).toMatchObject({ revision: 2, status: 'loading', lastGoodRevision: 1 });
+    expect(() => studio.capture(1)).toThrow('not available for rendering');
+    const third = studio.accept(materialRevision(3));
+    await Promise.all([second, third]);
+    expect(studio.state()).toMatchObject({
+      revision: 3,
+      status: 'ready',
+      lastGoodRevision: 3,
+      fingerprint: '3'.repeat(64),
+    });
+    expect(studio.state().stats?.library.materials).toBe(1);
+    await studio.accept(materialRevision(2));
+    expect(studio.state().revision).toBe(3);
+    await studio.accept({
+      aegis: 'asset-preview-state/1',
+      revision: 4,
+      status: 'failed',
+      lastPreparedRevision: 3,
+      document: null,
+      diagnostics: [
+        {
+          code: 'AEG-PREVIEW-0005',
+          severity: 'error',
+          message: 'New asset failed to decode.',
+          location: { path: 'source' },
+          fix: 'Repair the asset.',
+        },
+      ],
+    });
+    expect(studio.state()).toMatchObject({ revision: 4, status: 'failed', lastGoodRevision: 3 });
+    expect(() => studio.capture(4)).toThrow('not available for rendering');
+    const pending = studio.accept(materialRevision(5));
+    studio.dispose();
+    await pending;
+    expect(studio.state()).toMatchObject({ status: 'disposed', stats: null });
+    expect(guards.world).not.toHaveBeenCalled();
+    expect(guards.simulation).not.toHaveBeenCalled();
   });
 });
