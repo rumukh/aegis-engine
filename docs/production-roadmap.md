@@ -59,15 +59,21 @@ The paused-step regression is repaired: presentation follows explicitly advanced
 without advancing on repeated paused display or picking updates. Existing simulation oracles
 are not re-pinned.
 
-The shared-platform review also identified these follow-ups, deliberately kept visible for the
-next recovery pass rather than mistaken for completed work:
+### Shared-presentation correctness continuation (2026-09-09)
 
-| Area                        | Remaining correctness work                                                                                                               |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Dev-client restart ordering | A delayed restart acknowledgement must not reset newer same-generation feedback or restore an older snapshot.                            |
-| Named sprite overrides      | A replacement sprite's explicit frame must take precedence over the overridden component's old atlas frame.                              |
-| glTF instance disposal      | Release clone-owned `InstancedMesh` buffers without disposing borrowed geometry, materials or textures.                                  |
-| Dev-client reload           | Hydrate terminal visual state and HUD progress from generation-aware event history without replaying historical audio or transient cues. |
+The four remaining findings from the shared-platform review were reproduced against the
+published checkpoint and repaired without changing simulation inputs or oracles:
+
+| Area                        | Corrected behavior                                                                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Dev-client restart ordering | Frame and control responses share generation acceptance. A delayed acknowledgement cannot reset fresh feedback/input or roll a newer snapshot backward.                                                                  |
+| Named sprite overrides      | An explicit binding frame wins in both synchronization and animation sampling. A replaced atlas cannot supply a stale frame; non-overridden component frame updates still work.                                          |
+| glTF instance disposal      | Model handles dispose clone-owned `InstancedMesh` buffers exactly once, retaining borrowed geometry/materials/textures until their library owner releases them.                                                          |
+| Dev-client reload           | Opt-in generation-aware history arrives atomically with the frame snapshot. Cold clients restore held clips/frames and HUD progress without replaying old audio or transient effects; fresh buffered events remain live. |
+
+These are correctness repairs, not the remaining artistic and production acceptance. The history
+handshake is specific to presentation-enabled dev clients; legacy wire shapes and static-session
+initialization remain unchanged. It is not the deferred snapshot-copy optimization.
 
 Final showcase review still needs representative dev and prefixed-static playthrough images,
 human input and narrow-viewport review, trusted audio unlock/mute, restart/resource behavior and

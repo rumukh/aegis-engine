@@ -242,12 +242,15 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const frameBody = (
     runtime: GameRuntime,
     steps: number,
-    options: { drainEvents?: boolean; withHash?: boolean } = {},
+    options: { drainEvents?: boolean; withHash?: boolean; withEventHistory?: boolean } = {},
   ): FrameResponse => {
     let fresh: readonly GameEvent[] = [];
+    const history =
+      options.drainEvents === true || options.withEventHistory === true
+        ? runtime.session.world.events.history()
+        : [];
     const offset = runtime.eventCursor;
     if (options.drainEvents === true) {
-      const history = runtime.session.world.events.history();
       fresh = history.slice(runtime.eventCursor);
       runtime.eventCursor = history.length;
     }
@@ -259,6 +262,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       snapshot: runtime.session.snapshot(),
       events: toEventLines(fresh, runtime.presentation !== undefined, offset),
       ...(runtime.presentation === undefined ? {} : { generation: runtime.generation }),
+      ...(options.withEventHistory === true ? { eventHistory: toEventLines(history, true) } : {}),
     };
   };
 
@@ -456,6 +460,16 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
 
       if (endpoint === 'frame' && request.method === 'POST') {
         const body = await readJsonBody<FrameRequest>(request);
+        if (
+          body?.presentationGeneration !== undefined &&
+          body.presentationGeneration !== null &&
+          (!Number.isSafeInteger(body.presentationGeneration) || body.presentationGeneration < 0)
+        ) {
+          sendJson(response, 400, {
+            error: 'presentationGeneration must be null or a nonnegative safe integer.',
+          });
+          return;
+        }
         if (body?.input !== undefined) runtime.session.input.submit(body.input);
         // Wall-clock in, whole fixed ticks out. The simulation never sees a variable dt.
         const now = clock();
@@ -465,7 +479,17 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
             : Math.min(Math.max(now - runtime.lastFrameAt, 0), MAX_FRAME_SECONDS);
         runtime.lastFrameAt = now;
         const steps = runtime.session.advance(elapsed);
-        sendJson(response, 200, frameBody(runtime, steps, { drainEvents: true }));
+        sendJson(
+          response,
+          200,
+          frameBody(runtime, steps, {
+            drainEvents: true,
+            withEventHistory:
+              runtime.presentation !== undefined &&
+              body?.presentationGeneration !== undefined &&
+              body.presentationGeneration !== runtime.generation,
+          }),
+        );
         return;
       }
 

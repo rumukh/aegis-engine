@@ -5,7 +5,7 @@ import { Name } from '@aegis/core';
 import type { Entity, World } from '@aegis/core';
 import { FIXTURE_MANIFEST, fixtureGlb, fixtureWav } from '../testing/presentation-fixture.js';
 import { loadPresentationAssets } from './assets.js';
-import type { PresentationAssets } from './assets.js';
+import type { AssetLoaders, PresentationAssets } from './assets.js';
 import type { PresentationFrame, PresentationRuntime } from './runtime.js';
 import type { PresentationManifest } from './schema.js';
 
@@ -28,23 +28,25 @@ export async function runtimeAssets(
 ): Promise<PresentationAssets> {
   return loadPresentationAssets(
     { manifest, baseUrl: './assets/' },
-    {
-      loaders: {
-        texture: async () => new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1),
-        model: async () => {
-          const gltf = await new GLTFLoader().parseAsync(fixtureGlb(), '');
-          gltf.animations.push(
-            new AnimationClip('lift', 1, [
-              new NumberKeyframeTrack('fin.position[y]', [0, 1], [1.1, 2.1]),
-            ]),
-          );
-          alterModel?.(gltf);
-          return gltf;
-        },
-        audio: async () => Uint8Array.from(fixtureWav()).buffer,
-      },
-    },
+    { loaders: runtimeLoaders(alterModel) },
   );
+}
+
+export function runtimeLoaders(alterModel?: (gltf: GLTF) => void): AssetLoaders {
+  return {
+    texture: async () => new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1),
+    model: async () => {
+      const gltf = await new GLTFLoader().parseAsync(fixtureGlb(), '');
+      gltf.animations.push(
+        new AnimationClip('lift', 1, [
+          new NumberKeyframeTrack('fin.position[y]', [0, 1], [1.1, 2.1]),
+        ]),
+      );
+      alterModel?.(gltf);
+      return gltf;
+    },
+    audio: async () => Uint8Array.from(fixtureWav()).buffer,
+  };
 }
 
 export function entityNamed(world: World, name: string): Entity {

@@ -100,6 +100,9 @@ Absent presentation data retains the primitive mode. With a manifest, selected a
 resolve: a missing texture, model, frame or clip is an actionable `AEG-RENDER-*` diagnostic, not
 a colored-box substitute. Explicit entity bindings override authored Sprite/Model fields, then
 role bindings and the primitive palette provide defaults. Empty legacy appearance IDs remain legal.
+An explicit sprite binding frame wins over `Sprite.frame`. When that binding omits a frame,
+component-driven frame changes remain available for the same texture or an empty texture hint;
+a frame belonging to a replaced atlas is not applied to the new atlas.
 
 The loader uses the installed three.js texture/glTF facilities, with no CDN or runtime asset service.
 Supported assets are PNG/JPEG/WebP, self-contained SVG, uncompressed glTF 2.0/GLB, and
@@ -164,7 +167,8 @@ reason to duplicate loaders. `entity(name)`, `object(id)`, `setEntityState(name,
 `addEffect(effect)` expose existing instances and view-only behavior without hard-coded game names.
 
 The asset library owns textures, materials and geometry. A model instance's `dispose()` releases
-that instance, not another actor's shared geometry. Restart clears animation/effect/audio state
+that instance, including its cloned `InstancedMesh` buffers and skeletons, not another actor's
+shared geometry, materials or textures. Restart clears animation/effect/audio state
 and reuses loaded assets; page disposal releases the library after its instances. Do not call
 `dispose()` on a borrowed material or texture. Load errors, cancellation, same-tick duplicate
 events, stale restart generations and repeat disposal have explicit coverage.
@@ -176,6 +180,20 @@ pause/restart/mute/quality controls and collapsible diagnostics. Existing debug 
 readouts remain available. `aegis.ready` resolves only when real assets and the first world have
 mounted; `aegis.presentation()` exposes status and resource/effect/audio counters. Outcome panels
 report game events without changing simulation stepping.
+
+Dev-client reloads also restore held clip/frame poses and HUD progress before readiness. The
+frame request opts in with `presentationGeneration: null` initially and subsequently reports
+the last hydrated generation. When it differs, the server includes `eventHistory`: a full
+sequenced prefix captured with the same snapshot, avoiding a race between separate state and
+history reads. Legacy requests and routine same-generation frames keep their previous shape.
+Missing or inconsistent required history is a visible connection failure and is retried.
+
+Cold-page hydration is silent: old audio, bursts, pulses, recoil and transient extension callbacks
+are not replayed. Persistent animations still in progress are sampled at the snapshot tick.
+Buffered live events beyond the hydrated prefix are retained; a continuing page also preserves
+the fresh event suffix when observing a restart. Delayed control acknowledgements cannot reset
+an already accepted generation or roll its snapshot backward. Static sessions still start locally
+and need no history request.
 
 Audio bytes preload with assets. A trusted gesture unlocks the shared AudioContext; locked,
 muted, unavailable and error states are explicit. Unlock/unmute never replays old cues.
