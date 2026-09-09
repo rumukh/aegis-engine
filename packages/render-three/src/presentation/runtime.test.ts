@@ -351,6 +351,65 @@ describe('asset-backed presentation geometry', () => {
     expect(() => adapter.sync(world)).toThrow(/Unknown material "missing"/);
   });
 
+  it.each(['left', 'old-idle'])(
+    'uses an explicit replacement frame instead of the previous atlas frame %s',
+    async (oldFrame) => {
+      const manifest = runtimeManifest({
+        entities: [
+          {
+            target: { name: 'player' },
+            visual: { kind: 'sprite', texture: 'surface', frame: 'right' },
+          },
+        ],
+      });
+      const assets = own(await runtimeAssets(manifest));
+      const world = buildTestWorld(PLATFORMER_SCENE, platformerPlugin);
+      const player = entityNamed(world, 'player');
+      world.add(player, Sprite, { texture: 'old-atlas', frame: oldFrame, z: 7 });
+      const before = world.snapshot();
+      const adapter = own(
+        createRenderAdapter('platformer', { presentation: { manifest, assets } }),
+      );
+      adapter.mount(world);
+      const runtime = presentation(adapter);
+      const mesh = spriteMesh(runtime, 'player');
+      expect((mesh.material as MeshBasicMaterial).map).toBe(assets.texture('surface', 'right'));
+      runtime.present(frame(0));
+      adapter.sync(world);
+      runtime.present(frame(10));
+      expect((mesh.material as MeshBasicMaterial).map).toBe(assets.texture('surface', 'right'));
+      expect(mesh.renderOrder).toBe(7);
+      expect(world.snapshot()).toEqual(before);
+    },
+  );
+
+  it('does not apply an old atlas frame when the replacement omits a frame', async () => {
+    const manifest = runtimeManifest({
+      entities: [{ target: { name: 'player' }, visual: { kind: 'sprite', texture: 'surface' } }],
+    });
+    const assets = own(await runtimeAssets(manifest));
+    const world = buildTestWorld(PLATFORMER_SCENE, platformerPlugin);
+    const player = entityNamed(world, 'player');
+    world.add(player, Sprite, { texture: 'old-atlas', frame: 'old-idle' });
+    const adapter = own(createRenderAdapter('platformer', { presentation: { manifest, assets } }));
+    adapter.mount(world);
+    const runtime = presentation(adapter);
+    runtime.present(frame(0));
+    expect((spriteMesh(runtime, 'player').material as MeshBasicMaterial).map).toBe(
+      assets.texture('surface'),
+    );
+    const sprite = world.getOrThrow(player, Sprite);
+    sprite.texture = 'surface';
+    for (const [tick, selected] of ['left', 'right'].entries()) {
+      sprite.frame = selected;
+      adapter.sync(world);
+      runtime.present(frame(tick + 1));
+      expect((spriteMesh(runtime, 'player').material as MeshBasicMaterial).map).toBe(
+        assets.texture('surface', selected),
+      );
+    }
+  });
+
   it('uses named bindings, then nonempty components, then role bindings, without asset-id fallbacks', async () => {
     const manifest = runtimeManifest({
       entities: [
@@ -617,7 +676,7 @@ describe('tick-derived motion and state-linked animation', () => {
 });
 
 describe('data-owned sprite sequence names', () => {
-  it('warms every state/event map and material before display, with authored-frame fallback for unmapped states', async () => {
+  it('warms every state/event map and uses the explicit binding frame for unmapped states', async () => {
     const manifest = namedSpriteManifest();
     const assets = own(await runtimeAssets(manifest));
     const clone = vi.spyOn(assets.texture('surface'), 'clone');
@@ -648,7 +707,7 @@ describe('data-owned sprite sequence names', () => {
     adapter.sync(world);
     runtime.present(frame(15));
     expect(runtime.entity('player')!.state).toBe('fall');
-    expect(map()).toBe(assets.texture('surface', 'settled'));
+    expect(map()).toBe(assets.texture('surface', 'default-pose'));
     delete world.getOrThrow(player, Sprite).frame;
     adapter.sync(world);
     runtime.present(frame(16));
