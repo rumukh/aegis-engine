@@ -156,7 +156,9 @@ an `asset-preview-capture/1` report.
 
 For an exact stored camera, settings accept `camera: { position, target, zoom?,
 orthographicHeight? }` and `projection`. The receipt records the actual camera used for the
-requested output aspect, not just the name of a view. `clip: null` selects rest pose.
+requested output aspect, not just the name of a view. Explicit camera zoom is not fitted a
+second time for portrait output, so a stored recipe preserves its framing. `clip: null`
+selects rest pose.
 
 `startAssetPreviewServer(options)` is the browser-free HTTP host for embedders. It performs
 preflight and serves the operator page, but cannot itself produce PNGs without attached

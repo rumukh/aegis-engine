@@ -273,6 +273,31 @@ describe('standalone asset preview: actual browser acceptance', () => {
       settings: { clip: 'walk', time: 0.25 },
     });
     expect(repaired.output.sha256).toBe(second.output.sha256);
+    const portrait = await preview.capture({
+      filename: 'operative-portrait.png',
+      width: 320,
+      height: 640,
+    });
+    const camera = portrait.recipe.camera;
+    const restored = await preview.capture({
+      filename: 'operative-portrait-restored.png',
+      width: 320,
+      height: 640,
+      settings: {
+        projection: camera.projection,
+        camera: {
+          position: camera.position,
+          target: camera.target,
+          zoom: camera.zoom,
+          ...(camera.orthographicHeight === null
+            ? {}
+            : { orthographicHeight: camera.orthographicHeight }),
+        },
+      },
+    });
+    expect(restored.recipe.camera).toEqual(camera);
+    expect(restored.output.sha256).toBe(portrait.output.sha256);
+    pixels(restored);
   });
 
   it('watches source/texture edits, preserves orbit and clip, rejects failed revisions, and recovers without restarting', async () => {
@@ -478,13 +503,21 @@ describe('standalone asset preview: actual browser acceptance', () => {
       page,
       'performance.getEntriesByType("resource").map(entry => entry.name)',
     );
+    const isGameRequest = (url: string): boolean => {
+      const path = new URL(url).pathname;
+      return (
+        /^\/vendor\/@aegis\/(?:harness|mode-fps|mode-iso|mode-platformer)\//.test(path) ||
+        /^\/vendor\/@aegis\/render-three\/dist\/client\/(?:boot|static-boot)\.js$/.test(path) ||
+        /^\/api\/[^/]+\/frame$/.test(path)
+      );
+    };
+    expect(isGameRequest(`${preview.url}vendor/@aegis/render-three/dist/client/boot.js`)).toBe(
+      true,
+    );
     expect(
-      network.some((url) =>
-        /\/(?:harness|mode-fps|mode-iso|mode-platformer)\/|\/client\/boot\.js|\/api\/.*\/frame/.test(
-          url,
-        ),
-      ),
+      isGameRequest(`${preview.url}vendor/@aegis/render-three/dist/preview/client/boot.js`),
     ).toBe(false);
+    expect(network.some(isGameRequest)).toBe(false);
     expect(
       network.every(
         (url) => url.startsWith(preview.url) || url.startsWith('blob:') || url.startsWith('data:'),

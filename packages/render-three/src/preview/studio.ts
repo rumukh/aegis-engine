@@ -571,8 +571,9 @@ export class AssetPreviewStudio {
     const oldZoom = this.#camera.zoom;
     try {
       this.#size(width, height);
-      // Keep the operator's orbit and pan while widening the vertical span for a portrait capture.
-      this.#camera.zoom = oldZoom * Math.min(1, width / height / oldAspect);
+      // An explicit camera can be a saved capture recipe; applying the fit again would shrink it.
+      if (this.#settings.camera === undefined)
+        this.#camera.zoom = oldZoom * Math.min(1, width / height / oldAspect);
       this.#camera.updateProjectionMatrix();
       const renderStart = performance.now();
       this.render();

@@ -53,6 +53,9 @@ vi.mock('three', async (original) => ({
     render() {
       guards.render();
     }
+    getContext() {
+      return { isContextLost: () => false };
+    }
     dispose() {}
     forceContextLoss() {}
   },
@@ -92,6 +95,8 @@ function studioCanvas(): HTMLCanvasElement {
     width: 640,
     height: 360,
     getBoundingClientRect: () => ({ width: 640, height: 360 }),
+    // Camera-only boundary. Actual PNG pixels are checked in the browser suite.
+    toDataURL: () => 'data:image/png;base64,AA==',
   }) as HTMLCanvasElement;
 }
 
@@ -125,6 +130,35 @@ function materialRevision(revision: number): PreviewServerState {
 }
 
 describe('no-game proof for both standalone preview entry points', () => {
+  it.each(['perspective', 'orthographic'] as const)(
+    'restores an exact stored %s capture camera without applying portrait zoom twice',
+    async (projection) => {
+      const { AssetPreviewStudio } = await import('./studio.js');
+      const studio = new AssetPreviewStudio(studioCanvas(), { projection });
+      try {
+        await studio.accept(materialRevision(1));
+        const first = studio.capture(1, 256, 512);
+        expect(first.recipe.camera.zoom).toBeCloseTo(256 / 512 / (640 / 360), 8);
+        const camera = first.recipe.camera;
+        studio.configure({
+          projection: camera.projection,
+          camera: {
+            position: camera.position,
+            target: camera.target,
+            zoom: camera.zoom,
+            ...(camera.orthographicHeight === null
+              ? {}
+              : { orthographicHeight: camera.orthographicHeight }),
+          },
+        });
+        const restored = studio.capture(1, 256, 512);
+        expect(restored.recipe.camera).toEqual(camera);
+      } finally {
+        studio.dispose();
+      }
+    },
+  );
+
   it('arms guards which really fail if a world or simulation is created', () => {
     expect(guards.world).toThrow('NO-GAME: world');
     expect(guards.simulation).toThrow('NO-GAME: simulation');
