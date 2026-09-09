@@ -425,7 +425,9 @@ export class ManagedVisual {
     this.#modelData = model === undefined ? undefined : { ...model };
     this.root.visible = (sprite?.visible ?? true) && (model?.visible ?? true);
     if (this.#spec.kind === 'sprite') {
-      const frame = sprite?.frame ?? this.#spec.frame;
+      const frame =
+        this.#spec.frame ??
+        (sprite?.texture && sprite.texture !== this.#spec.texture ? undefined : sprite?.frame);
       this.#rememberFrame(frame);
       const animated =
         this.#lastState !== undefined && this.#spec.animations?.[this.#lastState] !== undefined;
@@ -512,7 +514,7 @@ export class ManagedVisual {
         override?.kind === 'frames'
           ? override.frame
           : sequence === undefined
-            ? (this.#sprite?.frame ?? spec.frame)
+            ? this.#authoredFrame
             : sequence.frames[
                 Math.floor(Math.max(0, tick - this.#stateStart) / sequence.frameTicks) %
                   sequence.frames.length
