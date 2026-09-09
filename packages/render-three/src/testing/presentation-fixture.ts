@@ -163,10 +163,18 @@ export function fixtureGltf(withTexture = true): string {
 }
 
 /** The same geometry in a GLB; Node can parse it without a browser's fetch progress events. */
-export function fixtureGlb(): ArrayBuffer {
+export function fixtureGlb(instanced = false): ArrayBuffer {
   const source = JSON.parse(fixtureGltf(false)) as {
     buffers: { uri?: string; byteLength: number }[];
+    nodes: { extensions?: { EXT_mesh_gpu_instancing: { attributes: { TRANSLATION: number } } } }[];
+    extensionsUsed?: string[];
   };
+  if (instanced) {
+    source.extensionsUsed = ['EXT_mesh_gpu_instancing'];
+    source.nodes[1]!.extensions = {
+      EXT_mesh_gpu_instancing: { attributes: { TRANSLATION: 0 } },
+    };
+  }
   const uri = source.buffers[0]?.uri;
   if (uri === undefined) throw new Error('Fixture buffer URI is missing.');
   const binary = Buffer.from(uri.slice(uri.indexOf(',') + 1), 'base64');

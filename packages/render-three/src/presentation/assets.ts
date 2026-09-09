@@ -1,6 +1,7 @@
 import {
   DoubleSide,
   FrontSide,
+  InstancedMesh,
   LinearFilter,
   LinearSRGBColorSpace,
   LoadingManager,
@@ -345,6 +346,7 @@ class AssetLibrary implements PresentationAssets {
         const skeletons = new Set<Skeleton>();
         root.traverse((node) => {
           if (node instanceof SkinnedMesh) skeletons.add(node.skeleton);
+          if (node instanceof InstancedMesh) node.dispose();
         });
         for (const skeleton of skeletons) skeleton.dispose();
         this.#instances.delete(instance);
