@@ -241,18 +241,10 @@ export function boot(config: BootConfig): void {
   function sendCommand(command: SessionCommand): void {
     // Keep the current loading/failure explanation intact until a real world exists.
     if (!mounted) return;
+    const responseGeneration = generation + (command === 'restart' ? 1 : 0);
     void postJson<FrameResponse>(`${config.api}/control`, { command: COMMANDS[command] })
       .then(({ value: response }) => {
-        if (stopped) return;
-        if (command === 'restart') {
-          collector.clear();
-          generation = response.generation ?? generation + 1;
-          host.reset(generation);
-        }
-        if ((response.generation ?? generation) < generation) return;
-        paused = response.paused;
-        if (response.tick >= lastTick || command === 'restart') applySnapshot(response.snapshot);
-        host.connection();
+        acceptResponse(response, responseGeneration);
       })
       .catch((error: unknown) => host.connection(error));
   }
@@ -311,24 +303,44 @@ export function boot(config: BootConfig): void {
     }
   };
 
+  const acceptResponse = (response: FrameResponse, fallbackGeneration: number): boolean => {
+    const incomingGeneration = response.generation ?? fallbackGeneration;
+    if (stopped || incomingGeneration < generation) return false;
+    if (incomingGeneration > generation) {
+      generation = incomingGeneration;
+      collector.clear();
+      host.reset(generation);
+      lastTick = -1;
+    }
+    // Control and frame replies can arrive in either order within the same generation.
+    if (response.tick >= lastTick) {
+      paused = response.paused;
+      applySnapshot(response.snapshot);
+    }
+    // An older frame can still carry events that a newer non-draining control reply omitted.
+    host.receive(response.events, generation);
+    host.connection();
+    return true;
+  };
+
   const exchange = async (): Promise<void> => {
     // Claim the waiters registered before this collection: their events are in this packet.
     const settling = syncWaiters;
     syncWaiters = [];
     const started = performance.now();
+    const requestGeneration = generation;
     try {
       const { value: response, bytes } = await postJson<FrameResponse>(`${config.api}/frame`, {
         input: collector.take(),
       });
-      if (stopped || (response.generation ?? generation) < generation) return;
+      if (stopped) return;
       timings.exchange = performance.now() - started;
       record(exchangeSamples, timings.exchange);
       timings.exchangeBytes = bytes;
-      paused = response.paused;
-      generation = response.generation ?? generation;
-      host.receive(response.events, generation);
-      applySnapshot(response.snapshot);
-      host.connection();
+      if (!acceptResponse(response, requestGeneration)) {
+        syncWaiters.push(...settling);
+        return;
+      }
       for (const resolve of settling) resolve();
     } catch (error) {
       timings.exchange = performance.now() - started;
