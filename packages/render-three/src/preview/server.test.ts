@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
@@ -194,5 +194,27 @@ describe('loopback asset-only host (no browser)', () => {
     await server.close();
     expect(server.state().status).toBe('closed');
     await expect(fetch(url)).rejects.toThrow();
+  });
+
+  it('invalidates a renamed dependency directory even when no individual file event is delivered', async () => {
+    const images = join(root, 'images');
+    const moved = join(root, 'moved-images');
+    mkdirSync(images);
+    renameSync(join(root, 'rig.png'), join(images, 'rig.png'));
+    const model = JSON.parse(readFileSync(source, 'utf8')) as { images: { uri: string }[] };
+    model.images[0]!.uri = 'images/rig.png';
+    writeFileSync(source, JSON.stringify(model));
+    server = await startAssetPreviewServer({ source, watch: true });
+    renameSync(images, moved);
+    await vi.waitFor(() => expect(server!.state().status).toBe('failed'), {
+      timeout: 5000,
+      interval: 20,
+    });
+    renameSync(moved, images);
+    await vi.waitFor(() => expect(server!.state().status).toBe('prepared'), {
+      timeout: 5000,
+      interval: 20,
+    });
+    expect(server.state().revision).toBeGreaterThan(1);
   });
 });
