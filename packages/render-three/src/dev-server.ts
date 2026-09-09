@@ -15,9 +15,9 @@
  * {@link GameDefinition.plugin}. It never renders anything either — that is the page's job.
  * @packageDocumentation
  */
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { extname } from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { DiagnosticError } from '@aegis/core';
 import type { Diagnostic, GameEvent } from '@aegis/core';
@@ -35,6 +35,7 @@ import {
 } from './presentation/files.js';
 import type { PreparedPresentation } from './presentation/files.js';
 import { isAssetPath } from './presentation/diagnostics.js';
+import { resolveVendorPath } from './vendor.js';
 import type {
   ControlRequest,
   EventLine,
@@ -42,6 +43,8 @@ import type {
   FrameRequest,
   FrameResponse,
 } from './protocol.js';
+
+export { resolveVendorPath } from './vendor.js';
 
 /** Options for {@link startDevServer}. */
 export interface DevServerOptions {
@@ -153,43 +156,6 @@ async function readJsonBody<T>(request: IncomingMessage): Promise<T | undefined>
   } catch {
     return undefined;
   }
-}
-
-/**
- * Resolve a `/vendor/...` path to a file on disk, or `undefined` if it escapes the allowed roots.
- * `/vendor/three/*` maps to the installed package; `/vendor/@aegis/<pkg>/*` to `packages/<pkg>`.
- */
-export function resolveVendorPath(repoRoot: string, urlPath: string): string | undefined {
-  let relative: string;
-  try {
-    relative = decodeURIComponent(urlPath.replace(/^\/vendor\//, ''));
-  } catch {
-    return undefined;
-  }
-  if (relative === '' || relative.includes('\0')) return undefined;
-
-  const parts = normalize(relative)
-    .split(/[\\/]/)
-    .filter((part) => part !== '' && part !== '.');
-  if (parts.some((part) => part === '..')) return undefined;
-
-  let root: string;
-  let rest: string[];
-  if (parts[0] === 'three') {
-    root = join(repoRoot, 'node_modules', 'three');
-    rest = parts.slice(1);
-  } else if (parts[0] === '@aegis' && parts[1] !== undefined) {
-    root = join(repoRoot, 'packages', parts[1]);
-    rest = parts.slice(2);
-  } else {
-    return undefined;
-  }
-
-  const target = resolve(root, ...rest);
-  const rootWithSep = resolve(root) + sep;
-  if (!target.startsWith(rootWithSep)) return undefined;
-  if (!existsSync(target) || !statSync(target).isFile()) return undefined;
-  return target;
 }
 
 /** Flatten recorded events into the HUD feed shape. */

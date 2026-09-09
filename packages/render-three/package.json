@@ -35,6 +35,18 @@
     "./presentation/node": {
       "types": "./dist/presentation/files.d.ts",
       "import": "./dist/presentation/files.js"
+    },
+    "./preview": {
+      "types": "./dist/preview/index.d.ts",
+      "import": "./dist/preview/index.js"
+    },
+    "./preview/client": {
+      "types": "./dist/preview/client/boot.d.ts",
+      "import": "./dist/preview/client/boot.js"
+    },
+    "./preview/studio": {
+      "types": "./dist/preview/studio.d.ts",
+      "import": "./dist/preview/studio.js"
     }
   },
   "files": [
