@@ -103,6 +103,60 @@ describe('preview CLI (CPU only; real captures live in preview.browser.test.ts)'
     });
   });
 
+  it.each([
+    ['--time', ''],
+    ['--time', '   '],
+    ['--port', ''],
+    ['--out-dir', ' '],
+    ['--asset-root', ''],
+    ['--camera', '1,,3', '--target', '0,0,0'],
+    ['--camera', '1,2,3', '--target', '0, ,0'],
+  ])('does not coerce empty values into capture settings: %j', async (...flags) => {
+    const start = vi.fn(async (): Promise<never> => {
+      throw new Error('Preview startup sentinel');
+    });
+    const command = createPreviewCommand({ start });
+    const args = ['specimen.svg', '--serve', ...flags];
+    const context = io(['preview', ...args]);
+    await expect(
+      command.run({
+        args: parseArgs(args, { ...GLOBAL_FLAGS, ...command.flags }),
+        io: context.io,
+        modes: noModes,
+      }),
+    ).rejects.toThrow();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('reaches the guarded startup boundary for explicit valid zeroes and coordinates', async () => {
+    const start = vi.fn(async (): Promise<never> => {
+      throw new Error('Preview startup sentinel');
+    });
+    const command = createPreviewCommand({ start });
+    const args = [
+      'specimen.svg',
+      '--out',
+      'valid.png',
+      '--time',
+      '0',
+      '--port',
+      '0',
+      '--camera',
+      '1,2,3',
+      '--target',
+      '0,0,0',
+    ];
+    const context = io(['preview', ...args]);
+    await expect(
+      command.run({
+        args: parseArgs(args, { ...GLOBAL_FLAGS, ...command.flags }),
+        io: context.io,
+        modes: noModes,
+      }),
+    ).rejects.toThrow('Preview startup sentinel');
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps --watch warm, resolves paths from CliIO, and closes the managed session on stop', async () => {
     let received: AssetPreviewOptions | undefined;
     const closed = vi.fn();

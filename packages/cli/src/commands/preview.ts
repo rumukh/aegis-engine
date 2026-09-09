@@ -118,6 +118,11 @@ function selection(ctx: CommandContext): PreviewSelection | undefined {
   return undefined;
 }
 
+function coordinates(value: string): number[] {
+  // Let shared finite-vector validation reject omissions instead of Number('') inventing zeroes.
+  return value.split(',').map((part) => (part.trim() === '' ? NaN : Number(part)));
+}
+
 function settings(ctx: CommandContext): PreviewSettings {
   const { args } = ctx;
   const result: PreviewSettings = {};
@@ -149,8 +154,8 @@ function settings(ctx: CommandContext): PreviewSettings {
       ? {}
       : {
           camera: {
-            position: camera.split(',').map(Number),
-            target: target.split(',').map(Number),
+            position: coordinates(camera),
+            target: coordinates(target),
           },
         }),
   });
@@ -197,6 +202,15 @@ export function createPreviewCommand(deps: PreviewCommandDeps = {}): Command {
     },
     async run(ctx) {
       const { args, io } = ctx;
+      for (const [name, value] of Object.entries(args.flags)) {
+        if (typeof value === 'string' && value.trim() === '') {
+          throw new AegisCliError(
+            CliCode.InvalidFlagValue,
+            `Flag --${name} must not have an empty value.`,
+            { fix: `Supply a value for --${name}, or omit the flag to use its default.` },
+          );
+        }
+      }
       const source = resolvePath(
         io,
         requirePositional(args, 0, 'asset', 'aegis preview <asset> --out <file.png>'),
