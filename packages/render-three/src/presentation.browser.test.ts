@@ -51,6 +51,25 @@ let browser: LaunchedBrowser;
 beforeAll(async () => {
   temporary = mkdtempSync(join(tmpdir(), 'aegis-presentation-browser-'));
   const presentation = writePresentationFixture(join(temporary, 'assets'));
+  writeFileSync(
+    join(temporary, 'assets', 'surface.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24" viewBox="0 0 48 24">' +
+      '<rect width="24" height="24" fill="#ff0000"/>' +
+      '<rect x="24" width="24" height="24" fill="#00ff00"/></svg>',
+  );
+  presentation.manifest.assets = [
+    ...(presentation.manifest.assets ?? []),
+    {
+      id: 'vector',
+      kind: 'texture',
+      src: 'surface.svg',
+      provenance: {
+        author: 'Aegis contributors',
+        license: 'MIT',
+        source: 'presentation.browser.test.ts',
+      },
+    },
+  ];
   // The perspective fixture must sit in front of the nearby blast door, not behind it.
   const forMode = (mode: GameMode): PresentationSource => ({
     ...presentation,
@@ -74,6 +93,15 @@ beforeAll(async () => {
             mode === 'fps'
               ? { position: [0.28, 0, -0.65], scale: [0.22, 0.22, 0.22] }
               : { position: [1.5, 0, -3], scale: [0.75, 0.75, 0.75] },
+        },
+        {
+          id: 'vector',
+          anchor: 'camera',
+          visual: { kind: 'sprite', texture: 'vector' },
+          pose:
+            mode === 'fps'
+              ? { position: [0.28, 0.26, -0.65], scale: [0.22, 0.11, 0.22] }
+              : { position: [1.5, 1, -3], scale: [0.75, 0.375, 0.75] },
         },
       ],
     },
@@ -154,6 +182,7 @@ beforeAll(async () => {
     '.gltf': 'model/gltf+json',
     '.glb': 'model/gltf-binary',
     '.png': 'image/png',
+    '.svg': 'image/svg+xml',
     '.wav': 'audio/wav',
   };
   staticServer = createServer((request, response) => {
@@ -277,8 +306,30 @@ describe('real asset presentation in dev and static browsers', () => {
             fins: number[][];
           }>(cdp, inspect);
           expect(first.textures).toContain(32);
+          expect(first.textures).toContain(48);
           expect(first.rigVertices.length).toBeGreaterThanOrEqual(2);
           expect(first.fins).toHaveLength(1);
+          const vector = await evaluate<{ size: number[]; pixels: number[] }>(
+            cdp,
+            `(() => {
+              const image = globalThis.aegis.adapter.presentation.assets.texture('vector').image;
+              const canvas = document.createElement('canvas');
+              canvas.width = image.width;
+              canvas.height = image.height;
+              const context = canvas.getContext('2d');
+              if (context === null) throw new Error('SVG pixel probe requires a 2D context.');
+              context.drawImage(image, 0, 0);
+              return {
+                size: [image.width, image.height],
+                pixels: [
+                  ...context.getImageData(8, 12, 1, 1).data,
+                  ...context.getImageData(40, 12, 1, 1).data,
+                ],
+              };
+            })()`,
+          );
+          expect(vector.size).toEqual([48, 24]);
+          expect(vector.pixels).toEqual([255, 0, 0, 255, 0, 255, 0, 255]);
           const visibility = await evaluate<{ inView: boolean; nearestIsModel: boolean }>(
             cdp,
             `(async () => {
@@ -310,7 +361,14 @@ describe('real asset presentation in dev and static browsers', () => {
           ).toBe(true);
           const initialTick = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
           await until<number>(cdp, 'globalThis.aegis.tick()', (tick) => tick >= initialTick + 15);
-          const next = await evaluate<typeof first>(cdp, inspect);
+          // A looping clip can revisit the first pose between two asynchronous observations.
+          const next = await until<typeof first>(
+            cdp,
+            inspect,
+            (value) =>
+              value.fins[0]?.some((component, index) => component !== first.fins[0]?.[index]) ===
+              true,
+          );
           expect(next.fins[0]).not.toEqual(first.fins[0]);
           const traffic = await evaluate<string[]>(
             cdp,
@@ -318,6 +376,7 @@ describe('real asset presentation in dev and static browsers', () => {
           );
           const prefix = transport === 'dev' ? '/preview/' : '/nested/site/';
           expect(traffic.some((url) => url.endsWith('/surface.png'))).toBe(true);
+          expect(traffic.some((url) => url.endsWith('/surface.svg'))).toBe(true);
           expect(traffic.some((url) => url.endsWith('/rig.gltf'))).toBe(true);
           expect(traffic.every((url) => new URL(url).pathname.startsWith(prefix))).toBe(true);
           const before = await evaluate<{ assets: { modelInstances: number; textures: number } }>(

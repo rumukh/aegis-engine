@@ -95,7 +95,8 @@ function browserLoaders(
             ? 'image/webp'
             : 'image/png';
       const blob = new Blob([bytes], { type: mime });
-      await verifyPixels(blob);
+      // Chromium rejects SVG Blobs here; verifyImages checks their decoded image pixels instead.
+      if (mime !== 'image/svg+xml') await verifyPixels(blob);
       const local = URL.createObjectURL(blob);
       try {
         const texture = await new TextureLoader().loadAsync(local);

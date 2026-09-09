@@ -94,7 +94,9 @@ sizes and digests are carried in the prepared inventory. Author sources and lice
 The browser must support `createImageBitmap` for required image assets. Readiness includes a real
 pixel decode: an image load event, and even Chromium's `image.decode()`, can succeed on a PNG whose
 compressed pixels later fail WebGL upload. That corrupt-image case is a browser regression test,
-separate from the server's refusal to serve files changed after preflight.
+separate from the server's refusal to serve files changed after preflight. SVG textures are
+decoded as image elements before bitmap pixel validation, since Chromium rejects direct SVG
+Blob-to-bitmap conversion; they must still pass pixel validation before readiness resolves.
 
 Textures preserve alpha, sRGB/linear sampling and nearest/linear filtering. Atlas rectangles are
 normalized `[u0,v0,u1,v1]` in **top-left image coordinates**. The shared helper converts UVs and
