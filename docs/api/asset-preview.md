@@ -116,6 +116,12 @@ A revision is a session-local attempt number; a fingerprint identifies checked c
 Explicit reloads can create new attempt numbers for identical content. Unchanged filesystem
 notifications and writes of unrelated capture output do not create content revisions.
 
+Logical source/root parents are watched non-recursively with narrow entry filters, while
+current resolved asset roots carry the dependency watches. Retargeting a directory junction,
+renaming a dependency directory, or replacing a directory handle causes the appropriate
+watches to be rebound. Reloading does not leave a native watch attached to an old target.
+This does not recursively scan or watch a source root's parent directory.
+
 ## Warm Node API
 
 Use `@aegis/render-three/preview`, not the renderer's general barrel, to avoid game-host imports.

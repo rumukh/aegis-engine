@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,6 +136,29 @@ describe('asset-only source preparation', () => {
     expect(() => assertPreviewFresh(second)).not.toThrow();
     writeFileSync(join(root, 'rig.gltf'), '{}');
     rejected(() => assertPreviewFresh(second), 'AEG-PREVIEW-0004');
+  });
+
+  it('re-preflights a dependency junction retarget rather than serving the old checked file', () => {
+    const a = join(root, 'a');
+    const b = join(root, 'b');
+    mkdirSync(a);
+    mkdirSync(b);
+    writeFileSync(join(a, 'rig.png'), fixturePng('rig'));
+    writeFileSync(join(b, 'rig.png'), fixturePng());
+    const images = join(root, 'images');
+    symlinkSync(a, images, 'junction');
+    const model = JSON.parse(readFileSync(join(root, 'rig.gltf'), 'utf8')) as {
+      images: { uri: string }[];
+    };
+    model.images[0]!.uri = 'images/rig.png';
+    writeFileSync(join(root, 'rig.gltf'), JSON.stringify(model));
+    const first = prepareAssetPreview({ source: join(root, 'rig.gltf') });
+    rmSync(images, { recursive: true });
+    symlinkSync(b, images, 'junction');
+    rejected(() => assertPreviewFresh(first), 'AEG-PREVIEW-0004');
+    const second = prepareAssetPreview({ source: join(root, 'rig.gltf') }, 2);
+    expect(second.document.fingerprint).not.toBe(first.document.fingerprint);
+    expect(readFileSync(join(a, 'rig.png'))).toEqual(fixturePng('rig'));
   });
 
   it('refuses missing buffers, remote dependencies, unsupported encodings, and invalid image bytes', () => {

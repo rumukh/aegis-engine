@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { createReadStream, watch } from 'node:fs';
-import type { FSWatcher } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { basename, dirname, extname, relative, resolve } from 'node:path';
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DiagnosticError } from '@aegis/core';
 import { presentationMimeType, readPreparedPresentationFile } from '../presentation/files.js';
@@ -14,6 +13,7 @@ import { renderAssetPreviewPage } from './page.js';
 import { assertPreviewFresh, prepareAssetPreview } from './source.js';
 import type { PreparedPreview, PreviewSourceOptions } from './source.js';
 import { captureDimensions, validatePreviewSettings, validateSelection } from './settings.js';
+import { AssetPreviewWatch } from './watch.js';
 import type {
   PreviewCaptureReport,
   PreviewCaptureRequest,
@@ -170,7 +170,7 @@ export async function startAssetPreviewServer(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let automation: PreviewAutomation | undefined;
   const streams = new Set<ServerResponse>();
-  const watchers: FSWatcher[] = [];
+  let watcher: AssetPreviewWatch | undefined;
 
   const publish = (): void => {
     const event = `data: ${JSON.stringify(state)}\n\n`;
@@ -210,6 +210,17 @@ export async function startAssetPreviewServer(
         status: 'failed',
         document: null,
         diagnostics: previewDiagnostics(error),
+      };
+    }
+    try {
+      watcher?.refresh();
+    } catch (error) {
+      prepared = undefined;
+      state = {
+        ...state,
+        status: 'failed',
+        document: null,
+        diagnostics: previewDiagnostics(error, PreviewCode.Input),
       };
     }
     publish();
@@ -483,7 +494,7 @@ export async function startAssetPreviewServer(
     if (closed) return;
     closed = true;
     if (timer !== undefined) clearTimeout(timer);
-    for (const watcher of watchers) watcher.close();
+    watcher?.close();
     state = { ...state, status: 'closed', document: null };
     publish();
     for (const stream of streams) stream.end();
@@ -494,56 +505,66 @@ export async function startAssetPreviewServer(
     );
   };
   if (options.watch === true) {
-    const roots = new Set([
-      dirname(sourceOptions.source),
-      options.assetRoot ?? dirname(sourceOptions.source),
-    ]);
-    try {
-      for (const root of roots) {
-        const watcher = watch(root, { recursive: true }, (_event, filename) => {
-          if (closed) return;
-          const changed = filename === null ? null : resolve(root, filename.toString());
-          const known =
-            lastPrepared === undefined
-              ? []
-              : [
-                  lastPrepared.sourcePath,
-                  ...lastPrepared.prepared.files.map((entry) => entry.source),
-                ];
-          if (
-            changed !== null &&
-            state.status === 'prepared' &&
-            !known.some((entry) => relative(entry, changed) === '')
-          )
+    watcher = new AssetPreviewWatch(
+      sourceOptions,
+      (changed, binding) => {
+        if (closed) return;
+        const previous = lastPrepared;
+        const known =
+          previous === undefined
+            ? []
+            : [
+                previous.sourcePath,
+                previous.sourceRealPath,
+                ...previous.prepared.files.flatMap((entry) => [
+                  entry.source,
+                  join(previous.assetRoot, ...entry.path.split('/')),
+                ]),
+              ];
+        if (
+          !binding &&
+          changed !== null &&
+          state.status === 'prepared' &&
+          !known.some((entry) => {
+            const within = relative(changed, entry);
+            return (
+              within === '' ||
+              (!isAbsolute(within) && within !== '..' && !within.startsWith(`..${sep}`))
+            );
+          })
+        )
+          return;
+        if (state.status === 'prepared' && lastPrepared !== undefined) {
+          try {
+            assertPreviewFresh(lastPrepared);
+            if (binding) watcher?.refresh();
             return;
-          if (state.status === 'prepared' && lastPrepared !== undefined) {
-            try {
-              assertPreviewFresh(lastPrepared);
-              return;
-            } catch {
-              // A changed or unreadable checked file needs a new preflight, not a timestamp revision.
-            }
+          } catch {
+            // A changed or unreadable checked file needs a new preflight, not a timestamp revision.
           }
-          if (timer !== undefined) clearTimeout(timer);
-          else begin();
-          timer = setTimeout(() => {
-            timer = undefined;
-            finish();
-          }, 60);
-        });
-        watcher.on('error', (error) => {
-          if (timer !== undefined) clearTimeout(timer);
+        }
+        if (timer !== undefined) clearTimeout(timer);
+        else begin();
+        timer = setTimeout(() => {
           timer = undefined;
-          begin();
-          state = {
-            ...state,
-            status: 'failed',
-            diagnostics: previewDiagnostics(error, PreviewCode.Input),
-          };
-          publish();
-        });
-        watchers.push(watcher);
-      }
+          finish();
+        }, 60);
+      },
+      (error) => {
+        if (closed) return;
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+        begin();
+        state = {
+          ...state,
+          status: 'failed',
+          diagnostics: previewDiagnostics(error, PreviewCode.Input),
+        };
+        publish();
+      },
+    );
+    try {
+      watcher.refresh();
     } catch (error) {
       await close();
       throw new DiagnosticError(previewDiagnostics(error, PreviewCode.Input));

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, extname, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { DiagnosticError } from '@aegis/core';
 import { preparePresentation, readPreparedPresentationFile } from '../presentation/files.js';
 import type { PreparedPresentation } from '../presentation/files.js';
@@ -292,5 +292,25 @@ export function assertPreviewFresh(preview: PreparedPreview): void {
       'The source changed after this revision was prepared.',
       'Reload and capture the new revision; the last-good frame is not the current source.',
     );
-  for (const file of preview.prepared.files) readPreparedPresentationFile(file);
+  for (const file of preview.prepared.files) {
+    let resolved: string;
+    try {
+      resolved = realpathSync(join(preview.assetRoot, ...file.path.split('/')));
+    } catch {
+      throw previewError(
+        PreviewCode.Revision,
+        'dependencies',
+        `Dependency "${file.path}" no longer resolves under the prepared asset root.`,
+        'Restore or re-export the local closure and reload before capturing.',
+      );
+    }
+    if (resolved !== file.source)
+      throw previewError(
+        PreviewCode.Revision,
+        'dependencies',
+        `Dependency "${file.path}" was replaced or its symlink target changed.`,
+        'Re-preflight the new local closure; a previously checked target is not the current source.',
+      );
+    readPreparedPresentationFile(file);
+  }
 }
