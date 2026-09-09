@@ -1,0 +1,95 @@
+{
+  "aegis": "presentation/1",
+  "assets": [
+    {
+      "id": "engineer",
+      "kind": "texture",
+      "src": "games/platformer/assets/engineer.svg",
+      "colorSpace": "srgb",
+      "frames": {
+        "idle": [0, 0, 0.125, 0.5],
+        "run": [0.25, 0, 0.375, 0.5],
+        "jump": [0, 0.5, 0.125, 1],
+        "victory": [0.375, 0.5, 0.5, 1]
+      },
+      "provenance": {
+        "author": "Aegis contributors",
+        "license": "MIT",
+        "source": "games/platformer/assets/source/generate.mjs"
+      }
+    },
+    {
+      "id": "operative",
+      "kind": "gltf",
+      "src": "games/iso/assets/operative.gltf",
+      "provenance": {
+        "author": "Aegis contributors",
+        "license": "MIT",
+        "source": "games/iso/assets/source/generate.mjs"
+      }
+    },
+    {
+      "id": "console",
+      "kind": "gltf",
+      "src": "games/iso/assets/access-console.gltf",
+      "provenance": {
+        "author": "Aegis contributors",
+        "license": "MIT",
+        "source": "games/iso/assets/source/generate.mjs"
+      }
+    },
+    {
+      "id": "kestrel",
+      "kind": "gltf",
+      "src": "games/fps/assets/generated/kestrel-security.glb",
+      "provenance": {
+        "author": "Aegis contributors",
+        "license": "MIT",
+        "source": "games/fps/assets/generate.mjs"
+      }
+    },
+    {
+      "id": "rifle",
+      "kind": "gltf",
+      "src": "games/fps/assets/generated/vaultline-rifle.glb",
+      "provenance": {
+        "author": "Aegis contributors",
+        "license": "MIT",
+        "source": "games/fps/assets/generate.mjs"
+      }
+    },
+    {
+      "id": "deck-color",
+      "kind": "texture",
+      "src": "games/fps/assets/generated/deck-albedo.png",
+      "colorSpace": "srgb",
+      "provenance": {
+        "author": "Aegis contributors",
+        "license": "MIT",
+        "source": "games/fps/assets/generate.mjs"
+      }
+    },
+    {
+      "id": "deck-normal",
+      "kind": "texture",
+      "src": "games/fps/assets/generated/deck-normal.png",
+      "colorSpace": "linear",
+      "provenance": {
+        "author": "Aegis contributors",
+        "license": "MIT",
+        "source": "games/fps/assets/generate.mjs"
+      }
+    }
+  ],
+  "materials": [
+    {
+      "id": "deck",
+      "shading": "standard",
+      "map": "deck-color",
+      "normalMap": "deck-normal",
+      "roughness": 0.65,
+      "metalness": 0.45,
+      "repeat": [2, 2]
+    }
+  ]
+}
