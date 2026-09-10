@@ -1,6 +1,6 @@
 /**
- * `aegis validate` — schema-check scene / prefab / tilemap documents and print structured
- * diagnostics with their stable `AEG-CONTENT-####` codes (CHARTER principle 8).
+ * `aegis validate` — schema-check content and presentation documents with the owning package's
+ * structured diagnostics (CHARTER principle 8).
  *
  * Validation never throws for content problems: every issue is a {@link Diagnostic} with a code,
  * a location and a fix. The command exits `2` when any document has an error (or, under
@@ -22,6 +22,8 @@ import {
 } from '@aegis/content';
 import type { Diagnostic } from '@aegis/core';
 import { createSceneContext } from '@aegis/harness';
+import type { PresentationManifest } from '@aegis/render-three/presentation/schema';
+import { validatePresentation } from '@aegis/render-three/presentation/validate';
 import { dirname } from 'node:path';
 import { AegisCliError, CliCode, Exit } from '../errors.js';
 import { formatDiagnostics, hasErrors, json } from '../format.js';
@@ -32,11 +34,27 @@ import type { ResolvedPlugin } from '../plugin.js';
 import { flagBool, flagString, readText, requirePositional, resolvePath } from './shared.js';
 import { baseRegistry, resolveRunPlugin } from './sim.js';
 
+const PRESENTATION_FORMAT: PresentationManifest['aegis'] = 'presentation/1';
+
+/** Document formats handled by this command, also exposed through capability discovery. */
+export const VALIDATION_FORMATS = [
+  'scene/1',
+  'prefab/1',
+  'tilemap/1',
+  PRESENTATION_FORMAT,
+] as const;
+
+const PRESENTATION_VALIDATION = {
+  format: PRESENTATION_FORMAT,
+  scope: 'structural',
+  notChecked: ['asset-files', 'asset-decoding', 'initialized-world-bindings'],
+} as const;
+
 const USAGE = [
   'aegis validate <file...> [options]',
   '',
-  'Schema-check one or more scene/prefab/tilemap documents. Kind is detected from the',
-  'document\'s "aegis" discriminator ("scene/1" | "prefab/1" | "tilemap/1"). Arguments',
+  'Schema-check one or more scene/prefab/tilemap/presentation documents. Kind is detected from',
+  `the "aegis" discriminator (${VALIDATION_FORMATS.map((format) => `"${format}"`).join(' | ')}). Arguments`,
   'containing wildcards are expanded by the CLI, so quoted globs work on every shell.',
   '',
   "  --plugin <spec>   Validate scenes against this plugin's components (<module>#<export>).",
@@ -46,11 +64,16 @@ const USAGE = [
   '  --json            Emit diagnostics as JSON (stable error codes).',
   '  --strict          Treat warnings as errors (affects exit code).',
   '',
+  'presentation/1 checks are STRUCTURAL ONLY: manifest fields, declared references and limits.',
+  'Asset files/decoding and initialized-world bindings are NOT checked. No plugin is loaded',
+  'for presentation documents; --plugin/--mode apply only to scene/prefab documents.',
+  '',
   'Exit codes: 0 = clean, 2 = one or more documents had problems.',
   '',
   'Examples:',
   '  aegis validate level1.scene.json',
   '  aegis validate "levels/*.scene.json" --strict',
+  '  aegis validate look.presentation.json --json',
   '  aegis validate games/iso/levels/server-vault.scene.json \\',
   '    --plugin games/iso/dist/server-vault.js#serverVaultPlugin',
 ].join('\n');
@@ -60,6 +83,7 @@ interface FileReport {
   file: string;
   ok: boolean;
   plugin?: string;
+  validation?: typeof PRESENTATION_VALIDATION;
   diagnostics: readonly Diagnostic[];
 }
 
@@ -98,14 +122,18 @@ async function validateDocument(
   file: string,
   abs: string,
   text: string,
-): Promise<{ diagnostics: readonly Diagnostic[]; plugin?: string }> {
-  let discriminator: unknown;
+): Promise<Omit<FileReport, 'file' | 'ok'>> {
+  let document: unknown;
   try {
-    discriminator = (JSON.parse(text) as { aegis?: unknown }).aegis;
+    document = JSON.parse(text);
   } catch {
     // Fall through: parseScene will surface the InvalidJson diagnostic uniformly.
     return { diagnostics: parseScene(text, file).diagnostics };
   }
+  const discriminator =
+    typeof document === 'object' && document !== null && 'aegis' in document
+      ? document.aegis
+      : undefined;
 
   switch (discriminator) {
     case 'scene/1': {
@@ -139,6 +167,11 @@ async function validateDocument(
     }
     case 'tilemap/1':
       return { diagnostics: parseTilemap(text, file).diagnostics };
+    case PRESENTATION_FORMAT:
+      return {
+        diagnostics: validatePresentation(document, file).diagnostics,
+        validation: PRESENTATION_VALIDATION,
+      };
     default:
       return {
         diagnostics: [
@@ -147,7 +180,7 @@ async function validateDocument(
             `Unknown document kind ${JSON.stringify(discriminator)}.`,
             {
               location: { file, path: 'aegis' },
-              fix: 'Set "aegis" to one of: "scene/1", "prefab/1", "tilemap/1".',
+              fix: `Set "aegis" to one of: ${VALIDATION_FORMATS.map((format) => `"${format}"`).join(', ')}.`,
               data: { received: discriminator },
             },
           ),
@@ -182,10 +215,10 @@ function expandTargets(ctx: CommandContext, patterns: readonly string[]): string
   return files;
 }
 
-/** `aegis validate` — validate a scene/prefab/tilemap document against the schema. */
+/** `aegis validate` — validate content or presentation with its owning package's validator. */
 export const validateCommand: Command = {
   name: 'validate',
-  summary: 'Validate a scene/prefab/tilemap document.',
+  summary: 'Validate a scene/prefab/tilemap/presentation document.',
   usage: USAGE,
   flags: { plugin: 'value', mode: 'value', strict: 'boolean' },
   async run(ctx: CommandContext): Promise<number> {
@@ -197,10 +230,11 @@ export const validateCommand: Command = {
     for (const rel of expandTargets(ctx, args.positionals)) {
       const abs = resolvePath(io, rel);
       const text = readText(abs, io);
-      const { diagnostics, plugin } = await validateDocument(ctx, rel, abs, text);
+      const report = await validateDocument(ctx, rel, abs, text);
       const failed =
-        hasErrors(diagnostics) || (strict && diagnostics.some((d) => d.severity === 'warning'));
-      reports.push({ file: rel, ok: !failed, ...(plugin ? { plugin } : {}), diagnostics });
+        hasErrors(report.diagnostics) ||
+        (strict && report.diagnostics.some((d) => d.severity === 'warning'));
+      reports.push({ file: rel, ok: !failed, ...report });
     }
 
     const ok = reports.every((r) => r.ok);
@@ -210,7 +244,13 @@ export const validateCommand: Command = {
       io.out(
         reports
           .map((r) => {
-            const head = r.plugin !== undefined ? `# ${r.file} against plugin ${r.plugin}\n` : '';
+            const head =
+              r.validation !== undefined
+                ? `# ${r.file}: ${r.validation.format} structural validation only.\n` +
+                  '# Not checked: asset files/decoding or initialized-world bindings.\n'
+                : r.plugin !== undefined
+                  ? `# ${r.file} against plugin ${r.plugin}\n`
+                  : '';
             return head + formatDiagnostics(r.diagnostics, r.file);
           })
           .join('\n\n') + '\n',

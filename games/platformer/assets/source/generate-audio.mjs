@@ -1,9 +1,15 @@
 import { Buffer } from 'node:buffer';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { URL } from 'node:url';
+import { resolve, sep } from 'node:path';
+import { argv } from 'node:process';
+import { URL, pathToFileURL } from 'node:url';
 
 const sampleRate = 22050;
-const root = new URL('../', import.meta.url);
+const args = argv.slice(2);
+if (args.length !== 0 && (args.length !== 2 || args[0] !== '--out'))
+  throw new Error('Usage: node generate-audio.mjs [--out <directory>]');
+const root =
+  args.length === 0 ? new URL('../', import.meta.url) : pathToFileURL(resolve(args[1]) + sep);
 
 function noise(seed) {
   let state = seed >>> 0;

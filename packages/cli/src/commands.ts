@@ -8,11 +8,12 @@ import type { Command } from './command.js';
 import { runCommand } from './commands/run.js';
 import { testCommand } from './commands/test.js';
 import { inspectCommand } from './commands/inspect.js';
-import { validateCommand } from './commands/validate.js';
+import { validateCommand, VALIDATION_FORMATS } from './commands/validate.js';
 import { recordCommand } from './commands/record.js';
 import { replayCommand } from './commands/replay.js';
 import { scaffoldCommand } from './commands/scaffold.js';
 import { createDescribeCommand } from './commands/describe.js';
+import { previewCommand } from './commands/preview.js';
 
 export { runCommand } from './commands/run.js';
 export { testCommand } from './commands/test.js';
@@ -21,6 +22,7 @@ export { validateCommand } from './commands/validate.js';
 export { recordCommand } from './commands/record.js';
 export { replayCommand } from './commands/replay.js';
 export { scaffoldCommand } from './commands/scaffold.js';
+export { previewCommand, createPreviewCommand } from './commands/preview.js';
 
 /** Capability discovery reads this same live registry, including its own registration. */
 export const describeCommand = createDescribeCommand(() => COMMANDS);
@@ -50,11 +52,12 @@ export const COMMANDS: readonly Command[] = [
   {
     ...validateCommand,
     formats: {
-      reads: ['scene/1', 'prefab/1', 'tilemap/1'],
+      reads: VALIDATION_FORMATS,
       writes: [],
       stdout: ['text', 'json'],
     },
   },
+  previewCommand,
   {
     ...recordCommand,
     formats: {

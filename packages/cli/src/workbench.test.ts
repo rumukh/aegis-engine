@@ -610,6 +610,7 @@ describe('aegis describe: built CLI acceptance', () => {
     expect(data.operations.commands.map((c) => c.name)).toEqual([
       'describe',
       'inspect',
+      'preview',
       'record',
       'replay',
       'run',
@@ -649,6 +650,7 @@ describe('aegis describe: built CLI acceptance', () => {
       'scene/1',
       'prefab/1',
       'tilemap/1',
+      'presentation/1',
     ]);
     expect(cli(['--help']).out).toContain('describe');
     expect(cli(['describe', '--help']).out).toContain('capabilities/1');

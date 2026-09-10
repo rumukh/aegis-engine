@@ -1,6 +1,6 @@
 /**
  * `@aegis/cli` — the single command-line surface for Aegis: `run`, `test`, `inspect`,
- * `describe`, `validate`, `record`, `replay`, `scaffold`. This barrel exposes the programmatic API
+ * `describe`, `validate`, `preview`, `record`, `replay`, `scaffold`. This barrel exposes the programmatic API
  * (dispatcher, command registry, IO seam, arg parser) so the CLI can be embedded and tested;
  * the executable entry point lives in `main.ts`.
  * @packageDocumentation

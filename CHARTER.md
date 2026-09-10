@@ -121,6 +121,9 @@ complementary requirements, not substitutes.
       builds, with visible failures, bounded resource use and no simulation interference.
 - [ ] Agent-facing capability discovery and bounded inspection expose actual registered
       contracts rather than requiring an agent to guess or deliberately submit invalid content.
+- [ ] Agents can render and inspect individual models, textures, materials and animations
+      without initializing a game. The asset workbench reuses production loading, supports
+      warm revision-aware reload, and produces operator-visible captures with provenance.
 - [ ] Runtime improvements have comparable measurements and preserve existing deterministic
       outputs; deliberate gameplay changes carry independent expectations and explained pins.
 - [ ] An agent-facing guide (`AGENTS.md`) documents the full authoring loop end to end.

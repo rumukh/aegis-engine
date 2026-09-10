@@ -7,6 +7,22 @@ pixels; this package is the one place pixels matter, and it must not compromise 
 > never writes to it, never advances it, never influences it. `noninterference.test.ts` proves it
 > per tick, for all three modes.
 
+## Preview assets without running a game
+
+```powershell
+npx aegis preview games\iso\assets\operative.gltf --clip walk --time 0.25 --out captures\operative.png --json
+npx aegis preview games\iso\assets\access-console.gltf --serve --watch --out-dir captures --json
+```
+
+The standalone asset studio accepts direct local models/images or selected resources from a
+`presentation/1` descriptor. It reuses the production loader and materials, but does not create
+a world, initialize a plugin, or start a game. The persistent operator page supports orbit,
+clip sampling/playback, reload, and revision-aware PNG capture with a fingerprinted recipe.
+
+Use `@aegis/render-three/preview` for the warm Node API. See the
+[asset preview reference](../../docs/api/asset-preview.md) for selection, lifecycle, safe local
+automation, supported formats, freshness, and timing semantics.
+
 ## Play the three PoC games
 
 ```
@@ -84,6 +100,9 @@ Absent presentation data retains the primitive mode. With a manifest, selected a
 resolve: a missing texture, model, frame or clip is an actionable `AEG-RENDER-*` diagnostic, not
 a colored-box substitute. Explicit entity bindings override authored Sprite/Model fields, then
 role bindings and the primitive palette provide defaults. Empty legacy appearance IDs remain legal.
+An explicit sprite binding frame wins over `Sprite.frame`. When that binding omits a frame,
+component-driven frame changes remain available for the same texture or an empty texture hint;
+a frame belonging to a replaced atlas is not applied to the new atlas.
 
 The loader uses the installed three.js texture/glTF facilities, with no CDN or runtime asset service.
 Supported assets are PNG/JPEG/WebP, self-contained SVG, uncompressed glTF 2.0/GLB, and
@@ -94,7 +113,9 @@ sizes and digests are carried in the prepared inventory. Author sources and lice
 The browser must support `createImageBitmap` for required image assets. Readiness includes a real
 pixel decode: an image load event, and even Chromium's `image.decode()`, can succeed on a PNG whose
 compressed pixels later fail WebGL upload. That corrupt-image case is a browser regression test,
-separate from the server's refusal to serve files changed after preflight.
+separate from the server's refusal to serve files changed after preflight. SVG textures are
+decoded as image elements before bitmap pixel validation, since Chromium rejects direct SVG
+Blob-to-bitmap conversion; they must still pass pixel validation before readiness resolves.
 
 Textures preserve alpha, sRGB/linear sampling and nearest/linear filtering. Atlas rectangles are
 normalized `[u0,v0,u1,v1]` in **top-left image coordinates**. The shared helper converts UVs and
@@ -113,7 +134,8 @@ Event `burst`, `pulse`, `recoil`, `clip` and `frames` effects name their target 
 Clip/frame names belong in game data, not in engine code; `holdLast` supports a terminal pose.
 An optional effect target `node` addresses a named model anchor. Recoil moves a view object,
 never the aim camera. Effect timing derives from ticks; extra synchronization for picking cannot
-advance it. Payloads are preserved for extensions, but the renderer does not invent an exact
+advance it. An explicit authoritative step still advances presentation while paused; repeated
+display frames without a world step do not. Payloads are preserved for extensions, but the renderer does not invent an exact
 historic impact position when the event did not record one.
 
 Default collider-derived level and trigger visuals remain visible. A replacement environment may
@@ -145,7 +167,8 @@ reason to duplicate loaders. `entity(name)`, `object(id)`, `setEntityState(name,
 `addEffect(effect)` expose existing instances and view-only behavior without hard-coded game names.
 
 The asset library owns textures, materials and geometry. A model instance's `dispose()` releases
-that instance, not another actor's shared geometry. Restart clears animation/effect/audio state
+that instance, including its cloned `InstancedMesh` buffers and skeletons, not another actor's
+shared geometry, materials or textures. Restart clears animation/effect/audio state
 and reuses loaded assets; page disposal releases the library after its instances. Do not call
 `dispose()` on a borrowed material or texture. Load errors, cancellation, same-tick duplicate
 events, stale restart generations and repeat disposal have explicit coverage.
@@ -157,6 +180,20 @@ pause/restart/mute/quality controls and collapsible diagnostics. Existing debug 
 readouts remain available. `aegis.ready` resolves only when real assets and the first world have
 mounted; `aegis.presentation()` exposes status and resource/effect/audio counters. Outcome panels
 report game events without changing simulation stepping.
+
+Dev-client reloads also restore held clip/frame poses and HUD progress before readiness. The
+frame request opts in with `presentationGeneration: null` initially and subsequently reports
+the last hydrated generation. When it differs, the server includes `eventHistory`: a full
+sequenced prefix captured with the same snapshot, avoiding a race between separate state and
+history reads. Legacy requests and routine same-generation frames keep their previous shape.
+Missing or inconsistent required history is a visible connection failure and is retried.
+
+Cold-page hydration is silent: old audio, bursts, pulses, recoil and transient extension callbacks
+are not replayed. Persistent animations still in progress are sampled at the snapshot tick.
+Buffered live events beyond the hydrated prefix are retained; a continuing page also preserves
+the fresh event suffix when observing a restart. Delayed control acknowledgements cannot reset
+an already accepted generation or roll its snapshot backward. Static sessions still start locally
+and need no history request.
 
 Audio bytes preload with assets. A trusted gesture unlocks the shared AudioContext; locked,
 muted, unavailable and error states are explicit. Unlock/unmute never replays old cues.

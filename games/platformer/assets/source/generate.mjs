@@ -1,8 +1,14 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { URL } from 'node:url';
+import { resolve, sep } from 'node:path';
+import { argv } from 'node:process';
+import { URL, pathToFileURL } from 'node:url';
 import { format } from 'prettier';
 
-const root = new URL('../', import.meta.url);
+const args = argv.slice(2);
+if (args.length !== 0 && (args.length !== 2 || args[0] !== '--out'))
+  throw new Error('Usage: node generate.mjs [--out <directory>]');
+const root =
+  args.length === 0 ? new URL('../', import.meta.url) : pathToFileURL(resolve(args[1]) + sep);
 const ink = '#101f2b';
 const slate = '#284652';
 const teal = '#3c6b70';
@@ -194,6 +200,7 @@ function atlas(columns, width, height, frames, draw) {
 }
 
 function critter(frame) {
+  if (frame === 5) return '';
   const step = frame % 4;
   const shift = [0, 4, 0, -4][step];
   const body = [
@@ -558,6 +565,7 @@ function foreground() {
 }
 
 function effect(index) {
+  if (index === 8) return '';
   if (index < 4) {
     const amount = index + 1;
     const opacity = [0.95, 0.7, 0.4, 0.16][index];
@@ -608,7 +616,7 @@ const terrainNames = [
 
 const outputs = new Map([
   ['engineer.svg', svg(1280, 384, atlas(8, 160, 192, engineerPoses, engineer), gradients)],
-  ['critter.svg', svg(640, 128, atlas(5, 128, 128, [0, 1, 2, 3, 4], critter), gradients)],
+  ['critter.svg', svg(768, 128, atlas(6, 128, 128, [0, 1, 2, 3, 4, 5], critter), gradients)],
   [
     'terrain.svg',
     svg(
@@ -632,13 +640,13 @@ const outputs = new Map([
   [
     'effects.svg',
     svg(
-      1024,
+      1152,
       128,
       atlas(
-        8,
+        9,
         128,
         128,
-        Array.from({ length: 8 }, (_, i) => i),
+        Array.from({ length: 9 }, (_, i) => i),
         effect,
       ),
       gradients,
@@ -670,7 +678,7 @@ const manifest = {
       frameWidth: 160,
       frameHeight: 192,
       columns: 8,
-      anchor: { x: 80, y: 178 },
+      anchor: { x: 80, y: 180 },
       frames: frames(
         engineerPoses.map((pose) => pose.name),
         8,
@@ -690,13 +698,13 @@ const manifest = {
     },
     critter: {
       file: 'critter.svg',
-      width: 640,
+      width: 768,
       height: 128,
       frameWidth: 128,
       frameHeight: 128,
-      columns: 5,
+      columns: 6,
       anchor: { x: 64, y: 110 },
-      frames: frames(['walk-0', 'walk-1', 'walk-2', 'walk-3', 'stomped'], 5, 128, 128),
+      frames: frames(['walk-0', 'walk-1', 'walk-2', 'walk-3', 'stomped', 'clear'], 6, 128, 128),
     },
     terrain: {
       file: 'terrain.svg',
@@ -731,14 +739,24 @@ const manifest = {
     foreground: { file: 'foreground.svg', width: 1536, height: 512 },
     effects: {
       file: 'effects.svg',
-      width: 1024,
+      width: 1152,
       height: 128,
       frameWidth: 128,
       frameHeight: 128,
-      columns: 8,
+      columns: 9,
       frames: frames(
-        ['dust-0', 'dust-1', 'dust-2', 'dust-3', 'signal-glow', 'ember-glow', 'impact', 'spark'],
-        8,
+        [
+          'dust-0',
+          'dust-1',
+          'dust-2',
+          'dust-3',
+          'signal-glow',
+          'ember-glow',
+          'impact',
+          'spark',
+          'clear',
+        ],
+        9,
         128,
         128,
       ),

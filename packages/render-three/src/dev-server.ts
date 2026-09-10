@@ -15,9 +15,9 @@
  * {@link GameDefinition.plugin}. It never renders anything either — that is the page's job.
  * @packageDocumentation
  */
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { extname } from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { DiagnosticError } from '@aegis/core';
 import type { Diagnostic, GameEvent } from '@aegis/core';
@@ -35,6 +35,7 @@ import {
 } from './presentation/files.js';
 import type { PreparedPresentation } from './presentation/files.js';
 import { isAssetPath } from './presentation/diagnostics.js';
+import { resolveVendorPath } from './vendor.js';
 import type {
   ControlRequest,
   EventLine,
@@ -42,6 +43,8 @@ import type {
   FrameRequest,
   FrameResponse,
 } from './protocol.js';
+
+export { resolveVendorPath } from './vendor.js';
 
 /** Options for {@link startDevServer}. */
 export interface DevServerOptions {
@@ -155,43 +158,6 @@ async function readJsonBody<T>(request: IncomingMessage): Promise<T | undefined>
   }
 }
 
-/**
- * Resolve a `/vendor/...` path to a file on disk, or `undefined` if it escapes the allowed roots.
- * `/vendor/three/*` maps to the installed package; `/vendor/@aegis/<pkg>/*` to `packages/<pkg>`.
- */
-export function resolveVendorPath(repoRoot: string, urlPath: string): string | undefined {
-  let relative: string;
-  try {
-    relative = decodeURIComponent(urlPath.replace(/^\/vendor\//, ''));
-  } catch {
-    return undefined;
-  }
-  if (relative === '' || relative.includes('\0')) return undefined;
-
-  const parts = normalize(relative)
-    .split(/[\\/]/)
-    .filter((part) => part !== '' && part !== '.');
-  if (parts.some((part) => part === '..')) return undefined;
-
-  let root: string;
-  let rest: string[];
-  if (parts[0] === 'three') {
-    root = join(repoRoot, 'node_modules', 'three');
-    rest = parts.slice(1);
-  } else if (parts[0] === '@aegis' && parts[1] !== undefined) {
-    root = join(repoRoot, 'packages', parts[1]);
-    rest = parts.slice(2);
-  } else {
-    return undefined;
-  }
-
-  const target = resolve(root, ...rest);
-  const rootWithSep = resolve(root) + sep;
-  if (!target.startsWith(rootWithSep)) return undefined;
-  if (!existsSync(target) || !statSync(target).isFile()) return undefined;
-  return target;
-}
-
 /** Flatten recorded events into the HUD feed shape. */
 function toEventLines(events: readonly GameEvent[], presentation = false, offset = 0): EventLine[] {
   return events.map((event, index) => ({
@@ -276,12 +242,15 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const frameBody = (
     runtime: GameRuntime,
     steps: number,
-    options: { drainEvents?: boolean; withHash?: boolean } = {},
+    options: { drainEvents?: boolean; withHash?: boolean; withEventHistory?: boolean } = {},
   ): FrameResponse => {
     let fresh: readonly GameEvent[] = [];
+    const history =
+      options.drainEvents === true || options.withEventHistory === true
+        ? runtime.session.world.events.history()
+        : [];
     const offset = runtime.eventCursor;
     if (options.drainEvents === true) {
-      const history = runtime.session.world.events.history();
       fresh = history.slice(runtime.eventCursor);
       runtime.eventCursor = history.length;
     }
@@ -293,6 +262,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       snapshot: runtime.session.snapshot(),
       events: toEventLines(fresh, runtime.presentation !== undefined, offset),
       ...(runtime.presentation === undefined ? {} : { generation: runtime.generation }),
+      ...(options.withEventHistory === true ? { eventHistory: toEventLines(history, true) } : {}),
     };
   };
 
@@ -490,6 +460,16 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
 
       if (endpoint === 'frame' && request.method === 'POST') {
         const body = await readJsonBody<FrameRequest>(request);
+        if (
+          body?.presentationGeneration !== undefined &&
+          body.presentationGeneration !== null &&
+          (!Number.isSafeInteger(body.presentationGeneration) || body.presentationGeneration < 0)
+        ) {
+          sendJson(response, 400, {
+            error: 'presentationGeneration must be null or a nonnegative safe integer.',
+          });
+          return;
+        }
         if (body?.input !== undefined) runtime.session.input.submit(body.input);
         // Wall-clock in, whole fixed ticks out. The simulation never sees a variable dt.
         const now = clock();
@@ -499,7 +479,17 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
             : Math.min(Math.max(now - runtime.lastFrameAt, 0), MAX_FRAME_SECONDS);
         runtime.lastFrameAt = now;
         const steps = runtime.session.advance(elapsed);
-        sendJson(response, 200, frameBody(runtime, steps, { drainEvents: true }));
+        sendJson(
+          response,
+          200,
+          frameBody(runtime, steps, {
+            drainEvents: true,
+            withEventHistory:
+              runtime.presentation !== undefined &&
+              body?.presentationGeneration !== undefined &&
+              body.presentationGeneration !== runtime.generation,
+          }),
+        );
         return;
       }
 

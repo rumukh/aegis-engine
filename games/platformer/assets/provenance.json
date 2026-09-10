@@ -54,7 +54,7 @@
       "kind": "procedural-original-vector-art",
       "source": "source/generate.mjs",
       "reproduction": "node games/platformer/assets/source/generate.mjs",
-      "notes": "Deterministic authored paths and seeded surface detail, with no external images, fonts, or runtime network requests. SVG files have explicit intrinsic sizes and transparent backgrounds where appropriate. Standalone 128x128 terrain cells reuse the atlas source to permit ordinary material sampling/repeat without atlas-edge bleeding."
+      "notes": "Deterministic authored paths and seeded surface detail, with no external images, fonts, or runtime network requests. SVG files have explicit intrinsic sizes and transparent backgrounds where appropriate. Standalone 128x128 terrain cells reuse the atlas source to permit ordinary material sampling/repeat without atlas-edge bleeding. Transparent clear cells in the critter/effect atlases terminate one-shot feedback through the shared frame API; the engineer anchor is the bottom of the idle boot sole at pixel 180."
     },
     {
       "files": [

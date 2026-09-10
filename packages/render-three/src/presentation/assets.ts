@@ -1,6 +1,7 @@
 import {
   DoubleSide,
   FrontSide,
+  InstancedMesh,
   LinearFilter,
   LinearSRGBColorSpace,
   LoadingManager,
@@ -95,7 +96,8 @@ function browserLoaders(
             ? 'image/webp'
             : 'image/png';
       const blob = new Blob([bytes], { type: mime });
-      await verifyPixels(blob);
+      // Chromium rejects SVG Blobs here; verifyImages checks their decoded image pixels instead.
+      if (mime !== 'image/svg+xml') await verifyPixels(blob);
       const local = URL.createObjectURL(blob);
       try {
         const texture = await new TextureLoader().loadAsync(local);
@@ -344,6 +346,7 @@ class AssetLibrary implements PresentationAssets {
         const skeletons = new Set<Skeleton>();
         root.traverse((node) => {
           if (node instanceof SkinnedMesh) skeletons.add(node.skeleton);
+          if (node instanceof InstancedMesh) node.dispose();
         });
         for (const skeleton of skeletons) skeleton.dispose();
         this.#instances.delete(instance);

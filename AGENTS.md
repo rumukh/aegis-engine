@@ -27,8 +27,9 @@ Transcripts beginning `$ node .tmp/…` came from throwaway probe scripts writte
 directory while this guide was being checked; they are not files in the repository. Where the
 probe is worth reproducing, its source is inline in the surrounding section.
 
-**What this guide does not cover.** Rendering and the browser dev server (`@aegis/render-three`) —
-you never need them to build or verify a game. Authoring scenes through the typed
+**What this guide does not cover.** Full-game rendering and the browser dev server
+(`@aegis/render-three`) are separate from the headless gameplay loop. Standalone asset rendering
+is covered in [§5.7](#57-rendering-an-asset-without-a-game). Authoring scenes through the typed
 `createSceneBuilder` API rather than JSON. Writing a new **mode** (as opposed to a game on top of
 an existing one) — see [ADR-0006](./docs/adr/0006-mode-module-boundary.md). Multiplayer,
 networking and save games, which the engine does not have. If you need one of these, read the
@@ -77,18 +78,20 @@ Four properties define everything else:
 
 Be honest with yourself about this table before planning any work.
 
-| You want to…                              | Can you? | How                                                                                                     |
-| ----------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
-| Author a level                            | Yes      | Write a `*.scene.json` with an inline ASCII tilemap                                                     |
-| Schema-check content before running       | Yes      | `aegis validate` → stable `AEG-CONTENT-nnnn` codes                                                      |
-| Drive a game without a keyboard           | Yes      | The input-script DSL (`hold`, `press`, `click`, `aim`, …)                                               |
-| Watch the world at any tick               | Yes      | `aegis inspect --view world` — the entire world serialises to JSON                                      |
-| "See" a 2D level                          | Yes      | `aegis inspect --view ascii` — a character grid with a legend                                           |
-| "See" a 3D scene                          | Partly   | The semantic frame: projected screen positions, depth, occlusion. No pixels.                            |
-| Prove a playthrough completes             | Yes      | `defineGameTest` + `expectSim` + `assertInvariant`                                                      |
-| Reproduce a run exactly                   | Yes      | `aegis record` / `aegis replay`; hashes are byte-identical across runs                                  |
-| Run a **game's own** systems from the CLI | Yes      | `aegis.json` beside the scene, or `--plugin <module>#<export>` ([§3.4](#34-how-a-plugin-reaches-a-run)) |
-| Judge whether a jump "feels good"         | **No**   | Nothing in this engine gives you feel. Assert on measurable beats instead.                              |
+| You want to…                              | Can you? | How                                                                                                                                    |
+| ----------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Author a level                            | Yes      | Write a `*.scene.json` with an inline ASCII tilemap                                                                                    |
+| Discover a game's authoring vocabulary    | Yes      | `aegis describe [scene] --json` lists the selected plugin's declarations ([§2.4](#24-discovering-the-component-vocabulary))            |
+| Preview an asset without starting a game  | Yes      | `aegis preview <asset> --out <file.png>` renders a model, texture or declared material ([§5.7](#57-rendering-an-asset-without-a-game)) |
+| Schema-check content before running       | Yes      | `aegis validate` → stable `AEG-CONTENT-nnnn` codes                                                                                     |
+| Drive a game without a keyboard           | Yes      | The input-script DSL (`hold`, `press`, `click`, `aim`, …)                                                                              |
+| Watch the world at any tick               | Yes      | `aegis inspect --view world` — the entire world serialises to JSON                                                                     |
+| "See" a 2D level                          | Yes      | `aegis inspect --view ascii` — a character grid with a legend                                                                          |
+| "See" a 3D scene                          | Partly   | The semantic frame: projected screen positions, depth, occlusion. No pixels.                                                           |
+| Prove a playthrough completes             | Yes      | `defineGameTest` + `expectSim` + `assertInvariant`                                                                                     |
+| Reproduce a run exactly                   | Yes      | `aegis record` / `aegis replay`; hashes are byte-identical across runs                                                                 |
+| Run a **game's own** systems from the CLI | Yes      | `aegis.json` beside the scene, or `--plugin <module>#<export>` ([§3.4](#34-how-a-plugin-reaches-a-run))                                |
+| Judge whether a jump "feels good"         | **No**   | Nothing in this engine gives you feel. Assert on measurable beats instead.                                                             |
 
 ### 1.3 The package graph
 
@@ -190,7 +193,9 @@ Commands:
   run       Simulate a scene headlessly for a number of ticks.
   test      Discover and run headless gameplay tests.
   inspect   Inspect world, semantic frame or ASCII view at a tick.
-  validate  Validate a scene/prefab/tilemap document.
+  describe  Discover a game plugin and its supported authoring operations.
+  validate  Validate a scene/prefab/tilemap/presentation document.
+  preview   Preview local assets without starting a game.
   record    Run a scene and write a replay recording.
   replay    Replay a recording and verify determinism.
   scaffold  Generate a game, scene, tilemap, prefab or test from a template.
@@ -322,18 +327,34 @@ which is exactly why a scaffolded platformer scene has no ground and no ASCII vi
 
 ### 2.4 Discovering the component vocabulary
 
-Do not guess component ids. Ask the validator: hand it a document with a component id that
-cannot exist, and the JSON diagnostic lists every id registered for that mode.
+Do not guess component IDs or manufacture invalid content to discover them. Run `describe`
+before authoring, from the repository root:
 
 ```
-$ npx aegis validate .tmp/probe.scene.json --json
-{"files":[{"diagnostics":[{"code":"AEG-CONTENT-0005","data":{"component":"?","known":["AttackOrder","Attacker","Blocking","Controlled","Dead","GridPosition","Health","IsoActor","IsoCamera","Light","Model","MoveOrder","Name","Sprite","Transform","Trigger","Triggered"]},"fix":"Register the component type, or fix the component id.","location":{"path":"entities[0].components.?"},"message":"Entity \"x\" uses unknown component \"?\"","severity":"error"}],"file":".tmp/probe.scene.json","ok":false}],"ok":false,"strict":false}
+$ npx aegis describe --mode platformer --json
+$ npx aegis describe --mode iso --json
+$ npx aegis describe --mode fps --json
+$ npx aegis describe games\iso\levels\server-vault.scene.json --json
 ```
 
-(`.tmp/probe.scene.json` was
-`{ "aegis": "scene/1", "name": "probe", "mode": "iso", "entities": [{ "id": "x", "components": { "?": {} } }] }`.)
+The first three commands select stock modes. The scene command uses the same plugin selection
+as `run`: for Server Vault, its `aegis.json` selects
+`@aegis/game-iso#serverVaultPlugin`, reported as `plugin.spec` with `plugin.source: "config"`.
+Use `--plugin <module>#<export>` for an explicit override. A stock-mode inventory does **not**
+include a game's additional components or systems.
 
-The three vocabularies, obtained exactly that way:
+The `capabilities/1` JSON reports `components` with defaults and accepted field/schema facts,
+`resources.ids`, `prefabs.catalog`, the resolved `systems.order` and unresolved constraints,
+and the live CLI `operations.commands` with flags and formats. It reports unavailable facts
+honestly: `resources.valueSchemas` is `null`, prefab declarations are not expanded, and
+input-action/event inventories are not inferred. Omit `--json` for a readable inventory.
+
+**Discovery is not validation or a gameplay oracle.** It imports the plugin and reads its
+declarations/defaults/schedule, but creates no world, calls no `init` and runs no ticks.
+A supplied scene selects the plugin; `aegis validate` still needs to check the authored content
+before a run. See the [Agent workbench reference](./docs/api/agent-workbench.md) for field details.
+
+The stock component IDs reported by these commands:
 
 | Mode         | Registered component ids                                                                                        |
 | ------------ | --------------------------------------------------------------------------------------------------------------- |
@@ -343,6 +364,8 @@ The three vocabularies, obtained exactly that way:
 | `fps`        | …plus `CapsuleBody`, `FpsController`, `LookState`, `FpsCamera`, `Hitscan`, `HitBox`                             |
 
 Your game adds its own on top, through its plugin ([§3](#3-the-composed-plugin-pattern)).
+Unknown-component diagnostics still list candidates when fixing invalid content; the deliberate
+invalid-document probe used by older revisions of this guide is no longer the discovery workflow.
 
 ### 2.5 Trap: `tags` are permissive, `components` are strict
 
@@ -810,15 +833,17 @@ Action names (`Right`, `Jump`, `Fire`, `Forward`) are **logical** — never key 
 
 ### 5.1 The CLI surface
 
-| Command          | Use it for                                                           | Exit codes                            |
-| ---------------- | -------------------------------------------------------------------- | ------------------------------------- |
-| `aegis run`      | Simulate N ticks, print seed / hash / entity count / event histogram | 0 ok, 2 bad content                   |
-| `aegis inspect`  | Dump `world`, `frame` or `ascii` at a tick                           | 0 ok, 2 bad content                   |
-| `aegis validate` | Schema-check documents                                               | 0 clean, 2 problems                   |
-| `aegis record`   | Run and write a `*.replay` recording                                 | 0 ok                                  |
-| `aegis replay`   | Re-run a recording and check the pinned hash                         | 0 match, 1 mismatch                   |
-| `aegis test`     | Discover and run `*.gametest.{js,mjs,cjs}` modules                   | 0 all passed, 1 failure or none found |
-| `aegis scaffold` | Generate a game / scene / tilemap / prefab / test                    | 0 ok                                  |
+| Command          | Use it for                                                                        | Exit codes                                |
+| ---------------- | --------------------------------------------------------------------------------- | ----------------------------------------- |
+| `aegis run`      | Simulate N ticks, print seed / hash / entity count / event histogram              | 0 ok, 2 bad content                       |
+| `aegis inspect`  | Dump `world`, `frame` or `ascii` at a tick                                        | 0 ok, 2 bad content                       |
+| `aegis describe` | Discover plugin declarations and supported CLI operations without running a world | 0 described, nonzero on invalid selection |
+| `aegis preview`  | Render an individual asset, or keep an asset-only studio open for iteration       | 0 captured/closed, nonzero on failure     |
+| `aegis validate` | Schema-check documents                                                            | 0 clean, 2 problems                       |
+| `aegis record`   | Run and write a `*.replay` recording                                              | 0 ok                                      |
+| `aegis replay`   | Re-run a recording and check the pinned hash                                      | 0 match, 1 mismatch                       |
+| `aegis test`     | Discover and run `*.gametest.{js,mjs,cjs}` modules                                | 0 all passed, 1 failure or none found     |
+| `aegis scaffold` | Generate a game / scene / tilemap / prefab / test                                 | 0 ok                                      |
 
 Add `--json` to almost anything for machine-readable output. Prefer it: you get stable keys
 instead of a formatted table.
@@ -858,6 +883,49 @@ Note also what those ten tests _are_: five of them are **lose cases** — a corp
 that does not finish the level, an operative standing in the guard's fire until it dies, a capsule
 sliding along a wall. A suite that only proves the happy path passes when the failure conditions
 stop working.
+
+#### Bound world inspection explicitly
+
+Start with a small entity page and resource summaries, or filter to one subject and omit resources:
+
+```
+$ npx aegis inspect games\iso\levels\server-vault.scene.json --tick 0 --view world --limit 2 --offset 1 --resources summary --json
+$ npx aegis inspect games\iso\levels\server-vault.scene.json --tick 0 --view world --query "has:Guard" --limit 1 --resources none --json
+```
+
+At tick 0 the first command returns `guard` and `vault-door`, with this count excerpt:
+
+<!-- template-exempt: transcript excerpt of the bounded Server Vault inspection above; entity values and resource summaries omitted here -->
+
+```json
+{
+  "matched": 6,
+  "total": 6,
+  "page": {
+    "hasMore": true,
+    "limit": 2,
+    "nextOffset": 3,
+    "offset": 1,
+    "order": "entity-index",
+    "returned": 2,
+    "truncated": true
+  }
+}
+```
+
+`total` is the whole world and `matched` is the full query result, **not** the page length.
+`page.returned` counts the entities actually included; page order is ascending entity index.
+The guard-only command reports one match and one returned entity out of six total.
+The first command also returns two resource summaries but **zero full values**:
+`resourceSelection.valuesReturned: 0`, `omittedValues: 2`, `truncated: true`. Summary rows
+are not the resources themselves, and an entity limit does not limit resource output.
+
+Use `page.nextOffset` for the next page (`null` when no advancing page exists), `--limit 0`
+for counts/resources only, and `--resource <id>` to select one exact runtime resource.
+These controls are world-only; `--resources all` is still the default without a projection.
+**They bound returned rows, not simulation time, snapshot memory or byte size.** Values on
+selected entities/resources remain complete. See the
+[Agent workbench reference](./docs/api/agent-workbench.md#bound-world-output-explicitly).
 
 ### 5.2 Run
 
@@ -1167,6 +1235,60 @@ only a config file to read can still name it.
 | `frame(tick?)`, `ascii(tick?)` | Semantic frame / character grid at any captured tick         |
 | `assertInvariant(name, check)` | Check a property on every captured tick                      |
 | `recording()`, `replay()`      | Portable recording; deterministic re-run                     |
+
+### 5.7 Rendering an asset without a game
+
+When the question is about a model, material, texture or animation, do not construct a dummy
+scene or replay a game to reach a convenient camera. `aegis preview` uses the production asset
+loader and materials in a standalone studio. It creates no gameplay world, initializes no
+game plugin and runs no game systems. Pixel rendering still needs a Chromium-family browser
+with WebGL; "without a game" does not mean "without a renderer".
+
+Build the engine normally once, then capture an existing asset directly. Choose a review
+output directory separate from authored assets:
+
+```powershell
+npx aegis preview games\iso\assets\operative.gltf --clip walk --time 0.25 --out reviews\operative.png --json
+npx aegis preview games\platformer\assets\engineer.svg --out reviews\engineer.png --json
+```
+
+The PNG has a neighboring `<file.png>.preview.json` recipe recording the rendered revision,
+source/dependency fingerprints, selected asset and animation sample, camera, lighting,
+dimensions and timings. Direct inputs with undeclared authorship or licensing remain unknown;
+the tool does not invent provenance. Fixed capture settings aid comparison, but do not promise
+identical GPU pixels on different machines.
+
+For repeated edits, keep the studio and capture browser warm:
+
+```powershell
+npx aegis preview games\fps\assets\generated\kestrel-security.glb --serve --watch --out-dir reviews --json
+```
+
+Open the reported loopback URL in the browser canvas for the operator. Orbit, frame the asset,
+choose lighting, or select and scrub a clip there; use the warm capture API for another image.
+Changing an asset or its local dependencies does not require an engine rebuild or game restart.
+The revision/loading/error display distinguishes the accepted render from a failed new edit.
+Do not present a previous PNG as evidence of the new revision merely because that file exists.
+Stop the preview process when the review is over.
+
+A `presentation/1` JSON document can supply declared textures, atlas frames, models and
+materials: select them with `--texture`, `--frame`, `--model` or `--material`. Preview selects
+resources, not the descriptor's game entity bindings, effects or audio. `aegis preview --help`
+lists framing, projection, lighting and exact output-size controls.
+
+The [PoC asset studies](./poc/previews/asset-studies.presentation.json) provide ready-made
+model, atlas-frame and PBR material selections. Their paths are relative to the repository,
+so pass `--asset-root .` when running from its root:
+
+```powershell
+npx aegis preview poc\previews\asset-studies.presentation.json --asset-root . --texture engineer --frame victory --out reviews\engineer-victory.png --json
+npx aegis preview poc\previews\asset-studies.presentation.json --asset-root . --material deck --shape sphere --out reviews\deck.png --json
+```
+
+Inspect the actual image before presenting it, and retain the recipe beside it. An attractive
+studio render does not prove in-game collision alignment, lighting, performance or gameplay;
+those still require the existing PoC acceptance paths. The boundary is specified in
+[ADR-0011](./docs/adr/0011-standalone-asset-preview.md).
 
 ---
 
@@ -1602,7 +1724,8 @@ Work down it. Each rung is cheaper than the one below.
 3. **ASCII view at the suspect tick** — `aegis inspect --view ascii --tick N`. Cheap spatial
    read. Remember it clamps ([§5.3](#53-see-a-2d-level)).
 4. **World dump, filtered** — `aegis inspect --view world --query "has:Player"`. This is ground
-   truth: exact component values, exact positions.
+   truth: exact component values, exact positions. Use the output bounds from
+   [§5.1](#51-the-cli-surface) and read the full `matched`/`total` counts, not just the returned page.
 5. **Bisect the tick** — with `captureHistory: true`, `result.at(t)` gives you the world at any
    tick. Binary-search `tickHashes` for the first tick that differs between two runs; the
    `replay` command already does this for you and names the first divergent tick.

@@ -16,6 +16,7 @@ import type { GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { RenderAdapter } from '../adapter.js';
 import { BINDINGS } from '../bindings.js';
 import type { BootConfig, ControlCommand, FrameResponse } from '../protocol.js';
+import { assertEventHistory } from '../protocol.js';
 import { createInputCollector } from './input.js';
 import type { SessionCommand } from './input.js';
 import { PresentationHost } from './presentation-host.js';
@@ -187,6 +188,7 @@ export function boot(config: BootConfig): void {
   let paused = false;
   let inFlight = false;
   let generation = 0;
+  let hydratedGeneration: number | null = null;
   let stopped = false;
   let animationFrame = 0;
   let framesThisSecond = 0;
@@ -241,18 +243,10 @@ export function boot(config: BootConfig): void {
   function sendCommand(command: SessionCommand): void {
     // Keep the current loading/failure explanation intact until a real world exists.
     if (!mounted) return;
+    const responseGeneration = generation + (command === 'restart' ? 1 : 0);
     void postJson<FrameResponse>(`${config.api}/control`, { command: COMMANDS[command] })
       .then(({ value: response }) => {
-        if (stopped) return;
-        if (command === 'restart') {
-          collector.clear();
-          generation = response.generation ?? generation + 1;
-          host.reset(generation);
-        }
-        if ((response.generation ?? generation) < generation) return;
-        paused = response.paused;
-        if (response.tick >= lastTick || command === 'restart') applySnapshot(response.snapshot);
-        host.connection();
+        acceptResponse(response, responseGeneration, 'control');
       })
       .catch((error: unknown) => host.connection(error));
   }
@@ -300,7 +294,6 @@ export function boot(config: BootConfig): void {
         adapter.mount(mirror);
         mounted = true;
         resize();
-        host.mounted();
       }
       lastTick = snapshot.tick;
     } catch (error) {
@@ -311,24 +304,87 @@ export function boot(config: BootConfig): void {
     }
   };
 
+  const acceptResponse = (
+    response: FrameResponse,
+    fallbackGeneration: number,
+    source: 'frame' | 'control',
+  ): boolean => {
+    const incomingGeneration = response.generation ?? fallbackGeneration;
+    if (stopped || incomingGeneration < generation) return false;
+    const needsHistory =
+      config.presentation !== undefined && hydratedGeneration !== incomingGeneration;
+    let history: FrameResponse['eventHistory'];
+    if (source === 'frame' && needsHistory) {
+      if (response.eventHistory === undefined)
+        throw new Error(
+          '[aegis] The frame omitted required presentation history; retrying hydration.',
+        );
+      if (response.tick !== response.snapshot.tick)
+        throw new Error('[aegis] Presentation history and snapshot ticks disagree.');
+      assertEventHistory(response.eventHistory, response.tick);
+      let boundary = response.eventHistory.length;
+      if (hydratedGeneration !== null && response.events.length > 0) {
+        const first = response.events[0]!.sequence;
+        if (
+          first === undefined ||
+          !Number.isSafeInteger(first) ||
+          first < 0 ||
+          first > boundary ||
+          response.events.length !== boundary - first ||
+          response.events.some((event, index) => event.sequence !== first + index)
+        )
+          throw new Error('[aegis] Fresh events do not match the presentation history suffix.');
+        // A cold page is silent; a continuing page retains new-generation live feedback.
+        boundary = first;
+      }
+      history = response.eventHistory.slice(0, boundary);
+    }
+    if (incomingGeneration > generation) {
+      generation = incomingGeneration;
+      collector.clear();
+      host.reset(generation);
+      lastTick = -1;
+    }
+    // Control and frame replies can arrive in either order within the same generation.
+    if (response.tick >= lastTick) {
+      paused = response.paused;
+      applySnapshot(response.snapshot);
+    }
+    if (history !== undefined) {
+      adapter.sync(mirror);
+      host.hydrate(history, generation, lastTick);
+      hydratedGeneration = generation;
+    }
+    // An older frame can still carry events that a newer non-draining control reply omitted.
+    host.receive(response.events, generation);
+    if (config.presentation === undefined || hydratedGeneration === generation) {
+      host.mounted();
+      host.connection();
+    }
+    return true;
+  };
+
   const exchange = async (): Promise<void> => {
     // Claim the waiters registered before this collection: their events are in this packet.
     const settling = syncWaiters;
     syncWaiters = [];
     const started = performance.now();
+    const requestGeneration = generation;
     try {
       const { value: response, bytes } = await postJson<FrameResponse>(`${config.api}/frame`, {
         input: collector.take(),
+        ...(config.presentation === undefined
+          ? {}
+          : { presentationGeneration: hydratedGeneration }),
       });
-      if (stopped || (response.generation ?? generation) < generation) return;
+      if (stopped) return;
       timings.exchange = performance.now() - started;
       record(exchangeSamples, timings.exchange);
       timings.exchangeBytes = bytes;
-      paused = response.paused;
-      generation = response.generation ?? generation;
-      host.receive(response.events, generation);
-      applySnapshot(response.snapshot);
-      host.connection();
+      if (!acceptResponse(response, requestGeneration, 'frame')) {
+        syncWaiters.push(...settling);
+        return;
+      }
       for (const resolve of settling) resolve();
     } catch (error) {
       timings.exchange = performance.now() - started;
@@ -365,7 +421,8 @@ export function boot(config: BootConfig): void {
           timings.inFlight = false;
         });
     }
-    if (!mounted) return;
+    if (!mounted || (config.presentation !== undefined && hydratedGeneration !== generation))
+      return;
 
     const t1 = performance.now();
     try {

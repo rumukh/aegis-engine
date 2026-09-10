@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AnimationMixer, DataTexture, Mesh, SRGBColorSpace } from 'three';
+import { AnimationMixer, Color, DataTexture, InstancedMesh, Mesh, SRGBColorSpace } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FIXTURE_MANIFEST, fixtureGlb, fixtureWav } from '../testing/presentation-fixture.js';
 import { loadPresentationAssets } from './assets.js';
@@ -107,6 +107,65 @@ describe('real presentation assets and ownership', () => {
       ),
     ).rejects.toThrow(/rig.*broken glTF/);
     expect(disposal).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes clone-owned glTF instance buffers exactly once without releasing borrowed resources', async () => {
+    const decode = loaders();
+    decode.model = async () => new GLTFLoader().parseAsync(fixtureGlb(true), '');
+    const library = await loadPresentationAssets(
+      { manifest: FIXTURE_MANIFEST, baseUrl: './assets/' },
+      { loaders: decode },
+    );
+    try {
+      const a = library.instantiateModel('rig');
+      const b = library.instantiateModel('rig');
+      const first = a.root.getObjectByName('body');
+      const second = b.root.getObjectByName('body');
+      if (!(first instanceof InstancedMesh) || !(second instanceof InstancedMesh))
+        throw new Error('The GLB did not decode its instancing extension.');
+      expect(first.count).toBe(12);
+      expect(first.instanceMatrix).not.toBe(second.instanceMatrix);
+      expect(first.instanceMatrix.array).not.toBe(second.instanceMatrix.array);
+      expect(first.geometry).toBe(second.geometry);
+      expect(first.material).toBe(second.material);
+      first.setColorAt(0, new Color('#ff0000'));
+      second.setColorAt(0, new Color('#00ff00'));
+      expect(first.instanceColor).not.toBe(second.instanceColor);
+      const firstRelease = vi.fn();
+      const secondRelease = vi.fn();
+      const geometryRelease = vi.fn();
+      const materialRelease = vi.fn();
+      const textureRelease = vi.fn();
+      first.addEventListener('dispose', firstRelease);
+      second.addEventListener('dispose', secondRelease);
+      first.geometry.addEventListener('dispose', geometryRelease);
+      if (Array.isArray(first.material)) throw new Error('Expected the fixture single material.');
+      first.material.addEventListener('dispose', materialRelease);
+      library.texture('surface').addEventListener('dispose', textureRelease);
+      const remainingMatrix = second.instanceMatrix.array.slice();
+
+      a.dispose();
+      a.dispose();
+      expect(firstRelease).toHaveBeenCalledTimes(1);
+      expect(secondRelease).not.toHaveBeenCalled();
+      expect(geometryRelease).not.toHaveBeenCalled();
+      expect(materialRelease).not.toHaveBeenCalled();
+      expect(textureRelease).not.toHaveBeenCalled();
+      expect(second.instanceMatrix.array).toEqual(remainingMatrix);
+      expect(library.stats().modelInstances).toBe(1);
+
+      library.dispose();
+      b.dispose();
+      library.dispose();
+      expect(firstRelease).toHaveBeenCalledTimes(1);
+      expect(secondRelease).toHaveBeenCalledTimes(1);
+      expect(geometryRelease).toHaveBeenCalledTimes(1);
+      expect(materialRelease).toHaveBeenCalledTimes(1);
+      expect(textureRelease).toHaveBeenCalledTimes(1);
+      expect(library.stats().modelInstances).toBe(0);
+    } finally {
+      library.dispose();
+    }
   });
 
   it('does not resolve a missing ID, unknown atlas frame, or material as a default', async () => {

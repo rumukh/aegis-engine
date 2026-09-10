@@ -150,6 +150,7 @@ describe('shared browser presentation lifecycle', () => {
       onCommand: () => undefined,
       presentation: { manifest: { aegis: 'presentation/1' }, baseUrl: './assets/' },
     });
+
     const start = vi.fn();
     host.start(start);
     await expect(host.ready).rejects.toThrow(/missing required texture/);
@@ -159,6 +160,43 @@ describe('shared browser presentation lifecycle', () => {
       'error',
       'AEG-RENDER-0004 missing required texture',
     );
+  });
+
+  it('hydrates once per generation, retaining buffered live events but not sending historical cues to audio', async () => {
+    mocks.load.mockResolvedValue(library());
+    const hydrate = vi.fn();
+    const present = vi.fn();
+    mocks.createAdapter.mockReturnValue({
+      present,
+      dispose: vi.fn(),
+      resetPresentation: vi.fn(),
+      presentation: { hydrate, setReducedMotion: vi.fn() },
+    });
+    host = new PresentationHost({
+      canvas: canvas(),
+      mode: 'fps',
+      onCommand: () => undefined,
+      presentation: { manifest: { aegis: 'presentation/1' }, baseUrl: './assets/' },
+    });
+    host.start(() => host?.mounted());
+    await host.ready;
+    const historical = { type: 'old', tick: 0, sequence: 0 };
+    const fresh = { type: 'fresh', tick: 1, sequence: 1 };
+    host.receive([historical, fresh], 0);
+    host.hydrate([historical], 0, 1);
+    host.hydrate([historical], 0, 1);
+    expect(hydrate).toHaveBeenCalledTimes(1);
+    expect(mocks.hudReset).toHaveBeenCalledTimes(1);
+    host.present(1, false);
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ events: [fresh] }));
+    const audio = mocks.audio.mock.results[0]!.value;
+    expect(audio.consume).toHaveBeenLastCalledWith([fresh], 0, 1);
+    host.receive([historical], 0);
+    host.present(2, false);
+    expect(audio.consume).toHaveBeenLastCalledWith([], 0, 2);
+    host.reset(1);
+    host.hydrate([], 1, 0);
+    expect(hydrate).toHaveBeenCalledTimes(2);
   });
 
   it('still releases GPU owners when audio cleanup fails', async () => {

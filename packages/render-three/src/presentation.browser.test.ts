@@ -51,6 +51,25 @@ let browser: LaunchedBrowser;
 beforeAll(async () => {
   temporary = mkdtempSync(join(tmpdir(), 'aegis-presentation-browser-'));
   const presentation = writePresentationFixture(join(temporary, 'assets'));
+  writeFileSync(
+    join(temporary, 'assets', 'surface.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24" viewBox="0 0 48 24">' +
+      '<rect width="24" height="24" fill="#ff0000"/>' +
+      '<rect x="24" width="24" height="24" fill="#00ff00"/></svg>',
+  );
+  presentation.manifest.assets = [
+    ...(presentation.manifest.assets ?? []),
+    {
+      id: 'vector',
+      kind: 'texture',
+      src: 'surface.svg',
+      provenance: {
+        author: 'Aegis contributors',
+        license: 'MIT',
+        source: 'presentation.browser.test.ts',
+      },
+    },
+  ];
   // The perspective fixture must sit in front of the nearby blast door, not behind it.
   const forMode = (mode: GameMode): PresentationSource => ({
     ...presentation,
@@ -75,6 +94,15 @@ beforeAll(async () => {
               ? { position: [0.28, 0, -0.65], scale: [0.22, 0.22, 0.22] }
               : { position: [1.5, 0, -3], scale: [0.75, 0.75, 0.75] },
         },
+        {
+          id: 'vector',
+          anchor: 'camera',
+          visual: { kind: 'sprite', texture: 'vector' },
+          pose:
+            mode === 'fps'
+              ? { position: [0.28, 0.26, -0.65], scale: [0.22, 0.11, 0.22] }
+              : { position: [1.5, 1, -3], scale: [0.75, 0.375, 0.75] },
+        },
       ],
     },
   });
@@ -93,6 +121,31 @@ beforeAll(async () => {
     bindings: BINDINGS[entry.id],
     presentation: forMode(entry.id),
   }));
+  const reloadPresentation = forMode('platformer');
+  reloadPresentation.manifest.hud = {
+    playerName: 'player',
+    winEvent: 'completed',
+    loseEvents: [],
+    steps: [{ id: 'gate', label: 'Open the gate', event: 'opened' }],
+  };
+  reloadPresentation.manifest.effects = [
+    {
+      event: 'opened',
+      kind: 'frames',
+      target: { object: 'atlas' },
+      frames: ['right'],
+      frameTicks: 1,
+      durationTicks: 1,
+      holdLast: true,
+    },
+    { event: 'ping', kind: 'burst', target: { object: 'atlas' }, durationTicks: 10, count: 2 },
+  ];
+  reloadPresentation.manifest.audio = {
+    cues: [
+      { event: 'opened', asset: 'tone' },
+      { event: 'ping', asset: 'tone' },
+    ],
+  };
   const broken = writePresentationFixture(join(temporary, 'broken'));
   const undecodable = writePresentationFixture(join(temporary, 'undecodable'));
   const invalidImage = fixturePng();
@@ -102,6 +155,7 @@ beforeAll(async () => {
   dev = await startDevServer({
     games: [
       ...games,
+      { ...games[0]!, id: 'reload', presentation: reloadPresentation },
       {
         id: 'broken',
         title: 'Broken required texture',
@@ -154,6 +208,7 @@ beforeAll(async () => {
     '.gltf': 'model/gltf+json',
     '.glb': 'model/gltf-binary',
     '.png': 'image/png',
+    '.svg': 'image/svg+xml',
     '.wav': 'audio/wav',
   };
   staticServer = createServer((request, response) => {
@@ -213,6 +268,89 @@ afterAll(async () => {
 });
 
 describe('real asset presentation in dev and static browsers', () => {
+  it('reloads a live session with its held visual and HUD progress but no historical audio or bursts', async () => {
+    const cdp = await openPage(browser.port, `${dev.url}/play/reload/`, VIEWPORT);
+    const control = async (command: string, ticks?: number): Promise<void> => {
+      const reply = await fetch(`${dev.url}/api/reload/control`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command, ticks }),
+      });
+      expect(reply.status).toBe(200);
+    };
+    const read = `(() => ({
+      tick: globalThis.aegis.tick(),
+      generation: globalThis.aegis.presentation().generation,
+      frame: globalThis.aegis.adapter.presentation.object('atlas').object.material.map.offset.x,
+      progress: document.getElementById('hud-progress').textContent,
+      outcome: document.getElementById('hud-outcome').textContent,
+      effects: globalThis.aegis.presentation().render.effects.active,
+      dropped: globalThis.aegis.presentation().audio.dropped,
+      hash: globalThis.aegis.world.hash(),
+    }))()`;
+    try {
+      await until<boolean>(
+        cdp,
+        "globalThis.aegis !== undefined && globalThis.aegis.presentation().status === 'ready'",
+        (ready) => ready,
+      );
+      await control('pause');
+      const session = dev.session('reload')!;
+      session.world.events.emit('opened', {});
+      session.world.events.emit('ping', {});
+      session.world.events.emit('completed', {});
+      await control('step', 45);
+      const targetTick = session.tick;
+      const first = await until<{
+        tick: number;
+        frame: number;
+        hash: string;
+        progress: string;
+        effects: number;
+      }>(
+        cdp,
+        read,
+        (value) =>
+          value.tick === targetTick &&
+          value.frame === 0.5 &&
+          value.progress === '1 / 1 complete' &&
+          value.effects === 0,
+      );
+      expect(first.frame).toBe(0.5);
+      const timeOrigin = await evaluate<number>(cdp, 'performance.timeOrigin');
+      await cdp.send('Page.reload', { ignoreCache: true });
+      await until<boolean>(
+        cdp,
+        `performance.timeOrigin !== ${timeOrigin} && globalThis.aegis !== undefined && globalThis.aegis.presentation().status === 'ready'`,
+        (ready) => ready,
+      );
+      await evaluate(cdp, 'globalThis.aegis.ready.then(() => true)');
+      expect(await evaluate(cdp, read)).toEqual({
+        tick: targetTick,
+        generation: 0,
+        frame: 0.5,
+        progress: '1 / 1 complete',
+        outcome: 'Objective complete',
+        effects: 0,
+        dropped: 0,
+        hash: first.hash,
+      });
+      session.world.events.emit('ping', {});
+      await until<number>(
+        cdp,
+        'globalThis.aegis.presentation().render.effects.active',
+        (count) => count === 2,
+      );
+      expect(await evaluate<number>(cdp, 'globalThis.aegis.presentation().audio.dropped')).toBe(1);
+    } finally {
+      try {
+        await cdp.send('Page.navigate', { url: 'about:blank' });
+      } finally {
+        cdp.close();
+      }
+    }
+  }, 180_000);
+
   for (const id of ['broken', 'undecodable'])
     it(`${id}: shows the required-asset failure instead of an empty ready game`, async () => {
       const cdp = await openPage(browser.port, `${dev.url}/play/${id}/`, VIEWPORT);
@@ -277,8 +415,30 @@ describe('real asset presentation in dev and static browsers', () => {
             fins: number[][];
           }>(cdp, inspect);
           expect(first.textures).toContain(32);
+          expect(first.textures).toContain(48);
           expect(first.rigVertices.length).toBeGreaterThanOrEqual(2);
           expect(first.fins).toHaveLength(1);
+          const vector = await evaluate<{ size: number[]; pixels: number[] }>(
+            cdp,
+            `(() => {
+              const image = globalThis.aegis.adapter.presentation.assets.texture('vector').image;
+              const canvas = document.createElement('canvas');
+              canvas.width = image.width;
+              canvas.height = image.height;
+              const context = canvas.getContext('2d');
+              if (context === null) throw new Error('SVG pixel probe requires a 2D context.');
+              context.drawImage(image, 0, 0);
+              return {
+                size: [image.width, image.height],
+                pixels: [
+                  ...context.getImageData(8, 12, 1, 1).data,
+                  ...context.getImageData(40, 12, 1, 1).data,
+                ],
+              };
+            })()`,
+          );
+          expect(vector.size).toEqual([48, 24]);
+          expect(vector.pixels).toEqual([255, 0, 0, 255, 0, 255, 0, 255]);
           const visibility = await evaluate<{ inView: boolean; nearestIsModel: boolean }>(
             cdp,
             `(async () => {
@@ -310,7 +470,14 @@ describe('real asset presentation in dev and static browsers', () => {
           ).toBe(true);
           const initialTick = await evaluate<number>(cdp, 'globalThis.aegis.tick()');
           await until<number>(cdp, 'globalThis.aegis.tick()', (tick) => tick >= initialTick + 15);
-          const next = await evaluate<typeof first>(cdp, inspect);
+          // A looping clip can revisit the first pose between two asynchronous observations.
+          const next = await until<typeof first>(
+            cdp,
+            inspect,
+            (value) =>
+              value.fins[0]?.some((component, index) => component !== first.fins[0]?.[index]) ===
+              true,
+          );
           expect(next.fins[0]).not.toEqual(first.fins[0]);
           const traffic = await evaluate<string[]>(
             cdp,
@@ -318,6 +485,7 @@ describe('real asset presentation in dev and static browsers', () => {
           );
           const prefix = transport === 'dev' ? '/preview/' : '/nested/site/';
           expect(traffic.some((url) => url.endsWith('/surface.png'))).toBe(true);
+          expect(traffic.some((url) => url.endsWith('/surface.svg'))).toBe(true);
           expect(traffic.some((url) => url.endsWith('/rig.gltf'))).toBe(true);
           expect(traffic.every((url) => new URL(url).pathname.startsWith(prefix))).toBe(true);
           const before = await evaluate<{ assets: { modelInstances: number; textures: number } }>(

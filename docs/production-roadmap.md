@@ -46,6 +46,45 @@ controls; actual rendered review; and comparable runtime measurements. Browser-h
 coordinated rather than raced on one machine. Do not disable assertions, weaken budgets, hide
 omissions or re-pin goldens without explaining the behavioral change.
 
+### Consolidated source checkpoint (2026-09-07)
+
+The recovery checkpoint brings together the engine contracts, output-compatible hashing,
+capability discovery and structural presentation validation, shared presentation platform,
+original asset recipes, and all three games' asset-backed composition profiles. The previously
+uncommitted Sector Breach composition-test draft is retained as a root integration test, where
+it does not introduce a game-to-renderer package dependency.
+
+This is a saved work-in-progress, not completed M1 acceptance or a claim of AAA readiness.
+The paused-step regression is repaired: presentation follows explicitly advanced world ticks
+without advancing on repeated paused display or picking updates. Existing simulation oracles
+are not re-pinned.
+
+### Shared-presentation correctness continuation (2026-09-09)
+
+The four remaining findings from the shared-platform review were reproduced against the
+published checkpoint and repaired without changing simulation inputs or oracles:
+
+| Area                        | Corrected behavior                                                                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Dev-client restart ordering | Frame and control responses share generation acceptance. A delayed acknowledgement cannot reset fresh feedback/input or roll a newer snapshot backward.                                                                  |
+| Named sprite overrides      | An explicit binding frame wins in both synchronization and animation sampling. A replaced atlas cannot supply a stale frame; non-overridden component frame updates still work.                                          |
+| glTF instance disposal      | Model handles dispose clone-owned `InstancedMesh` buffers exactly once, retaining borrowed geometry/materials/textures until their library owner releases them.                                                          |
+| Dev-client reload           | Opt-in generation-aware history arrives atomically with the frame snapshot. Cold clients restore held clips/frames and HUD progress without replaying old audio or transient effects; fresh buffered events remain live. |
+
+These are correctness repairs, not the remaining artistic and production acceptance. The history
+handshake is specific to presentation-enabled dev clients; legacy wire shapes and static-session
+initialization remain unchanged. It is not the deferred snapshot-copy optimization.
+
+Final showcase review still needs representative dev and prefixed-static playthrough images,
+human input and narrow-viewport review, trusted audio unlock/mute, restart/resource behavior and
+performance acceptance on the composed games. Earlier asset-only previews and headless profile
+probes do not establish that acceptance.
+
+The later local-observation performance work completed measurement/design only: avoidable
+snapshot/restore work was found on unchanged static-client frames. Caching by tick and restart
+generation remains a proposed optimization, subject to detached-mirror isolation and hostile
+mutation regressions; it is not part of the delivered hashing optimization.
+
 ## M2: scalable runtime and content
 
 Enter after M1's integrated acceptance. Use the expanded PoCs and representative stress scenes
