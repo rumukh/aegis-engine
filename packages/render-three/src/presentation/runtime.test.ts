@@ -120,6 +120,17 @@ const cases: { scene: SceneFile; plugin: ModePlugin; actor: string; size: number
 ];
 
 describe('initialized-world rendering', () => {
+  it.each(['platformer', 'fps'] as const)(
+    'rejects unsupported camera overrides rather than ignoring them in %s',
+    async (mode) => {
+      const manifest = runtimeManifest({ camera: { framing: 'level', padding: 1 } });
+      const assets = own(await runtimeAssets(manifest));
+      expect(() => createRenderAdapter(mode, { presentation: { manifest, assets } })).toThrow(
+        /camera framing overrides are supported only in isometric mode/,
+      );
+    },
+  );
+
   it('renders real expanded prefab children without repeating bootstrap', async () => {
     const prefab: PrefabFile = {
       aegis: 'prefab/1',

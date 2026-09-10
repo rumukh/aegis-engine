@@ -15,16 +15,18 @@
  * - input takes the same path a human's keyboard already takes — {@link createInputCollector}
  *   emits {@link InputPacket}s and {@link LiveInput} turns them into the very `InputFrame`s the
  *   `.input` DSL compiles to. There is still no second, privileged input route;
- * - **the renderer still cannot reach the simulation's world.** Every frame the page takes
- *   `session.snapshot()` — plain JSON, CHARTER principle 4 — and restores it into a separate,
- *   throwaway mirror `World` that the adapter draws. The adapter is handed the mirror and never
+ * - **the renderer still cannot reach the simulation's world.** Each newly observed tick or
+ *   restart takes `session.snapshot()` — plain JSON, CHARTER principle 4 — and restores it into
+ *   a separate mirror `World` that the adapter draws. The adapter is handed the mirror and never
  *   the live world, exactly as when the two lived in different processes. Co-locating them in one
  *   realm does not weaken ADR-0005's boundary, because the boundary was never the process
  *   boundary; it was the snapshot.
  *
  * What genuinely changes is that the wall clock is now read in the page rather than in the server,
- * and a frame costs a `snapshot()` + `restore()` instead of a round trip. Neither is visible to
- * the simulation: it still only ever sees `dt = 1 / tickRate`.
+ * and a newly observed revision costs a `snapshot()` + `restore()` instead of a round trip.
+ * Frames without a new revision reuse the detached mirror but still collect input and present.
+ * Unsupported observer writes affect only that mirror and heal on the next revision, not on
+ * every paused frame. The simulation still only ever sees `dt = 1 / tickRate`.
  * @packageDocumentation
  */
 import { Vector3 } from 'three';
@@ -33,6 +35,7 @@ import type { GameEvent, GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
 import type { RenderAdapter } from '../adapter.js';
+import { renderAdapter } from '../render.js';
 import { BINDINGS } from '../bindings.js';
 import type { ModeBindings } from '../bindings.js';
 import { systemClock, MAX_CATCHUP_SECONDS } from '../loop.js';
@@ -93,7 +96,7 @@ export interface StaticDebugHandle {
   frames(): number;
   /** Whether the session is paused. */
   paused(): boolean;
-  /** The last snapshot applied to the mirror — the world as plain JSON. */
+  /** A defensive copy of the last snapshot applied to the mirror, or null before the first. */
   snapshot(): WorldSnapshot | null;
   /** Every event the run has emitted, oldest first. */
   events(): readonly EventLine[];
@@ -146,7 +149,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   });
   const renderer = host.renderer;
   let adapter: RenderAdapter;
-  // The renderer's own copy of the world, rebuilt from JSON every frame. Never the session's.
+  // The renderer's detached copy, refreshed only when the authoritative revision changes.
   const mirror: World = createWorld({ seed: 0 });
   const hud = host.hud;
 
@@ -171,6 +174,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   let lastFrameAt = clock();
   let eventCursor = 0;
   let generation = 0;
+  let observedGeneration = -1;
   let stopped = false;
   let animationFrame = 0;
   let lastSnapshot: WorldSnapshot | null = null;
@@ -220,7 +224,6 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
 
   const applySnapshot = (snapshot: WorldSnapshot): void => {
     mirror.restore(snapshot);
-    lastSnapshot = snapshot;
     if (!mounted) {
       host.validateWorld(mirror);
       adapter.mount(mirror);
@@ -228,7 +231,9 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       resize();
       host.mounted();
     }
+    lastSnapshot = snapshot;
     lastTick = snapshot.tick;
+    observedGeneration = generation;
   };
 
   /** Drain the events the session has emitted since the last frame, for the HUD feed. */
@@ -259,11 +264,14 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
     steps += session.advance(elapsed);
 
     try {
-      applySnapshot(session.snapshot());
+      // Restart can replace the world at the same tick; input collection alone changes neither.
+      if (lastTick !== session.tick || observedGeneration !== generation) {
+        applySnapshot(session.snapshot());
+      }
       host.receive(drainEvents(), generation);
       adapter.sync(mirror);
       host.present(lastTick, session.paused);
-      renderer.render(adapter.scene, adapter.camera);
+      renderAdapter(renderer, adapter);
     } catch (error) {
       stopped = true;
       globalThis.cancelAnimationFrame(animationFrame);
@@ -301,7 +309,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
     steps: () => steps,
     frames: () => frames,
     paused: () => session.paused,
-    snapshot: () => lastSnapshot,
+    snapshot: () => (lastSnapshot === null ? null : structuredClone(lastSnapshot)),
     events: () => toEventLines(session.world.events.history(), config.presentation !== undefined),
     project(x: number, y: number, z: number): { x: number; y: number } | null {
       if (mounted) adapter.sync(mirror);

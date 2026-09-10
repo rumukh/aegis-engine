@@ -130,6 +130,10 @@ Use +Y up and actor feet at Y=0; iso maps grid Y to renderer Z. Poses use degree
 rotations. Camera-anchored objects provide viewmodels without modifying the gameplay camera.
 
 World/entity/camera decoration, parallax, static instancing, fog and lights are declarative.
+Isometric profiles may request `camera: { framing: 'level', padding: 1 }` to fit the complete
+navigation grid across viewport aspects without changing the authoritative `IsoCamera`.
+`padding` is a nonnegative world-unit margin. Omission or `framing: 'follow'` retains the existing
+follow camera; camera framing overrides are rejected for other modes rather than ignored.
 Event `burst`, `pulse`, `recoil`, `clip` and `frames` effects name their target and duration.
 Clip/frame names belong in game data, not in engine code; `holdLast` supports a terminal pose.
 An optional effect target `node` addresses a named model anchor. Recoil moves a view object,
@@ -137,6 +141,13 @@ never the aim camera. Effect timing derives from ticks; extra synchronization fo
 advance it. An explicit authoritative step still advances presentation while paused; repeated
 display frames without a world step do not. Payloads are preserved for extensions, but the renderer does not invent an exact
 historic impact position when the event did not record one.
+
+FPS camera-anchored objects and their bursts use a foreground pass so a nearby wall cannot
+erase the viewmodel. They retain ordinary material depth testing against their own geometry;
+only the world's depth is cleared between passes. The foreground uses its own light copies,
+without a second background or fog, and borrows the same asset resources. Both shipped clients
+use `renderAdapter(renderer, adapter)`; custom hosts can import the browser-safe helper from
+`@aegis/render-three/render`. It restores renderer flags and preserves combined draw counters.
 
 Default collider-derived level and trigger visuals remain visible. A replacement environment may
 explicitly opt out with `legacy: { level: false, triggers: false }` only alongside declared

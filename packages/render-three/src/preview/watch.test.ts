@@ -86,6 +86,8 @@ describe('logical asset roots and native watch lifetimes', () => {
     'detects a junction retarget and subsequent edits to its new target (manual reload: %s)',
     async (manual) => {
       server = await startAssetPreviewServer({ source, watch: true });
+      for (const call of observed.calls)
+        expect(call.directory).toBe(realpathSync.native(call.directory));
       const first = server.state();
       // Positive control: this same source and instrumentation observe an ordinary edit.
       writeFileSync(join(a, 'source.svg'), svg('#ff9944'));
@@ -108,20 +110,26 @@ describe('logical asset roots and native watch lifetimes', () => {
       await new Promise((done) => setTimeout(done, 180));
       expect(server.state().revision).toBe(editedB);
       const recursive = observed.calls.filter((call) => call.recursive);
-      expect(recursive.some((call) => call.directory === realpathSync(a))).toBe(true);
-      expect(recursive.some((call) => call.directory === realpathSync(b) && !call.closed)).toBe(
-        true,
-      );
+      expect(recursive.some((call) => call.directory === realpathSync.native(a))).toBe(true);
       expect(
-        recursive.filter((call) => call.directory === realpathSync(a)).every((call) => call.closed),
+        recursive.some((call) => call.directory === realpathSync.native(b) && !call.closed),
+      ).toBe(true);
+      expect(
+        recursive
+          .filter((call) => call.directory === realpathSync.native(a))
+          .every((call) => call.closed),
       ).toBe(true);
       expect(
         recursive.some(
-          (call) => call.directory === realpathSync(links) || call.directory === realpathSync(root),
+          (call) =>
+            call.directory === realpathSync.native(links) ||
+            call.directory === realpathSync.native(root),
         ),
       ).toBe(false);
       expect(
-        observed.calls.some((call) => call.directory === realpathSync(links) && !call.recursive),
+        observed.calls.some(
+          (call) => call.directory === realpathSync.native(links) && !call.recursive,
+        ),
       ).toBe(true);
     },
   );
