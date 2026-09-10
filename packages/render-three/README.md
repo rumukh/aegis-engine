@@ -249,6 +249,13 @@ Nothing about the non-interference rule moves with it. The page still renders fr
 `session.snapshot()` restored into a **separate mirror world**, and the adapter is handed the mirror
 — never the simulation's `World`. The boundary was always the snapshot, not the process.
 
+The static client refreshes that detached observation only when its tick or restart generation
+changes. Paused and sub-tick display frames still collect input, drain events, synchronize
+presentation and draw, but do not copy the identical world again. A same-tick restart still
+refreshes; a failed observation does not publish its revision. `aegis.snapshot()` returns a
+defensive copy of the retained snapshot. Unsupported writes through the debug mirror cannot
+change simulation state and heal on the next revision, not on every paused frame.
+
 Three properties the exporter enforces rather than hopes for:
 
 - **the module graph is crawled, not copied.** `dist/` contains `dev-server.js`, `catalog.js` and
