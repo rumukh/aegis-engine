@@ -130,6 +130,10 @@ Use +Y up and actor feet at Y=0; iso maps grid Y to renderer Z. Poses use degree
 rotations. Camera-anchored objects provide viewmodels without modifying the gameplay camera.
 
 World/entity/camera decoration, parallax, static instancing, fog and lights are declarative.
+Isometric profiles may request `camera: { framing: 'level', padding: 1 }` to fit the complete
+navigation grid across viewport aspects without changing the authoritative `IsoCamera`.
+`padding` is a nonnegative world-unit margin. Omission or `framing: 'follow'` retains the existing
+follow camera; camera framing overrides are rejected for other modes rather than ignored.
 Event `burst`, `pulse`, `recoil`, `clip` and `frames` effects name their target and duration.
 Clip/frame names belong in game data, not in engine code; `holdLast` supports a terminal pose.
 An optional effect target `node` addresses a named model anchor. Recoil moves a view object,
