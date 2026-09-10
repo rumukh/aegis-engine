@@ -138,7 +138,8 @@ export class AssetPreviewWatch {
           continue;
         }
         const watcher = watch(
-          target.directory,
+          // Expand Windows 8.3 names before libuv compares event paths with the watched root.
+          realpathSync.native(target.directory),
           { recursive: target.recursive },
           (_event, filename) => {
             if (this.#closed) return;
