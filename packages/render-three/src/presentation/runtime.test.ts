@@ -921,7 +921,12 @@ describe('named visual nodes', () => {
       runtime.present(frame(30, { events: [{ type: 'emit', tick: 30, sequence: 0 }] }));
       const actualAnchor = socket.getWorldPosition(new Vector3());
       expect(actualAnchor.distanceTo(withoutFeedback)).toBeGreaterThan(0.01);
-      const particles = adapter.scene.getObjectByName('presentation:effects')!.children;
+      const particles =
+        adapter.foreground === undefined
+          ? adapter.scene.getObjectByName('presentation:effects')!.children
+          : adapter.foreground.scene.children.filter((node) =>
+              node.name.startsWith('effect:burst:'),
+            );
       expect(particles).toHaveLength(1);
       const particle = particles[0]!;
       expect(particle.getWorldPosition(new Vector3()).distanceTo(actualAnchor)).toBeLessThan(1e-10);
@@ -976,7 +981,10 @@ describe('named visual nodes', () => {
     expect(runtime.stats().effects.active).toBe(32);
     expect(runtime.stats().dropped).toBe(1);
     expect(socket.getWorldPosition(new Vector3()).distanceTo(expected)).toBeLessThan(1e-10);
-    const particles = adapter.scene.getObjectByName('presentation:effects')!.children;
+    const particles =
+      adapter.foreground === undefined
+        ? adapter.scene.getObjectByName('presentation:effects')!.children
+        : adapter.foreground.scene.children.filter((node) => node.name.startsWith('effect:burst:'));
     expect(particles).toHaveLength(32);
     for (const particle of particles)
       expect(particle.getWorldPosition(new Vector3()).distanceTo(expected)).toBeLessThan(1e-10);

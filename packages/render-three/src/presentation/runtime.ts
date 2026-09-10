@@ -230,6 +230,7 @@ export class PresentationRuntime {
   #disposed = false;
   #debugGeometry = false;
   #legacyLevel?: Object3D;
+  #cameraEffectsParent?: Object3D;
 
   constructor(options: PresentationRuntimeOptions) {
     const checked = validatePresentation(options.manifest);
@@ -286,6 +287,11 @@ export class PresentationRuntime {
   /** Borrowed asset library; its ownership stays with the page/loader, not a visual instance. */
   get assets(): PresentationAssets {
     return this.#assets;
+  }
+
+  /** Optional borrowed foreground parent, in the same world coordinates as the main scene. */
+  setCameraEffectsParent(parent: Object3D | undefined): void {
+    this.#cameraEffectsParent = parent;
   }
 
   /**
@@ -927,7 +933,9 @@ export class PresentationRuntime {
       const mesh = this.#factory.effectMesh(spec.color ?? '#ffffff', 0.9);
       mesh.name = `effect:burst:${occurrence}:${i}`;
       const size = Math.max(0.02, (spec.amount ?? 0.12) * 0.4);
-      this.#effectRoot.add(mesh);
+      const cameraTarget =
+        'object' in spec.target && this.#objects.get(spec.target.object)?.spec.anchor === 'camera';
+      (cameraTarget ? (this.#cameraEffectsParent ?? this.#effectRoot) : this.#effectRoot).add(mesh);
       this.#effects.push({
         kind: 'particle',
         start,
@@ -1221,6 +1229,7 @@ export class PresentationRuntime {
     this.#disposed = true;
     this.#restoreDebugAncestors();
     this.#clearTransients();
+    this.#cameraEffectsParent = undefined;
     for (const extension of this.#extensions) extension.dispose();
     this.#extensions.clear();
     for (const binding of this.#bindings.values()) this.#release(binding);

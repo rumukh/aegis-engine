@@ -45,6 +45,12 @@ export interface PickedPoint {
   z: number;
 }
 
+/** Optional camera-local presentation, rendered after clearing only the world's depth. */
+export interface ForegroundPass {
+  readonly scene: Scene;
+  readonly camera: Camera;
+}
+
 /**
  * Mirrors world state onto a three.js scene. Lifecycle: {@link RenderAdapter.mount} once, then
  * {@link RenderAdapter.sync} for every frame you want to display, then
@@ -57,6 +63,7 @@ export interface RenderAdapter {
   readonly scene: Scene;
   /** The active camera, driven from the mode's camera rig. */
   readonly camera: Camera;
+  readonly foreground?: ForegroundPass | undefined;
   /** Owned render-local runtime, absent on the legacy primitive path. */
   readonly presentation?: PresentationRuntime | undefined;
   /** Build the static scene graph (level geometry, lights) for `world`. Call once. */
