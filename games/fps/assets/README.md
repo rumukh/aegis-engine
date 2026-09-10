@@ -72,6 +72,13 @@ The inspected starting rifle pose is `[0.31, -0.31, -0.9]` at scale `0.85`; reco
 only `0.035` metres to the visual wrapper, in addition to its short authored fire clip.
 The camera and collision meshes are never displaced.
 
+The FPS adapter exposes camera-anchored objects in its optional foreground scene.
+`renderAdapter` draws the world, clears only depth, then draws that scene with the same
+camera and copied world lighting. The rifle keeps its original depth-tested materials,
+so walls cannot swallow it and its own barrel, sight and arms still occlude correctly.
+Camera-object muzzle bursts use the same pass. Background and fog are not painted twice;
+draw-call and triangle counters include both passes, and only owned light copies are disposed.
+
 The shared runtime plays `Open`, `Unlock`, `Fire`, `ReturnFire` and `Shutdown` from
 existing simulation events. `Offline` is a constant terminal pose derived from the end
 of `Shutdown`, so reconstructing a dead actor without its historic event cannot loop the
