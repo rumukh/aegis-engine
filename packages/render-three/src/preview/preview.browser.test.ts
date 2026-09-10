@@ -420,6 +420,19 @@ describe('standalone asset preview: actual browser acceptance', () => {
     expect(material.stats.triangles).toBeGreaterThan(1000);
     expect(material.stats.library.audioBytes).toBe(0);
     pixels(material);
+    const deck = await start({
+      source: join(ROOT, 'poc', 'previews', 'asset-studies.presentation.json'),
+      assetRoot: ROOT,
+      selection: { kind: 'material', id: 'deck' },
+    });
+    const surface = await deck.capture({ filename: 'deck-material.png', ...SIZE });
+    expect(surface.rendered).toEqual({ kind: 'material', id: 'deck' });
+    expect(surface.stats.textures).toBe(2);
+    expect(surface.dependencies.map((dependency) => dependency.path)).toEqual([
+      'games/fps/assets/generated/deck-albedo.png',
+      'games/fps/assets/generated/deck-normal.png',
+    ]);
+    pixels(surface);
   });
 
   it('loads the original Kestrel and rifle, measures warm captures, and bounds repeated instance/GPU ownership', async () => {
