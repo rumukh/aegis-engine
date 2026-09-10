@@ -107,6 +107,8 @@ export function bootAssetPreview(config: PreviewBootConfig): void {
     errorBox.hidden = state.diagnostics.length === 0;
     if (state.diagnostics.length > 0) showError(new DiagnosticError(state.diagnostics));
     capture.disabled = state.status !== 'ready' || !config.captureEnabled;
+    element('recover', HTMLButtonElement).hidden = state.recovery === null;
+    clip.disabled = state.status !== 'ready' && state.recovery === null;
     if (state.recipe !== null) {
       for (const key of ['view', 'lighting', 'background', 'shape'] as const)
         (key === 'background'
@@ -119,7 +121,7 @@ export function bootAssetPreview(config: PreviewBootConfig): void {
       clip,
       [
         { value: '', label: 'Rest pose' },
-        ...(state.stats?.clips ?? []).map((entry) => ({
+        ...(state.recovery?.clips ?? state.stats?.clips ?? []).map((entry) => ({
           value: entry.name,
           label: `${entry.name} (${entry.duration.toFixed(2)} s)`,
         })),
@@ -271,6 +273,9 @@ export function bootAssetPreview(config: PreviewBootConfig): void {
     });
   on('clip', 'change', () => {
     studio.configure({ clip: clip.value || null, time: 0, playing: false });
+  });
+  on('recover', 'click', () => {
+    studio.configure({ clip: null, time: 0, playing: false });
   });
   on('scrub', 'input', () => {
     studio.configure({ time: Number(scrub.value), playing: false });

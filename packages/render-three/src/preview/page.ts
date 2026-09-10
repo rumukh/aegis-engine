@@ -87,6 +87,7 @@ export function renderAssetPreviewPage(
         <label>Clip<select id="clip"><option value="">Rest pose</option></select></label>
         <label>Sample time <output id="time" for="scrub">0.000 s</output><input id="scrub" type="range" min="0" max="1" step="0.001" value="0" disabled></label>
         <button id="play" type="button" disabled>Play clip</button>
+        <button id="recover" type="button" hidden>Use rest pose for this revision</button>
         <p class="muted">Studio playback only. Starts paused; reduced-motion preference pauses playback.</p>
       </fieldset>
       <fieldset><legend>Asset facts</legend><dl id="stats"></dl><p id="bounds"></p><p id="provenance" class="muted"></p></fieldset>

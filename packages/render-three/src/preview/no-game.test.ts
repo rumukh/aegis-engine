@@ -130,6 +130,102 @@ function materialRevision(revision: number): PreviewServerState {
 }
 
 describe('no-game proof for both standalone preview entry points', () => {
+  it.each(['renamed', 'shortened', 'removed'] as const)(
+    'repairs a %s animation selection on the current asset without restarting',
+    async (change) => {
+      const assetModule = await import('../presentation/assets.js');
+      const { AssetPreviewStudio } = await import('./studio.js');
+      const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+      const { fixtureGlb } = await import('../testing/presentation-fixture.js');
+      const manifest = {
+        aegis: 'presentation/1' as const,
+        assets: [
+          {
+            id: 'rig',
+            kind: 'gltf' as const,
+            src: 'rig.glb',
+            provenance: { author: 'Aegis contributors', license: 'MIT', source: 'fixture' },
+          },
+        ],
+      };
+      const libraries = [];
+      for (const revision of [1, 2]) {
+        libraries.push(
+          await assetModule.loadPresentationAssets(
+            { manifest, baseUrl: './assets/' },
+            {
+              loaders: {
+                texture: async () => {
+                  throw new Error('This fixture has no texture.');
+                },
+                audio: async () => {
+                  throw new Error('This fixture has no audio.');
+                },
+                model: async () => {
+                  const model = await new GLTFLoader().parseAsync(fixtureGlb(), '');
+                  if (revision === 2) {
+                    if (change === 'renamed') model.animations[0]!.name = 'updated';
+                    else if (change === 'removed') model.animations = [];
+                    else model.animations[0]!.duration = 0.5;
+                  }
+                  return model;
+                },
+              },
+            },
+          ),
+        );
+      }
+      const decode = vi
+        .spyOn(assetModule, 'loadPresentationAssets')
+        .mockResolvedValueOnce(libraries[0]!)
+        .mockResolvedValueOnce(libraries[1]!);
+      const studio = new AssetPreviewStudio(studioCanvas(), { clip: 'spin', time: 0.75 });
+      const revision = (number: number): PreviewServerState => {
+        const state = materialRevision(number);
+        state.document!.selection = { kind: 'model', id: 'rig' };
+        state.document!.presentation.manifest = manifest;
+        return state;
+      };
+      try {
+        await studio.accept(revision(1));
+        expect(studio.state().status).toBe('ready');
+        const originalCamera = studio.state().recipe!.camera;
+        await studio.accept(revision(2));
+        expect(studio.state()).toMatchObject({
+          revision: 2,
+          status: 'failed',
+          lastGoodRevision: 1,
+        });
+        expect(() => studio.capture(2)).toThrow();
+        expect(studio.state().recovery?.clips.map((clip) => clip.name)).toEqual(
+          change === 'removed' ? [] : [change === 'renamed' ? 'updated' : 'spin'],
+        );
+        expect(libraries[0]!.stats().modelInstances).toBe(1);
+        expect(libraries[1]!.stats().modelInstances).toBe(1);
+        expect(() => studio.configure({ clip: 'spin', time: 0.75 })).toThrow();
+        expect(() => studio.capture(2)).toThrow();
+        const repaired = studio.configure({
+          clip: change === 'removed' ? null : change === 'renamed' ? 'updated' : 'spin',
+          time: change === 'removed' ? 0 : 0.1,
+          playing: false,
+        });
+        expect(repaired).toMatchObject({ revision: 2, status: 'ready', lastGoodRevision: 2 });
+        expect(repaired.recovery).toBeNull();
+        expect(repaired.recipe?.camera.position).toEqual(originalCamera.position);
+        expect(repaired.recipe?.camera.target).toEqual(originalCamera.target);
+        expect(libraries[0]!.stats().modelInstances).toBe(0);
+        expect(libraries[1]!.stats().modelInstances).toBe(1);
+        expect(studio.capture(2, 256, 256).revision).toBe(2);
+        expect(decode).toHaveBeenCalledTimes(2);
+      } finally {
+        studio.dispose();
+        expect(libraries.every((library) => library.stats().modelInstances === 0)).toBe(true);
+        decode.mockRestore();
+        for (const library of libraries) library.dispose();
+      }
+    },
+  );
+
   it.each(['perspective', 'orthographic'] as const)(
     'restores an exact stored %s capture camera without applying portrait zoom twice',
     async (projection) => {

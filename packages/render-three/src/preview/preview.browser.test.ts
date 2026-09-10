@@ -536,6 +536,25 @@ describe('standalone asset preview: actual browser acceptance', () => {
     expect(saved.output).toMatchObject({ width: 320, height: 240 });
     expect(saved.recipe.time).toBe(0.25);
     pixels(saved);
+    const edited = JSON.parse(readFileSync(source, 'utf8')) as {
+      animations: { name: string }[];
+    };
+    const walk = edited.animations.find((animation) => animation.name === 'walk');
+    if (walk === undefined) throw new Error('Original operative has no walk clip.');
+    walk.name = 'walk-edited';
+    writeFileSync(source, JSON.stringify(edited));
+    await expect(preview.reload()).rejects.toThrow('Unsupported clip');
+    await until<boolean>(page, 'globalThis.aegisPreview.state().recovery !== null', Boolean);
+    await evaluate(page, 'document.querySelector("#recover").click()');
+    await until<string>(
+      page,
+      'globalThis.aegisPreview.state().status',
+      (value) => value === 'ready',
+    );
+    const recovered = await evaluate<PreviewStudioState>(page, 'globalThis.aegisPreview.state()');
+    expect(recovered.recipe?.clip).toBeNull();
+    expect(recovered.recipe?.time).toBe(0);
+    expect(recovered.revision).toBeGreaterThan(saved.revision);
     await screenshot(page, join(evidence, 'operator-studio.png'));
   });
 

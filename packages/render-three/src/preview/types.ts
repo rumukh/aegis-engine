@@ -127,6 +127,8 @@ export interface PreviewStudioState {
   stats: PreviewStats | null;
   loadMs: number | null;
   playing: boolean;
+  /** A valid new model awaits an explicit replacement for its invalid retained clip/time. */
+  recovery: { clips: PreviewStats['clips'] } | null;
 }
 
 export interface PreviewCaptureRequest {

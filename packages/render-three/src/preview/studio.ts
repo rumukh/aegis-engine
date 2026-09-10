@@ -58,6 +58,7 @@ export class AssetPreviewStudio {
   #camera: PerspectiveCamera | OrthographicCamera = new PerspectiveCamera(40, 1, 0.01, 1000);
   #controls: OrbitControls;
   #loaded?: LoadedSubject;
+  #pending?: LoadedSubject;
   #controller?: AbortController;
   #revision = 0;
   #lastGood: number | null = null;
@@ -209,10 +210,11 @@ export class AssetPreviewStudio {
   }
 
   #assertLoaded(): LoadedSubject {
+    const loaded = this.#pending ?? this.#loaded;
     if (
       this.#disposed ||
-      this.#loaded === undefined ||
-      this.#loaded.document.revision !== this.#revision ||
+      loaded === undefined ||
+      loaded.document.revision !== this.#revision ||
       this.#status === 'loading'
     )
       throw previewError(
@@ -221,7 +223,7 @@ export class AssetPreviewStudio {
         `Revision ${this.#revision} is not available for rendering.`,
         'Wait for this revision to load or repair it and reload. Last-good pixels cannot satisfy a new revision.',
       );
-    return this.#loaded;
+    return loaded;
   }
 
   #fail(error: unknown): void {
@@ -230,6 +232,12 @@ export class AssetPreviewStudio {
     this.#settings.playing = false;
     this.#stopAnimation();
     this.#notify();
+  }
+
+  #disposePending(): void {
+    this.#pending?.subject.dispose();
+    this.#pending?.assets.dispose();
+    this.#pending = undefined;
   }
 
   /** New requests immediately invalidate capture; an old load can never commit over a newer one. */
@@ -242,6 +250,7 @@ export class AssetPreviewStudio {
     )
       return;
     this.#controller?.abort();
+    this.#disposePending();
     const controller = (this.#controller = new AbortController());
     this.#revision = server.revision;
     this.#stopAnimation();
@@ -275,7 +284,6 @@ export class AssetPreviewStudio {
         document.selection,
         settings.shape,
       );
-      subject.sample(settings.clip, settings.time);
       assetBounds(subject.root);
       if (meshStats(subject.root).triangles <= 0)
         throw previewError(
@@ -290,6 +298,17 @@ export class AssetPreviewStudio {
         assets.dispose();
         return;
       }
+      try {
+        subject.validateSample(settings.clip, settings.time);
+      } catch (error) {
+        if (!(error instanceof DiagnosticError)) throw error;
+        // Keep the last-good pixels until the operator explicitly repairs the new model's settings.
+        this.#pending = { document, assets, subject, loadMs: performance.now() - started };
+        this.#fail(error);
+        return;
+      }
+      subject.sample(settings.clip, settings.time);
+      assetBounds(subject.root);
       this.#loaded = { document, assets, subject, loadMs: performance.now() - started };
       this.#settings = settings;
       this.#scene.add(subject.root);
@@ -424,8 +443,20 @@ export class AssetPreviewStudio {
       }
       this.#settings = next;
       loaded.subject.sample(next.clip, next.time);
+      assetBounds(loaded.subject.root);
+      const installing = loaded === this.#pending;
+      const hadPrevious = this.#loaded !== undefined;
+      if (installing) {
+        const previous = this.#loaded;
+        this.#loaded = loaded;
+        this.#pending = undefined;
+        this.#scene.add(loaded.subject.root);
+        previous?.subject.dispose();
+        previous?.assets.dispose();
+      }
       this.#setProjection();
       if (
+        (installing && !hadPrevious) ||
         patch.view !== undefined ||
         patch.projection !== undefined ||
         patch.camera !== undefined ||
@@ -436,6 +467,7 @@ export class AssetPreviewStudio {
       this.#setLighting();
       this.#status = 'ready';
       this.#diagnostics = [];
+      this.#lastGood = this.#revision;
       this.render();
       this.#stopAnimation();
       this.#startAnimation();
@@ -539,6 +571,16 @@ export class AssetPreviewStudio {
       stats: this.#stats(),
       loadMs: this.#loaded?.loadMs ?? null,
       playing: this.#settings.playing,
+      recovery:
+        this.#pending === undefined
+          ? null
+          : {
+              clips: this.#pending.subject.clips.map((clip) => ({
+                name: clip.name,
+                duration: clip.duration,
+                tracks: clip.tracks.length,
+              })),
+            },
     };
   }
 
@@ -629,6 +671,7 @@ export class AssetPreviewStudio {
     this.#canvas.removeEventListener('keydown', this.#keyDown);
     this.#canvas.removeEventListener('webglcontextlost', this.#contextLost);
     this.#controls.dispose();
+    this.#disposePending();
     this.#loaded?.subject.dispose();
     this.#loaded?.assets.dispose();
     this.#loaded = undefined;

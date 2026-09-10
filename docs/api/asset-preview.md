@@ -112,6 +112,13 @@ Changing to a different specimen refits and resets its clip. A bad edit reports 
 revision and labels any last-good specimen that remains visible. Such pixels cannot satisfy a
 capture of the failed revision. Repair the source and reload to recover.
 
+If an otherwise valid model edit removes or renames the selected clip, or shortens it past
+the retained sample time, the new revision remains failed until the operator explicitly
+chooses a current clip/time or **Use rest pose for this revision**. The last-good specimen
+stays labeled while the new decoded model waits; no requested animation is silently replaced.
+The API can repair the same revision with `configure({ clip: null, time: 0, playing: false })`
+or an explicit valid clip/time. This does not restart the server, browser, or game.
+
 A revision is a session-local attempt number; a fingerprint identifies checked content.
 Explicit reloads can create new attempt numbers for identical content. Unchanged filesystem
 notifications and writes of unrelated capture output do not create content revisions.
