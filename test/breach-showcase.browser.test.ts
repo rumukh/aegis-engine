@@ -488,35 +488,41 @@ describe('Sector Breach complete browser showcase', () => {
           expect(
             urls.filter((url) => url.startsWith(origin) && !url.startsWith(staticUrl)),
           ).toEqual([]);
+        }
+      } finally {
+        cdp.close();
+        await closeAllPages(browser.port);
+      }
+    }, 240_000);
 
-          it(`${transport}: responds to locked look/fire, plays only live audio and keeps self-depth`, async () => {
-            const cdp = await open(transport);
-            try {
-              const cursor = await reset(cdp, transport, win);
-              const start = await evaluate<Reading>(cdp, READ);
-              expect(start.presentation.audio.status).toBe('ready');
-              await mouseMove(cdp, cursor.x + 30, cursor.y + 12);
-              await sync(cdp);
-              await command(cdp, transport, 'step');
-              const looked = await evaluate<Reading>(cdp, READ);
-              expect(looked.player.LookState.yawDeg).toBeCloseTo(
-                30 * (BINDINGS.fps.lookDegreesPerPixel ?? 0.14) * (BINDINGS.fps.lookXSign ?? 1),
-                5,
-              );
-              expect(looked.player.LookState.pitchDeg).toBeCloseTo(
-                -12 * (BINDINGS.fps.lookDegreesPerPixel ?? 0.14),
-                5,
-              );
-              expect(looked.locked).toBe(true);
-              await mouseButton(cdp, true, cursor.x + 30, cursor.y + 12);
-              await sync(cdp);
-              await command(cdp, transport, 'step');
-              const fired = await evaluate<Reading>(cdp, READ);
-              expect(fired.player.LookState).toEqual(looked.player.LookState);
-              expect(fired.camera).toEqual(looked.camera);
-              const foreground = await evaluate<{ flash: number; recoil: number; depth: boolean }>(
-                cdp,
-                `(() => {
+    it(`${transport}: responds to locked look/fire, plays only live audio and keeps self-depth`, async () => {
+      const cdp = await open(transport);
+      try {
+        const cursor = await reset(cdp, transport, win);
+        const start = await evaluate<Reading>(cdp, READ);
+        expect(start.presentation.audio.status).toBe('ready');
+        await mouseMove(cdp, cursor.x + 30, cursor.y + 12);
+        await sync(cdp);
+        await command(cdp, transport, 'step');
+        const looked = await evaluate<Reading>(cdp, READ);
+        expect(looked.player.LookState.yawDeg).toBeCloseTo(
+          30 * (BINDINGS.fps.lookDegreesPerPixel ?? 0.14) * (BINDINGS.fps.lookXSign ?? 1),
+          5,
+        );
+        expect(looked.player.LookState.pitchDeg).toBeCloseTo(
+          -12 * (BINDINGS.fps.lookDegreesPerPixel ?? 0.14),
+          5,
+        );
+        expect(looked.locked).toBe(true);
+        await mouseButton(cdp, true, cursor.x + 30, cursor.y + 12);
+        await sync(cdp);
+        await command(cdp, transport, 'step');
+        const fired = await evaluate<Reading>(cdp, READ);
+        expect(fired.player.LookState).toEqual(looked.player.LookState);
+        expect(fired.camera).toEqual(looked.camera);
+        const foreground = await evaluate<{ flash: number; recoil: number; depth: boolean }>(
+          cdp,
+          `(() => {
                 const a=globalThis.aegis, f=a.adapter.foreground.scene;
                 const weapon=a.adapter.presentation.object('weapon');
                 let depth=true;
@@ -528,83 +534,71 @@ describe('Sector Breach complete browser showcase', () => {
                 return {flash:f.children.filter(n=>n.name.startsWith('effect:burst:')).length,
                   recoil:weapon.root.getObjectByName('presentation:effect').position.z,depth};
               })()`,
-              );
-              expect(foreground.flash).toBe(6);
-              expect(foreground.recoil).toBeGreaterThan(0);
-              expect(foreground.depth).toBe(true);
-              await mouseButton(cdp, false, cursor.x + 30, cursor.y + 12);
-              await sync(cdp);
-              await command(cdp, transport, 'step', 12);
-              const quiet = await evaluate<Reading>(cdp, READ);
-              const priorStarts = quiet.audioStarts.length;
-              await button(cdp, 'action-pause');
-              await until(
-                cdp,
-                `globalThis.aegis.tick()`,
-                (tick) => typeof tick === 'number' && tick > quiet.tick,
-              );
-              await until(
-                cdp,
-                `globalThis.__breachAudioStarts.length`,
-                (count) => typeof count === 'number' && count > priorStarts,
-              );
-              const resumed = await evaluate<Reading>(cdp, READ);
-              expect(resumed.audioStarts.slice(priorStarts).every((voice) => voice.loop)).toBe(
-                true,
-              );
-              await click(cdp, 640, 360);
-              await until(
-                cdp,
-                `globalThis.__breachAudioStarts.some(voice=>!voice.loop && Math.abs(voice.seconds-.28)<.001)`,
-                (value) => value === true,
-              );
-              await button(cdp, 'action-mute');
-              const muted = await evaluate<Reading>(cdp, READ);
-              expect(muted.presentation.audio.muted).toBe(true);
-              expect(muted.presentation.audio.voices).toBe(0);
-              await button(cdp, 'action-mute');
-              await until(
-                cdp,
-                `globalThis.aegis.presentation().audio.voices`,
-                (count) => count === 1,
-              );
-              const unmuted = await evaluate<Reading>(cdp, READ);
-              expect(
-                unmuted.audioStarts.slice(muted.audioStarts.length).every((voice) => voice.loop),
-              ).toBe(true);
-              await command(cdp, transport, 'pause');
-              observations.push({
-                name: `${transport}-live-input-audio`,
-                looked,
-                fired,
-                foreground,
-                muted,
-                unmuted,
-              });
-              expect(unmuted.presentation.assets.modelInstances).toBe(6);
-              expect(unmuted.foregroundDraws).toBeGreaterThan(0);
-              if (transport === 'static') {
-                await evaluate(cdp, `window.dispatchEvent(new Event('beforeunload')); null`);
-                const disposed = await evaluate<Reading['presentation']>(
-                  cdp,
-                  'globalThis.aegis.presentation()',
-                );
-                expect(disposed.status).toBe('disposed');
-                expect(disposed.assets.modelInstances).toBe(0);
-                expect(disposed.assets.loadedFiles).toBe(0);
-                expect(disposed.audio.voices).toBe(0);
-              }
-            } finally {
-              cdp.close();
-              await closeAllPages(browser.port);
-            }
-          }, 150_000);
+        );
+        expect(foreground.flash).toBe(6);
+        expect(foreground.recoil).toBeGreaterThan(0);
+        expect(foreground.depth).toBe(true);
+        await mouseButton(cdp, false, cursor.x + 30, cursor.y + 12);
+        await sync(cdp);
+        await command(cdp, transport, 'step', 12);
+        const quiet = await evaluate<Reading>(cdp, READ);
+        const priorStarts = quiet.audioStarts.length;
+        await button(cdp, 'action-pause');
+        await until(
+          cdp,
+          `globalThis.aegis.tick()`,
+          (tick) => typeof tick === 'number' && tick > quiet.tick,
+        );
+        await until(
+          cdp,
+          `globalThis.__breachAudioStarts.length`,
+          (count) => typeof count === 'number' && count > priorStarts,
+        );
+        const resumed = await evaluate<Reading>(cdp, READ);
+        expect(resumed.audioStarts.slice(priorStarts).every((voice) => voice.loop)).toBe(true);
+        await click(cdp, 640, 360);
+        await until(
+          cdp,
+          `globalThis.__breachAudioStarts.some(voice=>!voice.loop && Math.abs(voice.seconds-.28)<.001)`,
+          (value) => value === true,
+        );
+        await button(cdp, 'action-mute');
+        const muted = await evaluate<Reading>(cdp, READ);
+        expect(muted.presentation.audio.muted).toBe(true);
+        expect(muted.presentation.audio.voices).toBe(0);
+        await button(cdp, 'action-mute');
+        await until(cdp, `globalThis.aegis.presentation().audio.voices`, (count) => count === 1);
+        const unmuted = await evaluate<Reading>(cdp, READ);
+        expect(
+          unmuted.audioStarts.slice(muted.audioStarts.length).every((voice) => voice.loop),
+        ).toBe(true);
+        await command(cdp, transport, 'pause');
+        observations.push({
+          name: `${transport}-live-input-audio`,
+          looked,
+          fired,
+          foreground,
+          muted,
+          unmuted,
+        });
+        expect(unmuted.presentation.assets.modelInstances).toBe(6);
+        expect(unmuted.foregroundDraws).toBeGreaterThan(0);
+        if (transport === 'static') {
+          await evaluate(cdp, `window.dispatchEvent(new Event('beforeunload')); null`);
+          const disposed = await evaluate<Reading['presentation']>(
+            cdp,
+            'globalThis.aegis.presentation()',
+          );
+          expect(disposed.status).toBe('disposed');
+          expect(disposed.assets.modelInstances).toBe(0);
+          expect(disposed.assets.loadedFiles).toBe(0);
+          expect(disposed.audio.voices).toBe(0);
         }
       } finally {
         cdp.close();
         await closeAllPages(browser.port);
       }
-    }, 240_000);
+    }, 150_000);
   }
 
   it('restores the open dev door and HUD on reload without old audio, then restarts cleanly', async () => {
