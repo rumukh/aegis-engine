@@ -114,12 +114,18 @@ export function validatePresentation(
     'environment',
     'audio',
     'hud',
+    'camera',
     'ui',
     'quality',
     'legacy',
   ]);
   enumeration(root.aegis, 'aegis', ['presentation/1']);
   optional(root, 'quality', 'presentation', (v, p) => enumeration(v, p, ['low', 'standard']));
+  if (root.camera !== undefined) {
+    const camera = record(root.camera, 'camera', ['framing', 'padding']);
+    enumeration(camera.framing, 'camera.framing', ['follow', 'level']);
+    optional(camera, 'padding', 'camera', nonnegative);
+  }
   const assets = new Map<string, RecordValue>();
   const materials = new Set<string>();
   const objects = new Set<string>();

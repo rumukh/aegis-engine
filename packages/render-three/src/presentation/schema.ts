@@ -134,6 +134,12 @@ export interface PresentationManifest {
   };
   audio?: AudioSpec;
   hud?: HudSpec;
+  /** Iso-only framing override; omission retains the authoritative camera's follow behavior. */
+  camera?: {
+    framing: 'follow' | 'level';
+    /** Nonnegative world-unit margin around the level; used only for level framing. */
+    padding?: number;
+  };
   ui?: { accent?: string; eyebrow?: string; cover?: string };
   quality?: QualityTier;
   /** Explicit replacement only; collision geometry remains available in diagnostic view. */

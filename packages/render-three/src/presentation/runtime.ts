@@ -234,6 +234,12 @@ export class PresentationRuntime {
   constructor(options: PresentationRuntimeOptions) {
     const checked = validatePresentation(options.manifest);
     if (!checked.ok) throw new DiagnosticError(checked.diagnostics);
+    if (options.manifest.camera !== undefined && options.mode !== 'iso')
+      throw visualError(
+        'camera',
+        'Presentation camera framing overrides are supported only in isometric mode.',
+        'Omit camera for this mode; keep camera changes outside authoritative gameplay state.',
+      );
     this.manifest = options.manifest;
     this.#scene = options.scene;
     this.#camera = options.camera;

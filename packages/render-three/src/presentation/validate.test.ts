@@ -39,6 +39,31 @@ describe('presentation data validation', () => {
     );
   });
 
+  it('accepts explicit iso framing data and rejects unbounded or misspelled camera fields', () => {
+    for (const camera of [
+      { framing: 'follow' },
+      { framing: 'level', padding: 0 },
+      { framing: 'level', padding: 1.5 },
+    ]) {
+      expect(validatePresentation({ aegis: 'presentation/1', camera }).ok).toBe(true);
+    }
+    for (const camera of [
+      null,
+      {},
+      { framing: 'automatic' },
+      { framing: 'level', padding: -1 },
+      { framing: 'level', padding: Infinity },
+      { framing: 'level', padding: '1' },
+      { framing: 'level', paddding: 1 },
+    ]) {
+      const result = validatePresentation({ aegis: 'presentation/1', camera });
+      expect(result.ok).toBe(false);
+      expect(
+        result.diagnostics.some((diagnostic) => diagnostic.location?.path?.startsWith('camera')),
+      ).toBe(true);
+    }
+  });
+
   it('validates atlas/state sequence membership and rejects fields for another visual kind', () => {
     const valid = structuredClone(FIXTURE_MANIFEST);
     valid.entities = [
