@@ -610,6 +610,7 @@ describe('aegis describe: built CLI acceptance', () => {
     expect(data.operations.commands.map((c) => c.name)).toEqual([
       'describe',
       'inspect',
+      'preview',
       'record',
       'replay',
       'run',

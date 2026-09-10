@@ -15,9 +15,19 @@ function fakeIO(argv: readonly string[]): { io: CliIO; out: () => string; err: (
 }
 
 describe('@aegis/cli dispatcher', () => {
-  it('registers all eight commands', () => {
+  it('registers all nine commands', () => {
     expect(COMMANDS.map((c) => c.name).sort()).toEqual(
-      ['describe', 'inspect', 'record', 'replay', 'run', 'scaffold', 'test', 'validate'].sort(),
+      [
+        'describe',
+        'inspect',
+        'preview',
+        'record',
+        'replay',
+        'run',
+        'scaffold',
+        'test',
+        'validate',
+      ].sort(),
     );
   });
 
