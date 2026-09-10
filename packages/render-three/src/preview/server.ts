@@ -304,7 +304,8 @@ export async function startAssetPreviewServer(
           'cache-control': 'no-store',
           'x-content-type-options': 'nosniff',
           'referrer-policy': 'no-referrer',
-          'content-security-policy': `default-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'`,
+          // glTF buffers and ImageBitmapLoader fetch already-validated embedded data/local blobs.
+          'content-security-policy': `default-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; base-uri 'none'; form-action 'none'`,
         });
         response.end(
           renderAssetPreviewPage(

@@ -69,6 +69,7 @@ export class AssetPreviewStudio {
   #lastAnimationTime?: number;
   #width = 1;
   #height = 1;
+  #framingAspect = 1;
   #capturing = false;
   #disposed = false;
   #notifyQueued = false;
@@ -366,6 +367,7 @@ export class AssetPreviewStudio {
     const center = new Vector3().fromArray(bounds.center);
     const radius = new Vector3().fromArray(bounds.size).length() / 2;
     const aspect = this.#renderer.domElement.width / this.#renderer.domElement.height;
+    this.#framingAspect = aspect;
     const vertical = (40 * Math.PI) / 360;
     const horizontal = Math.atan(Math.tan(vertical) * aspect);
     const distance = (radius / Math.sin(Math.min(vertical, horizontal))) * 1.12;
@@ -403,7 +405,8 @@ export class AssetPreviewStudio {
       }
     }
     this.#setClipPlanes();
-    this.#controls.update();
+    if (this.#settings.camera === undefined) this.#controls.update();
+    else this.#camera.lookAt(this.#controls.target);
     this.render();
     this.#notify();
   }
@@ -609,7 +612,8 @@ export class AssetPreviewStudio {
       );
     this.#stopAnimation();
     this.#capturing = true;
-    const oldAspect = this.#width / this.#height;
+    // Loading/error UI can resize the viewport without changing the authored capture framing.
+    const oldAspect = this.#framingAspect;
     const oldZoom = this.#camera.zoom;
     try {
       this.#size(width, height);

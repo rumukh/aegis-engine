@@ -247,6 +247,13 @@ publication. `preview.browser.test.ts` records those paired measurements in
 median target rather than turning an absolute performance threshold into a timing-sensitive CI
 assertion. The actual samples and host load must accompany a performance claim.
 
+On 10 September 2026, Windows x64 / Node 25.6 measured a **130 ms median** across 11 warm
+reload-and-capture samples at 640 by 480 pixels: five edited console textures and six Kestrel/
+rifle model reloads, including PNG and sidecar publication. Samples ranged from 109 to 215 ms
+at approximately 29% whole-machine load. Separate, fully cold CLI examples at 1024 by 768 took
+8.4-12.0 seconds to reach initial readiness on the shared workstation. These are local
+observations, not portable guarantees: use the persistent workbench for rapid iteration.
+
 Recipes and source fingerprints are stable evidence. **Pixel identity across GPUs, browser
 versions, and rendering backends is not guaranteed.** This workflow assesses assets, not
 gameplay; continue using the existing headless and browser game acceptance surfaces for that.

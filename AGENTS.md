@@ -27,8 +27,9 @@ Transcripts beginning `$ node .tmp/…` came from throwaway probe scripts writte
 directory while this guide was being checked; they are not files in the repository. Where the
 probe is worth reproducing, its source is inline in the surrounding section.
 
-**What this guide does not cover.** Rendering and the browser dev server (`@aegis/render-three`) —
-you never need them to build or verify a game. Authoring scenes through the typed
+**What this guide does not cover.** Full-game rendering and the browser dev server
+(`@aegis/render-three`) are separate from the headless gameplay loop. Standalone asset rendering
+is covered in [§5.7](#57-rendering-an-asset-without-a-game). Authoring scenes through the typed
 `createSceneBuilder` API rather than JSON. Writing a new **mode** (as opposed to a game on top of
 an existing one) — see [ADR-0006](./docs/adr/0006-mode-module-boundary.md). Multiplayer,
 networking and save games, which the engine does not have. If you need one of these, read the
@@ -77,19 +78,20 @@ Four properties define everything else:
 
 Be honest with yourself about this table before planning any work.
 
-| You want to…                              | Can you? | How                                                                                                                         |
-| ----------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Author a level                            | Yes      | Write a `*.scene.json` with an inline ASCII tilemap                                                                         |
-| Discover a game's authoring vocabulary    | Yes      | `aegis describe [scene] --json` lists the selected plugin's declarations ([§2.4](#24-discovering-the-component-vocabulary)) |
-| Schema-check content before running       | Yes      | `aegis validate` → stable `AEG-CONTENT-nnnn` codes                                                                          |
-| Drive a game without a keyboard           | Yes      | The input-script DSL (`hold`, `press`, `click`, `aim`, …)                                                                   |
-| Watch the world at any tick               | Yes      | `aegis inspect --view world` — the entire world serialises to JSON                                                          |
-| "See" a 2D level                          | Yes      | `aegis inspect --view ascii` — a character grid with a legend                                                               |
-| "See" a 3D scene                          | Partly   | The semantic frame: projected screen positions, depth, occlusion. No pixels.                                                |
-| Prove a playthrough completes             | Yes      | `defineGameTest` + `expectSim` + `assertInvariant`                                                                          |
-| Reproduce a run exactly                   | Yes      | `aegis record` / `aegis replay`; hashes are byte-identical across runs                                                      |
-| Run a **game's own** systems from the CLI | Yes      | `aegis.json` beside the scene, or `--plugin <module>#<export>` ([§3.4](#34-how-a-plugin-reaches-a-run))                     |
-| Judge whether a jump "feels good"         | **No**   | Nothing in this engine gives you feel. Assert on measurable beats instead.                                                  |
+| You want to…                              | Can you? | How                                                                                                                                    |
+| ----------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Author a level                            | Yes      | Write a `*.scene.json` with an inline ASCII tilemap                                                                                    |
+| Discover a game's authoring vocabulary    | Yes      | `aegis describe [scene] --json` lists the selected plugin's declarations ([§2.4](#24-discovering-the-component-vocabulary))            |
+| Preview an asset without starting a game  | Yes      | `aegis preview <asset> --out <file.png>` renders a model, texture or declared material ([§5.7](#57-rendering-an-asset-without-a-game)) |
+| Schema-check content before running       | Yes      | `aegis validate` → stable `AEG-CONTENT-nnnn` codes                                                                                     |
+| Drive a game without a keyboard           | Yes      | The input-script DSL (`hold`, `press`, `click`, `aim`, …)                                                                              |
+| Watch the world at any tick               | Yes      | `aegis inspect --view world` — the entire world serialises to JSON                                                                     |
+| "See" a 2D level                          | Yes      | `aegis inspect --view ascii` — a character grid with a legend                                                                          |
+| "See" a 3D scene                          | Partly   | The semantic frame: projected screen positions, depth, occlusion. No pixels.                                                           |
+| Prove a playthrough completes             | Yes      | `defineGameTest` + `expectSim` + `assertInvariant`                                                                                     |
+| Reproduce a run exactly                   | Yes      | `aegis record` / `aegis replay`; hashes are byte-identical across runs                                                                 |
+| Run a **game's own** systems from the CLI | Yes      | `aegis.json` beside the scene, or `--plugin <module>#<export>` ([§3.4](#34-how-a-plugin-reaches-a-run))                                |
+| Judge whether a jump "feels good"         | **No**   | Nothing in this engine gives you feel. Assert on measurable beats instead.                                                             |
 
 ### 1.3 The package graph
 
@@ -192,7 +194,8 @@ Commands:
   test      Discover and run headless gameplay tests.
   inspect   Inspect world, semantic frame or ASCII view at a tick.
   describe  Discover a game plugin and its supported authoring operations.
-  validate  Validate a scene/prefab/tilemap document.
+  validate  Validate a scene/prefab/tilemap/presentation document.
+  preview   Preview local assets without starting a game.
   record    Run a scene and write a replay recording.
   replay    Replay a recording and verify determinism.
   scaffold  Generate a game, scene, tilemap, prefab or test from a template.
@@ -835,6 +838,7 @@ Action names (`Right`, `Jump`, `Fire`, `Forward`) are **logical** — never key 
 | `aegis run`      | Simulate N ticks, print seed / hash / entity count / event histogram              | 0 ok, 2 bad content                       |
 | `aegis inspect`  | Dump `world`, `frame` or `ascii` at a tick                                        | 0 ok, 2 bad content                       |
 | `aegis describe` | Discover plugin declarations and supported CLI operations without running a world | 0 described, nonzero on invalid selection |
+| `aegis preview`  | Render an individual asset, or keep an asset-only studio open for iteration       | 0 captured/closed, nonzero on failure     |
 | `aegis validate` | Schema-check documents                                                            | 0 clean, 2 problems                       |
 | `aegis record`   | Run and write a `*.replay` recording                                              | 0 ok                                      |
 | `aegis replay`   | Re-run a recording and check the pinned hash                                      | 0 match, 1 mismatch                       |
@@ -1231,6 +1235,60 @@ only a config file to read can still name it.
 | `frame(tick?)`, `ascii(tick?)` | Semantic frame / character grid at any captured tick         |
 | `assertInvariant(name, check)` | Check a property on every captured tick                      |
 | `recording()`, `replay()`      | Portable recording; deterministic re-run                     |
+
+### 5.7 Rendering an asset without a game
+
+When the question is about a model, material, texture or animation, do not construct a dummy
+scene or replay a game to reach a convenient camera. `aegis preview` uses the production asset
+loader and materials in a standalone studio. It creates no gameplay world, initializes no
+game plugin and runs no game systems. Pixel rendering still needs a Chromium-family browser
+with WebGL; "without a game" does not mean "without a renderer".
+
+Build the engine normally once, then capture an existing asset directly. Choose a review
+output directory separate from authored assets:
+
+```powershell
+npx aegis preview games\iso\assets\operative.gltf --clip walk --time 0.25 --out reviews\operative.png --json
+npx aegis preview games\platformer\assets\engineer.svg --out reviews\engineer.png --json
+```
+
+The PNG has a neighboring `<file.png>.preview.json` recipe recording the rendered revision,
+source/dependency fingerprints, selected asset and animation sample, camera, lighting,
+dimensions and timings. Direct inputs with undeclared authorship or licensing remain unknown;
+the tool does not invent provenance. Fixed capture settings aid comparison, but do not promise
+identical GPU pixels on different machines.
+
+For repeated edits, keep the studio and capture browser warm:
+
+```powershell
+npx aegis preview games\fps\assets\generated\kestrel-security.glb --serve --watch --out-dir reviews --json
+```
+
+Open the reported loopback URL in the browser canvas for the operator. Orbit, frame the asset,
+choose lighting, or select and scrub a clip there; use the warm capture API for another image.
+Changing an asset or its local dependencies does not require an engine rebuild or game restart.
+The revision/loading/error display distinguishes the accepted render from a failed new edit.
+Do not present a previous PNG as evidence of the new revision merely because that file exists.
+Stop the preview process when the review is over.
+
+A `presentation/1` JSON document can supply declared textures, atlas frames, models and
+materials: select them with `--texture`, `--frame`, `--model` or `--material`. Preview selects
+resources, not the descriptor's game entity bindings, effects or audio. `aegis preview --help`
+lists framing, projection, lighting and exact output-size controls.
+
+The [PoC asset studies](./poc/previews/asset-studies.presentation.json) provide ready-made
+model, atlas-frame and PBR material selections. Their paths are relative to the repository,
+so pass `--asset-root .` when running from its root:
+
+```powershell
+npx aegis preview poc\previews\asset-studies.presentation.json --asset-root . --texture engineer --frame victory --out reviews\engineer-victory.png --json
+npx aegis preview poc\previews\asset-studies.presentation.json --asset-root . --material deck --shape sphere --out reviews\deck.png --json
+```
+
+Inspect the actual image before presenting it, and retain the recipe beside it. An attractive
+studio render does not prove in-game collision alignment, lighting, performance or gameplay;
+those still require the existing PoC acceptance paths. The boundary is specified in
+[ADR-0011](./docs/adr/0011-standalone-asset-preview.md).
 
 ---
 

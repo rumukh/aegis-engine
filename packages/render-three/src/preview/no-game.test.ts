@@ -74,9 +74,11 @@ vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
 });
 
 let root: string | undefined;
+let resizeViewport: (() => void) | undefined;
 afterEach(() => {
   if (root !== undefined) rmSync(root, { recursive: true, force: true });
   root = undefined;
+  resizeViewport = undefined;
   vi.unstubAllGlobals();
 });
 
@@ -86,6 +88,9 @@ function studioCanvas(): HTMLCanvasElement {
   vi.stubGlobal(
     'ResizeObserver',
     class {
+      constructor(callback: () => void) {
+        resizeViewport = callback;
+      }
       observe() {}
       disconnect() {}
     },
@@ -130,6 +135,33 @@ function materialRevision(revision: number): PreviewServerState {
 }
 
 describe('no-game proof for both standalone preview entry points', () => {
+  it('keeps capture framing stable when an error panel changes the viewport size', async () => {
+    const { AssetPreviewStudio } = await import('./studio.js');
+    const canvas = studioCanvas();
+    const studio = new AssetPreviewStudio(canvas);
+    try {
+      await studio.accept(materialRevision(1));
+      const first = studio.capture(1, 512, 512);
+      expect(() => studio.configure({ clip: 'missing' })).toThrow();
+      vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+        x: 0,
+        y: 0,
+        width: 640,
+        height: 240,
+        top: 0,
+        left: 0,
+        right: 640,
+        bottom: 240,
+        toJSON: () => ({}),
+      });
+      resizeViewport?.();
+      studio.configure({ clip: null, time: 0 });
+      expect(studio.capture(1, 512, 512).recipe.camera).toEqual(first.recipe.camera);
+    } finally {
+      studio.dispose();
+    }
+  });
+
   it.each(['renamed', 'shortened', 'removed'] as const)(
     'repairs a %s animation selection on the current asset without restarting',
     async (change) => {

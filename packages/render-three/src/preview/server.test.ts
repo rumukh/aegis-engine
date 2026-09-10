@@ -34,7 +34,16 @@ describe('loopback asset-only host (no browser)', () => {
     writeFileSync(join(root, 'secret.txt'), 'not declared');
     server = await startAssetPreviewServer({ source });
     expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
-    const html = await (await fetch(server.url)).text();
+    const page = await fetch(server.url);
+    const policy = page.headers.get('content-security-policy') ?? '';
+    const connections = policy
+      .split(';')
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith('connect-src '));
+    expect(connections).toBe("connect-src 'self' data: blob:");
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).toMatch(/script-src 'self' 'nonce-[a-f0-9]+'/);
+    const html = await page.text();
     expect(html).toContain('Asset studio');
     expect(html).toContain('/preview/client/boot.js');
     expect(html).not.toContain("from '@aegis/render-three/client/boot'");

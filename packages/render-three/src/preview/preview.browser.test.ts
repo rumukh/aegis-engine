@@ -511,7 +511,18 @@ describe('standalone asset preview: actual browser acceptance', () => {
       deviceScaleFactor: 1,
       mobile: false,
     });
-    await until<number>(page, 'document.querySelector("canvas").width', (width) => width === 680);
+    await until<number>(
+      page,
+      'document.querySelector("canvas").width',
+      (width) => width >= 640 && width <= 680,
+    );
+    const layout = await evaluate<{ width: number; available: number; scroll: number }>(
+      page,
+      '({width: document.querySelector("canvas").width, available: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth})',
+    );
+    // A narrow page scrolls vertically; its scrollbar is not part of the available canvas width.
+    expect(layout.width).toBe(layout.available);
+    expect(layout.scroll).toBe(layout.available);
     const network = await evaluate<string[]>(
       page,
       'performance.getEntriesByType("resource").map(entry => entry.name)',

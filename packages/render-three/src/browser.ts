@@ -1241,6 +1241,7 @@ export async function describePage(cdp: CdpSession): Promise<string> {
 const VIRTUAL_KEYS: Readonly<Record<string, { key: string; vk: number }>> = {
   KeyA: { key: 'a', vk: 65 },
   KeyD: { key: 'd', vk: 68 },
+  KeyF: { key: 'f', vk: 70 },
   KeyS: { key: 's', vk: 83 },
   KeyW: { key: 'w', vk: 87 },
   Space: { key: ' ', vk: 32 },
@@ -1248,6 +1249,7 @@ const VIRTUAL_KEYS: Readonly<Record<string, { key: string; vk: number }>> = {
   ArrowDown: { key: 'ArrowDown', vk: 40 },
   ArrowLeft: { key: 'ArrowLeft', vk: 37 },
   ArrowRight: { key: 'ArrowRight', vk: 39 },
+  Home: { key: 'Home', vk: 36 },
   // The three session controls (`SESSION_CONTROLS` in bindings.ts). They are not gameplay input,
   // which is why they were absent: the screenshot capture drives pause/step through the dev
   // server's `/control` endpoint instead of the keyboard. The static site has no such endpoint —
