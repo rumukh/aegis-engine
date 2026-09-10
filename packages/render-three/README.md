@@ -142,6 +142,13 @@ advance it. An explicit authoritative step still advances presentation while pau
 display frames without a world step do not. Payloads are preserved for extensions, but the renderer does not invent an exact
 historic impact position when the event did not record one.
 
+FPS camera-anchored objects and their bursts use a foreground pass so a nearby wall cannot
+erase the viewmodel. They retain ordinary material depth testing against their own geometry;
+only the world's depth is cleared between passes. The foreground uses its own light copies,
+without a second background or fog, and borrows the same asset resources. Both shipped clients
+use `renderAdapter(renderer, adapter)`; custom hosts can import the browser-safe helper from
+`@aegis/render-three/render`. It restores renderer flags and preserves combined draw counters.
+
 Default collider-derived level and trigger visuals remain visible. A replacement environment may
 explicitly opt out with `legacy: { level: false, triggers: false }` only alongside declared
 replacement objects. The diagnostic collision toggle retains the original geometry. Game owners

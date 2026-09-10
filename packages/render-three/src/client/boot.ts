@@ -14,6 +14,7 @@ import { Vector3 } from 'three';
 import { createWorld } from '@aegis/core';
 import type { GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { RenderAdapter } from '../adapter.js';
+import { renderAdapter } from '../render.js';
 import { BINDINGS } from '../bindings.js';
 import type { BootConfig, ControlCommand, FrameResponse } from '../protocol.js';
 import { assertEventHistory } from '../protocol.js';
@@ -436,7 +437,7 @@ export function boot(config: BootConfig): void {
     }
     const t2 = performance.now();
     try {
-      renderer.render(adapter.scene, adapter.camera);
+      renderAdapter(renderer, adapter);
     } catch (error) {
       stopped = true;
       globalThis.cancelAnimationFrame(animationFrame);

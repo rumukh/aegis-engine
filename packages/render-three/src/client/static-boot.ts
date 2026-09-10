@@ -35,6 +35,7 @@ import type { GameEvent, GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
 import type { RenderAdapter } from '../adapter.js';
+import { renderAdapter } from '../render.js';
 import { BINDINGS } from '../bindings.js';
 import type { ModeBindings } from '../bindings.js';
 import { systemClock, MAX_CATCHUP_SECONDS } from '../loop.js';
@@ -270,7 +271,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       host.receive(drainEvents(), generation);
       adapter.sync(mirror);
       host.present(lastTick, session.paused);
-      renderer.render(adapter.scene, adapter.camera);
+      renderAdapter(renderer, adapter);
     } catch (error) {
       stopped = true;
       globalThis.cancelAnimationFrame(animationFrame);
