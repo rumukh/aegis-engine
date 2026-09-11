@@ -20,6 +20,7 @@ export const vaultPresentation = {
   assetRoot: fileURLToPath(new URL('../games/iso/assets/', import.meta.url)),
   manifest: {
     aegis: 'presentation/1',
+    camera: { framing: 'level', padding: 1.1 },
     assets: [
       ...[
         'operative',
