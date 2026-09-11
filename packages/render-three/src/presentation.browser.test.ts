@@ -400,20 +400,24 @@ describe('real asset presentation in dev and static browsers', () => {
           );
           await evaluate(cdp, 'globalThis.aegis.ready.then(() => true)');
           const inspect = `(() => {
-          const result = {textures: [], rigVertices: [], fins: []};
-          globalThis.aegis.adapter.scene.traverse(o => {
-            if (o.name === 'fin') result.fins.push(o.quaternion.toArray());
-            if (o.isMesh && o.geometry?.attributes.position?.count === 12) result.rigVertices.push(12);
-            if (o.isMesh) for (const m of Array.isArray(o.material) ? o.material : [o.material])
-              if (m?.map?.image) result.textures.push(m.map.image.width);
-          });
+          const adapter = globalThis.aegis.adapter;
+          const scenes = [adapter.scene, ...(adapter.foreground ? [adapter.foreground.scene] : [])];
+          const result = {textures: [], rigVertices: [], fins: [], passes: scenes.length};
+          for (const scene of scenes) scene.traverse(o => {
+              if (o.name === 'fin') result.fins.push(o.quaternion.toArray());
+              if (o.isMesh && o.geometry?.attributes.position?.count === 12) result.rigVertices.push(12);
+              if (o.isMesh) for (const m of Array.isArray(o.material) ? o.material : [o.material])
+                if (m?.map?.image) result.textures.push(m.map.image.width);
+            });
           return result;
         })()`;
           const first = await evaluate<{
             textures: number[];
             rigVertices: number[];
             fins: number[][];
+            passes: number;
           }>(cdp, inspect);
+          expect(first.passes).toBe(entry.id === 'fps' ? 2 : 1);
           expect(first.textures).toContain(32);
           expect(first.textures).toContain(48);
           expect(first.rigVertices.length).toBeGreaterThanOrEqual(2);
@@ -444,19 +448,29 @@ describe('real asset presentation in dev and static browsers', () => {
             `(async () => {
               const {Box3, Vector3, Raycaster} = await import('three');
               const adapter = globalThis.aegis.adapter;
-              adapter.scene.updateMatrixWorld(true);
+              const passes = [
+                ...(adapter.foreground ? [adapter.foreground] : []),
+                {scene: adapter.scene, camera: adapter.camera},
+              ];
+              for (const pass of passes) pass.scene.updateMatrixWorld(true);
               const model = adapter.presentation.object('specimen').object;
+              const owner = passes.find(pass => pass.scene.getObjectById(model.id));
+              if (!owner) throw new Error('The fixture model is not in a rendered pass.');
               const body = model.getObjectByName('body');
               const center = new Box3().setFromObject(body).getCenter(new Vector3());
-              const ndc = center.project(adapter.camera);
+              const ndc = center.project(owner.camera);
               const ray = new Raycaster();
-              ray.setFromCamera({x:ndc.x,y:ndc.y}, adapter.camera);
-              const hits = ray.intersectObjects(adapter.scene.children, true).filter(hit => {
-                for (let node = hit.object; node; node = node.parent) if (!node.visible) return false;
-                const material = Array.isArray(hit.object.material)
-                  ? hit.object.material[hit.face?.materialIndex ?? 0] : hit.object.material;
-                return material?.visible !== false && (material?.opacity ?? 1) >= 1;
-              });
+              let hits = [];
+              for (const pass of passes) {
+                ray.setFromCamera({x:ndc.x,y:ndc.y}, pass.camera);
+                hits = ray.intersectObjects(pass.scene.children, true).filter(hit => {
+                  for (let node = hit.object; node; node = node.parent) if (!node.visible) return false;
+                  const material = Array.isArray(hit.object.material)
+                    ? hit.object.material[hit.face?.materialIndex ?? 0] : hit.object.material;
+                  return material?.visible !== false && (material?.opacity ?? 1) >= 1;
+                });
+                if (hits.length > 0) break;
+              }
               let nearestIsModel = false;
               for (let node = hits[0]?.object; node; node = node.parent)
                 if (node === model) nearestIsModel = true;
