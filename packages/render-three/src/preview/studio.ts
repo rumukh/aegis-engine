@@ -61,6 +61,8 @@ export class AssetPreviewStudio {
   #pending?: LoadedSubject;
   #controller?: AbortController;
   #revision = 0;
+  #serverStatus?: PreviewServerState['status'];
+  #accepting: Promise<void> = Promise.resolve();
   #lastGood: number | null = null;
   #status: PreviewStudioState['status'] = 'loading';
   #diagnostics: PreviewStudioState['diagnostics'] = [];
@@ -216,6 +218,7 @@ export class AssetPreviewStudio {
       this.#disposed ||
       loaded === undefined ||
       loaded.document.revision !== this.#revision ||
+      this.#serverStatus !== 'prepared' ||
       this.#status === 'loading'
     )
       throw previewError(
@@ -242,14 +245,45 @@ export class AssetPreviewStudio {
   }
 
   /** New requests immediately invalidate capture; an old load can never commit over a newer one. */
-  async accept(server: PreviewServerState): Promise<void> {
-    if (this.#disposed || server.revision < this.#revision) return;
+  accept(server: PreviewServerState): Promise<void> {
+    if (this.#disposed || server.revision < this.#revision) return this.#accepting;
     if (
       server.revision === this.#revision &&
-      this.#status === 'ready' &&
-      server.status === 'prepared'
+      (server.status === this.#serverStatus ||
+        this.#serverStatus === 'closed' ||
+        (server.status === 'preparing' && this.#serverStatus !== undefined))
     )
-      return;
+      return this.#accepting;
+    // HTTP and SSE can deliver one revision out of order; duplicates must join its real load.
+    this.#serverStatus = server.status;
+    this.#accepting = this.#apply(server);
+    return this.#accepting;
+  }
+
+  async ready(revision?: number): Promise<PreviewStudioState> {
+    let accepting: Promise<void>;
+    do {
+      accepting = this.#accepting;
+      await accepting;
+    } while (accepting !== this.#accepting);
+    const state = this.state();
+    if (state.status !== 'ready' || (revision !== undefined && revision !== state.revision))
+      throw new DiagnosticError(
+        state.diagnostics.length > 0
+          ? state.diagnostics
+          : previewDiagnostics(
+              previewError(
+                PreviewCode.Revision,
+                'revision',
+                `Revision ${state.revision} is ${state.status}, not the requested ready revision.`,
+                'Wait for the current source to load or repair it and reload.',
+              ),
+            ),
+      );
+    return state;
+  }
+
+  async #apply(server: PreviewServerState): Promise<void> {
     this.#controller?.abort();
     this.#disposePending();
     const controller = (this.#controller = new AbortController());
