@@ -523,28 +523,44 @@ describe('Coyote Gap real browser acceptance', () => {
         if ((await evaluate<Seen>(cdp, READ)).host.audio.muted)
           await pressControl(cdp, '#action-mute');
         await pressControl(cdp, '#action-pause');
-        await until<number>(
-          cdp,
-          'globalThis.aegis.presentation().audio.voices',
-          (voices) => voices === 1,
-        );
+        // Let the initial landing cue finish before measuring the new jump's audio.
+        await until<Seen>(cdp, READ, (seen) => seen.body.grounded && seen.host.audio.voices === 1);
         await evaluate(
           cdp,
           `(() => {
           document.getElementById('stage').focus();
-          globalThis.coyoteAudioProbe={peak:0,frame:0};
+          const originalStart=AudioBufferSourceNode.prototype.start;
+          globalThis.coyoteAudioProbe={peak:0,frame:0,starts:[],originalStart};
+          AudioBufferSourceNode.prototype.start=function(...args){
+            const result=originalStart.apply(this,args);
+            globalThis.coyoteAudioProbe.starts.push({loop:this.loop,seconds:this.buffer?.duration});
+            return result;
+          };
           const sample=()=>{const p=globalThis.coyoteAudioProbe;p.peak=Math.max(p.peak,globalThis.aegis.presentation().audio.voices);p.frame=requestAnimationFrame(sample)};
           sample();
         })()`,
         );
         await tap(cdp, 'Space');
+        await sync(cdp);
+        const jumpEvents = await until<readonly EventLine[]>(
+          cdp,
+          transport === 'static'
+            ? 'globalThis.aegis.events()'
+            : `fetch(${JSON.stringify(`${dev.url}/api/platformer/events`)}).then(response => response.json()).then(log => log.events)`,
+          (log) => log.some((event) => event.type === 'player.jumped'),
+          10_000,
+        );
+        expect(jumpEvents.filter((event) => event.type === 'player.jumped')).toHaveLength(1);
+        await until<boolean>(
+          cdp,
+          'globalThis.coyoteAudioProbe.starts.some(source => !source.loop && Math.abs(source.seconds - 0.23) < 0.001)',
+          Boolean,
+          10_000,
+        );
         await until<number>(cdp, 'globalThis.coyoteAudioProbe.peak', (peak) => peak >= 2, 10_000);
         const voicePeak = await evaluate<number>(
           cdp,
-          'cancelAnimationFrame(globalThis.coyoteAudioProbe.frame); globalThis.coyoteAudioProbe.peak',
-        );
-        expect((await events(transport, cdp)).some((event) => event.type === 'player.jumped')).toBe(
-          true,
+          'cancelAnimationFrame(globalThis.coyoteAudioProbe.frame); AudioBufferSourceNode.prototype.start=globalThis.coyoteAudioProbe.originalStart; globalThis.coyoteAudioProbe.peak',
         );
         await pressControl(cdp, '#action-mute');
         await until<boolean>(cdp, 'globalThis.aegis.presentation().audio.muted', Boolean);
