@@ -77,6 +77,13 @@ Actor and interaction bindings use `fit: 'authored'`: one unit remains one cell 
 roots remain at the floor. The generic iso adapter faces resolved paths and opponents,
 briefly interpolates observed adjacent cell steps, and keeps clicks tied to the logical
 actor rather than rounding a partially interpolated position into a neighboring cell.
+Observations older than the blend window snap to the current cell so paused stepping or
+a slow display cannot leave a false actor over a requested destination.
+
+The view-only `camera: { framing: 'level', padding: 1.1 }` keeps the navigation grid and
+static rear architecture in frame at desktop and narrow aspect ratios. Its bounds do not
+follow moving actors, animated door leaves, or death poses. The authoritative camera data
+and headless semantic projection remain unchanged.
 
 Game event mappings select the attack and held terminal clips, shared bounded feedback,
 audio cues, and HUD objectives. Materials and textures are borrowed from the shared asset

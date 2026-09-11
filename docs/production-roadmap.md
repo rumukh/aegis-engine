@@ -25,8 +25,10 @@ that the engine already has AAA scale or production completeness.
 
 ## M1: integrated vertical slice
 
-This is the current milestone. Completion means integrated acceptance, not separate green
-branches or a claim of AAA readiness.
+**Completed as a reference milestone on 2026-09-11.** The integrated source, original routes,
+actual browser playthroughs, resource lifetimes and measured runtime changes are recorded in
+[M1 acceptance](m1-acceptance.md), with reviewed in-game captures. This is not a claim of
+AAA readiness or completion of M2-M4.
 
 | Sequence                              | Work                                                                                                                                                                                                                                   | Integration condition                                                                                                        |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -54,7 +56,7 @@ original asset recipes, and all three games' asset-backed composition profiles. 
 uncommitted Sector Breach composition-test draft is retained as a root integration test, where
 it does not introduce a game-to-renderer package dependency.
 
-This is a saved work-in-progress, not completed M1 acceptance or a claim of AAA readiness.
+This was a saved work-in-progress, before the integrated acceptance recorded below.
 The paused-step regression is repaired: presentation follows explicitly advanced world ticks
 without advancing on repeated paused display or picking updates. Existing simulation oracles
 are not re-pinned.
@@ -71,19 +73,26 @@ published checkpoint and repaired without changing simulation inputs or oracles:
 | glTF instance disposal      | Model handles dispose clone-owned `InstancedMesh` buffers exactly once, retaining borrowed geometry/materials/textures until their library owner releases them.                                                          |
 | Dev-client reload           | Opt-in generation-aware history arrives atomically with the frame snapshot. Cold clients restore held clips/frames and HUD progress without replaying old audio or transient effects; fresh buffered events remain live. |
 
-These are correctness repairs, not the remaining artistic and production acceptance. The history
+These correctness repairs preceded the integrated showcase acceptance. The history
 handshake is specific to presentation-enabled dev clients; legacy wire shapes and static-session
 initialization remain unchanged. It is not the deferred snapshot-copy optimization.
 
-Final showcase review still needs representative dev and prefixed-static playthrough images,
-human input and narrow-viewport review, trusted audio unlock/mute, restart/resource behavior and
-performance acceptance on the composed games. Earlier asset-only previews and headless profile
-probes do not establish that acceptance.
+### Integrated showcase and runtime acceptance (2026-09-11)
 
-The later local-observation performance work completed measurement/design only: avoidable
-snapshot/restore work was found on unchanged static-client frames. Caching by tick and restart
-generation remains a proposed optimization, subject to detached-mirror isolation and hostile
-mutation regressions; it is not part of the delivered hashing optimization.
+All three existing games now have real dev and prefixed-static win/lose coverage, reviewed
+in-game images, native input and audio exercise, narrow-view controls, required-asset
+refusal/retry, reload/restart behavior and disposal/budget assertions. Running them exposed
+and repaired stale isometric picking, clipped narrow-screen objectives and near-wall FPS
+viewmodel occlusion. No gameplay scene, script or golden was changed to make the routes easier.
+Asset-only previews are not substituted for this game acceptance.
+
+The separately authorized static-client optimization is also implemented: unchanged tick/restart
+revisions reuse the detached mirror while every-frame input and presentation continue.
+Defensive debug snapshots, same-tick restarts and hostile mirror mutations are covered.
+The paired actual-client measurement removes all 96 redundant snapshot/restore pairs in each
+96-frame paused sample. Native active frames usually change, so a general FPS gain is not
+claimed. The full method, noisy timing limitations and current integration evidence are in the
+[acceptance record](m1-acceptance.md).
 
 ## M2: scalable runtime and content
 

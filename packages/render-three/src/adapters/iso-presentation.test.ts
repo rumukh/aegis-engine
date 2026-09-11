@@ -232,6 +232,8 @@ describe('iso presentation bindings', () => {
       const world = buildTestWorld(ISO_SCENE, isoPlugin);
       const guard = entityNamed(world, 'guard');
       adapter.mount(world);
+      world.restore({ ...world.snapshot(), tick: 19 });
+      adapter.sync(world);
       world.getOrThrow(guard, GridPosition).cellX = 3;
       world.restore({ ...world.snapshot(), tick: 20 });
       const before = world.snapshot();
@@ -372,6 +374,124 @@ describe('iso presentation bindings', () => {
       expect(adapter.presentation!.entity('guard')!.state).toBe('idle');
     } finally {
       adapter.dispose();
+      assets.dispose();
+    }
+  });
+
+  it('snaps a stale observed patrol step instead of drawing a false actor over the script destination', async () => {
+    const manifest = runtimeManifest({
+      entities: [
+        { target: { name: 'guard' }, fit: 'authored', visual: { kind: 'model', mesh: 'rig' } },
+      ],
+    });
+    const assets = await runtimeAssets(manifest);
+    const adapter = createIsoAdapter({ presentation: { manifest, assets } });
+    try {
+      const world = buildTestWorld(ISO_SCENE, isoPlugin);
+      const guard = entityNamed(world, 'guard');
+      world.getOrThrow(guard, GridPosition).cellX = 1;
+      adapter.mount(world);
+      world.getOrThrow(guard, GridPosition).cellX = 2;
+      world.restore({ ...world.snapshot(), tick: 40 });
+      adapter.sync(world);
+      expect(adapter.presentation!.entity('guard')!.root.position.toArray()).toEqual([2, 0, 3]);
+      const destination = new Vector3(1, 0, 3).project(adapter.camera);
+      expect(adapter.pick(destination.x, destination.y)).toEqual({ x: 1, y: 3, z: 0 });
+    } finally {
+      adapter.dispose();
+      assets.dispose();
+    }
+  });
+
+  it('fits the static level and rear architecture at narrow aspects without changing the authoritative camera', async () => {
+    const manifest = runtimeManifest({
+      camera: { framing: 'level' },
+      objects: [
+        {
+          id: 'rear-equipment',
+          visual: { kind: 'primitive', shape: 'box' },
+          pose: { position: [2, 2, -0.6], scale: [6, 4, 0.4] },
+        },
+      ],
+    });
+    const assets = await runtimeAssets(manifest);
+    const adapter = createIsoAdapter({ presentation: { manifest, assets } });
+    try {
+      const world = buildTestWorld(ISO_SCENE, isoPlugin);
+      const before = world.snapshot();
+      adapter.mount(world);
+      const focus = adapter.camera.position.clone();
+      const height = adapter.camera.top - adapter.camera.bottom;
+      // Omitted padding means a literal 0.75 world-unit margin on each side.
+      const noPadding = createIsoAdapter({
+        presentation: {
+          manifest: { ...manifest, camera: { framing: 'level', padding: 0 } },
+          assets,
+        },
+      });
+      try {
+        noPadding.mount(world);
+        expect(height - (noPadding.camera.top - noPadding.camera.bottom)).toBeCloseTo(1.5);
+      } finally {
+        noPadding.dispose();
+      }
+      for (const [width, viewportHeight] of [
+        [1280, 800],
+        [390, 844],
+      ]) {
+        adapter.resize(width!, viewportHeight!);
+        adapter.sync(world);
+        const nav = world.getResource(NavGrid)!;
+        for (let y = 0; y < nav.height; y++)
+          for (let x = 0; x < nav.width; x++) {
+            const point = new Vector3(x, 0, y).project(adapter.camera);
+            expect(Math.abs(point.x)).toBeLessThan(1);
+            expect(Math.abs(point.y)).toBeLessThan(1);
+          }
+        for (const x of [-1, 5])
+          for (const y of [0, 4])
+            for (const z of [-0.8, -0.4]) {
+              const point = new Vector3(x, y, z).project(adapter.camera);
+              expect(Math.abs(point.x)).toBeLessThan(1);
+              expect(Math.abs(point.y)).toBeLessThan(1);
+            }
+      }
+      world.getOrThrow(entityNamed(world, 'operative'), GridPosition).cellX = 4;
+      adapter.sync(world);
+      expect(adapter.camera.position.toArray()).toEqual(focus.toArray());
+      world.restore(before);
+      expect(world.snapshot()).toEqual(before);
+    } finally {
+      adapter.dispose();
+      assets.dispose();
+    }
+  });
+
+  it('keeps explicit follow behavior unchanged and rejects invalid overview extents', async () => {
+    const manifest = runtimeManifest({ camera: { framing: 'follow' } });
+    const assets = await runtimeAssets(manifest);
+    const follow = createIsoAdapter({ presentation: { manifest, assets } });
+    const legacy = createIsoAdapter();
+    const invalid = createIsoAdapter({
+      aspect: NaN,
+      presentation: {
+        manifest: { ...manifest, camera: { framing: 'level' } },
+        assets,
+      },
+    });
+    try {
+      const world = buildTestWorld(ISO_SCENE, isoPlugin);
+      follow.mount(world);
+      legacy.mount(world);
+      expect(follow.camera.position.toArray()).toEqual(legacy.camera.position.toArray());
+      expect(follow.camera.projectionMatrix.elements).toEqual(
+        legacy.camera.projectionMatrix.elements,
+      );
+      expect(() => invalid.mount(world)).toThrow(/finite bounds.*positive viewport aspect/);
+    } finally {
+      follow.dispose();
+      legacy.dispose();
+      invalid.dispose();
       assets.dispose();
     }
   });

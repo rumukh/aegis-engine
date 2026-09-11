@@ -200,6 +200,12 @@ change, or arbitrary output-path API is provided.
 `closed`. Browser state uses `loading`, `ready`, `failed`, and `disposed`. Read the browser
 status after an HTTP reload, or use the Node `reload()` method that waits for it.
 
+HTTP and event-stream delivery can overlap. Duplicate states join the same asset load, and a
+late `preparing` message cannot undo an already prepared revision. Browser `ready()` follows
+the current load; an explicit revision still rejects if superseded. A lost connection disables
+capture until the server confirms its current prepared revision again. Changing view settings
+does not count as that confirmation, and a closed revision cannot be reopened by a stale message.
+
 HTTP capture requires an explicit revision. Loading, failure, stale revision, or source drift
 cannot return a last-good capture as a success. Revision refusal is HTTP 409, access refusal
 403, and invalid content/settings 422; the body contains `diagnostics` and the current

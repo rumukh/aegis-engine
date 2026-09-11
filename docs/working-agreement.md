@@ -64,9 +64,10 @@ type-checked a single test file. A test fixture could silently drift out of cont
 it claims to exercise, and one had: `packages/mode-fps/src/systems.test.ts` built `InputFrame`s
 missing `released` and `pointer` from the day it was written. Tests are code; they get checked.
 
-Note: `.github/workflows/ci.yml` is documentation of intent — this repo has **no git remote**,
-so GitHub Actions never actually runs. `npm run verify` is the real gate. Keep the workflow
-in sync with it anyway, so the project is CI-ready the day it gets a remote.
+`.github/workflows/ci.yml` runs this gate on pushes and pull requests for both Windows and
+Ubuntu. The audited browser phase runs on Ubuntu CI and locally on Windows, but is explicitly
+omitted on hosted Windows as documented in ADR-0010. A green Windows CI job alone is not browser
+acceptance. Keep the workflow, local command and reported omissions aligned.
 
 ## 4. Determinism is not negotiable
 

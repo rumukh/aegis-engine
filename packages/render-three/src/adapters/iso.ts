@@ -18,6 +18,7 @@
  */
 import {
   AmbientLight,
+  Box3,
   DirectionalLight,
   Group,
   OrthographicCamera,
@@ -138,6 +139,8 @@ export class IsoAdapter extends BaseAdapter {
   readonly #pickProxies = new Set<Object3D>();
   #aspect: number;
   #levelBuilt = false;
+  #levelBounds?: Box3;
+  #overview?: { yaw: number; width: number; height: number; center: Vector3 };
 
   constructor(options: RenderAdapterOptions = {}) {
     super();
@@ -162,6 +165,8 @@ export class IsoAdapter extends BaseAdapter {
     this.#pickCells.clear();
     this.#pickProxies.clear();
     this.#levelBuilt = false;
+    this.#levelBounds = undefined;
+    this.#overview = undefined;
     if (this.defaultLighting) {
       const ambient = new AmbientLight(0xffffff, 1.1);
       ambient.name = 'light:ambient';
@@ -326,7 +331,8 @@ export class IsoAdapter extends BaseAdapter {
           adjacent &&
           next === undefined &&
           pose.next === undefined &&
-          world.tick > pose.tick;
+          world.tick > pose.tick &&
+          world.tick - pose.tick <= STEP_BLEND_TICKS;
         pose.from.copy(pose.position);
         pose.movedAt = stepped ? world.tick : -Infinity;
         pose.directionX = dx;
@@ -392,6 +398,19 @@ export class IsoAdapter extends BaseAdapter {
           floor.position.set(at.x, -0.04, at.z);
           this.#level.add(floor);
         }
+      }
+    }
+    if (this.presentation?.manifest.camera?.framing === 'level') {
+      const half = nav.tileSize / 2;
+      this.#levelBounds = new Box3(
+        new Vector3(-half, -0.08, -half),
+        new Vector3(nav.width - 1 + half, 1.5, nav.height - 1 + half),
+      );
+      for (const spec of this.presentation.manifest.objects ?? []) {
+        if (spec.anchor !== undefined && spec.anchor !== 'world') continue;
+        if (spec.motion !== undefined || spec.parallax !== undefined) continue;
+        const object = this.presentation.object(spec.id);
+        if (object !== undefined) this.#levelBounds.union(new Box3().setFromObject(object.root));
       }
     }
     this.#levelBuilt = true;
@@ -568,16 +587,58 @@ export class IsoAdapter extends BaseAdapter {
     }
   }
 
-  /** Follow the `IsoCamera` target along the authored isometric direction. */
+  /** Framing is view-only; the authoritative camera and world are never edited. */
   #syncCamera(world: World): void {
     const rig = world.query({ has: [IsoCamera] }).first();
     const config = rig?.get(IsoCamera);
-    const focus = this.#focusOf(world, config?.target ?? '');
-    this.#applyFrustum(config?.viewHeight ?? FALLBACK_VIEW_HEIGHT);
-
     const yaw = (config?.yawDegrees ?? 45) * DEG2RAD;
     const elevation = ISO_ELEVATION_DEG * DEG2RAD;
     const horizontal = cos(elevation);
+    let focus: { x: number; z: number } = this.#focusOf(world, config?.target ?? '');
+    let focusY = 0;
+    let viewHeight = config?.viewHeight ?? FALLBACK_VIEW_HEIGHT;
+    const framing = this.presentation?.manifest.camera;
+    if (framing?.framing === 'level') {
+      if (this.#levelBounds === undefined)
+        throw new Error('[aegis] Isometric level framing requires a nonempty navigation grid.');
+      if (this.#overview?.yaw !== yaw) {
+        const size = this.#levelBounds.getSize(new Vector3());
+        this.#overview = {
+          yaw,
+          center: this.#levelBounds.getCenter(new Vector3()),
+          width: Math.abs(cos(yaw)) * size.x + Math.abs(sin(yaw)) * size.z,
+          height:
+            Math.abs(sin(elevation) * sin(yaw)) * size.x +
+            horizontal * size.y +
+            Math.abs(sin(elevation) * cos(yaw)) * size.z,
+        };
+      }
+      const overview = this.#overview;
+      const padding = framing.padding ?? 0.75;
+      if (
+        ![
+          overview.center.x,
+          overview.center.y,
+          overview.center.z,
+          overview.width,
+          overview.height,
+          this.#aspect,
+        ].every(Number.isFinite) ||
+        this.#aspect <= 0
+      )
+        throw new Error(
+          '[aegis] Isometric level framing needs finite bounds and a positive viewport aspect.',
+        );
+      focus = overview.center;
+      focusY = overview.center.y;
+      viewHeight = Math.max(
+        overview.height + 2 * padding,
+        (overview.width + 2 * padding) / this.#aspect,
+      );
+      if (!Number.isFinite(viewHeight) || viewHeight <= 0)
+        throw new Error('[aegis] Isometric level framing produced an invalid view extent.');
+    }
+    this.#applyFrustum(viewHeight);
     const offset = {
       x: sin(yaw) * horizontal,
       y: sin(elevation),
@@ -585,11 +646,11 @@ export class IsoAdapter extends BaseAdapter {
     };
     this.camera.position.set(
       focus.x + offset.x * CAMERA_DISTANCE,
-      offset.y * CAMERA_DISTANCE,
+      focusY + offset.y * CAMERA_DISTANCE,
       focus.z + offset.z * CAMERA_DISTANCE,
     );
     this.camera.up.set(0, 1, 0);
-    this.camera.lookAt(focus.x, 0, focus.z);
+    this.camera.lookAt(focus.x, focusY, focus.z);
     this.camera.updateMatrixWorld();
   }
 

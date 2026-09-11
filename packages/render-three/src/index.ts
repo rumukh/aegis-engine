@@ -8,6 +8,7 @@
  * @packageDocumentation
  */
 export * from './adapter.js';
+export * from './render.js';
 export * from './adapters/index.js';
 export * from './adapters/platformer.js';
 export * from './adapters/iso.js';

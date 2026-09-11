@@ -38,6 +38,9 @@ import type { RenderAdapterOptions } from '../adapter.js';
 import { resolveAppearance } from '../appearance.js';
 import type { VisualRole } from '../appearance.js';
 import { Primitives } from '../primitives.js';
+import { ForegroundScene } from '../render.js';
+import type { PresentationFrame } from '../presentation/runtime.js';
+import { checkLightBudget } from '../presentation/runtime-lights.js';
 
 /** Thickness of the ground slab under a walkable cell, world units. */
 const GROUND_THICKNESS = 0.5;
@@ -58,7 +61,9 @@ export class FpsAdapter extends BaseAdapter {
   readonly mode: GameMode = 'fps';
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
+  readonly foreground: ForegroundScene | undefined;
 
+  readonly #cameraObjects: readonly string[];
   readonly #primitives = new Primitives();
   readonly #level = new Group();
   readonly #entities = new Group();
@@ -78,6 +83,14 @@ export class FpsAdapter extends BaseAdapter {
     this.camera.name = 'camera';
     this.configurePresentation(options);
     this.presentation?.bindLevel(this.#level);
+    this.#cameraObjects =
+      options.presentation?.manifest.objects
+        ?.filter((object) => object.anchor === 'camera')
+        .map((object) => object.id) ?? [];
+    if (this.#cameraObjects.length > 0) {
+      this.foreground = new ForegroundScene(this.camera);
+      this.presentation?.setCameraEffectsParent(this.foreground.scene);
+    }
   }
 
   mount(world: World): void {
@@ -105,6 +118,20 @@ export class FpsAdapter extends BaseAdapter {
     this.#syncCamera(world);
     this.#syncOtherAnchors(world);
     this.finishPresentationSync(world);
+    if (this.foreground !== undefined) {
+      for (const id of this.#cameraObjects) {
+        const object = this.presentation?.object(id);
+        if (object !== undefined && object.root.parent !== this.foreground.scene)
+          this.foreground.scene.add(object.root);
+      }
+      this.foreground.syncLighting(this.scene);
+      checkLightBudget(this.foreground.scene);
+    }
+  }
+
+  override present(frame: PresentationFrame): void {
+    super.present(frame);
+    this.foreground?.syncLighting(this.scene);
   }
 
   resize(width: number, height: number): void {
@@ -118,6 +145,7 @@ export class FpsAdapter extends BaseAdapter {
     this.#pool.clear();
     this.#primitives.dispose();
     super.dispose();
+    this.foreground?.dispose();
   }
 
   /**

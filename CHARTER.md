@@ -109,25 +109,28 @@ complementary requirements, not substitutes.
 
 ### 4.3 Definition of done
 
-- [ ] The existing complete `npm run verify` gate is green from a clean checkout with locked dependencies.
-- [ ] Every package has meaningful tests. Core sim logic is thoroughly covered.
-- [ ] Determinism is *proven by test*: identical state hash across repeated runs.
-- [ ] All three PoCs complete their scripted playthrough headlessly in CI, and assert on
+M1 acceptance is recorded in [`docs/m1-acceptance.md`](./docs/m1-acceptance.md), including
+the tested routes, rendered evidence, measured bounds and explicit production limits.
+
+- [x] The existing complete `npm run verify` gate is green from a clean checkout with locked dependencies.
+- [x] Every package has meaningful tests. Core sim logic is thoroughly covered.
+- [x] Determinism is *proven by test*: identical state hash across repeated runs.
+- [x] All three PoCs complete their scripted playthrough headlessly in CI, and assert on
       gameplay outcomes (reached the goal, defeated the enemy, took the correct damage).
-- [ ] All three PoCs are visually playable by a human in a browser.
-- [ ] Snapshot restoration, prefab hierarchies, resource declarations and replay timing have
+- [x] All three PoCs are visually playable by a human in a browser.
+- [x] Snapshot restoration, prefab hierarchies, resource declarations and replay timing have
       complete, validated contracts on headless, CLI and live paths.
-- [ ] A shared declarative presentation/asset layer serves all three games in dev and static
+- [x] A shared declarative presentation/asset layer serves all three games in dev and static
       builds, with visible failures, bounded resource use and no simulation interference.
-- [ ] Agent-facing capability discovery and bounded inspection expose actual registered
+- [x] Agent-facing capability discovery and bounded inspection expose actual registered
       contracts rather than requiring an agent to guess or deliberately submit invalid content.
-- [ ] Agents can render and inspect individual models, textures, materials and animations
+- [x] Agents can render and inspect individual models, textures, materials and animations
       without initializing a game. The asset workbench reuses production loading, supports
       warm revision-aware reload, and produces operator-visible captures with provenance.
-- [ ] Runtime improvements have comparable measurements and preserve existing deterministic
+- [x] Runtime improvements have comparable measurements and preserve existing deterministic
       outputs; deliberate gameplay changes carry independent expectations and explained pins.
-- [ ] An agent-facing guide (`AGENTS.md`) documents the full authoring loop end to end.
-- [ ] CI runs the whole thing on push.
+- [x] An agent-facing guide (`AGENTS.md`) documents the full authoring loop end to end.
+- [x] CI runs the whole thing on push.
 
 ## 5. Boundaries and non-goals for the first milestone
 
@@ -167,5 +170,6 @@ Every session works on its own branch and hands back a summary. The PM integrate
 | **M3: production characters and worlds** | Animation, richer physics/navigation, persistence migrations, streamed worlds and VFX/audio authoring. | Agent-facing diagnostics and measurable gameplay/presentation acceptance for each subsystem. |
 | **M4: production operations and platforms** | Large-project content workflows, packaging, platform integration and continuous performance/crash diagnostics. | Sustained production-scale workloads and explicit platform readiness, not feature-count claims. |
 
-M1 is the current execution scope, not proof of AAA completeness. Its sequencing and acceptance
-are specified in [`docs/production-roadmap.md`](./docs/production-roadmap.md).
+M1 is the completed reference milestone, not proof of AAA completeness. Its acceptance and
+the separately scoped next milestones are specified in
+[`docs/production-roadmap.md`](./docs/production-roadmap.md).

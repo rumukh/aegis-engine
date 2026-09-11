@@ -213,21 +213,7 @@ export function bootAssetPreview(config: PreviewBootConfig): void {
   };
   const ready = async (revision?: number): Promise<PreviewStudioState> => {
     await loading;
-    const state = studio.state();
-    if (state.status !== 'ready' || (revision !== undefined && revision !== state.revision))
-      throw new DiagnosticError(
-        state.diagnostics.length > 0
-          ? state.diagnostics
-          : previewDiagnostics(
-              previewError(
-                PreviewCode.Revision,
-                'revision',
-                `Revision ${state.revision} is ${state.status}, not the requested ready revision.`,
-                'Wait for the current source to load or repair it and reload.',
-              ),
-            ),
-      );
-    return state;
+    return studio.ready(revision);
   };
   const reload = async (selection?: PreviewSelection): Promise<PreviewStudioState> => {
     const state = await request<PreviewServerState>(

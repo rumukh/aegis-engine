@@ -246,7 +246,7 @@ describe('Sector Breach playable presentation', () => {
           expect(door.position.y).toBeLessThan(0.05);
           expect(world.getResource(FPS_COLLISION)?.cells[12 * 11 + 5]?.solid).toBe(false);
           const sparks: Mesh[] = [];
-          adapter.scene.getObjectByName('presentation:effects')?.traverse((node) => {
+          adapter.foreground?.scene.traverse((node) => {
             if (node instanceof Mesh && node.name.startsWith('effect:burst:')) sparks.push(node);
           });
           expect(sparks).toHaveLength(6);
@@ -326,6 +326,9 @@ describe('Sector Breach playable presentation', () => {
       const wrapper = part(runtime.object('weapon')?.root, 'presentation:effect');
       expect(wrapper.position.toArray()).toEqual([0, 0, 0]);
       expect(adapter.scene.getObjectByName('presentation:effects')?.children).toHaveLength(0);
+      expect(
+        adapter.foreground?.scene.children.filter((node) => node.name.startsWith('effect:burst:')),
+      ).toHaveLength(0);
       adapter.present(presentationFrame(68));
       expect(part(runtime.object('blast-door')?.object, 'DoorLeaf').position.y).toBeCloseTo(4.1, 5);
       expect(part(runtime.entity('button')?.object, 'LockStatus').scale.toArray()).toEqual([

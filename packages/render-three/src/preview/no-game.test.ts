@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate as settle } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PreviewServerState } from './types.js';
 
@@ -382,5 +383,177 @@ describe('no-game proof for both standalone preview entry points', () => {
     expect(studio.state()).toMatchObject({ status: 'disposed', stats: null });
     expect(guards.world).not.toHaveBeenCalled();
     expect(guards.simulation).not.toHaveBeenCalled();
+  });
+
+  it.each(['loading', 'ready'] as const)(
+    'ignores a delayed preparing message after the same revision is already %s',
+    async (phase) => {
+      const { AssetPreviewStudio } = await import('./studio.js');
+      const studio = new AssetPreviewStudio(studioCanvas());
+      try {
+        await studio.accept(materialRevision(1));
+        const second = studio.accept(materialRevision(2));
+        if (phase === 'ready') await second;
+        expect(studio.state()).toMatchObject({ revision: 2, status: phase });
+        await studio.accept({
+          ...materialRevision(2),
+          status: 'preparing',
+          document: null,
+          lastPreparedRevision: 1,
+        });
+        expect(studio.state()).toMatchObject({
+          revision: 2,
+          status: 'ready',
+          lastGoodRevision: 2,
+        });
+        expect(studio.capture(2, 256, 256).revision).toBe(2);
+        await second;
+      } finally {
+        studio.dispose();
+      }
+    },
+  );
+
+  it('joins an in-flight prepared revision instead of aborting and decoding it twice', async () => {
+    const assetModule = await import('../presentation/assets.js');
+    const { AssetPreviewStudio } = await import('./studio.js');
+    const decode = vi.spyOn(assetModule, 'loadPresentationAssets');
+    const studio = new AssetPreviewStudio(studioCanvas());
+    try {
+      await studio.accept(materialRevision(1));
+      const second = studio.accept(materialRevision(2));
+      const repeated = studio.accept(materialRevision(2));
+      await second;
+      expect(studio.state()).toMatchObject({ revision: 2, status: 'ready' });
+      await repeated;
+      expect(decode).toHaveBeenCalledTimes(2);
+      expect(studio.capture(2, 256, 256).revision).toBe(2);
+    } finally {
+      studio.dispose();
+      decode.mockRestore();
+    }
+  });
+
+  it('waits for the latest load while rejecting an explicitly superseded ready revision', async () => {
+    const assetModule = await import('../presentation/assets.js');
+    const { AssetPreviewStudio } = await import('./studio.js');
+    const studio = new AssetPreviewStudio(studioCanvas());
+    const load = assetModule.loadPresentationAssets;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const decode = vi
+      .spyOn(assetModule, 'loadPresentationAssets')
+      .mockImplementation(async (presentation, options) => {
+        if (presentation.baseUrl === './assets/r3/') await gate;
+        return load(presentation, options);
+      });
+    try {
+      await studio.accept(materialRevision(1));
+      const second = studio.accept(materialRevision(2));
+      const settled: string[] = [];
+      const waiting = studio.ready().then(
+        (state) => {
+          settled.push('ready');
+          return state;
+        },
+        (error: unknown) => {
+          settled.push('failed');
+          return error;
+        },
+      );
+      const pinned = studio.ready(2).catch((error: unknown) => error);
+      const third = studio.accept(materialRevision(3));
+      await second;
+      await settle();
+      expect(studio.state()).toMatchObject({ revision: 3, status: 'loading' });
+      expect(settled).toEqual([]);
+      release();
+      await third;
+      expect(await waiting).toMatchObject({ revision: 3, status: 'ready' });
+      expect(settled).toEqual(['ready']);
+      expect(await pinned).toMatchObject({
+        diagnostics: [{ code: 'AEG-PREVIEW-0004' }],
+      });
+      expect(studio.capture(3, 256, 256).revision).toBe(3);
+    } finally {
+      release();
+      studio.dispose();
+      decode.mockRestore();
+    }
+  });
+
+  it.each(['failed', 'closed'] as const)(
+    'keeps a %s source invalid despite late preparing messages and settings changes',
+    async (status) => {
+      const { AssetPreviewStudio } = await import('./studio.js');
+      const studio = new AssetPreviewStudio(studioCanvas());
+      try {
+        await studio.accept(materialRevision(1));
+        await studio.accept({
+          ...materialRevision(1),
+          status,
+          document: null,
+          diagnostics: [
+            {
+              code: 'AEG-PREVIEW-0007',
+              severity: 'error',
+              message: 'Lost contact with the preview server.',
+              location: { path: 'connection' },
+            },
+          ],
+        });
+        await studio.accept({ ...materialRevision(1), status: 'preparing', document: null });
+        await expect(studio.ready(1)).rejects.toThrow('Lost contact');
+        expect(() => studio.capture(1)).toThrow();
+        expect(() => studio.configure({ view: 'left' })).toThrow('not available');
+        await studio.accept(materialRevision(1));
+        if (status === 'failed') {
+          await expect(studio.ready(1)).resolves.toMatchObject({ revision: 1, status: 'ready' });
+          expect(studio.capture(1, 256, 256).revision).toBe(1);
+        } else {
+          await expect(studio.ready(1)).rejects.toThrow('Lost contact');
+        }
+      } finally {
+        studio.dispose();
+      }
+    },
+  );
+
+  it('invalidates capture for a genuinely newer preparing revision until it is prepared', async () => {
+    const { AssetPreviewStudio } = await import('./studio.js');
+    const studio = new AssetPreviewStudio(studioCanvas());
+    try {
+      await studio.accept(materialRevision(1));
+      await studio.accept({
+        ...materialRevision(2),
+        status: 'preparing',
+        document: null,
+        lastPreparedRevision: 1,
+      });
+      await expect(studio.ready(2)).rejects.toThrow('loading');
+      expect(() => studio.capture(1)).toThrow('not available');
+      await studio.accept(materialRevision(2));
+      await expect(studio.ready(2)).resolves.toMatchObject({ revision: 2, status: 'ready' });
+    } finally {
+      studio.dispose();
+    }
+  });
+
+  it('rejects readiness when the active load is disposed instead of returning last-good state', async () => {
+    const { AssetPreviewStudio } = await import('./studio.js');
+    const studio = new AssetPreviewStudio(studioCanvas());
+    try {
+      await studio.accept(materialRevision(1));
+      const pending = studio.accept(materialRevision(2));
+      const ready = studio.ready(2);
+      studio.dispose();
+      await pending;
+      await expect(ready).rejects.toThrow('disposed');
+      expect(studio.state()).toMatchObject({ status: 'disposed', stats: null });
+    } finally {
+      studio.dispose();
+    }
   });
 });
