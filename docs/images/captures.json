@@ -1,0 +1,49 @@
+{
+  "capturedOn": "2026-09-11",
+  "engineCommit": "5e46034cbe4512e605972528ba0acb3dbb1cfe95",
+  "scope": "Actual local browser screenshots for the project README. Not concept art, a pixel-determinism guarantee, or evidence of AAA production readiness.",
+  "images": [
+    {
+      "file": "platformer.png",
+      "width": 1280,
+      "height": 720,
+      "sha256": "7f588954e70ef451d80294265b00d6baf50e5337828b933a5e72f0a10878983b",
+      "subject": "Coyote Gap: riding the ferry at tick 175.",
+      "scene": "games/platformer/levels/coyote-gap.scene.json",
+      "input": "games/platformer/play/coyote-gap.input",
+      "method": "The existing script's logical input frames were submitted through the paused dev server, then the production browser client rendered the state after asset readiness. The complete 400-tick route was separately executed through the same endpoint and matched an independent headless run.",
+      "fullPlaythroughHash": "d813e4e19db7444d"
+    },
+    {
+      "file": "iso.png",
+      "width": 1280,
+      "height": 720,
+      "sha256": "afa9883bd1d498de896f9f3b1ed35d9bc8848326365d772ae39efc180fc2d6e3",
+      "subject": "The Server Vault: completed extraction at tick 506.",
+      "scene": "games/iso/levels/server-vault.scene.json",
+      "input": "games/iso/play/server-vault.input",
+      "method": "Existing poc/capture.mjs browser-input replay. The full playthrough passed its win/alive acceptance before the capture selected its event-derived photo tick."
+    },
+    {
+      "file": "fps.png",
+      "width": 1280,
+      "height": 720,
+      "sha256": "93786603046b76f033f8d1e23d3ebbdeb7ff6a9134644772e93a5c52f59b1a2d",
+      "subject": "Sector Breach: the security encounter at tick 177.",
+      "scene": "games/fps/levels/sector-breach.scene.json",
+      "input": "games/fps/play/sector-breach.input",
+      "method": "Existing poc/capture.mjs browser-input replay. The full playthrough passed its win/alive acceptance; the photograph shows the first enemy.damaged beat, not the terminal state."
+    },
+    {
+      "file": "asset-studio.png",
+      "width": 1280,
+      "height": 960,
+      "sha256": "776b4192a6d15112cf9688e08de215d089e540ba67e9d5fa963ae16fa14ff541",
+      "subject": "Standalone asset studio with the operative's walk clip sampled at 0.25 seconds.",
+      "asset": "games/iso/assets/operative.gltf",
+      "clip": "walk",
+      "time": 0.25,
+      "method": "Existing startAssetPreview API and production loader, displayed in its operator page after readiness. No game scene, plugin or simulation was initialized."
+    }
+  ]
+}
