@@ -1,0 +1,56 @@
+{
+  "format": "aegis-m1-captures/1",
+  "description": "Unedited in-game acceptance captures, inspected before inclusion. These are not pixel-determinism goldens.",
+  "captures": [
+    {
+      "file": "coyote-ferry.png",
+      "sourceCommit": "cd29307533bddb97e2fa6a54c57b4182f3e4dc3e",
+      "transport": "prefixed-static",
+      "tick": 186,
+      "width": 1280,
+      "height": 720,
+      "bytes": 550732,
+      "sha256": "7ab8d3923e4df4735ba4625b55884383e0ce62a0d5524ad10c4f97a6d41baa1c"
+    },
+    {
+      "file": "vault-overview.png",
+      "sourceCommit": "da86dea666aa7d4a4df29c5c9b8f545529e34b48",
+      "transport": "dev",
+      "tick": 0,
+      "width": 1280,
+      "height": 800,
+      "bytes": 402009,
+      "sha256": "735f196985b57c850aff2741f5909833d5bd4fcd7fe5fd2c451bdf9b6cb4299b"
+    },
+    {
+      "file": "vault-narrow.png",
+      "sourceCommit": "da86dea666aa7d4a4df29c5c9b8f545529e34b48",
+      "transport": "prefixed-static",
+      "tick": 0,
+      "width": 390,
+      "height": 844,
+      "bytes": 100147,
+      "sha256": "e7a95614170a077def86ae60842085e5d18651a9d73c733f0d416eb6bc809a9d"
+    },
+    {
+      "file": "breach-combat.png",
+      "sourceCommit": "04ae7e10eb70ea3eb3f091d872a97944147ccd91",
+      "transport": "dev",
+      "tick": 177,
+      "width": 1280,
+      "height": 720,
+      "bytes": 355998,
+      "sha256": "33598578897a6872230d86929315764219863d66b552317b7a8b01e879f42f14"
+    },
+    {
+      "file": "breach-wall.png",
+      "sourceCommit": "04ae7e10eb70ea3eb3f091d872a97944147ccd91",
+      "transport": "prefixed-static",
+      "tick": 200,
+      "width": 1280,
+      "height": 720,
+      "bytes": 291382,
+      "sha256": "b82802ff38495e33f4c125211963c333bf5cd0fd2f599fc754485440c60f006d"
+    }
+  ]
+}
