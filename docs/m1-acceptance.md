@@ -174,6 +174,12 @@ are the complementary evidence. The final M1 source integration is `a8df8cb`, fo
 the combined `npm run verify` passed **122 files / 1,784 cases**, including **eight browser
 files / 108 cases**, with no failures, skips or pending cases.
 
+Each showcase case owns a fresh browser process and requires a clean `Browser.close` exit
+before removing its profile. Navigating to a blank page is not the cleanup boundary: Ubuntu
+CI exposed missing navigation replies at that boundary even while the test process remained
+responsive. Real page reloads, navigation, input, audio and disposal assertions still run
+inside each case; terminating the browser only isolates one case from the next.
+
 M1 does not supply a native backend, streamed large worlds, networking, production skeletal
 animation tooling, console integrations or a guarantee about subjective game feel.
 Those remain explicit [later production milestones](production-roadmap.md), not unfinished

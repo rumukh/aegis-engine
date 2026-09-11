@@ -1,24 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
-import { CdpSession, until } from '../browser.js';
+import { CdpSession } from '../browser.js';
 import type { LaunchedBrowser } from '../browser.js';
-
-/** Destroy this game's document before reusing the dedicated test browser. */
-export async function leavePage(cdp: CdpSession): Promise<void> {
-  try {
-    const navigation = await cdp.send<{ errorText?: string }>('Page.navigate', {
-      url: 'about:blank',
-    });
-    if (navigation.errorText)
-      throw new Error(`Could not leave the owned game page: ${navigation.errorText}`);
-    await until(
-      cdp,
-      "location.href === 'about:blank' && globalThis.aegis === undefined",
-      (left) => left === true,
-    );
-  } finally {
-    cdp.close();
-  }
-}
 
 function exited(child: ChildProcess): Promise<number | null> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
@@ -43,7 +25,7 @@ function exited(child: ChildProcess): Promise<number | null> {
   });
 }
 
-/** Quit the owned browser and prove process exit, rather than relying on tab-close endpoints. */
+/** End a test's owned browser process; navigation and tab-close acknowledgements are not cleanup. */
 export async function closeOwnedBrowser(browser: LaunchedBrowser): Promise<void> {
   let control: CdpSession | undefined;
   let failure: { error: unknown } | undefined;

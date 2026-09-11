@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { parseInputScript } from '@aegis/harness';
 import {
   sectorBreachPitDeath,
@@ -40,10 +40,7 @@ import {
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
 import type { EventLine } from '../packages/render-three/src/protocol.js';
-import {
-  closeOwnedBrowser,
-  leavePage,
-} from '../packages/render-three/src/testing/browser-lifecycle.js';
+import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
 
 const VIEWPORT = { width: 1280, height: 720 };
 const PREFIX = '/review/sector-breach/';
@@ -134,7 +131,7 @@ let artifacts: string;
 let dev: DevServer;
 let fileServer: Server;
 let staticUrl: string;
-let browser: LaunchedBrowser;
+let browser: LaunchedBrowser | undefined;
 const blocked = new Set<string>();
 const observations: object[] = [];
 
@@ -219,11 +216,36 @@ beforeAll(async () => {
   assert.ok(address !== null && typeof address !== 'string');
   staticUrl = `http://127.0.0.1:${address.port}${PREFIX}`;
   expect((await fetch(staticUrl)).status).toBe(200);
+}, 180_000);
+
+beforeEach(async () => {
   browser = await launchBrowser({ viewport: VIEWPORT });
   const blank = await openPage(browser.port, 'about:blank', VIEWPORT);
-  await waitForPaint(blank);
-  await leavePage(blank);
-}, 180_000);
+  try {
+    await waitForPaint(blank);
+  } finally {
+    blank.close();
+  }
+});
+
+afterEach(async ({ task }) => {
+  const owned = browser;
+  browser = undefined;
+  if (owned === undefined) return;
+  try {
+    await closeOwnedBrowser(owned);
+  } finally {
+    rmSync(owned.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+  observations.push({
+    name: 'browser-lifetime',
+    test: task.name,
+    pid: owned.process.pid,
+    method: 'Browser.close',
+    exitCode: owned.process.exitCode,
+    profileRemoved: true,
+  });
+});
 
 afterAll(async () => {
   if (artifacts !== undefined)
@@ -231,20 +253,14 @@ afterAll(async () => {
       join(artifacts, 'observations.json'),
       `${JSON.stringify(observations, null, 2)}\n`,
     );
-  try {
-    if (browser !== undefined) await closeOwnedBrowser(browser);
-  } finally {
-    stopExternalLagWitness();
-    await dev?.close();
-    if (fileServer !== undefined)
-      await new Promise<void>((done) => {
-        fileServer.closeAllConnections();
-        fileServer.close(() => done());
-      });
-    if (browser !== undefined)
-      rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-    if (temporary !== undefined) rmSync(temporary, { recursive: true, force: true });
-  }
+  stopExternalLagWitness();
+  await dev?.close();
+  if (fileServer !== undefined)
+    await new Promise<void>((done) => {
+      fileServer.closeAllConnections();
+      fileServer.close(() => done());
+    });
+  if (temporary !== undefined) rmSync(temporary, { recursive: true, force: true });
 });
 
 type Transport = 'dev' | 'static';
@@ -307,6 +323,7 @@ async function button(cdp: CdpSession, id: string): Promise<void> {
 }
 
 async function open(transport: Transport): Promise<CdpSession> {
+  assert.ok(browser);
   const url = transport === 'dev' ? `${dev.url}/play/fps/` : `${staticUrl}play/fps/`;
   const cdp = await openPage(browser.port, 'about:blank', VIEWPORT);
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: AUDIO_OBSERVER });
@@ -497,7 +514,7 @@ describe('Sector Breach complete browser showcase', () => {
           ).toEqual([]);
         }
       } finally {
-        await leavePage(cdp);
+        cdp.close();
       }
     }, 240_000);
 
@@ -601,7 +618,7 @@ describe('Sector Breach complete browser showcase', () => {
           expect(disposed.audio.voices).toBe(0);
         }
       } finally {
-        await leavePage(cdp);
+        cdp.close();
       }
     }, 150_000);
   }
@@ -662,13 +679,14 @@ describe('Sector Breach complete browser showcase', () => {
         audioBytes: 0,
       });
     } finally {
-      await leavePage(cdp);
+      cdp.close();
     }
   }, 240_000);
 
   it('keeps narrow-screen aim readable and refuses a missing required rifle before retrying', async () => {
     const asset = `${PREFIX}assets/fps/vaultline-rifle.glb`;
     blocked.add(asset);
+    assert.ok(browser);
     const cdp = await openPage(browser.port, `${staticUrl}play/fps/`, { width: 640, height: 720 });
     try {
       await until(
@@ -719,7 +737,7 @@ describe('Sector Breach complete browser showcase', () => {
       expect(layout.aspect).toBeCloseTo(layout.canvas[0]! / layout.canvas[1]!, 5);
     } finally {
       blocked.delete(asset);
-      await leavePage(cdp);
+      cdp.close();
     }
   }, 180_000);
 });

@@ -1,25 +1,21 @@
 import { ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LaunchedBrowser } from '../browser.js';
-import { CdpSession } from '../browser.js';
-import { closeOwnedBrowser, leavePage } from './browser-lifecycle.js';
+import { closeOwnedBrowser } from './browser-lifecycle.js';
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
   close: vi.fn(),
-  until: vi.fn(),
 }));
 vi.mock('../browser.js', () => ({
   CdpSession: {
     connect: vi.fn(async () => ({ send: mocks.send, close: mocks.close })),
   },
-  until: mocks.until,
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.send.mockReset();
-  mocks.until.mockResolvedValue(true);
   vi.stubGlobal(
     'fetch',
     vi.fn(
@@ -33,6 +29,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -92,26 +89,44 @@ describe('owned browser test lifetimes', () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it('leaves the game document and confirms its globals are gone before disconnecting', async () => {
-    mocks.send.mockResolvedValue({});
-    const cdp = await CdpSession.connect('ws://test/page');
-    await leavePage(cdp);
-    expect(mocks.send).toHaveBeenCalledExactlyOnceWith('Page.navigate', { url: 'about:blank' });
-    expect(mocks.until).toHaveBeenCalledWith(
-      cdp,
-      "location.href === 'about:blank' && globalThis.aegis === undefined",
-      expect.any(Function),
-    );
-    expect(mocks.close.mock.invocationCallOrder[0]).toBeGreaterThan(
-      mocks.until.mock.invocationCallOrder[0]!,
-    );
+  it('closes each fresh browser through its own endpoint without retaining the previous process', async () => {
+    const first = browser();
+    const second = { ...browser(), port: 23456 };
+    for (const owned of [first, second]) {
+      mocks.send.mockImplementationOnce(async () => {
+        owned.process.exitCode = 0;
+        owned.process.emit('exit', 0, null);
+        return {};
+      });
+      await closeOwnedBrowser(owned);
+      expect(owned.process.listenerCount('exit')).toBe(0);
+      expect(owned.process.listenerCount('error')).toBe(0);
+    }
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:12345/json/version',
+      'http://127.0.0.1:23456/json/version',
+    ]);
+    expect(mocks.send.mock.calls).toEqual([['Browser.close'], ['Browser.close']]);
+    expect(mocks.close).toHaveBeenCalledTimes(2);
   });
 
-  it('still disconnects and surfaces a page that cannot navigate away', async () => {
-    mocks.send.mockResolvedValue({ errorText: 'navigation refused' });
-    const cdp = await CdpSession.connect('ws://test/page');
-    await expect(leavePage(cdp)).rejects.toThrow('navigation refused');
-    expect(mocks.until).not.toHaveBeenCalled();
+  it('does not accept a close acknowledgement as proof that the process exited', async () => {
+    vi.useFakeTimers();
+    const own = browser();
+    mocks.send.mockResolvedValue({});
+    const kill = vi.spyOn(own.process, 'kill').mockImplementation(() => {
+      own.process.exitCode = 1;
+      own.process.emit('exit', 1, null);
+      return true;
+    });
+    const closed = expect(closeOwnedBrowser(own)).rejects.toThrow(
+      'Owned browser process did not exit within 10000ms.',
+    );
+    await vi.advanceTimersByTimeAsync(10_001);
+    await closed;
+    expect(kill).toHaveBeenCalledTimes(1);
     expect(mocks.close).toHaveBeenCalledTimes(1);
+    expect(own.process.listenerCount('exit')).toBe(0);
+    expect(own.process.listenerCount('error')).toBe(0);
   });
 });

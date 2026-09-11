@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { parseInputScript, runScene } from '@aegis/harness';
 import { SERVER_VAULT_SCRIPT, SERVER_VAULT_DEATH_SCRIPT, serverVaultPlugin } from '@aegis/game-iso';
 import { pocGames, pocStaticGames, pocStaticModules } from '../poc/poc-games.mjs';
@@ -22,6 +22,7 @@ import {
   until,
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
+import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
 import type { GameDefinition } from '../packages/render-three/src/catalog.js';
 import type { EventLine } from '../packages/render-three/src/protocol.js';
 
@@ -30,6 +31,8 @@ const VIEWPORT = { width: 1280, height: 800 };
 const PREFIX = '/nested/vault/';
 const captures = process.env['AEGIS_VAULT_CAPTURE_DIR'];
 const reports: Record<string, unknown> = {};
+const browserLifetimes: object[] = [];
+reports['browserLifetimes'] = browserLifetimes;
 const images: { path: string; tick: number; viewport: { width: number; height: number } }[] = [];
 reports['images'] = images;
 let temporary: string;
@@ -37,7 +40,7 @@ let game: GameDefinition;
 let dev: DevServer;
 let staticServer: Server;
 let staticUrl: string;
-let browser: LaunchedBrowser;
+let browser: LaunchedBrowser | undefined;
 const requests: string[] = [];
 
 beforeAll(async () => {
@@ -100,14 +103,35 @@ beforeAll(async () => {
   const address = staticServer.address();
   if (address === null || typeof address === 'string') throw new Error('No static server port');
   staticUrl = `http://127.0.0.1:${address.port}${PREFIX.slice(0, -1)}`;
+  if (captures !== undefined) mkdirSync(captures, { recursive: true });
+}, 180_000);
+
+beforeEach(async () => {
   browser = await launchBrowser({ viewport: VIEWPORT });
   reports['ownedBrowser'] = {
     pid: browser.process.pid,
     profile: browser.profile,
     port: browser.port,
   };
-  if (captures !== undefined) mkdirSync(captures, { recursive: true });
-}, 180_000);
+});
+
+afterEach(async ({ task }) => {
+  const owned = browser;
+  browser = undefined;
+  if (owned === undefined) return;
+  try {
+    await closeOwnedBrowser(owned);
+  } finally {
+    await rm(owned.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+  }
+  browserLifetimes.push({
+    test: task.name,
+    pid: owned.process.pid,
+    method: 'Browser.close',
+    exitCode: owned.process.exitCode,
+    profileRemoved: true,
+  });
+});
 
 afterAll(async () => {
   const failures: unknown[] = [];
@@ -116,15 +140,6 @@ afterAll(async () => {
       if (captures === undefined) return;
       mkdirSync(captures, { recursive: true });
       writeFileSync(join(captures, 'browser-report.json'), JSON.stringify(reports, null, 2));
-    },
-    async () => {
-      if (browser === undefined) return;
-      if (browser.process.exitCode === null && browser.process.signalCode === null) {
-        const exited = new Promise<void>((done) => browser.process.once('exit', () => done()));
-        browser.process.kill();
-        await exited;
-      }
-      await rm(browser.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
     },
     async () => {
       await dev?.close();
@@ -150,6 +165,7 @@ afterAll(async () => {
 }, 120_000);
 
 async function open(transport: Transport): Promise<CdpSession> {
+  if (browser === undefined) throw new Error('The test browser is not running.');
   const page = await openPage(
     browser.port,
     `${transport === 'dev' ? dev.url : staticUrl}/play/iso/`,
@@ -410,6 +426,7 @@ async function replay(
 describe('Server Vault actual showcase', () => {
   for (const transport of ['dev', 'static'] as const) {
     it(`${transport}: required model loading is visible, failure is explicit and retry recovers`, async () => {
+      if (browser === undefined) throw new Error('The test browser is not running.');
       const page = await openPage(browser.port, 'about:blank', VIEWPORT);
       const url = `${transport === 'dev' ? dev.url : staticUrl}/play/iso/`;
       try {
@@ -466,7 +483,6 @@ describe('Server Vault actual showcase', () => {
           retry: 'ready',
         };
       } finally {
-        await page.send('Page.navigate', { url: 'about:blank' });
         page.close();
       }
     }, 180_000);
@@ -610,7 +626,6 @@ describe('Server Vault actual showcase', () => {
         expect(disposed.audio.voices).toBe(0);
         reports[`${transport}-lifecycle`] = { audioStarts, baseline, disposed };
       } finally {
-        await page.send('Page.navigate', { url: 'about:blank' });
         page.close();
       }
     }, 180_000);
@@ -716,7 +731,6 @@ describe('Server Vault actual showcase', () => {
         }
       } finally {
         await photo(page, `${transport}-last`);
-        await page.send('Page.navigate', { url: 'about:blank' });
         page.close();
       }
     }, 240_000);
@@ -745,7 +759,6 @@ describe('Server Vault actual showcase', () => {
         expect(state.outcome).toContain('Run ended');
         expect(state.outcomeHidden).toBe(false);
       } finally {
-        await page.send('Page.navigate', { url: 'about:blank' });
         page.close();
       }
     }, 180_000);

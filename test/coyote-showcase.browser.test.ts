@@ -4,7 +4,7 @@ import type { Server } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { hashString } from '@aegis/core';
 import { parseInputScript, runScene } from '@aegis/harness';
 import {
@@ -69,6 +69,7 @@ const REPORT: Record<string, unknown> = {
   routes: [],
   images: [],
   lifecycle: [],
+  browserLifetimes: [],
 };
 const BEATS = new Map([
   [0, 'vista'],
@@ -91,7 +92,7 @@ const LOSSES = [
   { id: 'corpse-at-goal', spec: corpseCannotFinishTest, tick: 91, cause: 'critter' },
 ];
 let temporary: string;
-let browser: LaunchedBrowser;
+let browser: LaunchedBrowser | undefined;
 let dev: DevServer;
 let fileServer: Server;
 let origin: string;
@@ -192,6 +193,10 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${address.port}`;
   expect((await fetch(`${dev.url}/play/platformer/`)).status).toBe(200);
   expect((await fetch(`${origin}${PREFIX}play/platformer/`)).status).toBe(200);
+  REPORT['assetFiles'] = site.files.filter((file) => file.startsWith('assets/'));
+}, 150_000);
+
+beforeEach(async () => {
   browser = await launchBrowser({ viewport: VIEWPORT });
   REPORT['browser'] = { pid: browser.process.pid, port: browser.port, profile: browser.profile };
   const blank = await openPage(browser.port, 'about:blank', VIEWPORT);
@@ -200,50 +205,45 @@ beforeAll(async () => {
   } finally {
     blank.close();
   }
-  REPORT['assetFiles'] = site.files.filter((file) => file.startsWith('assets/'));
-}, 150_000);
+});
+
+afterEach(async ({ task }) => {
+  releaseAsset?.();
+  const owned = browser;
+  browser = undefined;
+  if (owned === undefined) return;
+  try {
+    await closeOwnedBrowser(owned);
+  } finally {
+    await rm(owned.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+  record('browserLifetimes', {
+    test: task.name,
+    pid: owned.process.pid,
+    method: 'Browser.close',
+    exitCode: owned.process.exitCode,
+    profileRemoved: true,
+  });
+});
 
 afterAll(async () => {
   releaseAsset?.();
-  try {
-    if (browser !== undefined) {
-      try {
-        await closeOwnedBrowser(browser);
-        REPORT['teardown'] = {
-          method: 'Browser.close',
-          processExited: true,
-          exitCode: browser.process.exitCode,
-        };
-      } catch (error) {
-        REPORT['teardownFailure'] = String(error);
-        throw error;
-      } finally {
-        await rm(browser.profile, {
-          recursive: true,
-          force: true,
-          maxRetries: 20,
-          retryDelay: 100,
-        });
-      }
-    }
-  } finally {
-    stopExternalLagWitness();
-    await dev?.close();
-    if (fileServer !== undefined) {
-      fileServer.closeAllConnections();
-      await new Promise<void>((done, fail) =>
-        fileServer.close((error) => (error === undefined ? done() : fail(error))),
-      );
-    }
-    if (CAPTURE !== undefined) {
-      await mkdir(CAPTURE, { recursive: true });
-      await writeFile(
-        join(CAPTURE, 'coyote-browser-acceptance.json'),
-        `${JSON.stringify({ ...REPORT, requests }, null, 2)}\n`,
-      );
-    }
-    if (temporary !== undefined) await rm(temporary, { recursive: true, force: true });
+  stopExternalLagWitness();
+  await dev?.close();
+  if (fileServer !== undefined) {
+    fileServer.closeAllConnections();
+    await new Promise<void>((done, fail) =>
+      fileServer.close((error) => (error === undefined ? done() : fail(error))),
+    );
   }
+  if (CAPTURE !== undefined) {
+    await mkdir(CAPTURE, { recursive: true });
+    await writeFile(
+      join(CAPTURE, 'coyote-browser-acceptance.json'),
+      `${JSON.stringify({ ...REPORT, requests }, null, 2)}\n`,
+    );
+  }
+  if (temporary !== undefined) await rm(temporary, { recursive: true, force: true });
 });
 
 const urlFor = (transport: Transport) =>
@@ -259,13 +259,13 @@ async function ready(cdp: CdpSession): Promise<void> {
 }
 
 async function withPage(transport: Transport, action: (cdp: CdpSession) => Promise<void>) {
+  assert.ok(browser);
   const cdp = await openPage(browser.port, urlFor(transport), VIEWPORT);
   try {
     await ready(cdp);
     await action(cdp);
     expect(cdp.diagnostics).toEqual([]);
   } finally {
-    await cdp.send('Page.navigate', { url: 'about:blank' });
     cdp.close();
   }
 }
@@ -681,6 +681,7 @@ describe('Coyote Gap real browser acceptance', () => {
   }
 
   it('shows real loading and required-asset failure, then successfully retries the same static page', async () => {
+    assert.ok(browser);
     const cdp = await openPage(browser.port, 'about:blank', VIEWPORT);
     try {
       holdAsset = new Promise<void>((done) => {
@@ -744,7 +745,6 @@ describe('Coyote Gap real browser acceptance', () => {
     } finally {
       releaseAsset?.();
       holdAsset = undefined;
-      await cdp.send('Page.navigate', { url: 'about:blank' });
       cdp.close();
     }
   }, 180_000);
