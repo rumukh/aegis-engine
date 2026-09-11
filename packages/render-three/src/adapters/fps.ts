@@ -131,7 +131,7 @@ export class FpsAdapter extends BaseAdapter {
 
   override present(frame: PresentationFrame): void {
     super.present(frame);
-    this.foreground?.scene.updateMatrixWorld(true);
+    this.foreground?.syncLighting(this.scene);
   }
 
   resize(width: number, height: number): void {

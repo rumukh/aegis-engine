@@ -120,7 +120,7 @@ describe('optional foreground render pass', () => {
     const releasedMap = vi.fn();
     texture.addEventListener('dispose', releasedMap);
     layer.syncLighting(world);
-    const lights = layer.scene.children;
+    const lights = [...layer.scene.children];
     const copy = lights.find((light) => light instanceof PointLight);
     expect(copy).toBeInstanceOf(PointLight);
     expect(copy?.position.toArray()).toEqual([4, 4, 4]);
@@ -141,7 +141,7 @@ describe('optional foreground render pass', () => {
     layer.syncLighting(world);
     expect(layer.scene.children).toEqual(lights);
     expect(copy?.position.x).toBe(5);
-    expect((copy as PointLight).intensity).toBe(3);
+    expect(copy.intensity).toBe(3);
     parent.remove(point);
     layer.syncLighting(world);
     expect(released).toHaveBeenCalledTimes(1);
