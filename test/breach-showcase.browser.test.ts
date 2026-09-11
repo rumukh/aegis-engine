@@ -27,7 +27,6 @@ import type { DomInputPlan } from '../packages/render-three/src/script-input.js'
 import { BINDINGS } from '../packages/render-three/src/bindings.js';
 import {
   click,
-  closeAllPages,
   evaluate,
   key,
   launchBrowser,
@@ -35,11 +34,16 @@ import {
   mouseMove,
   openPage,
   screenshot,
+  stopExternalLagWitness,
   until,
   waitForPaint,
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
 import type { EventLine } from '../packages/render-three/src/protocol.js';
+import {
+  closeOwnedBrowser,
+  leavePage,
+} from '../packages/render-three/src/testing/browser-lifecycle.js';
 
 const VIEWPORT = { width: 1280, height: 720 };
 const PREFIX = '/review/sector-breach/';
@@ -218,7 +222,7 @@ beforeAll(async () => {
   browser = await launchBrowser({ viewport: VIEWPORT });
   const blank = await openPage(browser.port, 'about:blank', VIEWPORT);
   await waitForPaint(blank);
-  await closeAllPages(browser.port);
+  await leavePage(blank);
 }, 180_000);
 
 afterAll(async () => {
@@ -227,17 +231,20 @@ afterAll(async () => {
       join(artifacts, 'observations.json'),
       `${JSON.stringify(observations, null, 2)}\n`,
     );
-  if (browser !== undefined) {
-    await closeAllPages(browser.port);
-    browser.process.kill();
+  try {
+    if (browser !== undefined) await closeOwnedBrowser(browser);
+  } finally {
+    stopExternalLagWitness();
+    await dev?.close();
+    if (fileServer !== undefined)
+      await new Promise<void>((done) => {
+        fileServer.closeAllConnections();
+        fileServer.close(() => done());
+      });
+    if (browser !== undefined)
+      rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    if (temporary !== undefined) rmSync(temporary, { recursive: true, force: true });
   }
-  await dev?.close();
-  if (fileServer !== undefined)
-    await new Promise<void>((done) => {
-      fileServer.closeAllConnections();
-      fileServer.close(() => done());
-    });
-  if (temporary !== undefined) rmSync(temporary, { recursive: true, force: true });
 });
 
 type Transport = 'dev' | 'static';
@@ -490,8 +497,7 @@ describe('Sector Breach complete browser showcase', () => {
           ).toEqual([]);
         }
       } finally {
-        cdp.close();
-        await closeAllPages(browser.port);
+        await leavePage(cdp);
       }
     }, 240_000);
 
@@ -595,8 +601,7 @@ describe('Sector Breach complete browser showcase', () => {
           expect(disposed.audio.voices).toBe(0);
         }
       } finally {
-        cdp.close();
-        await closeAllPages(browser.port);
+        await leavePage(cdp);
       }
     }, 150_000);
   }
@@ -657,8 +662,7 @@ describe('Sector Breach complete browser showcase', () => {
         audioBytes: 0,
       });
     } finally {
-      cdp.close();
-      await closeAllPages(browser.port);
+      await leavePage(cdp);
     }
   }, 240_000);
 
@@ -715,8 +719,7 @@ describe('Sector Breach complete browser showcase', () => {
       expect(layout.aspect).toBeCloseTo(layout.canvas[0]! / layout.canvas[1]!, 5);
     } finally {
       blocked.delete(asset);
-      cdp.close();
-      await closeAllPages(browser.port);
+      await leavePage(cdp);
     }
   }, 180_000);
 });

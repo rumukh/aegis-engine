@@ -17,7 +17,6 @@ import { platformer } from '../poc/platformer.mjs';
 import { pocGames, pocStaticGames, pocStaticModules } from '../poc/poc-games.mjs';
 import {
   click,
-  CdpSession,
   evaluate,
   key,
   launchBrowser,
@@ -27,7 +26,8 @@ import {
   until,
   waitForPaint,
 } from '../packages/render-three/src/browser.js';
-import type { LaunchedBrowser } from '../packages/render-three/src/browser.js';
+import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
+import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
 import { startDevServer } from '../packages/render-three/src/dev-server.js';
 import type { DevServer } from '../packages/render-three/src/dev-server.js';
 import type { GameDefinition } from '../packages/render-three/src/catalog.js';
@@ -207,37 +207,23 @@ afterAll(async () => {
   releaseAsset?.();
   try {
     if (browser !== undefined) {
-      let control: CdpSession | undefined;
       try {
-        const version = (await (
-          await fetch(`http://127.0.0.1:${browser.port}/json/version`, {
-            signal: AbortSignal.timeout(5_000),
-          })
-        ).json()) as { webSocketDebuggerUrl: string };
-        control = await CdpSession.connect(version.webSocketDebuggerUrl);
-        // Quit the owned browser; a confirmed process exit is stronger than a tab-close request.
-        const exitCode = await new Promise<number | null>((done, fail) => {
-          const timer = setTimeout(
-            () => fail(new Error('Owned browser did not exit after Browser.close')),
-            10_000,
-          );
-          browser.process.once('exit', (code) => {
-            clearTimeout(timer);
-            done(code);
-          });
-          void control!.send('Browser.close').catch((error: unknown) => {
-            clearTimeout(timer);
-            fail(error);
-          });
-        });
-        expect(exitCode).toBe(0);
-        REPORT['teardown'] = { method: 'Browser.close', processExited: true, exitCode };
+        await closeOwnedBrowser(browser);
+        REPORT['teardown'] = {
+          method: 'Browser.close',
+          processExited: true,
+          exitCode: browser.process.exitCode,
+        };
       } catch (error) {
         REPORT['teardownFailure'] = String(error);
         throw error;
       } finally {
-        control?.close();
-        if (browser.process.exitCode === null) browser.process.kill();
+        await rm(browser.profile, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 100,
+        });
       }
     }
   } finally {
