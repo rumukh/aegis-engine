@@ -54,6 +54,32 @@ Missing assets remain hard errors. Dev and static export consume the same presen
 and inventory; authoring sources/contact sheets are not runtime dependencies.
 
 The original 400-tick final hash remains `d813e4e19db7444d`; its trajectory pin remains
-`79d373c4785825ca`. B1 covers integration and headless regression checks. Actual dev/static
-vista, ferry and victory inspection, plus browser lifecycle/performance acceptance, belong to
-the separately coordinated B2 pass; asset sheets alone are not final visual acceptance.
+`79d373c4785825ca`. Asset sheets alone are not gameplay acceptance.
+
+## Reproduce showcase acceptance
+
+The real-composition checks live at the repository root so neither the game nor the renderer
+imports the other:
+
+```powershell
+npm run build
+npx vitest run test\coyote-showcase.test.ts test\coyote-showcase.browser.test.ts --maxWorkers=1 --fileParallelism=false
+```
+
+The browser suite requires the repository's existing Chromium driver; an absent or broken
+browser fails rather than skipping the work. Each run uses its own profiles and ephemeral ports,
+and the static server serves only the exported files under a nested URL prefix. Set
+`AEGIS_COYOTE_CAPTURE_DIR` to an evidence directory to retain beat/failure/control PNGs and
+`coyote-browser-acceptance.json`; `AEGIS_COYOTE_TESTED_SHA` can label the tested revision.
+
+Coverage includes the original winning route and all four existing lose routes through both
+transports, the entire winning hash timeline, no-input ferry carry, coyote/buffer beats, held
+beacon/character art after reload, keyboard controls at 390x844 and 640x360, required-asset
+failure/retry, trusted sound unlock and a live jump cue, mute/pause, cached restart and navigation
+disposal. The draw-call and per-frame payload ceilings stay at the existing 2,000 and 24,000
+budgets. Timing samples are observations on the current host, not portable frame-rate promises.
+
+The source tests also compare actual instanced geometry with the collision grid and measure
+sprite feet, ferry deck and trigger extents. Browser sound assertions cover decoding and real
+active voices, not a listening review. Narrow-window coverage retains keyboard controls; it
+does not add touchscreen gameplay or claim subjective human play feel.
