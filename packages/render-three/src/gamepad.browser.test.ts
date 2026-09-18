@@ -162,19 +162,8 @@ beforeAll(async () => {
   if (address === null || typeof address === 'string')
     throw new Error('Static server did not bind');
   staticUrl = `http://127.0.0.1:${address.port}${PREFIX.slice(0, -1)}`;
-  // The shared launcher owns ports/profiles; keep its profile under this test's repository cache.
-  const previous = [process.env['TEMP'], process.env['TMP'], process.env['TMPDIR']];
-  try {
-    process.env['TEMP'] = artifacts;
-    process.env['TMP'] = artifacts;
-    process.env['TMPDIR'] = artifacts;
-    browser = await launchBrowser({ viewport: VIEWPORT });
-  } finally {
-    for (const [index, name] of ['TEMP', 'TMP', 'TMPDIR'].entries()) {
-      if (previous[index] === undefined) delete process.env[name];
-      else process.env[name] = previous[index];
-    }
-  }
+  // Keep the launcher's short OS temp path: Chromium also creates Unix sockets beneath TMPDIR.
+  browser = await launchBrowser({ viewport: VIEWPORT });
   const blank = await openPage(browser.port, 'about:blank', VIEWPORT);
   try {
     await waitForPaint(blank);
@@ -191,6 +180,7 @@ afterAll(async () => {
       if (browser.process.exitCode !== null || browser.process.signalCode !== null) done();
       else browser.process.once('exit', () => done());
     });
+    rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
   await dev?.close();
   if (staticServer !== undefined) {
