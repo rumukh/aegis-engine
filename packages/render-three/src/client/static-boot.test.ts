@@ -13,6 +13,7 @@ import { buttonEvent, installFakeDom, keyEvent } from '../testing/dom.js';
 import type { FakeDom } from '../testing/dom.js';
 import type { PresentationHostOptions } from './presentation-host.js';
 import { bootStatic } from './static-boot.js';
+import { virtualGamepad } from '../testing/gamepad.js';
 
 const hooks = vi.hoisted(() => {
   const sessions: LiveSession[] = [];
@@ -230,6 +231,66 @@ function evidence(world: World) {
 function expectUnchangedAuthority(actual: World, independent: World): void {
   expect(evidence(actual)).toEqual(evidence(independent));
 }
+
+describe('static-client controller polling', () => {
+  it('does not spend pre-restart elapsed time on the newly restarted world', () => {
+    const pad = virtualGamepad();
+    vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+    const run = boot();
+    display();
+    display(3 * DT);
+    expect(run.debug.tick()).toBe(3);
+    pad.buttons[8]!.value = 1;
+    display(4 * DT);
+    expect(run.debug.tick()).toBe(0);
+    expect(run.debug.steps()).toBe(0);
+    expect(body(run.session.world).jumps).toBe(0);
+  });
+
+  it('buffers a sub-tick controller tap until simulation and consumes its edge once', () => {
+    const pad = virtualGamepad();
+    vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+    const run = boot();
+    display();
+    pad.buttons[0]!.value = 1;
+    display(DT / 4);
+    pad.buttons[0]!.value = 0;
+    display(DT / 4);
+    expect(run.debug.tick()).toBe(0);
+    display(3.5 * DT);
+    expect(run.debug.tick()).toBe(4);
+    expect(body(run.session.world).jumps).toBe(1);
+    expect(run.submit.mock.calls.some(([packet]) => packet.released?.includes('Jump'))).toBe(true);
+    display(DT);
+    expect(body(run.session.world).jumps).toBe(1);
+  });
+
+  it('samples Menu while paused, then prevents held Jump from leaking through resume', () => {
+    const pad = virtualGamepad();
+    vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+    const run = boot();
+    display();
+    pad.buttons[9]!.value = 1;
+    display(DT);
+    expect(run.debug.paused()).toBe(true);
+    pad.buttons[9]!.value = 0;
+    display(DT);
+    pad.buttons[0]!.value = 1;
+    display(DT);
+    expect(run.debug.tick()).toBe(0);
+    pad.buttons[9]!.value = 1;
+    display(DT);
+    expect(run.debug.paused()).toBe(false);
+    display(DT);
+    expect(body(run.session.world).jumps).toBe(0);
+    pad.buttons[9]!.value = 0;
+    pad.buttons[0]!.value = 0;
+    display(DT);
+    pad.buttons[0]!.value = 1;
+    display(2 * DT);
+    expect(body(run.session.world).jumps).toBe(1);
+  });
+});
 
 describe('bootStatic observes revisions, not displayed frames', () => {
   it('captures first mount, then keeps input and presentation running without paused copies', async () => {

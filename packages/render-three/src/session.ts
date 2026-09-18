@@ -112,6 +112,7 @@ export function createLiveSession(options: LiveSessionOptions): LiveSession {
       return paused;
     },
     set paused(value: boolean) {
+      if (paused !== value) built.input.clear();
       paused = value;
       if (value) loop.reset();
     },

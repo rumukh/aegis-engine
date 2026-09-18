@@ -146,6 +146,19 @@ describe('live session', () => {
     expect(session.paused).toBe(false);
   });
 
+  it('clears pending gameplay only on pause transitions, preserving deliberate paused steps', () => {
+    const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
+    session.input.submit({ seq: 1, held: ['Fire'], pressed: ['Fire'], axes: { MoveX: 1 } });
+    session.paused = true;
+    expect(session.input.frameFor(0)).toMatchObject({ actions: {}, pressed: [], axes: {} });
+    session.input.submit({ seq: 2, held: ['Jump'], pressed: ['Jump'] });
+    session.paused = true;
+    expect(session.input.frameFor(0).pressed).toEqual(['Jump']);
+    session.input.submit({ seq: 3, held: ['Fire'], pressed: ['Fire'] });
+    session.paused = false;
+    expect(session.input.frameFor(0)).toMatchObject({ actions: {}, pressed: [] });
+  });
+
   it('restart rebuilds the world at tick 0 with the same starting hash', () => {
     const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
     const initial = session.hash();

@@ -11,6 +11,9 @@ import { PLATFORMER_SCENE } from '../testing/scenes.js';
 import { buildTestWorld } from '../testing/world.js';
 import { boot } from './boot.js';
 import type { AegisDebugHandle } from './boot.js';
+import type { InputPacket } from '../live-input.js';
+import { virtualGamepad } from '../testing/gamepad.js';
+import { createLiveSession } from '../session.js';
 
 // Keep the real boot, input, mirror, HUD and presentation runtime; only GPU drawing is absent.
 vi.mock('three', async (importOriginal) => ({
@@ -190,7 +193,111 @@ async function start(
   await debug().ready;
 }
 
+describe('dev-client controller polling', () => {
+  it('captures a press/release between exchanges while the preceding HTTP frame is in flight', async () => {
+    const pad = virtualGamepad();
+    vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+    await start();
+    await display();
+    const inFlight = takeRequest('frame');
+    pad.buttons[0]!.value = 1;
+    await display();
+    pad.buttons[0]!.value = 0;
+    await display();
+    expect(requests).toHaveLength(0);
+    await answer(inFlight, response(1, 0));
+    await display();
+    const packet: { input: InputPacket } = JSON.parse(takeRequest('frame').body!);
+    expect(packet.input).toMatchObject({ held: [], pressed: ['Jump'], released: ['Jump'] });
+  });
+
+  it('receives controller pause/resume commands without forwarding paused actions', async () => {
+    const pad = virtualGamepad();
+    vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+    await start();
+    pad.buttons[9]!.value = 1;
+    await display();
+    const pause = takeRequest('control');
+    expect(JSON.parse(pause.body!)).toEqual({ command: 'toggle' });
+    expect(requests).toHaveLength(0);
+    await answer(pause, response(1, 0, [], true));
+    pad.buttons[9]!.value = 0;
+    await display();
+    await answer(takeRequest('frame'), response(1, 0, [], true));
+    pad.buttons[0]!.value = 1;
+    await display();
+    const pausedFrame = takeRequest('frame');
+    const packet: { input: InputPacket } = JSON.parse(pausedFrame.body!);
+    expect(packet.input.held).toEqual([]);
+    expect(packet.input.pressed).toEqual([]);
+    await answer(pausedFrame, response(1, 0, [], true));
+    pad.buttons[9]!.value = 1;
+    await display();
+    const resume = takeRequest('control');
+    expect(JSON.parse(resume.body!)).toEqual({ command: 'toggle' });
+    expect(requests).toHaveLength(0);
+    await answer(resume, response(1, 0, [], false));
+    await display();
+    const resumed: { input: InputPacket } = JSON.parse(takeRequest('frame').body!);
+    expect(resumed.input).toMatchObject({ held: [], pressed: [] });
+  });
+});
+
 describe('dev-client synchronization', () => {
+  it('cannot execute paused key taps while the resume acknowledgement is delayed', async () => {
+    await start(true, response(0, 0, [], true));
+    const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
+    session.step();
+    dom.dispatch('keydown', keyEvent('Space'));
+    dom.dispatch('keyup', keyEvent('Space'));
+    dom.dispatch('keydown', keyEvent('KeyP'));
+    const resume = takeRequest('control');
+    // The server has resumed, but the client has not received its acknowledgement.
+    dom.dispatch('keydown', keyEvent('Space'));
+    dom.dispatch('keyup', keyEvent('Space'));
+    await display();
+    await display();
+    expect(requests).toHaveLength(0);
+    await answer(resume, response(0, 0, [], false));
+    await display();
+    const request = takeRequest('frame');
+    const packet: { input: InputPacket } = JSON.parse(request.body!);
+    session.input.submit(packet.input);
+    session.step();
+    expect(
+      session.world.events.history().filter((event) => event.type === 'player.jumped'),
+    ).toHaveLength(0);
+    expect(packet.input).toMatchObject({ held: [], pressed: [] });
+    await answer(request, response(1, 0));
+    dom.dispatch('keydown', keyEvent('Space'));
+    await display();
+    const fresh: { input: InputPacket } = JSON.parse(takeRequest('frame').body!);
+    session.input.submit(fresh.input);
+    session.step();
+    expect(
+      session.world.events.history().filter((event) => event.type === 'player.jumped'),
+    ).toHaveLength(1);
+  });
+
+  it('orders an outstanding paused frame before resume and blocks new exchanges until acknowledgement', async () => {
+    await start(true, response(0, 0, [], true));
+    dom.dispatch('keydown', keyEvent('Space'));
+    dom.dispatch('keyup', keyEvent('Space'));
+    await display();
+    const oldFrame = takeRequest('frame');
+    dom.dispatch('keydown', keyEvent('KeyP'));
+    await display();
+    expect(requests).toHaveLength(0);
+    await answer(oldFrame, response(0, 0, [], true));
+    const resume = takeRequest('control');
+    await display();
+    expect(requests).toHaveLength(0);
+    await answer(resume, response(0, 0, [], false));
+    await display();
+    const fresh: { input: InputPacket } = JSON.parse(takeRequest('frame').body!);
+    expect(fresh.input).toMatchObject({ held: [], pressed: [], reset: true });
+  });
+
   it('does not let a delayed restart acknowledgement erase a newer same-generation frame', async () => {
     await start();
     dom.dispatch('keydown', keyEvent('KeyR'));

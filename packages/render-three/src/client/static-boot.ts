@@ -43,8 +43,9 @@ import type { Clock } from '../loop.js';
 import { createLiveSession } from '../session.js';
 import type { LiveSession } from '../session.js';
 import type { EventLine } from '../protocol.js';
-import { createInputCollector } from './input.js';
+import { createInputCollector } from '../input.js';
 import type { SessionCommand } from './input.js';
+import { gamepadCursor, gamepadStatus } from './gamepad-cursor.js';
 import type { ResolvedPresentation } from '../presentation/schema.js';
 import { PresentationHost } from './presentation-host.js';
 
@@ -172,6 +173,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   let steps = 0;
   let frames = 0;
   let lastFrameAt = clock();
+  let clockRevision = 0;
   let eventCursor = 0;
   let generation = 0;
   let observedGeneration = -1;
@@ -194,8 +196,10 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   function sendCommand(command: SessionCommand): void {
     // Keep the current loading/failure explanation intact until a real world exists.
     if (!mounted) return;
-    if (command === 'pause') session.paused = !session.paused;
-    else if (command === 'step') {
+    if (command === 'pause') {
+      session.paused = !session.paused;
+      collector.setPaused(session.paused);
+    } else if (command === 'step') {
       session.step();
       steps++;
     } else if (command === 'restart') {
@@ -206,6 +210,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       host.reset(++generation);
     }
     lastFrameAt = clock();
+    clockRevision++;
   }
 
   const collector = createInputCollector({
@@ -220,6 +225,8 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       return adapter.pick(x, y);
     },
     onCommand: sendCommand,
+    onGamepadPointer: gamepadCursor(canvas),
+    onGamepadSample: gamepadStatus(),
   });
 
   const applySnapshot = (snapshot: WorldSnapshot): void => {
@@ -250,6 +257,11 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
     animationFrame = globalThis.requestAnimationFrame(frame);
     frames++;
 
+    const now = clock();
+    const elapsed = Math.min(Math.max(now - lastFrameAt, 0), MAX_FRAME_SECONDS);
+    lastFrameAt = now;
+    const sampledRevision = clockRevision;
+    collector.poll(elapsed);
     // Claim the waiters registered before this collection: their events are in this packet.
     const settling = syncWaiters;
     syncWaiters = [];
@@ -258,10 +270,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
 
     // Wall-clock in, whole fixed ticks out. The simulation never sees a variable dt. The clamp is
     // the dev server's, derived from the accumulator's own budget so the two cannot disagree.
-    const now = clock();
-    const elapsed = Math.min(Math.max(now - lastFrameAt, 0), MAX_FRAME_SECONDS);
-    lastFrameAt = now;
-    steps += session.advance(elapsed);
+    steps += session.advance(sampledRevision === clockRevision ? elapsed : 0);
 
     try {
       // Restart can replace the world at the same tick; input collection alone changes neither.

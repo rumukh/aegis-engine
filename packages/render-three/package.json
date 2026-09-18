@@ -16,6 +16,10 @@
       "types": "./dist/render.d.ts",
       "import": "./dist/render.js"
     },
+    "./input": {
+      "types": "./dist/input.d.ts",
+      "import": "./dist/input.js"
+    },
     "./client/static-boot": {
       "types": "./dist/client/static-boot.d.ts",
       "import": "./dist/client/static-boot.js"
