@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GameMode } from '@aegis/core';
-import { BINDINGS, SESSION_CONTROLS } from './bindings.js';
+import { BINDINGS, SESSION_CONTROLS, CONTROLLER_SESSION_CONTROLS } from './bindings.js';
 import type { PresentationManifest } from './presentation/schema.js';
 import { PAGE_STYLE, renderCatalogBody, renderGameChrome } from './page-chrome.js';
 import type { CatalogGame, GameChromeOptions } from './page-chrome.js';
@@ -45,6 +45,8 @@ describe('shared play-page body', () => {
       'hud-outcome',
       'hud-tick',
       'hud-status',
+      'hud-controller',
+      'gamepad-cursor',
       'hud-stats',
       'hud-events',
       'action-pause',
@@ -68,7 +70,11 @@ describe('shared play-page body', () => {
     'prints the real %s bindings and session keys',
     (mode) => {
       const body = renderGameChrome({ ...GAME, mode, bindings: BINDINGS[mode] });
-      for (const line of [...BINDINGS[mode].help, ...SESSION_CONTROLS]) {
+      for (const line of [
+        ...BINDINGS[mode].help,
+        ...SESSION_CONTROLS,
+        ...CONTROLLER_SESSION_CONTROLS,
+      ]) {
         expect(body).toContain(`<kbd>${line.keys}</kbd>`);
         expect(body).toContain(`<dd>${line.does}</dd>`);
       }
@@ -91,6 +97,16 @@ describe('shared play-page body', () => {
       /<label\b[^>]*><input\b[^>]*id="collision-debug"[^>]*>\s*Show collision geometry<\/label>/,
     );
     expect(body.match(/<details\b[^>]*id="controls"[^>]*>/)?.[0]).not.toMatch(/\bopen\b/);
+  });
+
+  it('does not advertise the standard session profile for keyboard-only custom bindings', () => {
+    const body = renderGameChrome({
+      ...GAME,
+      bindings: { actions: [], axes: [], pointer: 'none', help: [] },
+    });
+    expect(body).not.toContain('controller: Menu / View');
+    expect(body).toContain('id="hud-controller" role="status" hidden');
+    expect(body).toContain('pause / resume');
   });
 
   it('renders authored HUD data, accent, audio readiness and the selected quality tier', () => {

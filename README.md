@@ -45,7 +45,9 @@ infer gameplay success from a screenshot. Aegis makes the authoring and feedback
 | Repair bad content             | Structured diagnostics with stable codes, locations and actionable fixes.                                                                          |
 | Iterate visually with a person | An asset-only studio and PNG captures using the production loaders, without booting a game.                                                        |
 
-**Agent-first does not mean agent-only.** The games accept ordinary keyboard and mouse input.
+**Agent-first does not mean agent-only.** The games accept keyboard/mouse and standard-mapped
+controllers. The [browser-safe input API](docs/api/gamepad-input.md) also works in games that
+own their renderer and animation loop.
 Nor does it mean an LLM runs inside the engine: Aegis exposes tools that coding agents can use,
 while authoritative gameplay remains explicit code and data.
 

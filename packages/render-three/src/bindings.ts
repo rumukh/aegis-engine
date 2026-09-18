@@ -11,6 +11,18 @@
  * @packageDocumentation
  */
 import type { GameMode } from '@aegis/core';
+import type { GamepadBindings } from './gamepad.js';
+
+/** Presentation-side interpretation of logical controller axes/actions. */
+export interface ControllerProfile {
+  bindings: GamepadBindings;
+  /** Axis names and signed camera rates in degrees per second at full deflection. */
+  look?: { x: string; y: string; yawRate: number; pitchRate: number };
+  /** A screen-space cursor, projected through the same picker as a mouse click. */
+  pointer?: { x: string; y: string; primary: string; pixelsPerSecond: number };
+  /** These actions control the session and are never sent to gameplay. */
+  commands?: Readonly<Record<string, 'pause' | 'step' | 'restart'>>;
+}
 
 /** A key that holds a digital action while it is down. */
 export interface ActionBinding {
@@ -61,6 +73,8 @@ export interface DirectionAlias {
 
 /** Everything needed to drive one mode from a browser. */
 export interface ModeBindings {
+  /** Omit for keyboard/mouse only. Standard Gamepad API mapping; no native XInput. */
+  gamepad?: ControllerProfile;
   /** Digital action keys. */
   actions: readonly ActionBinding[];
   /** Analog axis keys. */
@@ -117,9 +131,29 @@ export const SCREEN_HANDEDNESS =
   'mode-fps is left-handed (yaw 0 -> +Z, right -> +X); three.js cameras look down -Z, so the ' +
   "camera's screen-right is world -X. Screen-relative human input is negated on the way in.";
 
+const CONTROLLER_COMMANDS = {
+  buttons: [
+    { button: 9, action: 'SessionPause', label: 'Menu' },
+    { button: 8, action: 'SessionRestart', label: 'View' },
+  ],
+  commands: { SessionPause: 'pause', SessionRestart: 'restart' } as const,
+};
+
 /** The binding table for each mode. */
 export const BINDINGS: Readonly<Record<GameMode, ModeBindings>> = {
   platformer: {
+    gamepad: {
+      bindings: {
+        sticks: [{ axes: [0, 1], x: 'MoveX', y: 'MoveY' }],
+        buttons: [
+          { button: 0, action: 'Jump', label: 'A' },
+          { button: 14, axis: 'MoveX', scale: -1, label: 'D-pad left' },
+          { button: 15, axis: 'MoveX', label: 'D-pad right' },
+          ...CONTROLLER_COMMANDS.buttons,
+        ],
+      },
+      commands: CONTROLLER_COMMANDS.commands,
+    },
     actions: [
       { code: 'Space', action: 'Jump' },
       { code: 'KeyW', action: 'Jump' },
@@ -139,18 +173,47 @@ export const BINDINGS: Readonly<Record<GameMode, ModeBindings>> = {
     help: [
       { keys: 'A / D  ·  ← / →', does: 'run · axis MoveX' },
       { keys: 'Space / W / ↑', does: 'jump · coyote time + buffering' },
+      { keys: 'controller: left stick / D-pad', does: 'run (analog stick)' },
+      { keys: 'controller: A', does: 'jump' },
     ],
   },
   iso: {
+    gamepad: {
+      bindings: {
+        sticks: [{ axes: [0, 1], x: 'PointerX', y: 'PointerY' }],
+        buttons: [
+          { button: 0, action: 'PointerPrimary', label: 'A' },
+          ...CONTROLLER_COMMANDS.buttons,
+        ],
+      },
+      pointer: { x: 'PointerX', y: 'PointerY', primary: 'PointerPrimary', pixelsPerSecond: 500 },
+      commands: CONTROLLER_COMMANDS.commands,
+    },
     actions: [],
     axes: [],
     pointer: 'click',
     help: [
       { keys: 'click floor', does: 'move · A* path (pointer)' },
       { keys: 'click the guard', does: 'attack-move · close, then fire' },
+      { keys: 'controller: left stick + A', does: 'move cursor, then order / attack-move' },
     ],
   },
   fps: {
+    gamepad: {
+      bindings: {
+        sticks: [
+          { axes: [0, 1], x: 'Strafe', y: 'Forward', invertX: true, invertY: true },
+          { axes: [2, 3], x: 'LookX', y: 'LookY' },
+        ],
+        buttons: [
+          { button: 0, action: 'Jump', label: 'A' },
+          { button: 7, action: 'Fire', threshold: 0.5, label: 'RT' },
+          ...CONTROLLER_COMMANDS.buttons,
+        ],
+      },
+      look: { x: 'LookX', y: 'LookY', yawRate: -120, pitchRate: -90 },
+      commands: CONTROLLER_COMMANDS.commands,
+    },
     actions: [{ code: 'Space', action: 'Jump' }],
     axes: [
       { code: 'KeyW', axis: 'Forward', value: 1 },
@@ -178,6 +241,8 @@ export const BINDINGS: Readonly<Record<GameMode, ModeBindings>> = {
       { keys: 'Space', does: 'jump the coolant pit' },
       { keys: 'mouse', does: 'look · click to capture pointer' },
       { keys: 'left click', does: 'fire · hitscan' },
+      { keys: 'controller: left / right stick', does: 'move / look' },
+      { keys: 'controller: A / RT', does: 'jump / fire' },
     ],
   },
 };
@@ -187,6 +252,12 @@ export const SESSION_CONTROLS: readonly ControlHelp[] = [
   { keys: 'P', does: 'pause / resume' },
   { keys: '.', does: 'single-step one tick' },
   { keys: 'R', does: 'restart at tick 0' },
+];
+
+/** Help for the standard controller session profile, not keyboard-only custom bindings. */
+export const CONTROLLER_SESSION_CONTROLS: readonly ControlHelp[] = [
+  { keys: 'controller: Menu / View', does: 'pause / restart (standard mapping)' },
+  { keys: 'controller connection', does: 'press a button to expose it, then release to arm' },
 ];
 
 // --- reading the table ----------------------------------------------------------------------

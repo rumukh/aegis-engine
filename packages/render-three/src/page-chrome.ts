@@ -1,5 +1,5 @@
 import type { GameMode } from '@aegis/core';
-import { SESSION_CONTROLS } from './bindings.js';
+import { SESSION_CONTROLS, CONTROLLER_SESSION_CONTROLS } from './bindings.js';
 import type { ModeBindings } from './bindings.js';
 import type { PresentationManifest } from './presentation/schema.js';
 
@@ -149,7 +149,7 @@ export const PAGE_STYLE = `
   .binding-list dd { margin: 0; color: var(--dim); }
   kbd { font: inherit; }
   .diagnostic-row { display: flex; gap: 1.1rem; color: var(--accent); font-size: .75rem; }
-  #hud-stats, #hud-events {
+  #hud-stats, #hud-events, #hud-controller {
     white-space: pre-wrap; overflow-wrap: anywhere; font: .71rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
     margin: .55rem 0; color: var(--dim);
   }
@@ -159,6 +159,11 @@ export const PAGE_STYLE = `
   #crosshair::before, #crosshair::after { content: ""; position: absolute; background: #edf3f4; box-shadow: 0 0 2px #000; opacity: .85; }
   #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
   #crosshair::after { top: 6px; left: 0; height: 2px; width: 14px; }
+  #gamepad-cursor {
+    position: fixed; width: 18px; height: 18px; z-index: 2; pointer-events: none;
+    border: 2px solid #fff; border-radius: 50%; background: #07152088;
+    box-shadow: 0 0 0 1px #071520; transform: translate(-50%, -50%);
+  }
   .loading-panel { position: absolute; inset: 0; display: grid; place-items: center; padding: 1rem; background: #050a1280; pointer-events: none; }
   .loading-card { width: min(29rem, 100%); padding: 1.6rem; background: #101d29; }
   .loading-card h2 { margin: .3rem 0 .7rem; font-size: 1.3rem; }
@@ -238,13 +243,18 @@ export function renderGameChrome(options: GameChromeOptions): string {
   const hasAudio =
     manifest?.audio?.ambient !== undefined || (manifest?.audio?.cues?.length ?? 0) > 0;
   const quality = manifest?.quality ?? 'standard';
-  const controls = [...bindings.help, ...SESSION_CONTROLS]
+  const controls = [
+    ...bindings.help,
+    ...SESSION_CONTROLS,
+    ...(bindings.gamepad === undefined ? [] : CONTROLLER_SESSION_CONTROLS),
+  ]
     .map(
       (line) => `          <dt><kbd>${escape(line.keys)}</kbd></dt><dd>${escape(line.does)}</dd>`,
     )
     .join('\n');
   return `  <main class="game-shell" id="game-shell" data-mode="${escape(mode)}"${accent(manifest)}>
     <canvas id="stage" tabindex="0" aria-label="${escape(title)} game view" aria-busy="true">This game requires a browser with WebGL support.</canvas>
+    <div id="gamepad-cursor" aria-hidden="true" hidden></div>
 ${mode === 'fps' ? '    <div id="crosshair" aria-hidden="true"></div>\n' : ''}    <div class="game-topbar">
       <section class="panel" id="hud" aria-labelledby="game-title">
         <div class="hud-heading"><a class="back-link" href="${localUrl(options.backHref)}"><span aria-hidden="true">← </span>All games</a><p class="eyebrow">${escape(manifest?.ui?.eyebrow ?? MODE_LABELS[mode])}</p></div>
@@ -275,6 +285,7 @@ ${controls}
         <summary>Diagnostics</summary>
         <div class="details-content" tabindex="0" aria-label="Simulation diagnostics">
           <div class="diagnostic-row"><output id="hud-tick">tick 0</output><output id="hud-status">starting…</output></div>
+          <p id="hud-controller" role="status"${bindings.gamepad === undefined ? ' hidden' : ''}>Controller not sampled yet</p>
           <pre id="hud-stats"></pre>
           <section id="events" aria-labelledby="events-title"><h2 id="events-title">Simulation events</h2><pre id="hud-events"></pre></section>
           <label class="debug-toggle"><input type="checkbox" id="collision-debug" /> Show collision geometry</label>
@@ -307,7 +318,7 @@ export function renderCatalogBody(options: CatalogBodyOptions): string {
     })
     .join('\n');
   return `  <main class="index">
-    <header class="catalog-header"><p class="brand">Aegis</p><p class="eyebrow">Game collection</p><h1>Pick a world.<br />Make your move.</h1><p class="lede">Short, playable games. Choose a game below, then use a keyboard and mouse to find your way through.</p><p class="catalog-note">${options.staticSite ? 'Simulation runs in your browser.' : 'Live simulation · development preview'}</p></header>
+    <header class="catalog-header"><p class="brand">Aegis</p><p class="eyebrow">Game collection</p><h1>Pick a world.<br />Make your move.</h1><p class="lede">Short, playable games. Choose a game below, then use a keyboard and mouse or a standard-mapped controller to find your way through.</p><p class="catalog-note">${options.staticSite ? 'Simulation runs in your browser.' : 'Live simulation · development preview'}</p></header>
     <section class="game-grid" aria-label="Games">
 ${cards || '      <p class="lede">No games are configured yet.</p>'}
     </section>

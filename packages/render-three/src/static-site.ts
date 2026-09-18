@@ -158,6 +158,12 @@ const ENGINE_MODULE_PATHS: readonly {
     entry: 'packages/render-three/dist/client/static-boot.js',
   },
   {
+    specifier: '@aegis/render-three/input',
+    name: '@aegis/render-three',
+    root: 'packages/render-three',
+    entry: 'packages/render-three/dist/input.js',
+  },
+  {
     specifier: '@aegis/render-three/presentation',
     name: '@aegis/render-three',
     root: 'packages/render-three',

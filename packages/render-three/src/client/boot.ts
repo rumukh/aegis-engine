@@ -18,8 +18,9 @@ import { renderAdapter } from '../render.js';
 import { BINDINGS } from '../bindings.js';
 import type { BootConfig, ControlCommand, FrameResponse } from '../protocol.js';
 import { assertEventHistory } from '../protocol.js';
-import { createInputCollector } from './input.js';
+import { createInputCollector } from '../input.js';
 import type { SessionCommand } from './input.js';
+import { gamepadCursor, gamepadStatus } from './gamepad-cursor.js';
 import { PresentationHost } from './presentation-host.js';
 
 /**
@@ -188,6 +189,8 @@ export function boot(config: BootConfig): void {
   let lastTick = -1;
   let paused = false;
   let inFlight = false;
+  let frameExchange: Promise<void> | undefined;
+  let pauseBarrier: Promise<void> | undefined;
   let generation = 0;
   let hydratedGeneration: number | null = null;
   let stopped = false;
@@ -244,12 +247,30 @@ export function boot(config: BootConfig): void {
   function sendCommand(command: SessionCommand): void {
     // Keep the current loading/failure explanation intact until a real world exists.
     if (!mounted) return;
-    const responseGeneration = generation + (command === 'restart' ? 1 : 0);
-    void postJson<FrameResponse>(`${config.api}/control`, { command: COMMANDS[command] })
-      .then(({ value: response }) => {
-        acceptResponse(response, responseGeneration, 'control');
-      })
-      .catch((error: unknown) => host.connection(error));
+    const send = async (): Promise<void> => {
+      if (stopped) return;
+      const responseGeneration = generation + (command === 'restart' ? 1 : 0);
+      const { value: response } = await postJson<FrameResponse>(`${config.api}/control`, {
+        command: COMMANDS[command],
+      });
+      acceptResponse(response, responseGeneration, 'control');
+    };
+    if (command !== 'pause' && pauseBarrier === undefined) {
+      void send().catch((error: unknown) => host.connection(error));
+      return;
+    }
+    // A paused key tap must not arrive after the server resumes, even if its acknowledgement
+    // is delayed. Drain the preceding frame first, then hold new exchanges behind this boundary.
+    collector.clear();
+    const preceding = pauseBarrier ?? frameExchange;
+    const pending = (preceding === undefined ? send() : preceding.then(send))
+      .catch((error: unknown) => host.connection(error))
+      .finally(() => {
+        if (pauseBarrier !== pending) return;
+        collector.clear();
+        pauseBarrier = undefined;
+      });
+    pauseBarrier = pending;
   }
 
   const collector = createInputCollector({
@@ -282,6 +303,8 @@ export function boot(config: BootConfig): void {
       return adapter.pick(x, y);
     },
     onCommand: sendCommand,
+    onGamepadPointer: gamepadCursor(canvas),
+    onGamepadSample: gamepadStatus(),
   });
 
   const applySnapshot = (snapshot: WorldSnapshot): void => {
@@ -349,6 +372,7 @@ export function boot(config: BootConfig): void {
     // Control and frame replies can arrive in either order within the same generation.
     if (response.tick >= lastTick) {
       paused = response.paused;
+      collector.setPaused(paused);
       applySnapshot(response.snapshot);
     }
     if (history !== undefined) {
@@ -407,19 +431,21 @@ export function boot(config: BootConfig): void {
       if (timings.gap > timings.worstGap) timings.worstGap = timings.gap;
       record(gapSamples, timings.gap);
     }
+    collector.poll(lastFrameAt === 0 ? 0 : (frameStart - lastFrameAt) / 1000);
     lastFrameAt = frameStart;
     timings.frames++;
     windowFrames++;
     timings.meanGap = windowFrames > 1 ? (frameStart - windowStart) / (windowFrames - 1) : 0;
 
-    if (!inFlight) {
+    if (!inFlight && pauseBarrier === undefined) {
       inFlight = true;
       timings.inFlight = true;
-      void exchange()
+      frameExchange = exchange()
         .catch(() => undefined)
         .finally(() => {
           inFlight = false;
           timings.inFlight = false;
+          frameExchange = undefined;
         });
     }
     if (!mounted || (config.presentation !== undefined && hydratedGeneration !== generation))

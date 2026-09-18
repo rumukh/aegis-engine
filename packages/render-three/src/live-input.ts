@@ -20,6 +20,8 @@ import type { InputFrame, InputSource, PointerInput } from '@aegis/core';
 export interface InputPacket {
   /** Monotonic counter; stale packets that arrive out of order are ignored. */
   seq: number;
+  /** A focus/context boundary: discard prior levels and unconsumed impulses before this packet. */
+  reset?: boolean;
   /** Logical actions currently held down. */
   held?: readonly string[];
   /** Actions whose press edge happened since the last packet. */
@@ -90,6 +92,7 @@ export function createLiveInput(): LiveInput {
     submit(packet: InputPacket): boolean {
       if (packet.seq <= lastSeq) return false;
       lastSeq = packet.seq;
+      if (packet.reset === true) live.clear();
       if (packet.held !== undefined) held = [...packet.held];
       if (packet.axes !== undefined) axes = { ...packet.axes };
       pushUnique(pendingPressed, packet.pressed);
