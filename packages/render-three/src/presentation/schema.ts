@@ -185,6 +185,18 @@ export interface LossEndingSpec {
   message?: string;
   fadeSeconds?: number;
 }
+export interface WinEndingSpec {
+  /** A separate, preloaded glTF set; never the authoritative world's scene or camera. */
+  model: string;
+  clip: string;
+  camera: { eye: string; target: string; fov?: number };
+  title: string;
+  message: string;
+  fadeSeconds?: number;
+  captions?: readonly { startSeconds: number; endSeconds: number; text: string }[];
+  /** Presentation-only audio events, not events emitted into the simulation. */
+  cues?: readonly { atSeconds: number; event: string }[];
+}
 export interface PresentationManifest {
   aegis: 'presentation/1';
   assets?: readonly AssetSpec[];
@@ -226,6 +238,7 @@ export interface PresentationManifest {
     cover?: string;
     layout?: 'standard' | 'cinematic';
     lossEnding?: LossEndingSpec;
+    winEnding?: WinEndingSpec;
   };
   quality?: QualityTier;
   /** Omission keeps the original direct rendering path. */

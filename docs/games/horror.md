@@ -44,8 +44,31 @@ When caught, the view dims over one second and a persistent **YOU WERE CAUGHT** 
 an actual Restart button. Mouse capture is released and the button receives focus; R and
 controller View remain restart commands. Reduced-motion preference applies the dim immediately.
 The camera stays upright, the game does not restart automatically, and this presentation does
-not alter the authoritative catch, collision or replay hashes. The successful extraction ending
-and the other games' default presentation are unchanged.
+not alter the authoritative catch, collision or replay hashes.
+
+Successful extraction now opens an **18-second, in-engine evacuation cutscene**: the capsule
+hatch closes, the independent capsule separates from the east docking collar, and the station
+recedes against the existing gas giant. Captions confirm that the crew archive is safe before
+the view fades to **CLEAR OF NULL MERIDIAN**, with Play again and All games controls.
+Skip (or Escape) goes directly to this completion screen. Pause and Mute remain accessible;
+reduced motion goes straight to the still completion screen. R / controller View restarts
+with the normal neutral-input rearm. A held interaction cannot operate the ending controls.
+
+This is an isolated presentation scene, not a new mission, teleport or gameplay camera change.
+The same `level.completed` event and canonical hashes remain authoritative. Its local clock
+stops for cutscene/session pause and hidden tabs; returning to the page does not fast-forward.
+The existing airlock sound starts at completion; the original separation voice is reassigned,
+once, to the cutscene's four-second separation beat. Skip, mute, delayed unlock and reduced
+motion do not replay missed dialogue. Pause stops active speech rather than resuming a partial
+line; the timed text remains available. Rejoining a completed live run restores the final
+screen without replaying the cinematic or historical speech. Other games remain opt-out.
+
+`assets/build-ending.mjs` cooks only `generated/evacuation-ending.glb`, a separate animated
+exterior/capsule set using the existing orbital geometry and material maps. It does not rebuild
+or replace the accepted facility, responder, rings, textures or original visual inventory.
+`assets/ending-provenance.json` fingerprints the new source/output. This additional asset and
+its existing dependencies are included by the production loader and static exporter within
+the unchanged 64 MiB encoded budget.
 
 ## Mission structure
 
@@ -142,9 +165,12 @@ a physical rescue-suit silhouette, practical light pools, a controllable flashli
 machinery/footsteps, sparse dialogue and a gas-giant observation view. The target is 2560 by 1440
 at 60 fps on RTX 4070 Ti SUPER, with a separate higher-quality screenshot tier.
 
-The delivered runtime closes over **36 visual files (38,117,885 bytes)** and **27 audio files
-(1,325,284 bytes)**, within the unchanged 64 MiB presentation limit. Retained recipes, sources,
+The optical-baseline art, evacuation ending and approved SFX close over **37 visual files
+(40,106,653 bytes)** and **30 audio files (1,505,787 bytes)**: **67 files, 41,612,440 bytes**,
+within the unchanged 64 MiB presentation limit. Retained recipes, sources,
 file fingerprints and an independent byte-for-byte visual rebuild accompany the assets.
+The original 36-file visual inventory remains unchanged; the added evacuation model is recorded
+separately in `ending-provenance.json`.
 The current cooking proof records Node 25.6.0 and three.js 0.169.0; it is not a claim that
 rebuilding with an arbitrary toolchain produces identical media.
 
@@ -153,6 +179,25 @@ visitor footstep variants and three responder variants. **There is no musical sc
 Authorized score generation failed without producing a native audio file; the explicit
 failure/provenance record is retained under `assets/audio`, and offline score recipes are not
 declared as runtime assets. Dialogue shares one voice group, and master headroom is applied once.
+
+The user approved three original nonmusical horror gestures on 2026-09-19. Additive mono layers
+place strained material inside maintenance machinery, dry clicks behind the infirmary wall, and
+respiration on the actual responder. Their 37/41/47-second loops contain at least 85% authored
+quiet, use gains 0.30/0.26/0.22, and fade out over 0.2 seconds when `HorrorStatus.musicPhase`
+leaves `explore`. All 27 existing audio files, footsteps and warning bindings are unchanged.
+The existing 0.65 master headroom is not applied twice. Added decoded PCM is 24,000,000 bytes
+at 48 kHz, bringing audio PCM to 64,557,712 bytes; these are not browser-memory or VRAM totals.
+Approval, hashes and reproducible edit/encode recipes are under `assets/audio/source/horror-pass/`.
+
+Actual recorded game output includes a real clue with non-silent chitter underneath and a
+subsequent physical catch: pursuit at tick 4352, warning at 4469, caught at 4516, preserving
+48 inclusive warning ticks. All new layers stopped about 1.75 seconds before the audible warning.
+Mute and paused/restart intervals measured zero master output. These observations and CPU
+waveform checks are not human intelligibility or final whole-game mix approval. The recorder's
+later redundant scenario failed to reacquire the mouse before resetting the persistent caught
+dialog, and graceful shutdown needed an owned-process fallback; completed measurements are
+retained separately from that failed runner exit. Media-container duration is not assumed to
+preserve disconnected-silence intervals on the AudioContext clock.
 
 Precise browser route proofs use paused single-step input, which intentionally suppresses audio.
 A separate unpaused phase exercises ambience, flashlight and walking cues before resetting for

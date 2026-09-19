@@ -33,6 +33,37 @@ const CATALOG_GAME: CatalogGame = {
 };
 
 describe('shared play-page body', () => {
+  it('creates accessible opt-in cutscene controls and escapes completion copy', () => {
+    expect(renderGameChrome(GAME)).not.toContain('id="win-ending"');
+    const html = renderGameChrome({
+      ...GAME,
+      manifest: {
+        ...MANIFEST,
+        ui: {
+          winEnding: {
+            model: 'set',
+            clip: 'Departure',
+            camera: { eye: 'eye', target: 'target' },
+            title: 'Safe <now>',
+            message: 'Evidence & crew',
+          },
+        },
+      },
+    });
+    expect(html).toContain('Safe &lt;now&gt;');
+    expect(html).toContain('Evidence &amp; crew');
+    for (const id of [
+      'win-ending',
+      'win-caption',
+      'win-skip',
+      'win-pause',
+      'win-mute',
+      'win-restart',
+      'win-error',
+    ])
+      expect(html.split(`id="${id}"`)).toHaveLength(2);
+    expect(html).toContain('aria-labelledby="win-title"');
+  });
   it('creates a labelled native loss dialog only on explicit opt-in and escapes authored text', () => {
     expect(renderGameChrome(GAME)).not.toContain('id="loss-ending"');
     const html = renderGameChrome({

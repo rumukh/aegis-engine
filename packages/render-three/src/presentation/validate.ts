@@ -754,11 +754,85 @@ export function validatePresentation(
       });
   }
   if (root.ui !== undefined) {
-    const r = record(root.ui, 'ui', ['accent', 'eyebrow', 'cover', 'layout', 'lossEnding']);
+    const r = record(root.ui, 'ui', [
+      'accent',
+      'eyebrow',
+      'cover',
+      'layout',
+      'lossEnding',
+      'winEnding',
+    ]);
     optional(r, 'layout', 'ui', (v, p) => enumeration(v, p, ['standard', 'cinematic']));
     optional(r, 'accent', 'ui', color);
     optional(r, 'eyebrow', 'ui', text);
     optional(r, 'cover', 'ui', (v, p) => asset(v, p, 'texture'));
+    if (r.winEnding !== undefined) {
+      const p = 'ui.winEnding';
+      const ending = record(r.winEnding, p, [
+        'model',
+        'clip',
+        'camera',
+        'title',
+        'message',
+        'fadeSeconds',
+        'captions',
+        'cues',
+      ]);
+      asset(ending.model, `${p}.model`, 'gltf');
+      text(ending.clip, `${p}.clip`);
+      text(ending.title, `${p}.title`);
+      text(ending.message, `${p}.message`);
+      const camera = record(ending.camera, `${p}.camera`, ['eye', 'target', 'fov']);
+      text(camera.eye, `${p}.camera.eye`);
+      text(camera.target, `${p}.camera.target`);
+      if (camera.eye === camera.target)
+        fail(`${p}.camera`, 'Eye and target must name distinct nodes.');
+      optional(camera, 'fov', `${p}.camera`, (v, at) => number(v, at, 20, 90));
+      optional(ending, 'fadeSeconds', p, (v, at) => number(v, at, 0, 3));
+      let previousEnd = 0;
+      if (ending.captions !== undefined)
+        list(ending.captions, `${p}.captions`, 32).forEach((value, i) => {
+          const at = `${p}.captions[${i}]`;
+          const caption = record(value, at, ['startSeconds', 'endSeconds', 'text']);
+          const startOk = number(caption.startSeconds, `${at}.startSeconds`, 0, 120);
+          const endOk = number(caption.endSeconds, `${at}.endSeconds`, 0, 120);
+          text(caption.text, `${at}.text`);
+          if (startOk && endOk) {
+            const start = caption.startSeconds as number,
+              end = caption.endSeconds as number;
+            if (start < previousEnd || end <= start)
+              fail(at, 'Captions must be ordered, non-overlapping, positive-duration intervals.');
+            previousEnd = end;
+          }
+        });
+      let previousTime = 0;
+      const events = new Set<string>();
+      if (ending.cues !== undefined)
+        list(ending.cues, `${p}.cues`, 32).forEach((value, i) => {
+          const at = `${p}.cues[${i}]`;
+          const cue = record(value, at, ['atSeconds', 'event']);
+          if (number(cue.atSeconds, `${at}.atSeconds`, 0, 120)) {
+            if (cue.atSeconds < previousTime) fail(at, 'Cutscene cues must be ordered by time.');
+            previousTime = cue.atSeconds;
+          }
+          if (text(cue.event, `${at}.event`, /^presentation\.[A-Za-z0-9_.-]+$/)) {
+            if (events.has(cue.event)) fail(at, 'Each cutscene audio event must be unique.');
+            events.add(cue.event);
+            if (
+              !object(root.audio) ||
+              !Array.isArray(root.audio.cues) ||
+              !root.audio.cues.some((entry) => object(entry) && entry.event === cue.event)
+            )
+              fail(
+                `${at}.event`,
+                'Declare a matching audio.cues entry for this presentation event.',
+                RenderCode.Reference,
+              );
+          }
+        });
+      if (!object(root.hud) || !text(root.hud.winEvent, 'hud.winEvent'))
+        fail(p, 'A win ending requires an authoritative hud.winEvent.');
+    }
     if (r.lossEnding !== undefined) {
       const ending = record(r.lossEnding, 'ui.lossEnding', ['title', 'message', 'fadeSeconds']);
       optional(ending, 'title', 'ui.lossEnding', text);

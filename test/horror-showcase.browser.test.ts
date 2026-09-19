@@ -424,7 +424,7 @@ describe('NULL MERIDIAN real browser mission', () => {
           assets: { loadedFiles: number };
           audio: { status: string };
         }>(page, 'globalThis.aegis.presentation()');
-        expect(initial.assets.loadedFiles).toBe(63);
+        expect(initial.assets.loadedFiles).toBe(67);
         expect(initial.audio.status).not.toBe('unavailable');
         await control(page, transport, 'resume');
         await until(

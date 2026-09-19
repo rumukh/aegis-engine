@@ -1,0 +1,28 @@
+{
+  "schema": "null-meridian-ending/1",
+  "source": "games/horror/assets/build-ending.mjs",
+  "sourceSha256": "bc2bf84011a8da7716d4f26e5c52378de9ce723c718c833ba945899d6139a409",
+  "authorship": "Original authored Aegis geometry and glTF animation; no generated video.",
+  "reused": "Existing material maps, gas giant, rings and antenna kit. Original sources remain unchanged.",
+  "durationSeconds": 18,
+  "shots": [
+    {
+      "start": 0,
+      "end": 3.6,
+      "beat": "Capsule hatch closes around the recovered crew recorder."
+    },
+    {
+      "start": 3.6,
+      "end": 10.5,
+      "beat": "Thrusters fire; independent capsule separates from the east collar."
+    },
+    {
+      "start": 10.5,
+      "end": 18,
+      "beat": "Capsule leaves the station behind above the gas giant."
+    }
+  ],
+  "file": "evacuation-ending.glb",
+  "bytes": 1988768,
+  "sha256": "55d8a739532ba47b16efe3bb9ce40c2a8a894dd53adb6e6f8dd05763c4c4ee0b"
+}

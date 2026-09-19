@@ -203,6 +203,60 @@ The stable DOM IDs are `loss-ending`, `loss-shade`, `loss-title`, `loss-message`
 Custom `PresentationHost` consumers enabling this option must wire `onGameplayBlocked` to
 their input collector's `setGameplayBlocked`; the standard live/static hosts already do.
 
+### Optional win cutscene
+
+`ui.winEnding` opts into a presentation-only animated glTF set triggered by `hud.winEvent`.
+It does not change the authoritative world, its camera, input history or victory conditions.
+The live and static clients use the same player and preloaded asset inventory. For example:
+
+```json
+{
+  "model": "evacuation-ending",
+  "clip": "Departure",
+  "camera": { "eye": "ending-eye", "target": "ending-target", "fov": 50 },
+  "title": "CLEAR OF NULL MERIDIAN",
+  "message": "The crew archive is safe.",
+  "fadeSeconds": 1.5,
+  "captions": [
+    { "startSeconds": 0, "endSeconds": 3.6, "text": "Hatch sealing." },
+    { "startSeconds": 4, "endSeconds": 8.5, "text": "Separation confirmed." }
+  ],
+  "cues": [{ "atSeconds": 4, "event": "presentation.evacuation.separated" }]
+}
+```
+
+`model` must reference a declared glTF asset. `clip` must uniquely name a 1-120 second animation.
+The animated eye/target node names must each occur exactly once and stay apart. They drive a
+separate perspective camera (FOV 20-90 degrees, default 50), with a 0.05-2000 unit depth range.
+The set has a neutral hemispheric fill and warm directional key, borrowing the game's reflection
+map without taking ownership. It uses the existing quality/postprocessing pipeline, not another
+renderer or simulation. Models and dependencies count toward the normal encoded asset budget.
+
+`captions` are ordered, non-overlapping intervals within the clip. `cues` are ordered, uniquely
+named `presentation.*` events with matching `audio.cues` entries; these go only to browser audio,
+never to the world event bus, replay or HUD mission history. Times are local presentation seconds,
+not simulation ticks. At most 32 captions and 32 cues are allowed. The final black fade defaults
+to 1.5 seconds and accepts 0-3 seconds, bounded by the clip. Invalid clips, nodes and timelines
+fail presentation readiness visibly, rather than quietly showing a success screen.
+
+The modal releases pointer lock and blocks gameplay while retaining the restart command and
+neutral-rearm contract. It provides Skip / Escape, local Pause, Mute and an eventual Play again
+button and catalog link. The clock holds during either local or session pause and while the
+document is hidden. Reduced motion skips directly to the persistent completion screen.
+Skipped, muted, locked or obsolete audio cues are never caught up; pausing stops active speech
+instead of resuming halfway through the line. Captions remain readable without sound.
+Repeated events do not replay the cutscene. A completed live session's hydrated history restores
+only the final screen, without replaying the animation or speech. A genuine restart resets the
+clock, cue cursor, modal, focus and camera/scene selection after the new world is observed.
+Errors remain visible inside the modal.
+
+Stable DOM IDs are `win-ending`, `win-shade`, `win-caption`, `win-card`, `win-title`,
+`win-message`, `win-skip`, `win-pause`, `win-mute`, `win-restart` and `win-error`.
+`aegis.presentation().winEnding` reports `{ active, phase, seconds, duration, paused,
+reducedMotion }`, with phase `hidden`, `playing`, `shown` or `restarting`; `paused` is the
+local cutscene pause. Custom hosts must supply `onGameplayBlocked`, just as for loss endings.
+Omitting `ui.winEnding` preserves existing win presentation.
+
 ## Spatial sound and captions
 
 Existing `audio.ambient` and event cues remain supported. New `audio.layers` entries contain

@@ -102,6 +102,7 @@ export class CinematicPipeline {
   readonly #grade: ShaderPass;
   readonly #output = new OutputPass();
   readonly #environment: View['scene']['environment'];
+  readonly #environmentScene: View['scene'];
   readonly #environmentIntensity: number;
   readonly #previous;
   readonly #shadowMeshes = new WeakSet<Mesh>();
@@ -126,6 +127,7 @@ export class CinematicPipeline {
     this.#view = view;
     this.#quality = quality;
     this.#environment = view.scene.environment;
+    this.#environmentScene = view.scene;
     this.#environmentIntensity = view.scene.environmentIntensity;
     this.#previous = {
       toneMapping: renderer.toneMapping,
@@ -213,8 +215,10 @@ export class CinematicPipeline {
   render(view: View = this.#view): void {
     if (this.#disposed) throw new Error('[aegis:pipeline] Cannot render a disposed pipeline.');
     this.#view = view;
+    this.#world.scene = view.scene;
     this.#world.camera = view.camera;
     if (this.#ao !== undefined) {
+      this.#ao.scene = view.scene;
       this.#ao.camera = view.camera;
       this.#ao.setSize(this.#width, this.#height);
       if (view.camera instanceof PerspectiveCamera || view.camera instanceof OrthographicCamera) {
@@ -278,8 +282,8 @@ export class CinematicPipeline {
     this.#ao?.ssaoMaterial.dispose();
     this.#ao?.noiseTexture.dispose();
     this.#composer.dispose();
-    this.#view.scene.environment = this.#environment;
-    this.#view.scene.environmentIntensity = this.#environmentIntensity;
+    this.#environmentScene.environment = this.#environment;
+    this.#environmentScene.environmentIntensity = this.#environmentIntensity;
     this.#reflection?.dispose();
     this.#reflection = undefined;
     this.#renderer.toneMapping = this.#previous.toneMapping;

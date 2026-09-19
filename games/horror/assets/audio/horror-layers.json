@@ -1,0 +1,431 @@
+{
+  "schema": "null-meridian-audio-inventory/1",
+  "revision": "approved-horror-layers-r1",
+  "baselineCommit": "5e9cdcdbcafc14ada77002322886408c33945890",
+  "approvedAuditionManifestSha256": "3d5713ca6174657dbd9ba32671f97effb435e7a347387905230392427608f5f0",
+  "approvalReceiptSha256": "52cc58b7f38c35ce6f6fe557a14cc6ca92f18083862314c6f2b2d27474336319",
+  "recipeSha256": "a3c39a732c6b89c436d1f169e0da79469628b51ba26a63d2bcf6874884e82c9c",
+  "sampleRate": 48000,
+  "runtimeCodec": "Ogg Opus",
+  "totalRuntimeBytes": 180503,
+  "decodedFloatPcmBytes": 24000000,
+  "baselineRuntimeBytes": 1325284,
+  "baselineDecodedFloatPcmBytes": 40557712,
+  "combinedRuntimeBytes": 1505787,
+  "combinedDecodedFloatPcmBytes": 64557712,
+  "masterDirectory": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files\\horror-layer-masters-r1",
+  "sourceDirectory": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files\\horror-pass-audition-r1",
+  "mix": {
+    "headroomAlreadyInGame": 0.65,
+    "fragmentDoesNotAddMasterGain": true
+  },
+  "cues": [
+    {
+      "id": "dread-membrane",
+      "category": "sparse-horror-ambience",
+      "description": "Two isolated strained-material movements inside maintenance machinery, separated by long silence. No footstep cadence or damage cue.",
+      "channels": 1,
+      "frames": 1776000,
+      "durationSeconds": 37,
+      "url": "runtime/dread-membrane.ogg",
+      "sha256": "b8415bec37790323d8a9a6b2c4aab261b3f199d307a275176f773f9588fea2b0",
+      "sourceSha256": "e33d0a96cf391191811aa163ff501c787c974d1ebb21190f4b4fc4d784b152a2",
+      "originalNativeSha256": "2ce4d5097e63b187459dbe27fad41f38986a4464e0b5973ed1563a540d5cf70c",
+      "masterSha256": "460da389ad40d2619bb18d335cd56c9cae7bc13684ca7d4fda84cfb8069874e1",
+      "maxMasterQuantizationError": 1.1548399925231934e-7,
+      "gestures": [
+        {
+          "startSeconds": 5,
+          "endSeconds": 7.6,
+          "gain": 1
+        },
+        {
+          "startSeconds": 23.4,
+          "endSeconds": 26,
+          "gain": 0.72
+        }
+      ],
+      "authoredQuietIntervals": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 5
+        },
+        {
+          "startSeconds": 7.6,
+          "endSeconds": 23.4
+        },
+        {
+          "startSeconds": 26,
+          "endSeconds": 37
+        }
+      ],
+      "quietFraction": 0.8594594594594595,
+      "decodedQuiet": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 4.92,
+          "peak": 0
+        },
+        {
+          "startSeconds": 7.68,
+          "endSeconds": 23.32,
+          "peak": 2.9154405790796066e-23
+        },
+        {
+          "startSeconds": 26.08,
+          "endSeconds": 37,
+          "peak": 2.7865454403319246e-23
+        }
+      ],
+      "loop": {
+        "startSeconds": 0,
+        "endSeconds": 37,
+        "seamPolicy": "digital-silence boundary",
+        "offlineOverlapSeconds": 0,
+        "decodedBoundaryStep": 1.401298464324817e-45
+      },
+      "measured": {
+        "durationSeconds": 37.0065,
+        "bytes": 61253,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -36.93,
+        "truePeakDbtp": -11.97,
+        "loudnessRangeLu": 3.4,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0
+          },
+          {
+            "boundary": "end",
+            "seconds": 5.027792
+          },
+          {
+            "boundary": "start",
+            "seconds": 6.180396
+          },
+          {
+            "boundary": "end",
+            "seconds": 7.443604
+          },
+          {
+            "boundary": "start",
+            "seconds": 7.555625
+          },
+          {
+            "boundary": "end",
+            "seconds": 23.444333
+          },
+          {
+            "boundary": "start",
+            "seconds": 24.398187
+          },
+          {
+            "boundary": "end",
+            "seconds": 25.853104
+          },
+          {
+            "boundary": "start",
+            "seconds": 25.955562
+          },
+          {
+            "boundary": "end",
+            "seconds": 37
+          }
+        ]
+      },
+      "layer": {
+        "id": "dread-membrane",
+        "asset": "dread-membrane",
+        "volume": 0.3,
+        "fadeSeconds": 0.2,
+        "spatial": {
+          "target": {
+            "position": [4.7, 1.4, 16]
+          },
+          "refDistance": 1.5,
+          "maxDistance": 12,
+          "rolloffFactor": 1.5
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "explore"
+        }
+      },
+      "acceptance": {
+        "sourceDirection": "Human-approved audition r1",
+        "assembledGameMix": "Pending integrator actual playback and listening"
+      }
+    },
+    {
+      "id": "dread-chitter",
+      "category": "sparse-horror-ambience",
+      "description": "Tiny dry organic click clusters behind the infirmary wall. Quiet irregular appearances are environmental, never substitute hostile footsteps.",
+      "channels": 1,
+      "frames": 1968000,
+      "durationSeconds": 41,
+      "url": "runtime/dread-chitter.ogg",
+      "sha256": "08bbb8d75e548f7d2f40e2a3d59f8fec1c86e810f9e7f634cc7d2dca4448787c",
+      "sourceSha256": "144980524c27af0390dc551e15b92bac579c0ad1720a3a92754ca9aab2322cc5",
+      "originalNativeSha256": "d19907f314e6ece3232380a5a4fe52114d3b0e0b98167e2fab53e897104929d6",
+      "masterSha256": "4cb619fb4bf3045adc690b5b86333e49144a5c84819afd5924eefaf937a84bb6",
+      "maxMasterQuantizationError": 1.1548399925231934e-7,
+      "gestures": [
+        {
+          "startSeconds": 13.2,
+          "endSeconds": 15.03,
+          "gain": 0.84
+        },
+        {
+          "startSeconds": 31.6,
+          "endSeconds": 33.43,
+          "gain": 1
+        }
+      ],
+      "authoredQuietIntervals": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 13.2
+        },
+        {
+          "startSeconds": 15.03,
+          "endSeconds": 31.6
+        },
+        {
+          "startSeconds": 33.43,
+          "endSeconds": 41
+        }
+      ],
+      "quietFraction": 0.9107317073170732,
+      "decodedQuiet": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 13.12,
+          "peak": 0
+        },
+        {
+          "startSeconds": 15.11,
+          "endSeconds": 31.52,
+          "peak": 6.176046696282356e-8
+        },
+        {
+          "startSeconds": 33.51,
+          "endSeconds": 41,
+          "peak": 9.323458272092466e-8
+        }
+      ],
+      "loop": {
+        "startSeconds": 0,
+        "endSeconds": 41,
+        "seamPolicy": "digital-silence boundary",
+        "offlineOverlapSeconds": 0,
+        "decodedBoundaryStep": 1.401298464324817e-45
+      },
+      "measured": {
+        "durationSeconds": 41.0065,
+        "bytes": 54404,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -42.2,
+        "truePeakDbtp": -11.98,
+        "loudnessRangeLu": 4.1,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0
+          },
+          {
+            "boundary": "end",
+            "seconds": 13.358917
+          },
+          {
+            "boundary": "start",
+            "seconds": 13.7305
+          },
+          {
+            "boundary": "end",
+            "seconds": 14.337479
+          },
+          {
+            "boundary": "start",
+            "seconds": 14.667396
+          },
+          {
+            "boundary": "end",
+            "seconds": 31.758729
+          },
+          {
+            "boundary": "start",
+            "seconds": 32.130708
+          },
+          {
+            "boundary": "end",
+            "seconds": 32.525042
+          },
+          {
+            "boundary": "start",
+            "seconds": 33.067479
+          },
+          {
+            "boundary": "end",
+            "seconds": 41
+          }
+        ]
+      },
+      "layer": {
+        "id": "dread-chitter",
+        "asset": "dread-chitter",
+        "volume": 0.26,
+        "fadeSeconds": 0.2,
+        "spatial": {
+          "target": {
+            "position": [29.6, 2.3, 16.5]
+          },
+          "refDistance": 1.5,
+          "maxDistance": 12,
+          "rolloffFactor": 1.5
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "explore"
+        }
+      },
+      "acceptance": {
+        "sourceDirection": "Human-approved audition r1",
+        "assembledGameMix": "Pending integrator actual playback and listening"
+      }
+    },
+    {
+      "id": "responder-breath",
+      "category": "sparse-horror-ambience",
+      "description": "Involuntary damaged-respirator release from the actual responder. Long gaps avoid a repeated breathing or footfall rhythm; this layer switches off outside exploration.",
+      "channels": 1,
+      "frames": 2256000,
+      "durationSeconds": 47,
+      "url": "runtime/responder-breath.ogg",
+      "sha256": "8c97eca4f5e6d3ecb9bfb7250350296f84658e499f3c441fa2d0a01709921da7",
+      "sourceSha256": "085ee2925bf8c0079ca252521dc44e1e16f1ca8d36a489fec6933cfb8b25154d",
+      "originalNativeSha256": "b3f47a4c7adb87162442ce3b36712a1ba5d3c1ae10b39c360a25d344aef25c7e",
+      "masterSha256": "eec165126f7f5de86a752e0545688381a7c0da5567c81d38bd2e2e0b46294eb5",
+      "maxMasterQuantizationError": 1.1548399925231934e-7,
+      "gestures": [
+        {
+          "startSeconds": 21.1,
+          "endSeconds": 23.75,
+          "gain": 1
+        },
+        {
+          "startSeconds": 39.3,
+          "endSeconds": 41.95,
+          "gain": 0.76
+        }
+      ],
+      "authoredQuietIntervals": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 21.1
+        },
+        {
+          "startSeconds": 23.75,
+          "endSeconds": 39.3
+        },
+        {
+          "startSeconds": 41.95,
+          "endSeconds": 47
+        }
+      ],
+      "quietFraction": 0.8872340425531915,
+      "decodedQuiet": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 21.02,
+          "peak": 0
+        },
+        {
+          "startSeconds": 23.83,
+          "endSeconds": 39.22,
+          "peak": 1.401298464324817e-45
+        },
+        {
+          "startSeconds": 42.03,
+          "endSeconds": 47,
+          "peak": 1.401298464324817e-45
+        }
+      ],
+      "loop": {
+        "startSeconds": 0,
+        "endSeconds": 47,
+        "seamPolicy": "digital-silence boundary",
+        "offlineOverlapSeconds": 0,
+        "decodedBoundaryStep": 1.401298464324817e-45
+      },
+      "measured": {
+        "durationSeconds": 47.0065,
+        "bytes": 64846,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -28.16,
+        "truePeakDbtp": -11.74,
+        "loudnessRangeLu": 12,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0
+          },
+          {
+            "boundary": "end",
+            "seconds": 21.365792
+          },
+          {
+            "boundary": "start",
+            "seconds": 23.319937
+          },
+          {
+            "boundary": "end",
+            "seconds": 39.571604
+          },
+          {
+            "boundary": "start",
+            "seconds": 41.479813
+          },
+          {
+            "boundary": "end",
+            "seconds": 47
+          }
+        ]
+      },
+      "layer": {
+        "id": "responder-breath",
+        "asset": "responder-breath",
+        "volume": 0.22,
+        "fadeSeconds": 0.2,
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2,
+          "maxDistance": 16,
+          "rolloffFactor": 1.5
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "explore"
+        }
+      },
+      "acceptance": {
+        "sourceDirection": "Human-approved audition r1",
+        "assembledGameMix": "Pending integrator actual playback and listening"
+      }
+    }
+  ]
+}

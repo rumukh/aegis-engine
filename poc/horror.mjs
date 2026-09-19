@@ -55,6 +55,15 @@ const foley = JSON.parse(
     'utf8',
   ),
 );
+const horrorSound = JSON.parse(
+  readFileSync(
+    new URL(
+      '../games/horror/assets/audio/horror-layers.presentation-fragment.json',
+      import.meta.url,
+    ),
+    'utf8',
+  ),
+);
 const emitters = {
   'horror.service.opened': 'service-door',
   'horror.uplink.transmitted': 'evac-door',
@@ -85,6 +94,18 @@ export const horrorPresentation = {
     assets: [
       ...sound.assets,
       ...foley.assets,
+      ...horrorSound.assets,
+      {
+        id: 'evacuation-ending',
+        kind: 'gltf',
+        src: 'generated/evacuation-ending.glb',
+        provenance: {
+          author: 'Aegis contributors / original evacuation set and animation',
+          license:
+            'Original authored geometry; reused material provenance in assets/provenance.json',
+          source: 'games/horror/assets/build-ending.mjs',
+        },
+      },
       ...visuals.models.map((model) => ({
         id: modelId(model.file),
         kind: 'gltf',
@@ -102,24 +123,29 @@ export const horrorPresentation = {
     audio: {
       volume: 1,
       headroom: 0.65,
-      layers: foley.audio.layers.map((layer) => ({
-        ...layer,
-        ...(['amb-room', 'amb-hull'].includes(layer.id)
-          ? {
-              enabledWhen: {
-                entity: 'player',
-                component: 'HorrorStatus',
-                field: 'ended',
-                equals: false,
-              },
-            }
-          : {}),
-        ...(layer.id === 'amb-vent'
-          ? { spatial: { ...layer.spatial, target: { entity: 'power-console' } } }
-          : {}),
-      })),
+      layers: [
+        ...foley.audio.layers.map((layer) => ({
+          ...layer,
+          ...(['amb-room', 'amb-hull'].includes(layer.id)
+            ? {
+                enabledWhen: {
+                  entity: 'player',
+                  component: 'HorrorStatus',
+                  field: 'ended',
+                  equals: false,
+                },
+              }
+            : {}),
+          ...(layer.id === 'amb-vent'
+            ? { spatial: { ...layer.spatial, target: { entity: 'power-console' } } }
+            : {}),
+        })),
+        ...horrorSound.audio.layers,
+      ],
       cues: [
-        ...sound.audio.cues,
+        ...sound.audio.cues.map((cue) =>
+          cue.asset === 'vo-exit' ? { ...cue, event: 'presentation.evacuation.separated' } : cue,
+        ),
         ...foley.audio.cues.map((cue) => ({
           ...cue,
           ...(emitters[cue.event]
@@ -282,6 +308,34 @@ export const horrorPresentation = {
         title: 'YOU WERE CAUGHT',
         message: 'The responder caught you. Restart from the docking airlock.',
         fadeSeconds: 1,
+      },
+      winEnding: {
+        model: 'evacuation-ending',
+        clip: 'Departure',
+        camera: { eye: 'ending-eye', target: 'ending-target', fov: 50 },
+        title: 'CLEAR OF NULL MERIDIAN',
+        message:
+          'The crew archive is safe. The rescue network is behind you. You are free to leave.',
+        fadeSeconds: 1.5,
+        captions: [
+          { startSeconds: 0, endSeconds: 3.6, text: 'INDEPENDENT CAPSULE / Hatch sealing.' },
+          {
+            startSeconds: 4,
+            endSeconds: 8.5,
+            text: 'Station: Separation confirmed. You are clear of the station.',
+          },
+          {
+            startSeconds: 10.5,
+            endSeconds: 14.5,
+            text: 'CREW ARCHIVE / Receipt verified. Evidence preserved.',
+          },
+          {
+            startSeconds: 14.5,
+            endSeconds: 18,
+            text: 'Your departure is not a medical emergency.',
+          },
+        ],
+        cues: [{ atSeconds: 4, event: 'presentation.evacuation.separated' }],
       },
     },
     hud: {

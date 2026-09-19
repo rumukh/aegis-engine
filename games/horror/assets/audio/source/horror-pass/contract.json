@@ -1,0 +1,75 @@
+{
+  "schema": "null-meridian-horror-audio-contract/1",
+  "baselineCommit": "5e9cdcdbcafc14ada77002322886408c33945890",
+  "authorization": "Parent relayed explicit user approval for a bounded original nonmusical horror SFX revision on2026-09-19; initial audition is a separate human gate before final palette.",
+  "scope": "Additive sound media only. Preserve27 baseline encodes,8 approved voice performances, existing truthful footsteps/warning/catch cues and one0.65 master headroom. No ACE retry, model downloads, third-party samples or copied franchise audio.",
+  "firstAudition": {
+    "newNativeTakes": 3,
+    "representativeCues": ["dread-membrane", "dread-chitter", "responder-breath"],
+    "contextSeconds": 38,
+    "gate": "Human sound-direction approval through parent. No whole-palette acceptance or engine-mix acceptance inferred from technical checks."
+  },
+  "proposedFinalPalette": [
+    {
+      "id": "dread-membrane",
+      "type": "sparse mono loop",
+      "place": "Inside maintenance solid machinery",
+      "position": [4.7, 1.4, 16],
+      "condition": "player.HorrorStatus.musicPhase === explore",
+      "maxGain": 0.3,
+      "refDistance": 1.5,
+      "maxDistance": 12,
+      "rolloffFactor": 1.5,
+      "meaning": "Environmental strained material, never a substitute hostile footstep."
+    },
+    {
+      "id": "dread-chitter",
+      "type": "sparse mono loop",
+      "place": "Behind infirmary east wall",
+      "position": [29.6, 2.3, 16.5],
+      "condition": "player.HorrorStatus.musicPhase === explore",
+      "maxGain": 0.26,
+      "refDistance": 1.5,
+      "maxDistance": 12,
+      "rolloffFactor": 1.5,
+      "meaning": "Tiny localized organic sound, not the responder's movement cadence."
+    },
+    {
+      "id": "responder-breath",
+      "type": "sparse mono loop",
+      "entity": "responder",
+      "condition": "player.HorrorStatus.musicPhase === explore",
+      "maxGain": 0.22,
+      "refDistance": 2,
+      "maxDistance": 16,
+      "rolloffFactor": 1.5,
+      "meaning": "Involuntary respiration-like suit sound physically follows the actual responder, not a phantom hostile."
+    },
+    {
+      "id": "responder-fibrous",
+      "type": "source motif within a sparse loop, not a separate unused runtime asset",
+      "meaning": "Fibrous movement can occupy a second nonuniform beat of the membrane/responder loop after audition approval. No invented timed game event."
+    },
+    {
+      "id": "responder-strain",
+      "type": "source motif within the actual responder's sparse loop",
+      "meaning": "Restrained damaged actuator settling between breath-like releases; no separate attack or speech-imitation event."
+    }
+  ],
+  "silence": "Environmental and breathing loops will contain long authored silence and nonuniform spacing, not continuous drones or a recognizable step rhythm. Exact timing is pending measured source edits and audition approval.",
+  "safetyAndMix": "High-pass all new material at >=65Hz; no infrasonic emphasis or loud stingers. Isolated source true-peak cap <=-12dBTP before gains; conservative unattenuated worst-case sum must preserve intelligible dialogue and actual attack warnings. No resynthesis or normalization of approved voices.",
+  "license": "Reuse existing user-accepted Stability Community License2024-07-05 and Gemma Terms2026-04-01 for noncommercial hobby/evaluation. Existing pinned installed checkpoints only; source/production-policy.json and model-provenance.json remain the baseline references.",
+  "runtimePackaging": "At most3 additional mono sparse layers package4–5 distinct sonic gestures; avoid shipping unused source-only cuts. No new timer, event or authoritative entity required.",
+  "deactivationFadeSeconds": 0.2,
+  "fadeReason": "Explore-to-threat layer shutdown must clear before the48-tick attack warning. Gentle onsets and decays are baked in the media, not a long engine fade.",
+  "approvedGate": {
+    "statement": "SFX approved.",
+    "time": "2026-09-19T19:12:25.081+02:00",
+    "manifestSha256": "3d5713ca6174657dbd9ba32671f97effb435e7a347387905230392427608f5f0",
+    "scope": "Approved audition sound direction; final placement uses the existing approved gesture masters only."
+  },
+  "pending": [
+    "Actual engine pause/restart/layer and spatial playback proof through integrator",
+    "Final in-game masking and warning listening acceptance"
+  ]
+}

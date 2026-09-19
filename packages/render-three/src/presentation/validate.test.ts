@@ -4,6 +4,56 @@ import { RenderCode, isAssetPath } from './diagnostics.js';
 import { validatePresentation } from './validate.js';
 
 describe('presentation data validation', () => {
+  it('validates win camera, bounded timeline and declared presentation-only audio cues', () => {
+    const ending = {
+      model: 'set',
+      clip: 'Departure',
+      camera: { eye: 'eye', target: 'target' },
+      title: 'Safe',
+      message: 'Home.',
+    };
+    const base = {
+      aegis: 'presentation/1',
+      assets: [
+        {
+          id: 'set',
+          kind: 'gltf',
+          src: 'set.glb',
+          provenance: { author: 'Aegis', license: 'Original', source: 'fixture' },
+        },
+      ],
+      hud: { playerName: 'player', winEvent: 'level.completed', loseEvents: [] },
+      audio: { cues: [{ event: 'presentation.separated', caption: { text: 'Clear.' } }] },
+    };
+    expect(validatePresentation({ ...base, ui: { winEnding: ending } }).ok).toBe(true);
+    expect(
+      validatePresentation({
+        ...base,
+        ui: { winEnding: { ...ending, cues: [{ atSeconds: 4, event: 'presentation.separated' }] } },
+      }).ok,
+    ).toBe(true);
+    for (const change of [
+      { model: 'absent' },
+      { fadeSeconds: 4 },
+      { camera: { eye: 'same', target: 'same' } },
+      { camera: { eye: 'eye', target: 'target', fov: 180 } },
+      { cues: [{ atSeconds: 4, event: 'level.completed' }] },
+      { cues: [{ atSeconds: 4, event: 'presentation.missing' }] },
+      { captions: [{ startSeconds: 4, endSeconds: 2, text: 'Reversed' }] },
+      {
+        captions: [
+          { startSeconds: 0, endSeconds: 3, text: 'A' },
+          { startSeconds: 2, endSeconds: 4, text: 'B' },
+        ],
+      },
+    ])
+      expect(
+        validatePresentation({ ...base, ui: { winEnding: { ...ending, ...change } } }).ok,
+      ).toBe(false);
+    expect(validatePresentation({ ...base, hud: undefined, ui: { winEnding: ending } }).ok).toBe(
+      false,
+    );
+  });
   it('bounds opt-in loss fading and requires authoritative loss events without changing omission defaults', () => {
     const hud = { playerName: 'player', winEvent: 'won', loseEvents: ['lost'] };
     expect(

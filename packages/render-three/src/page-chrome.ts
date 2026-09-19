@@ -149,6 +149,21 @@ export const PAGE_STYLE = `
   #loss-restart { min-width: 10rem; border-color: var(--accent); font-weight: 650; }
   #loss-help { font-size: .75rem; color: var(--dim); }
   #loss-error { color: #ffd29e; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #game-shell[data-ending="win"] > :is(.game-topbar, .game-bottom, .narrative-overlay, #crosshair, #hud-input) { visibility: hidden; }
+  #win-ending { position: fixed; inset: 0; width: 100vw; height: 100vh; width: 100dvw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--ink); pointer-events: auto; overflow: auto; }
+  #win-ending::backdrop { background: transparent; }
+  #win-ending::before, #win-ending::after { content: ""; position: fixed; left: 0; right: 0; height: 9vh; background: #020407; pointer-events: none; }
+  #win-ending::before { top: 0; }
+  #win-ending::after { bottom: 0; }
+  #win-shade { position: fixed; inset: 0; background: #020407; opacity: 0; pointer-events: none; }
+  .win-actions { position: absolute; top: max(1rem, env(safe-area-inset-top)); right: max(1rem, env(safe-area-inset-right)); display: flex; gap: .5rem; z-index: 2; }
+  .win-actions button { font-size: .8rem; background: #081018e8; }
+  #win-caption { position: absolute; bottom: 12vh; left: 50%; transform: translateX(-50%); width: min(42rem, 88vw); margin: 0; padding: .7rem 1rem; background: #020407de; text-align: center; line-height: 1.5; font-size: clamp(.9rem, 2vw, 1.1rem); }
+  #win-card { position: relative; z-index: 1; width: min(40rem, 88vw); margin: 25vh auto 4rem; padding: 2rem 1rem; text-align: center; }
+  #win-title { font-size: clamp(1.7rem, 5vw, 3.8rem); letter-spacing: .12em; line-height: 1.15; margin: 1rem 0; }
+  #win-message { color: #c5d8c8; line-height: 1.8; margin: 1rem 0 2rem; }
+  #win-restart { margin-right: 1rem; border-color: var(--accent); }
+  #win-error { position: relative; z-index: 3; margin: 12vh auto 1rem; padding: 1rem; max-width: min(42rem, 88vw); color: #ffd29e; background: #09121bf2; white-space: pre-wrap; overflow-wrap: anywhere; }
   [data-layout="cinematic"] #hud { width: min(24rem, 46vw); padding: .65rem .8rem; }
   [data-layout="cinematic"] #hud h1 { font-size: .9rem; margin: .25rem 0; }
   [data-layout="cinematic"] .eyebrow { font-size: .6rem; }
@@ -272,6 +287,7 @@ export function renderGameChrome(options: GameChromeOptions): string {
   const quality = manifest?.quality ?? 'standard';
   const compact = manifest?.ui?.layout === 'cinematic';
   const ending = manifest?.ui?.lossEnding;
+  const win = manifest?.ui?.winEnding;
   const controls = [
     ...bindings.help,
     ...SESSION_CONTROLS,
@@ -319,6 +335,27 @@ ${
         <p id="loss-help">Press R or the controller restart button.</p>
         <p id="loss-error" role="alert" hidden></p>
       </section>
+    </dialog>\n`
+}\
+${
+  win === undefined
+    ? ''
+    : `    <dialog id="win-ending" aria-modal="true" aria-labelledby="win-title" data-phase="hidden">
+      <div id="win-shade" aria-hidden="true"></div>
+      <div class="win-actions">
+        <button id="win-mute" type="button" aria-pressed="false">Enable sound</button>
+        <button id="win-pause" type="button" aria-pressed="false">Pause</button>
+        <button id="win-skip" type="button">Skip / Esc</button>
+      </div>
+      <p id="win-caption" role="status" aria-live="polite" hidden></p>
+      <section id="win-card" hidden><p class="eyebrow">Mission complete</p>
+        <h2 id="win-title">${escape(win.title)}</h2>
+        <p id="win-message">${escape(win.message)}</p>
+        <button id="win-restart" type="button">Play again</button>
+        <a class="back-link" href="${localUrl(options.backHref)}">All games</a>
+        <p class="eyebrow">R / controller restart also starts a new run.</p>
+      </section>
+      <p id="win-error" role="alert" hidden></p>
     </dialog>\n`
 }\
     <div class="game-bottom">

@@ -1,0 +1,38 @@
+{
+  "schema": "null-meridian-horror-audition-edits/1",
+  "cues": [
+    {
+      "id": "dread-membrane",
+      "source": "horror-membrane-native.wav",
+      "description": "Dry strained membrane and duct material: a brief irregular pull from inside the maintenance machine. Environmental material, not a footstep or damage cue.",
+      "startSeconds": 4.3,
+      "endSeconds": 6.9,
+      "attackSeconds": 0.09,
+      "releaseSeconds": 0.45,
+      "targetLufs": -25,
+      "proposedLayerGain": 0.3
+    },
+    {
+      "id": "dread-chitter",
+      "source": "horror-chitter-native.wav",
+      "description": "Two small dry organic click clusters behind the infirmary wall. A source gesture to be separated by long silence in the proposed layer.",
+      "startSeconds": 0.12,
+      "endSeconds": 1.95,
+      "attackSeconds": 0.045,
+      "releaseSeconds": 0.2,
+      "targetLufs": -26,
+      "proposedLayerGain": 0.26
+    },
+    {
+      "id": "responder-breath",
+      "source": "horror-responder-native.wav",
+      "description": "One involuntary respirator/membrane release from the actual damaged responder. No recognizable speech, repeated breath cadence, roar or attack warning is intended.",
+      "startSeconds": 0.75,
+      "endSeconds": 3.4,
+      "attackSeconds": 0.13,
+      "releaseSeconds": 0.35,
+      "targetLufs": -26,
+      "proposedLayerGain": 0.22
+    }
+  ]
+}
