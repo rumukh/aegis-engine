@@ -2,6 +2,12 @@ import { BufferGeometry, ExtrudeGeometry, Float32BufferAttribute, Shape } from '
 import { Model, rotation } from './model.mjs';
 import { MATERIALS } from './textures.mjs';
 import { curvedVisor } from './optical-surfaces.mjs';
+import {
+  INFESTATION_MATERIALS,
+  chestInfestation,
+  shoulderInfestation,
+  helmetInfestation,
+} from './infestation.mjs';
 
 function pressureLoft(model, node, material, sections, segments = 32, fold = 0.004) {
   const rings = [...sections].sort((a, b) => a[0] - b[0]);
@@ -95,8 +101,11 @@ function shell(
   geometry.dispose();
 }
 
-export function responderModel() {
-  const model = new Model('meridian-corrupted-responder', MATERIALS);
+export function responderModel({ infected = false } = {}) {
+  const model = new Model(
+    'meridian-corrupted-responder',
+    infected ? { ...MATERIALS, ...INFESTATION_MATERIALS } : MATERIALS,
+  );
   const solveLeg = (pelvisHeight, footZ, lift = 0) => {
     const thigh = 0.43,
       shin = Math.sqrt(0.4 * 0.4 + 0.009 * 0.009);
@@ -183,17 +192,35 @@ export function responderModel() {
   }
   model.box(hips, 'steel', [0.015, 0.05, 0.18], [0.074, 0.064, 0.017], 0.008);
   model.box(hips, 'rubber', [0.015, 0.05, 0.193], [0.03, 0.024, 0.005]);
-  const chestOutline = [
-    [-0.19, -0.2],
-    [-0.23, -0.08],
-    [-0.228, 0.16],
-    [-0.145, 0.25],
-    [0.14, 0.24],
-    [0.225, 0.14],
-    [0.21, -0.16],
-    [0.115, -0.235],
-    [-0.09, -0.225],
-  ];
+  const chestOutline = infected
+    ? [
+        [-0.19, -0.2],
+        [-0.23, -0.08],
+        [-0.228, 0.16],
+        [-0.145, 0.25],
+        [0.031, 0.25],
+        [0.065, 0.193],
+        [0.009, 0.157],
+        [0.024, 0.107],
+        [-0.015, 0.053],
+        [0.012, -0.01],
+        [-0.001, -0.073],
+        [0.037, -0.111],
+        [0.027, -0.178],
+        [0.115, -0.235],
+        [-0.09, -0.225],
+      ]
+    : [
+        [-0.19, -0.2],
+        [-0.23, -0.08],
+        [-0.228, 0.16],
+        [-0.145, 0.25],
+        [0.14, 0.24],
+        [0.225, 0.14],
+        [0.21, -0.16],
+        [0.115, -0.235],
+        [-0.09, -0.225],
+      ];
   shell(
     model,
     chest,
@@ -204,19 +231,72 @@ export function responderModel() {
     0.007,
   );
   shell(model, chest, chestOutline, [0, 0.005, 0.179], 0.026);
+  if (infected) {
+    shell(
+      model,
+      chest,
+      [
+        [0.184, 0.206],
+        [0.207, 0.154],
+        [0.213, 0.008],
+        [0.156, -0.116],
+        [0.174, -0.059],
+        [0.187, 0.003],
+        [0.172, 0.097],
+      ],
+      [0.003, 0.006, 0.191],
+      0.013,
+    );
+    chestInfestation(model, chest);
+  }
   for (const [x, y] of [
     [-0.173, 0.15],
-    [0.166, 0.15],
+    ...(infected ? [] : [[0.166, 0.15]]),
     [-0.155, -0.15],
-    [0.151, -0.15],
+    ...(infected ? [] : [[0.151, -0.15]]),
   ])
     fastener(chest, x, y, 0.224, 0.009);
   model.badge(chest, [-0.08, 0.04, 0.222], 0.2, 0.052, 0);
-  model.box(chest, 'graphite', [0.114, -0.027, 0.232], [0.14, 0.195, 0.069], 0.009);
-  for (let row = 0; row < 5; row++)
-    model.box(chest, 'steel', [0.114, -0.067 + row * 0.023, 0.27], [0.085, 0.007, 0.006]);
-  model.box(chest, 'ochre', [0.114, 0.052, 0.27], [0.052, 0.014, 0.007]);
-  for (const x of [0.057, 0.171]) for (const y of [-0.1, 0.049]) fastener(chest, x, y, 0.27, 0.005);
+  if (infected) {
+    model.box(
+      chest,
+      'graphite',
+      [0.183, -0.167, 0.201],
+      [0.069, 0.077, 0.039],
+      0.006,
+      [0, -0.12, -0.29],
+    );
+    model.cable(
+      chest,
+      'rubber',
+      [
+        [0.165, -0.174, 0.222],
+        [0.148, -0.195, 0.222],
+        [0.126, -0.176, 0.191],
+      ],
+      0.004,
+      9,
+    );
+    model.cable(
+      chest,
+      'copper',
+      [
+        [0.176, -0.178, 0.222],
+        [0.17, -0.221, 0.185],
+        [0.155, -0.202, 0.167],
+      ],
+      0.002,
+      9,
+    );
+    for (const y of [-0.145, -0.181]) fastener(chest, 0.208, y, 0.222, 0.006);
+  } else {
+    model.box(chest, 'graphite', [0.114, -0.027, 0.232], [0.14, 0.195, 0.069], 0.009);
+    for (let row = 0; row < 5; row++)
+      model.box(chest, 'steel', [0.114, -0.067 + row * 0.023, 0.27], [0.085, 0.007, 0.006]);
+    model.box(chest, 'ochre', [0.114, 0.052, 0.27], [0.052, 0.014, 0.007]);
+    for (const x of [0.057, 0.171])
+      for (const y of [-0.1, 0.049]) fastener(chest, x, y, 0.27, 0.005);
+  }
 
   model.cylinder(chest, 'steel', [-0.117, -0.108, 0.238], 0.041, 0.06, 'z', 0.041, 24);
   model.torus(chest, 'rubber', [-0.117, -0.108, 0.272], 0.034, 0.009, [0, 0, 0], 24);
@@ -253,6 +333,31 @@ export function responderModel() {
     model.box(chest, 'rubber', [x, 0.01, -0.275], [0.12, 0.031, 0.007]);
   }
   for (const side of [-1, 1]) {
+    if (infected && side === 1) {
+      model.cable(
+        chest,
+        'torn-liner',
+        [
+          [0.17, -0.24, 0.127],
+          [0.185, -0.183, 0.154],
+          [0.208, -0.144, 0.147],
+        ],
+        0.01,
+        12,
+      );
+      model.cable(
+        chest,
+        'torn-liner',
+        [
+          [0.151, 0.18, -0.241],
+          [0.17, 0.278, -0.05],
+          [0.189, 0.23, 0.025],
+        ],
+        0.012,
+        15,
+      );
+      continue;
+    }
     model.cable(
       chest,
       'ochre',
@@ -341,6 +446,7 @@ export function responderModel() {
   model.box(head, 'ochre', [-0.055, 0.174, -0.032], [0.031, 0.008, 0.175], 0.003);
   model.badge(head, [0.036, -0.146, 0.177], 0.13, 0.032, 1);
   model.box(head, 'graphite', [-0.203, 0.091, 0.055], [0.039, 0.066, 0.12], 0.01);
+  if (infected) helmetInfestation(model, head);
 
   const legs = [],
     knees = [],
@@ -473,23 +579,40 @@ export function responderModel() {
       32,
       0.004,
     );
-    const shoulder = [
-      [-0.082, -0.124],
-      [-0.098, -0.037],
-      [-0.083, 0.044],
-      [-0.032, 0.067],
-      [0.073, 0.045],
-      [0.103, -0.028],
-      [0.083, -0.111],
-      [0.006, -0.142],
-    ];
+    const shoulder =
+      infected && side === 1
+        ? [
+            [-0.082, -0.124],
+            [-0.098, -0.037],
+            [-0.083, 0.044],
+            [-0.032, 0.067],
+            [0.009, 0.06],
+            [-0.01, 0.021],
+            [0.025, -0.016],
+            [-0.018, -0.034],
+            [0.017, -0.077],
+            [-0.02, -0.098],
+            [0.006, -0.142],
+          ]
+        : [
+            [-0.082, -0.124],
+            [-0.098, -0.037],
+            [-0.083, 0.044],
+            [-0.032, 0.067],
+            [0.073, 0.045],
+            [0.103, -0.028],
+            [0.083, -0.111],
+            [0.006, -0.142],
+          ];
     shell(model, arm, shoulder, [0, 0, 0.075], 0.021);
-    for (const x of [-0.058, 0.058]) fastener(arm, x, -0.029, 0.118, 0.007);
-    model.badge(arm, [0, -0.085, 0.114], 0.117, 0.029, 3);
-    if (side === 1) {
+    if (infected && side === 1) shoulderInfestation(model, arm);
+    for (const x of infected && side === 1 ? [-0.058] : [-0.058, 0.058])
+      fastener(arm, x, -0.029, 0.118, 0.007);
+    if (!infected || side === -1) model.badge(arm, [0, -0.085, 0.114], 0.117, 0.029, 3);
+    if (side === 1 && !infected) {
       for (const y of [-0.033, -0.075])
         model.box(arm, 'ochre', [0.016, y, 0.128], [0.155, 0.02, 0.003], 0, [0, 0, 0.14]);
-    } else {
+    } else if (side === -1) {
       model.box(arm, 'graphite', [-0.02, -0.19, 0.097], [0.125, 0.14, 0.045], 0.012);
       model.box(arm, 'satin', [-0.02, -0.15, 0.121], [0.088, 0.017, 0.007]);
     }
@@ -570,7 +693,14 @@ export function responderModel() {
   });
   model.animation('Idle', [
     quatTrack(chest, 'x', [0, 1.7, 3.4], [0.055, 0.075, 0.055]),
-    quatTrack(head, 'z', [0, 1.7, 3.4], [-0.062, -0.083, -0.062]),
+    infected
+      ? quatTrack(
+          head,
+          'z',
+          [0, 1.05, 1.18, 1.27, 1.4, 2.7, 3.4],
+          [-0.062, -0.062, -0.115, -0.04, -0.097, -0.083, -0.062],
+        )
+      : quatTrack(head, 'z', [0, 1.7, 3.4], [-0.062, -0.083, -0.062]),
     quatTrack(arms[0], 'x', [0, 1.7, 3.4], [-0.085, -0.11, -0.085]),
     quatTrack(elbows[1], 'x', [0, 1.7, 3.4], [-0.14, -0.165, -0.14]),
   ]);
@@ -587,6 +717,22 @@ export function responderModel() {
     }),
   );
   model.animation('Stalk', [
+    ...(infected
+      ? [
+          quatTrack(
+            head,
+            'z',
+            times,
+            phases.map(
+              (phase) =>
+                -0.065 +
+                (phase > 0.62 && phase < 0.8
+                  ? -0.031 * Math.sin(((phase - 0.62) / 0.18) * Math.PI)
+                  : 0),
+            ),
+          ),
+        ]
+      : []),
     ...legs.map((node, i) =>
       quatTrack(
         node,

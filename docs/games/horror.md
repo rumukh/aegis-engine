@@ -165,12 +165,12 @@ a physical rescue-suit silhouette, practical light pools, a controllable flashli
 machinery/footsteps, sparse dialogue and a gas-giant observation view. The target is 2560 by 1440
 at 60 fps on RTX 4070 Ti SUPER, with a separate higher-quality screenshot tier.
 
-The optical-baseline art, evacuation ending and approved SFX close over **37 visual files
+Before the infestation pass, optical-baseline art, evacuation ending and approved SFX close over **37 visual files
 (40,106,653 bytes)** and **30 audio files (1,505,787 bytes)**: **67 files, 41,612,440 bytes**,
 within the unchanged 64 MiB presentation limit. Retained recipes, sources,
 file fingerprints and an independent byte-for-byte visual rebuild accompany the assets.
-The original 36-file visual inventory remains unchanged; the added evacuation model is recorded
-separately in `ending-provenance.json`.
+The added evacuation model is recorded separately in `ending-provenance.json`.
+The current review candidate's infestation-pack totals are reported below.
 The current cooking proof records Node 25.6.0 and three.js 0.169.0; it is not a claim that
 rebuilding with an arbitrary toolchain produces identical media.
 
@@ -253,3 +253,63 @@ Human review confirmed both movement and mouse look on the independent static bu
 described the atmosphere positively after a real catch. The request for a more obvious failure
 ending prompted the opt-in loss dialog above; it is not blanket visual, audio-mix, gait or
 8-12 minute pacing approval.
+
+### Infestation pass: sculpted in-game review candidate
+
+This isolated candidate adds an original alien infestation to the responder's damaged chest,
+right shoulder and lower helmet seal: torn suit layers, rooted calcified growth, selective wounds
+and restrained dried blood. It does not introduce dismemberment, exposed organs or a copied
+franchise creature. The accepted curved visor, rig, bounds, lower-body motion, Search clip and
+48-tick Lunge remain unchanged; only the declared Idle/Stalk head interruptions are new.
+
+The separate world-origin `struggle` decoration shows a damaged maintenance protective grille,
+a hand wipe and flush boot/tool drag evidence at the existing machinery's west face, x=4.5,
+z=16. It adds no authoritative entity or collision. Its maximum raised lip is 14 mm; controls,
+door openings and access lanes are unchanged. That maintenance model remains byte-identical.
+
+The user subsequently authorized three other restrained sites. One additional world-origin
+`aftermath-sites` model contains a parted/scored arrival cover with interrupted dirty contact,
+a frayed aid wrap on an infirmary berth clip, and a failed short cassette brace in the archive.
+All are wall-backed or flush floor detail, not passage barriers. Existing maps, lighting,
+controls, collision and the 75 prior runtime files are unchanged. The added model is 115,032
+bytes. The three representative review poses use the unchanged canonical input at ticks 196,
+3830 and 4728; the latter two retain their original flashlight-off state and powered practicals.
+
+The first two constructed infestation revisions did not meet the intended visual direction:
+their pale attachments or outlined wounds still read as decorative cloth, plants or molded parts.
+The next authorized candidate uses one continuous scripted Blender sculpt with packed UVs and
+baked 2K material maps, inserted in three existing bone-local pieces. The retained body, visor,
+rig and clips are copied, not re-exported. This is not hand sculpting or production retopology.
+
+The user then requested a much more damaged and blood-stained suit rather than approving the
+whole character. One bounded actor pass fractures three armor regions and one fabric region,
+with recessed backing and localized contact staining from two actor-only 512px atlases.
+The sculpt insert, visor, rig, clips, bounds, original texture bytes and 72 other runtime assets
+remain unchanged. No environment, ending or sound revision is included in this pass.
+
+The three-site environment review candidate with the approved damaged character, evacuation
+ending and SFX closes over **46 visual files (51,956,359 bytes)** plus
+**30 audio files (1,505,787 bytes)**: **76 runtime files, 53,462,146 bytes**, under the unchanged
+64 MiB limit.
+The planning allocation for the user-added ending is now 50 MiB for all visuals, including the
+ending, and 14 MiB for audio. The existing base-art inventory limit remains 48 MiB; the engine
+hard cap remains 64 MiB. This is an explicit allocation change, not a quality reduction or
+weakened engine guard. The base-art inventory is 45 files / 49,967,591 bytes, below its unchanged
+48 MiB limit. Only two unreferenced rejected-prototype maps were removed; the colony normal
+still used by the struggle cluster and all shared ending textures remain. Orphan pruning does
+not claim further runtime savings, because those maps were already absent from the used closure.
+Art source/preimage hashes and reproduction instructions accompany
+`assets/source/sculpt-insert/sculpt-provenance.json`, the retained `.blend` and insert maps,
+and `assets/generated/sculpt-provenance.json`. Node assembly reproduces the model from retained
+inputs without rerunning Blender; these source files are not runtime declarations.
+The subsequent bounded damage recipe and exact preimages are documented in
+`assets/source/suit-damage.recipe.json` and `assets/generated/suit-damage-provenance.json`.
+`damage-suit.mjs` reproduces only the damaged actor and two contact maps from the retained
+sculpted model; it does not rerun the sculpt or modify shared textures.
+**The damaged character, SFX direction, evacuation ending and three environment sites are
+human-approved.** Approval applies to responder `e26edcaa...`, aftermath model `35279a2e...` and
+their recorded in-game views; it is not an AAA or sustained-performance claim. Historical
+recipes and provenance retain their original production-stage wording and hash-pinned bytes.
+Their old pending-review fields are not the current approval status. Final release readiness
+is established separately by the integrated verification and handoff record. Existing immutable
+human review builds are preserved.

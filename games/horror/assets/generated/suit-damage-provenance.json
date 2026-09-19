@@ -1,0 +1,416 @@
+{
+  "revision": "user-suit-damage-game-review-1",
+  "parentApproval": {
+    "authority": "Parentcoordinator b3e4d9e1-746a-4cbe-9266-39afd91ce2e7,2026-09-19",
+    "decision": "Raw neutral/torch inspected: blood/contactstainingclearlymoresubstantial/localized, chest/shoulderlosses andupperarmtearsvisible. Exacte26modelandmaps approved tointegrateforingamereviewONLY.",
+    "exclusions": "No humanfinalapproval/AAAclaim, no further artworktweak/capturebyproducer, no clusterexpansion. Integratoronly3matchedactualactorviews."
+  },
+  "source": {
+    "file": "damage-suit.mjs",
+    "sha256": "14688df94bbbe57762842d2e6d015618a1700f7208f106516198103931fdfb52"
+  },
+  "recipe": {
+    "revision": "responder-suit-damage-checkpoint-1",
+    "status": "ONE user-selected suit-damage revision; neutral and torch assembled-body checkpoint required before game import",
+    "userDecision": "Make the suit much more damaged and blood-stained",
+    "scope": "Current sculpted responder only. No new infestation/sculpt/model-generation pipeline, concepts, downloads, rooms, cluster, audio, ending, engine, scene, AI, collision, damage rules or server actions.",
+    "geometry": {
+      "armor": "Three localized irregular fractures/dents on existing thorax, left shoulder and defensive left forearm armor. Remove actual front triangles, add explicit material-thickness walls and recessed dark pressure backing. Existing non-target geometry is copied.",
+      "fabric": "One localized right upper-arm pressure-fabric tear with dark backing and attached short irregular frays at the injury interface.",
+      "preservation": "Original nodes, animation data, connected sculpt insert and curved smooth visor remain exact. Geometry and stains stay within the existing model envelope. No scale/exposure/camera trick."
+    },
+    "surface": {
+      "method": "Two small original512x512 responder-only RGBA/packedORM atlases, with four bounded tiles for injury-contact pooling and interrupted gravity trails, transferred arm smears, diagonal abrasion/dirt and one restrained lower-suit transfer.",
+      "blood": "Dark dried/absorbed staining with irregular edges and smaller low-roughness wet areas; not red outlines, uniform rims, all-over noise, new exposed anatomy or dismemberment.",
+      "normalResponse": "Stain overlays retain the exact underlying material normal map through separate original UV coordinates, while their base/roughness atlas uses its own UV set. Physical dent/fracture normals are recomputed only in the edited region.",
+      "ownership": "No existing texture payload is modified, especially shared ceramic/graphite/ending maps. The two added maps are responder-specific and bounded by the remaining actual byte budget; no unrelated texture is reduced."
+    },
+    "provenance": "Original deterministic Node-authored geometry and pigment/roughness masks. No AI generation or downloaded source. Existing Blender source, bakes and accepted sculpt checkpoint are retained unchanged.",
+    "acceptance": "Inspect one neutral and one isolated game-settings torch assembled-body view; report exact changed paths, raw hashes and measured deduplicated byte delta. Stop for parent review before integrator import or game captures.",
+    "internalCheckpointCorrection": "The first internal render showed forearm-pad occlusion of an otherwise under-surface stain and coarse mask-cell edges. The same bounded revision adds conforming contact transfer to that forearm pad, makes the chest-contact smear readable and interpolates low-frequency mask variation continuously. First-draft source/images are retained. No sculpt, visor, lighting, scale or other asset changes."
+  },
+  "originalSculptInput": {
+    "path": "C:\\Users\\predi\\.copilot\\session-state\\6af7a750-3407-48f3-81d3-a47ed55d051e\\files\\sculpt-checkpoint-assembled\\responder.glb",
+    "bytes": 3167776,
+    "sha256": "ff9969eadf19aea103e1800543c332f6dc1b001c52b8b5c3b976f7c40b98565f"
+  },
+  "runtimeModel": {
+    "file": "responder.glb",
+    "bytes": 3451024,
+    "sha256": "e26edcaa4cf3703a65190b0a93432c54cedea7525a18ce45cf77a81991c1e682",
+    "triangles": 65382,
+    "bounds": {
+      "min": [
+        -0.39416886276006696,
+        -2.0861626315316073e-9,
+        -0.3179999923706055
+      ],
+      "max": [
+        0.3849999994635582,
+        2.0290000003576276,
+        0.2677024303901752
+      ]
+    }
+  },
+  "newMaps": [
+    {
+      "path": "generated/responder-contact-stains-orm.png",
+      "bytes": 64609,
+      "sha256": "060e170e88eff64798e12d885902b84096f06f89997634351b73d78605413d71"
+    },
+    {
+      "path": "generated/responder-contact-stains.png",
+      "bytes": 252310,
+      "sha256": "e6896f8f2faedc85459ecca551325b724594d787f082700a9619c2a72240a07b"
+    }
+  ],
+  "geometryEdits": [
+    {
+      "node": "thorax",
+      "material": "suit-shell",
+      "removedTriangles": 8,
+      "fractureBoundaryEdges": 12,
+      "backingDepth": 0.18,
+      "authorizedRegion": {
+        "node": "thorax",
+        "material": "suit-shell",
+        "center": [
+          -0.129,
+          0.091
+        ],
+        "radius": [
+          0.037,
+          0.043
+        ],
+        "depth": 0.009,
+        "floor": 0.18,
+        "level": 3,
+        "seed": 3
+      }
+    },
+    {
+      "node": "shoulder-left",
+      "material": "suit-shell",
+      "removedTriangles": 11,
+      "fractureBoundaryEdges": 11,
+      "backingDepth": 0.081,
+      "authorizedRegion": {
+        "node": "shoulder-left",
+        "material": "suit-shell",
+        "center": [
+          0.024,
+          -0.015
+        ],
+        "radius": [
+          0.032,
+          0.039
+        ],
+        "depth": 0.007,
+        "floor": 0.081,
+        "level": 3,
+        "seed": 7
+      }
+    },
+    {
+      "node": "elbow-left",
+      "material": "suit-shell",
+      "removedTriangles": 9,
+      "fractureBoundaryEdges": 13,
+      "backingDepth": 0.064,
+      "authorizedRegion": {
+        "node": "elbow-left",
+        "material": "suit-shell",
+        "center": [
+          0.019,
+          -0.09
+        ],
+        "radius": [
+          0.022,
+          0.026
+        ],
+        "depth": 0.005,
+        "floor": 0.064,
+        "level": 3,
+        "seed": 11
+      }
+    },
+    {
+      "node": "shoulder-right",
+      "material": "suit-textile",
+      "removedTriangles": 23,
+      "fractureBoundaryEdges": 25,
+      "backingDepth": 0.053,
+      "authorizedRegion": {
+        "node": "shoulder-right",
+        "material": "suit-textile",
+        "center": [
+          -0.011,
+          -0.225
+        ],
+        "radius": [
+          0.026,
+          0.048
+        ],
+        "depth": 0.002,
+        "floor": 0.053,
+        "level": 2,
+        "seed": 9,
+        "fabric": true
+      }
+    }
+  ],
+  "stainRegions": [
+    {
+      "node": "thorax",
+      "material": "suit-textile",
+      "tile": 0,
+      "triangles": 154,
+      "region": [
+        -0.235,
+        -0.29,
+        0.24,
+        0.27
+      ]
+    },
+    {
+      "node": "thorax",
+      "material": "suit-shell",
+      "tile": 0,
+      "triangles": 388,
+      "region": [
+        -0.235,
+        -0.29,
+        0.24,
+        0.27
+      ]
+    },
+    {
+      "node": "thorax",
+      "material": "shell-edge",
+      "tile": 0,
+      "triangles": 46,
+      "region": [
+        -0.235,
+        -0.29,
+        0.24,
+        0.27
+      ]
+    },
+    {
+      "node": "shoulder-left",
+      "material": "suit-textile",
+      "tile": 2,
+      "triangles": 85,
+      "region": [
+        -0.108,
+        -0.3,
+        0.112,
+        0.075
+      ]
+    },
+    {
+      "node": "shoulder-left",
+      "material": "suit-shell",
+      "tile": 2,
+      "triangles": 373,
+      "region": [
+        -0.108,
+        -0.3,
+        0.112,
+        0.075
+      ]
+    },
+    {
+      "node": "shoulder-left",
+      "material": "shell-edge",
+      "tile": 2,
+      "triangles": 16,
+      "region": [
+        -0.108,
+        -0.3,
+        0.112,
+        0.075
+      ]
+    },
+    {
+      "node": "elbow-left",
+      "material": "suit-textile",
+      "tile": 2,
+      "triangles": 59,
+      "region": [
+        -0.077,
+        -0.3,
+        0.077,
+        -0.04
+      ]
+    },
+    {
+      "node": "elbow-left",
+      "material": "suit-shell",
+      "tile": 2,
+      "triangles": 247,
+      "region": [
+        -0.077,
+        -0.3,
+        0.077,
+        -0.04
+      ]
+    },
+    {
+      "node": "hip-right",
+      "material": "suit-textile",
+      "tile": 3,
+      "triangles": 103,
+      "region": [
+        -0.08,
+        -0.29,
+        0.12,
+        0.055
+      ]
+    },
+    {
+      "node": "shoulder-right",
+      "material": "suit-textile",
+      "tile": 1,
+      "triangles": 582,
+      "region": [
+        -0.095,
+        -0.31,
+        0.09,
+        0.075
+      ]
+    },
+    {
+      "node": "shoulder-right",
+      "material": "suit-shell",
+      "tile": 1,
+      "triangles": 13,
+      "region": [
+        -0.095,
+        -0.31,
+        0.09,
+        0.075
+      ]
+    },
+    {
+      "node": "shoulder-right",
+      "material": "shell-edge",
+      "tile": 1,
+      "triangles": 24,
+      "region": [
+        -0.095,
+        -0.31,
+        0.09,
+        0.075
+      ]
+    },
+    {
+      "node": "elbow-right",
+      "material": "suit-textile",
+      "tile": 1,
+      "triangles": 59,
+      "region": [
+        -0.077,
+        -0.31,
+        0.077,
+        -0.04
+      ]
+    },
+    {
+      "node": "elbow-right",
+      "material": "suit-shell",
+      "tile": 1,
+      "triangles": 4,
+      "region": [
+        -0.077,
+        -0.31,
+        0.077,
+        -0.04
+      ]
+    },
+    {
+      "node": "elbow-right",
+      "material": "graphite",
+      "tile": 1,
+      "triangles": 18,
+      "region": [
+        -0.077,
+        -0.31,
+        0.077,
+        -0.04
+      ]
+    }
+  ],
+  "surface": {
+    "width": 512,
+    "height": 512,
+    "tiles": 4,
+    "nontransparentTexels": 140005,
+    "wetTexels": 2493,
+    "noEmission": true,
+    "noOriginalTextureReplacement": true
+  },
+  "preservation": {
+    "originalSculptAndVisorPrimitivesExact": true,
+    "unchangedOtherPrimitives": 68,
+    "allOriginalMaterialsAndImagePayloadsExact": true,
+    "rigNodesAndAnimationAccessorsExact": true,
+    "endingAndClusterAudioAndAllOtherRuntimeFilesExact": 72
+  },
+  "physicalOpenings": [
+    {
+      "node": "thorax",
+      "expectedOpening": "suit-shell",
+      "firstHit": {
+        "material": "rubber",
+        "z": 0.1850000023841858
+      },
+      "removedTriangles": 8,
+      "boundaryEdges": 12
+    },
+    {
+      "node": "shoulder-left",
+      "expectedOpening": "suit-shell",
+      "firstHit": {
+        "material": "suit-textile",
+        "z": 0.09912477380768947
+      },
+      "removedTriangles": 11,
+      "boundaryEdges": 11
+    },
+    {
+      "node": "elbow-left",
+      "expectedOpening": "suit-shell",
+      "firstHit": {
+        "material": "suit-textile",
+        "z": 0.07187265176374535
+      },
+      "removedTriangles": 9,
+      "boundaryEdges": 13
+    },
+    {
+      "node": "shoulder-right",
+      "expectedOpening": "suit-textile",
+      "firstHit": {
+        "material": "responder-pressure-underliner",
+        "z": 0.05299999937415123
+      },
+      "removedTriangles": 23,
+      "boundaryEdges": 25
+    }
+  ],
+  "actualBudget": {
+    "files": 75,
+    "byteDelta": 600167,
+    "baseVisualBytes": 49852559,
+    "baseVisualLimit": 50331648,
+    "allVisualIncludingEndingBytes": 51841327,
+    "allVisualLimit": 52428800,
+    "audioBytes": 1505787,
+    "audioLimit": 14680064,
+    "combinedBytes": 53347114,
+    "hardCombinedLimit": 67108864
+  },
+  "exactRebuild": true,
+  "warning": "Proofmetadata is not a claimof finalvisualapproval. Currentfixture isasset-only; gamecaptures arethenextapprovedgate."
+}

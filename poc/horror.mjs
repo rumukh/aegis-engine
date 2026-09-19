@@ -75,6 +75,23 @@ const provenance = {
   license: 'Original generated media; provenance.json records sources and human concept approval',
   source: 'games/horror/assets/generate.mjs',
 };
+const infestationProvenance = {
+  author: 'Aegis contributors / original alien infestation and struggle evidence',
+  license:
+    'Original project-authored geometry and procedural maps; source/horror-pass.recipe.json records production provenance. Current approval context: docs/games/horror.md.',
+  source: 'games/horror/assets/source/horror-pass.recipe.json',
+};
+const sculptProvenance = {
+  author: 'Aegis contributors / original scripted Blender sculpt, UVs and baked materials',
+  license:
+    'Original project-authored insert and bounded suit damage; retained body maps preserve their existing provenance. Current approval context: docs/games/horror.md.',
+  source: 'games/horror/assets/source/suit-damage.recipe.json',
+};
+const aftermathProvenance = {
+  author: 'Aegis contributors / original localized station aftermath',
+  license: 'Original project-authored geometry using unchanged existing material maps.',
+  source: 'games/horror/assets/source/aftermath-three.recipe.json',
+};
 const modelId = (file) => file.replace(/\.glb$/, '');
 const powered = { entity: 'mission', component: 'HorrorMission', field: 'power', equals: true };
 const stateField = (field) => ({ entity: 'player', component: 'HorrorStatus', field });
@@ -110,7 +127,14 @@ export const horrorPresentation = {
         id: modelId(model.file),
         kind: 'gltf',
         src: `generated/${model.file}`,
-        provenance,
+        provenance:
+          model.file === 'responder.glb'
+            ? sculptProvenance
+            : model.file === 'struggle.glb'
+              ? infestationProvenance
+              : model.file === 'aftermath-sites.glb'
+                ? aftermathProvenance
+                : provenance,
       })),
       {
         id: 'station-reflection',
@@ -158,6 +182,16 @@ export const horrorPresentation = {
     objects: [
       { id: 'facility', visual: { kind: 'model', mesh: 'facility' } },
       { id: 'orbital-exterior', visual: { kind: 'model', mesh: 'orbital-exterior' } },
+      {
+        id: 'struggle',
+        visual: { kind: 'model', mesh: 'struggle' },
+        pose: { position: [0, 0, 0] },
+      },
+      {
+        id: 'aftermath-sites',
+        visual: { kind: 'model', mesh: 'aftermath-sites' },
+        pose: { position: [0, 0, 0] },
+      },
     ],
     entities: [
       ...visuals.placement.props.map((prop) => ({

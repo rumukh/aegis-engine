@@ -51,7 +51,24 @@ const SHOTS = new Map([
 ]);
 const parsed = parseInputScript(WIN_ROUTE);
 assert.ok(parsed.ok && parsed.value);
-const plan = compileDomInput(parsed.value.frames(WIN_TICKS), horrorBindings);
+// The terminal UI blocks further keyboard stepping after the win at8153. The canonical
+// headless8217 proof remains unchanged; its final63 frames contain no active gameplay input.
+const BROWSER_WIN_TICKS = 8154;
+const winFrames = parsed.value.frames(WIN_TICKS);
+assert.equal(WIN_TICKS, 8217);
+assert.ok(
+  winFrames
+    .slice(BROWSER_WIN_TICKS)
+    .every(
+      (frame) =>
+        !Object.values(frame.actions).some(Boolean) &&
+        !Object.values(frame.axes).some((value) => value !== 0) &&
+        frame.look.dx === 0 &&
+        frame.look.dy === 0 &&
+        frame.pointer === null,
+    ),
+);
+const plan = compileDomInput(winFrames.slice(0, BROWSER_WIN_TICKS), horrorBindings);
 const caught = parseInputScript(CAUGHT_ROUTE);
 assert.ok(caught.ok && caught.value);
 const threatApproach = compileDomInput(caught.value.frames(3140), horrorBindings);
@@ -109,6 +126,8 @@ beforeAll(async () => {
     '.js': 'text/javascript',
     '.json': 'application/json',
     '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
     '.glb': 'model/gltf-binary',
     '.ogg': 'audio/ogg',
   };
@@ -162,6 +181,18 @@ afterAll(async () => {
 
 async function sync(page: CdpSession): Promise<void> {
   await evaluate(page, 'globalThis.aegis.sync().then(()=>null)');
+}
+
+async function clickUi(page: CdpSession, id: string): Promise<void> {
+  const point = await evaluate<{ x: number; y: number }>(
+    page,
+    `(() => {
+      const button=document.getElementById(${JSON.stringify(id)});
+      if(!button?.checkVisibility())throw new Error('Required ending button is not visible');
+      const r=button.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};
+    })()`,
+  );
+  await click(page, point.x, point.y);
 }
 
 async function diagnoseFailure(
@@ -410,6 +441,13 @@ describe('NULL MERIDIAN real browser mission', () => {
         });
         await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'ready');
         await control(page, transport, 'pause');
+        await control(page, transport, 'restart');
+        await until(
+          page,
+          'globalThis.aegis.presentation().input.capture.gameplayBlocked',
+          (blocked) => blocked === false,
+          5000,
+        );
         await click(page, 480, 350);
         await mouseButton(page, false, 480, 350);
         await until(page, 'document.pointerLockElement !== null', (value) => value === true);
@@ -424,7 +462,7 @@ describe('NULL MERIDIAN real browser mission', () => {
           assets: { loadedFiles: number };
           audio: { status: string };
         }>(page, 'globalThis.aegis.presentation()');
-        expect(initial.assets.loadedFiles).toBe(67);
+        expect(initial.assets.loadedFiles).toBe(76);
         expect(initial.audio.status).not.toBe('unavailable');
         await control(page, transport, 'resume');
         await until(
@@ -471,32 +509,128 @@ describe('NULL MERIDIAN real browser mission', () => {
           `[horror ${transport}] assets ready; starting ${plan.segments.length} exact input segments`,
         );
         await drive(page, transport, plan, { x, y }, SHOTS);
-        expect(await evaluate(page, 'globalThis.aegis.tick()')).toBe(WIN_TICKS);
+        await key(page, 'KeyE', false);
+        await sync(page);
+        expect(await evaluate(page, 'globalThis.aegis.tick()')).toBe(BROWSER_WIN_TICKS);
         const result = await evaluate<{
-          mission: { escaped: boolean; dead: boolean };
+          hash: string;
+          mission: { escaped: boolean; dead: boolean; completedTick: number };
+          health: number;
           status: string;
           audio: object[];
-          body: string;
           pipeline: { width: number; height: number };
           lossActive: boolean;
+          winEnding: { active: boolean; phase: string; seconds: number };
+          gameplayBlocked: boolean;
+          modal: boolean;
+          focused: string;
+          pointerLocked: boolean;
         }>(
           page,
           `(() => {
-          const a=globalThis.aegis;
-          return {mission:a.world.snapshot().entities.find(e=>e.name==='mission').components.HorrorMission,status:a.presentation().status,audio:globalThis.__horrorAudio,body:document.body.innerText,pipeline:a.presentation().pipeline,lossActive:a.presentation().ending.active};
+          const a=globalThis.aegis,s=a.world.snapshot(),presentation=a.presentation();
+          return {hash:a.world.hash(),mission:s.entities.find(e=>e.name==='mission').components.HorrorMission,health:s.entities.find(e=>e.name==='player').components.Health.current,status:presentation.status,audio:globalThis.__horrorAudio,pipeline:presentation.pipeline,lossActive:presentation.ending.active,winEnding:presentation.winEnding,gameplayBlocked:presentation.input.capture.gameplayBlocked,modal:document.getElementById('win-ending').open,focused:document.activeElement.id,pointerLocked:document.pointerLockElement!==null};
         })()`,
         );
-        expect(result.mission.escaped).toBe(true);
-        expect(result.mission.dead).toBe(false);
+        // Captured independently from unchanged headless framesFromPlan at8154, not this page.
+        expect(result.hash).toBe('7fd891b93e339fd8');
+        expect(result.mission).toMatchObject({
+          arrived: true,
+          fuse: true,
+          service: true,
+          busIsolated: true,
+          power: true,
+          visitorToken: true,
+          recorder: true,
+          coolant: true,
+          uplink: true,
+          escaped: true,
+          dead: false,
+          completedTick: 8153,
+          evidence: 3,
+        });
+        expect(result.health).toBe(100);
+        const events =
+          transport === 'live'
+            ? dev.session('horror')?.world.events.history()
+            : await evaluate<{ type: string; tick: number }[]>(page, 'globalThis.aegis.events()');
+        assert.ok(events);
+        expect(
+          events.filter((event) => event.type === 'level.completed').map((event) => event.tick),
+        ).toEqual([8153]);
+        expect(events.some((event) => event.type === 'player.died')).toBe(false);
         expect(result.status).toBe('ready');
         expect(result.lossActive).toBe(false);
         expect(result.audio.length).toBeGreaterThanOrEqual(4);
-        expect(result.body).toContain('CLEAR OF NULL MERIDIAN');
+        expect(result.winEnding).toMatchObject({ active: true, phase: 'playing', seconds: 0 });
+        expect(result.gameplayBlocked).toBe(true);
+        expect(result.modal).toBe(true);
+        expect(result.focused).toBe('win-skip');
+        expect(result.pointerLocked).toBe(false);
         expect(result.pipeline.width * result.pipeline.height).toBeLessThanOrEqual(
           HARDWARE ? 3686400 : 921600,
         );
         expect(result.pipeline.width).toBe(HARDWARE ? 2560 : 480);
         expect(result.pipeline.height).toBe(HARDWARE ? 1440 : 270);
+
+        for (const code of ['KeyW', 'KeyF', 'Period']) await key(page, code, true);
+        for (const code of ['KeyW', 'KeyF', 'Period']) await key(page, code, false);
+        await sync(page);
+        expect(await evaluate(page, 'globalThis.aegis.tick()')).toBe(BROWSER_WIN_TICKS);
+        expect(await evaluate(page, 'globalThis.aegis.world.hash()')).toBe(result.hash);
+
+        await clickUi(page, 'win-skip');
+        await until(
+          page,
+          'globalThis.aegis.presentation().winEnding.phase',
+          (phase) => phase === 'shown',
+          5000,
+        );
+        const finalCard = await evaluate<{
+          title: string;
+          titleVisible: boolean;
+          restartVisible: boolean;
+          focused: string;
+          gameplayBlocked: boolean;
+        }>(
+          page,
+          `(() => {
+          const title=document.getElementById('win-title'),r=title.getBoundingClientRect();
+          return {title:title.textContent,titleVisible:title.checkVisibility()&&r.top>=0&&r.bottom<=innerHeight,restartVisible:document.getElementById('win-restart').checkVisibility(),focused:document.activeElement.id,gameplayBlocked:globalThis.aegis.presentation().input.capture.gameplayBlocked};
+        })()`,
+        );
+        expect(finalCard).toEqual({
+          title: 'CLEAR OF NULL MERIDIAN',
+          titleVisible: true,
+          restartVisible: true,
+          focused: 'win-restart',
+          gameplayBlocked: true,
+        });
+        expect(await evaluate(page, 'globalThis.aegis.world.hash()')).toBe(result.hash);
+        await clickUi(page, 'win-restart');
+        await until(page, 'globalThis.aegis.tick()', (tick) => tick === 0, 10000);
+        await until(
+          page,
+          'globalThis.aegis.presentation().winEnding.active',
+          (active) => active === false,
+          5000,
+        );
+        expect(
+          await evaluate(page, 'globalThis.aegis.presentation().input.capture.gameplayBlocked'),
+        ).toBe(false);
+        expect(await evaluate(page, 'document.activeElement.id')).toBe('stage');
+        expect(
+          await evaluate(
+            page,
+            "globalThis.aegis.world.query({has:['HorrorMission']}).one().get('HorrorMission').escaped",
+          ),
+        ).toBe(false);
+        expect(
+          await evaluate(
+            page,
+            "globalThis.aegis.world.query({has:['Health']}).one().get('Health').current",
+          ),
+        ).toBe(100);
       } catch (error) {
         failed = true;
         await diagnoseFailure(page, transport, 'win route', error);
@@ -533,6 +667,13 @@ describe('NULL MERIDIAN real browser mission', () => {
         );
         await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'ready');
         await control(page, transport, 'pause');
+        await control(page, transport, 'restart');
+        await until(
+          page,
+          'globalThis.aegis.presentation().input.capture.gameplayBlocked',
+          (blocked) => blocked === false,
+          5000,
+        );
         await click(page, 480, 350);
         await mouseButton(page, false, 480, 350);
         await until(page, 'document.pointerLockElement !== null', (value) => value === true);
@@ -541,6 +682,7 @@ describe('NULL MERIDIAN real browser mission', () => {
         await control(page, transport, 'restart');
         await drive(page, transport, threatApproach, { x: 2000, y: 400 });
         const view = await evaluate<{
+          hash: string;
           distance: number;
           screen: { x: number; y: number } | null;
           flashlight: boolean;
@@ -551,9 +693,12 @@ describe('NULL MERIDIAN real browser mission', () => {
           `(() => {
         const a=globalThis.aegis,s=a.world.snapshot(),p=s.entities.find(e=>e.name==='player').components,t=s.entities.find(e=>e.name==='responder').components.Transform.position;
         const q=p.Transform.position;
-        return {distance:Math.hypot(q.x-t.x,q.z-t.z),screen:a.project(t.x,t.y+1.3,t.z),flashlight:p.HorrorPlayer.flashlight,visible:a.adapter.presentation.entity('responder').root.visible,look:p.LookState};
+        return {hash:a.world.hash(),distance:Math.hypot(q.x-t.x,q.z-t.z),screen:a.project(t.x,t.y+1.3,t.z),flashlight:p.HorrorPlayer.flashlight,visible:a.adapter.presentation.entity('responder').root.visible,look:p.LookState};
       })()`,
         );
+        // Headless framesFromPlan prefix at 3140, pinned before this pass. Whole mouse pixels
+        // quantize yaw to 90.02 degrees; the unquantized DSL has a different, valid hash.
+        expect(view.hash).toBe('c6acff7586fa43ab');
         expect(view.distance).toBeGreaterThan(2);
         expect(view.distance).toBeLessThan(5);
         expect(view.flashlight).toBe(true);
