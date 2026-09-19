@@ -1,10 +1,10 @@
-// The composition root for playing the three proof-of-concept games in a browser.
+// The composition root for playing the four demo games in a browser.
 //
 // This file, not `packages/render-three/src/`, is where the renderer meets the games.
 // `@aegis/render-three` is *engine*: `scripts/check-deps.mjs` forbids anything under `packages/`
 // from importing anything under `games/`, by package name or by relative path — "the engine must
 // NEVER depend on a game". The dev server is therefore game-agnostic (`startDevServer({ games })`
-// takes a catalogue), and the three PoCs are wired in here.
+// takes a catalogue), and the four demos are wired in here.
 //
 // It used to live at `packages/render-three/poc-games.mjs`, where it imported all three
 // `@aegis/game-*` packages — a straight violation of that rule that the checker did not see,
@@ -19,11 +19,12 @@ import { readFile } from 'node:fs/promises';
 import { platformer } from './platformer.mjs';
 import { iso } from './iso.mjs';
 import { fps } from './fps.mjs';
-import { BINDINGS } from '../packages/render-three/dist/bindings.js';
+import { horror } from './horror.mjs';
+import { BINDINGS } from '@aegis/render-three/input';
 import { findRepoRoot, loadInputScript, loadScene } from '../packages/render-three/dist/catalog.js';
 
 /**
- * The three PoC games: id, presentation, the **composed** plugin, the scene it runs, the game's
+ * The four demo games: id, presentation, the **composed** plugin, the scene it runs, the game's
  * own `.input` script, and what a completed playthrough looks like.
  *
  * The script and the acceptance pair are what let the screenshot capture refuse to ship a failed
@@ -39,7 +40,7 @@ import { findRepoRoot, loadInputScript, loadScene } from '../packages/render-thr
  * module `poc/play.mjs` does. `test/pages-site.test.ts` asserts the string and the value agree, so
  * the two spellings cannot drift apart.
  */
-export const POC = [platformer, iso, fps];
+export const POC = [platformer, iso, fps, horror];
 
 /** Resolve a repo-relative POSIX path against the repository root. */
 function at(root, relative) {
@@ -62,7 +63,7 @@ export async function pocGames() {
       scriptTicks: entry.scriptTicks,
       acceptance: entry.acceptance,
       presentation: entry.presentation,
-      bindings: BINDINGS[entry.plugin.mode],
+      bindings: entry.bindings ?? BINDINGS[entry.plugin.mode],
     })),
   );
 }
@@ -84,7 +85,7 @@ export async function pocStaticGames() {
       blurb: entry.blurb,
       objective: entry.objective,
       mode: entry.plugin.mode,
-      bindings: BINDINGS[entry.plugin.mode],
+      bindings: entry.bindings ?? BINDINGS[entry.plugin.mode],
       sceneText: await readFile(at(root, entry.scene), 'utf8'),
       pluginModule: entry.pluginModule,
       pluginExport: entry.pluginExport,

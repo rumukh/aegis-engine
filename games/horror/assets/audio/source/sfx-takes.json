@@ -1,0 +1,66 @@
+{
+  "schema": "null-meridian-sfx-takes/1",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "weightDistribution": "DeepBeepMeep/TTS",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "sampleRate": 44100,
+  "negativePrompt": "music, melody, singing, speech, voices, drums, digital beeps, laser sounds, cinematic explosion, distorted clipping",
+  "takes": [
+    {
+      "id": "station-air",
+      "seed": 9182701,
+      "duration": 32,
+      "prompt": "Interior room tone of a deserted industrial control room. Very quiet broad ventilation air, low distant physical fan rumble, faint intermittent loose metal panel vibration. Continuous natural machinery ambience, no discrete loud events. Detailed subdued field recording, spacious but dry enough to layer, no music, no voices."
+    },
+    {
+      "id": "hull-stress",
+      "seed": 9182702,
+      "duration": 16,
+      "prompt": "A huge heavy steel hull slowly flexing under pressure. Three separated low metallic creaks and long deep resonant groans with tiny ticking fasteners, settling into silence between them. Physical ship structure, restrained realistic field recording, no musical notes, no voice, no explosion."
+    },
+    {
+      "id": "pressure-door",
+      "seed": 9182703,
+      "duration": 10,
+      "prompt": "One heavy industrial sliding pressure door opening. A short pneumatic seal release, worn electric motor and metal roller travel, then a heavy cushioned latch and settling metal rattle. Clear mechanical sequence with quiet space before and after, close natural sound effect, no beeps, no speech, no music."
+    },
+    {
+      "id": "power-relay",
+      "seed": 9182704,
+      "duration": 14,
+      "prompt": "An old industrial power cabinet being switched on. Heavy breaker contacts click in a short staggered sequence, a deep transformer and cooling fans slowly rise into steady mechanical power, small cabinet rattles settle. Realistic electrical machinery with controlled low pressure, no alarm, no music, no artificial science fiction laser tone."
+    },
+    {
+      "id": "boots-metal",
+      "seed": 9182705,
+      "duration": 12,
+      "prompt": "Five slow separate heavy rubber work boot footsteps on a solid metal ship floor. Each step has a dull weighty heel impact, small leather movement and a restrained steel floor rattle, then clear quiet separation. Close dry isolated foley, not running, no background ambience, no music, no voices."
+    },
+    {
+      "id": "responder-steps",
+      "seed": 9182707,
+      "duration": 16,
+      "prompt": "Four slow separated steps of a heavy industrial rescue machine walking on jointed metal supports. Each step is a muted weighty steel contact, a short hydraulic joint strain and a slight scraping rubber pad, with irregular pauses. Physical tired machinery, ominous through weight not loudness. Isolated close foley, no growls, no voice, no music."
+    },
+    {
+      "id": "responder-search",
+      "seed": 9182708,
+      "duration": 10,
+      "prompt": "A worn robotic industrial inspection head slowly turning, pausing, and returning. Small geared servo friction, restrained ratcheting metal clicks, a soft pneumatic adjustment and cable movement. Very physical close dry machinery, tense and quiet, no electronic alarm, no pitched musical tone, no voices."
+    },
+    {
+      "id": "recorder-handling",
+      "seed": 9182709,
+      "duration": 10,
+      "prompt": "Close dry foley of gloved hands operating an old handheld tape recorder: small plastic latch click, thumb presses a firm mechanical button, light casing rub and tape transport mechanism starting. Several distinct tactile clicks with quiet gaps. No speech, no tape music, no beeps, no continuous background noise."
+    },
+    {
+      "id": "airlock-cycle",
+      "seed": 9182710,
+      "duration": 14,
+      "prompt": "A heavy spacecraft pressure hatch sealing safely. Restrained metal latch bolts rotate into place, a rubber gasket compresses, then a smooth pneumatic pressure equalization wash slowly recedes. Deep physical machinery and short room resonance, quiet controlled weight, no explosive decompression, no music, no voice, no alarm."
+    }
+  ]
+}

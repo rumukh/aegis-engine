@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createWorld, Name, Transform } from '@aegis/core';
+import { createWorld, defineComponent, Name, Transform } from '@aegis/core';
 import { Health } from '@aegis/content';
 import { PlatformerController } from '@aegis/mode-platformer';
 import { Controlled, GridPosition } from '@aegis/mode-iso';
@@ -12,6 +12,7 @@ class Element {
   writes = 0;
   hidden = false;
   disabled = false;
+  open = false;
   attributes = new Map<string, string>();
   get textContent(): string {
     return this.#text;
@@ -34,6 +35,9 @@ const IDS = [
   'hud-stats',
   'hud-events',
   'hud-objective',
+  'hud-prompt',
+  'hud-subtitle',
+  'hud-narrative-status',
   'hud-health',
   'hud-health-bar',
   'health-readout',
@@ -44,6 +48,7 @@ const IDS = [
   'action-pause',
   'action-mute',
   'hud-audio',
+  'session-menu',
   'loading-panel',
   'loading-title',
   'loading-message',
@@ -69,6 +74,73 @@ const SPEC: HudSpec = {
 };
 
 describe('game-facing HUD', () => {
+  it('announces only the first authoritative outcome until reset and preserves first-win precedence', () => {
+    const { root } = dom();
+    const outcomes: ('win' | 'lose' | undefined)[] = [];
+    const hud = createHud(root, { spec: SPEC, onOutcome: (value) => outcomes.push(value) });
+    hud.pushEvents([{ type: 'crew.lost', tick: 1, sequence: 0 }]);
+    hud.pushEvents([
+      { type: 'crew.lost', tick: 1, sequence: 0 },
+      { type: 'crew.lost', tick: 2, sequence: 1 },
+    ]);
+    expect(outcomes).toEqual(['lose']);
+    hud.reset();
+    hud.pushEvents([
+      { type: 'expedition.complete', tick: 1, sequence: 0 },
+      { type: 'crew.lost', tick: 2, sequence: 1 },
+    ]);
+    expect(outcomes).toEqual(['lose', undefined, 'win']);
+  });
+  it('opens an opt-in compact session menu when sound fails, keeping the error visible', () => {
+    const { root, get } = dom();
+    const hud = createHud(root);
+    expect(get('session-menu').open).toBe(false);
+    hud.setAudio({ status: 'error', muted: false, error: 'Required sound could not decode' });
+    expect(get('session-menu').open).toBe(true);
+    expect(get('hud-audio').textContent).toBe('Required sound could not decode');
+  });
+  it('reads generic narrative fields and expires accessible captions without mutating simulation', () => {
+    const Status = defineComponent({
+      id: 'Narrative',
+      defaults: () => ({
+        objective: 'Find the relay',
+        prompt: '[E] Restore power',
+        subtitle: 'Stay quiet',
+        until: 5,
+        threat: 'Listening',
+      }),
+    });
+    const world = createWorld({ seed: 'narrative' });
+    const player = world.spawn(Name({ value: 'navigator' }), Status());
+    const field = (field: string) => ({ entity: 'navigator', component: 'Narrative', field });
+    const { root, get } = dom();
+    const hud = createHud(root, {
+      spec: {
+        ...SPEC,
+        bindings: {
+          objective: field('objective'),
+          prompt: field('prompt'),
+          subtitle: field('subtitle'),
+          subtitleUntil: field('until'),
+          status: field('threat'),
+        },
+      },
+    });
+    const hash = world.hash();
+    hud.setCaption({ text: 'A pipe creaks', speaker: 'Environment', durationTicks: 10 }, 0);
+    hud.setStats('fps', world);
+    expect(get('hud-objective').textContent).toBe('Find the relay');
+    expect(get('hud-prompt').textContent).toBe('[E] Restore power');
+    expect(get('hud-narrative-status').textContent).toBe('Listening');
+    expect(get('hud-subtitle').textContent).toBe('Stay quiet');
+    expect(world.hash()).toBe(hash);
+    world.getOrThrow(player, Status).until = 0;
+    hud.setStats('fps', world);
+    expect(get('hud-subtitle').textContent).toBe('Environment: A pipe creaks');
+    hud.reset();
+    expect(get('hud-subtitle').hidden).toBe(true);
+    expect(get('hud-prompt').hidden).toBe(true);
+  });
   it('reads health from the manifest-named actor, not the first damageable or mode controller', () => {
     const { root, get } = dom();
     const hud = createHud(root, { spec: SPEC, objective: 'Bring everyone home' });
@@ -183,7 +255,7 @@ describe('game-facing HUD', () => {
     expect(get('hud-events').textContent.split('\n').at(-1)).toBe('   5  next');
   });
 
-  it('clears run-local state while preserving objective, audio and quality preferences', () => {
+  it('clears run-local state while preserving objective, pause, audio and quality preferences', () => {
     const { root, get } = dom();
     const hud = createHud(root, { spec: SPEC, objective: 'Bring everyone home' });
     hud.setStatus(40, true, 60);
@@ -202,7 +274,9 @@ describe('game-facing HUD', () => {
     expect(get('hud-outcome').hidden).toBe(true);
     expect(get('hud-objective').textContent).toBe('Bring everyone home');
     expect(get('hud-audio').textContent).toBe('Sound muted');
-    expect(get('action-pause').textContent).toBe('Pause');
+    expect(get('action-pause').textContent).toBe('Resume');
+    expect(get('action-pause').getAttribute('aria-pressed')).toBe('true');
+    expect(get('action-pause').getAttribute('aria-label')).toBe('Resume game');
     hud.pushEvents([{ type: 'power.restored', tick: 1, sequence: 0 }]);
     expect(get('hud-progress').textContent).toBe('1 / 2 complete');
   });

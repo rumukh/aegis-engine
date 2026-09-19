@@ -126,10 +126,17 @@ function makeHost() {
     pick: vi.fn(() => ({ x: 3, y: 0, z: 4 })),
     dispose: vi.fn(),
   } satisfies RenderAdapter;
+  const renderer = { setSize: vi.fn(), render: vi.fn() };
   return {
     ready,
     adapter,
-    renderer: { setSize: vi.fn(), render: vi.fn() },
+    renderer,
+    captureInput: vi.fn(),
+    resize: (width: number, height: number) => {
+      renderer.setSize(width, height, false);
+      adapter.resize(width, height);
+    },
+    render: () => renderer.render(adapter.scene, adapter.camera),
     hud: { setStatus: vi.fn(), setStats: vi.fn() },
     start: vi.fn((start: () => void) => start()),
     mounted: vi.fn(() => resolveReady()),

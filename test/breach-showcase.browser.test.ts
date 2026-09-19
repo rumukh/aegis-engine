@@ -473,7 +473,10 @@ describe('Sector Breach complete browser showcase', () => {
           expect(result.timings.drawCalls).toBeGreaterThan(0);
           expect(result.timings.drawCalls).toBeLessThanOrEqual(2000);
           expect(result.timings.exchangeBytes).toBeLessThanOrEqual(24_000);
-          expect(result.timings.exchangeErrors).toBe(0);
+          expect(
+            result.timings.exchangeErrors,
+            `Live exchange failure evidence: ${JSON.stringify(result.timings)}`,
+          ).toBe(0);
         }
 
         const dead = await replay(

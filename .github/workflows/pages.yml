@@ -1,6 +1,6 @@
 name: Pages
 
-# Publish the three proof-of-concept games as a **playable** static site.
+# Publish the four demo games as a **playable** static site.
 #
 # The site has no backend, and that is the whole design rather than a limitation worked around:
 # `packages/render-three/src/client/static-boot.ts` runs the same `createLiveSession` the dev
@@ -77,7 +77,7 @@ jobs:
       - name: Check the artifact before uploading it
         run: |
           set -eu
-          for page in index.html 404.html play/platformer/index.html play/iso/index.html play/fps/index.html; do
+          for page in index.html 404.html play/platformer/index.html play/iso/index.html play/fps/index.html play/horror/index.html; do
             test -s "dist-site/$page" || { echo "missing or empty: dist-site/$page" >&2; exit 1; }
           done
           modules=$(find dist-site -name '*.js' | wc -l)

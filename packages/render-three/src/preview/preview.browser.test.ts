@@ -28,7 +28,7 @@ import {
   waitForPaint,
 } from '../browser.js';
 import type { CdpSession, LaunchedBrowser } from '../browser.js';
-import { fixturePng } from '../testing/presentation-fixture.js';
+import { fixturePng, writePresentationFixture } from '../testing/presentation-fixture.js';
 import type { PresentationManifest } from '../presentation/schema.js';
 import { startAssetPreview, readPreviewCapture } from './capture.js';
 import type { AssetPreview, AssetPreviewOptions } from './capture.js';
@@ -375,6 +375,71 @@ describe('standalone asset preview: actual browser acceptance', () => {
       preview.capture({ filename: 'old-revision.png', revision: baseline.revision }),
     ).rejects.toThrow('Requested revision');
   });
+
+  it('captures cinematic materials with the production pipeline and bounds GPU resources across reloads', async () => {
+    const dir = join(temporary, 'cinematic-material');
+    const fixture = writePresentationFixture(dir);
+    fixture.manifest.quality = 'high';
+    fixture.manifest.pipeline = {
+      toneMapping: 'aces',
+      exposure: 1,
+      bloom: { strength: 0.1, radius: 0.2, threshold: 1 },
+      ambientOcclusion: { radius: 4, minDistance: 0.002, maxDistance: 0.03 },
+    };
+    fixture.manifest.environment = { reflections: { texture: 'surface', intensity: 0.4 } };
+    fixture.manifest.assets = [
+      ...fixture.manifest.assets!,
+      {
+        id: 'data',
+        kind: 'texture',
+        colorSpace: 'linear',
+        src: 'surface.png',
+        provenance: fixture.manifest.assets!.find((asset) => asset.id === 'surface')!.provenance,
+      },
+    ];
+    fixture.manifest.materials = [
+      ...(fixture.manifest.materials ?? []),
+      {
+        id: 'metal',
+        shading: 'standard',
+        map: 'surface',
+        roughnessMap: 'data',
+        metalnessMap: 'data',
+        aoMap: 'data',
+        metalness: 0.6,
+      },
+    ];
+    const source = join(dir, 'sample.presentation.json');
+    writeFileSync(source, JSON.stringify(fixture.manifest));
+    const preview = await start({ source, selection: { kind: 'material', id: 'metal' } });
+    const first = await preview.capture({ filename: 'cinematic-material.png', ...SIZE });
+    expect(first.recipe.pipeline).toMatchObject({
+      quality: 'high',
+      settings: { toneMapping: 'aces' },
+    });
+    expect(first.stats.pipeline).toMatchObject({
+      width: 640,
+      height: 480,
+      outputTransforms: 1,
+      reflections: true,
+    });
+    pixels(first);
+    for (let i = 0; i < 2; i++) {
+      await preview.reload();
+      const next = await preview.capture({
+        filename: `cinematic-material-${i}.png`,
+        ...SIZE,
+        settings: { projection: i === 0 ? 'orthographic' : 'perspective' },
+      });
+      expect(next.stats.gpu).toEqual(first.stats.gpu);
+      pixels(next);
+    }
+    await expect(
+      preview.capture({ filename: 'over-budget.png', width: 3840, height: 2160 }),
+    ).rejects.toThrow(/pixel budget/);
+    expect((await preview.state()).status).toBe('ready');
+    pixels(await preview.capture({ filename: 'after-budget-refusal.png', ...SIZE }));
+  }, 180_000);
 
   it('shows the original engineer atlas, its declared frame, and a production material sample', async () => {
     const source = copyAsset(ENGINEER, join(temporary, 'atlas'));

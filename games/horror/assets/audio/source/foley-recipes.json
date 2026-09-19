@@ -1,0 +1,574 @@
+{
+  "inventoryName": "foley",
+  "dynamics": {
+    "mechanism": ["acompressor=threshold=0.025:ratio=3:attack=2:release=180:knee=4:makeup=1"],
+    "footstep": ["acompressor=threshold=0.035:ratio=4:attack=0.2:release=80:knee=4:makeup=1"],
+    "threat": ["acompressor=threshold=0.03:ratio=4:attack=0.5:release=140:knee=4:makeup=1"],
+    "interaction": ["acompressor=threshold=0.04:ratio=3:attack=0.2:release=60:knee=4:makeup=1"]
+  },
+  "cues": [
+    {
+      "id": "amb-room",
+      "source": "station-air.wav",
+      "category": "ambience",
+      "description": "Low continuous station room air; stereo non-positional foundation.",
+      "channels": 2,
+      "filters": ["highpass=f=35", "lowpass=f=7500"],
+      "loopOverlapSeconds": 4,
+      "targetLufs": -32,
+      "maxTruePeakDbtp": -16,
+      "bitrateKbps": 96,
+      "layer": {
+        "volume": 0.6,
+        "fadeSeconds": 2,
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "ended",
+          "equals": false
+        }
+      }
+    },
+    {
+      "id": "amb-vent",
+      "source": "station-air.wav",
+      "category": "ambience",
+      "description": "Separate mono ventilation emitter at the restored power cabinet.",
+      "channels": 1,
+      "filters": ["highpass=f=130", "lowpass=f=3600"],
+      "startSeconds": 16,
+      "endSeconds": 32,
+      "loopOverlapSeconds": 2,
+      "targetLufs": -29,
+      "maxTruePeakDbtp": -14,
+      "bitrateKbps": 64,
+      "layer": {
+        "volume": 0.45,
+        "fadeSeconds": 3,
+        "spatial": {
+          "target": { "entity": "power-console" },
+          "refDistance": 2,
+          "maxDistance": 16,
+          "rolloffFactor": 1
+        },
+        "enabledWhen": {
+          "entity": "mission",
+          "component": "HorrorMission",
+          "field": "power",
+          "equals": true
+        }
+      }
+    },
+    {
+      "id": "amb-hull",
+      "source": "hull-stress.wav",
+      "category": "ambience",
+      "description": "Distant structural flexing, with deliberately long quiet intervals rather than a continuous drone.",
+      "channels": 1,
+      "filters": [
+        "highpass=f=35",
+        "lowpass=f=4200",
+        "adelay=13000:all=1",
+        "apad=whole_dur=53",
+        "atrim=duration=53"
+      ],
+      "loopOverlapSeconds": 5,
+      "targetLufs": -31,
+      "maxTruePeakDbtp": -15,
+      "bitrateKbps": 64,
+      "layer": {
+        "volume": 0.6,
+        "fadeSeconds": 2,
+        "spatial": {
+          "target": { "position": [16, 2.9, 23] },
+          "refDistance": 4,
+          "maxDistance": 40,
+          "rolloffFactor": 0.8
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "ended",
+          "equals": false
+        }
+      }
+    },
+    {
+      "id": "door-open",
+      "source": "pressure-door.wav",
+      "category": "mechanism",
+      "description": "Pressure seal, worn motor travel and cushioned heavy latch.",
+      "channels": 1,
+      "filters": ["highpass=f=40", "lowpass=f=8200"],
+      "startSeconds": 0.06,
+      "endSeconds": 9.5,
+      "releaseSeconds": 0.7,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.service.opened",
+          "volume": 0.75,
+          "cooldownTicks": 120,
+          "maxVoices": 1,
+          "spatial": {
+            "target": { "entity": "service-door" },
+            "refDistance": 2,
+            "maxDistance": 20,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.uplink.transmitted",
+          "volume": 0.6,
+          "cooldownTicks": 120,
+          "maxVoices": 1,
+          "spatial": {
+            "target": { "entity": "evac-door" },
+            "refDistance": 2,
+            "maxDistance": 20,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "power-rise",
+      "source": "power-relay.wav",
+      "category": "mechanism",
+      "description": "Staggered breaker engagement and transformer/fan rise; transitions into the vent loop.",
+      "channels": 1,
+      "filters": ["highpass=f=30", "lowpass=f=7000"],
+      "startSeconds": 0.05,
+      "endSeconds": 12.6,
+      "releaseSeconds": 2,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.power.restored",
+          "volume": 0.65,
+          "cooldownTicks": 600,
+          "maxVoices": 1,
+          "spatial": {
+            "target": { "entity": "power-console" },
+            "refDistance": 2,
+            "maxDistance": 24,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-01",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 1.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 0.08,
+      "endSeconds": 0.64,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": { "field": "variant", "equals": 0 },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": { "entity": "player" },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-02",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 2.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 0.68,
+      "endSeconds": 1.25,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": { "field": "variant", "equals": 1 },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": { "entity": "player" },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-03",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 3.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 1.46,
+      "endSeconds": 2.07,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": { "field": "variant", "equals": 2 },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": { "entity": "player" },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-04",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 4.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 2.24,
+      "endSeconds": 2.85,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": { "field": "variant", "equals": 3 },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": { "entity": "player" },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-step-01",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Heavy articulated support placement, distinct first strike.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7800"],
+      "startSeconds": 0.21,
+      "endSeconds": 1.18,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.threat.step",
+          "when": { "field": "variant", "equals": 0 },
+          "volume": 0.85,
+          "cooldownTicks": 10,
+          "maxVoices": 3,
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-step-02",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Heavy articulated support placement, distinct second selected strike.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7800"],
+      "startSeconds": 3.86,
+      "endSeconds": 4.84,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.threat.step",
+          "when": { "field": "variant", "equals": 1 },
+          "volume": 0.85,
+          "cooldownTicks": 10,
+          "maxVoices": 3,
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-step-03",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Heavy articulated support placement, distinct third selected strike.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7800"],
+      "startSeconds": 6,
+      "endSeconds": 6.9,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.threat.step",
+          "when": { "field": "variant", "equals": 2 },
+          "volume": 0.85,
+          "cooldownTicks": 10,
+          "maxVoices": 3,
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-search",
+      "source": "responder-search.wav",
+      "category": "threat",
+      "description": "Inspection head servo and ratchet movement, dry mono to follow the responder.",
+      "channels": 1,
+      "filters": ["highpass=f=100", "lowpass=f=7600"],
+      "startSeconds": 0.15,
+      "endSeconds": 3.9,
+      "releaseSeconds": 0.25,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -11,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.threat.search",
+          "volume": 0.85,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2.5,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.threat.suspicious",
+          "volume": 0.65,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2.5,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.rescue.called",
+          "volume": 0.7,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2.5,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-alert",
+      "source": "responder-search.wav",
+      "category": "threat",
+      "description": "More sustained mechanical head movement, not a musical stinger or roar.",
+      "channels": 1,
+      "filters": ["highpass=f=70", "lowpass=f=7600"],
+      "startSeconds": 4.1,
+      "endSeconds": 7.2,
+      "releaseSeconds": 0.3,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.threat.awakened",
+          "volume": 0.8,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2.5,
+            "maxDistance": 30,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.threat.chase",
+          "volume": 0.85,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2.5,
+            "maxDistance": 30,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.threat.warning",
+          "volume": 0.65,
+          "cooldownTicks": 480,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": { "entity": "responder" },
+            "refDistance": 2.5,
+            "maxDistance": 30,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "recorder-handle",
+      "source": "recorder-handling.wav",
+      "category": "interaction",
+      "description": "Two small physical recorder transport/latch movements.",
+      "channels": 1,
+      "filters": ["highpass=f=120", "lowpass=f=8500"],
+      "startSeconds": 1.94,
+      "endSeconds": 2.95,
+      "targetLufs": -28,
+      "maxTruePeakDbtp": -15,
+      "bitrateKbps": 80,
+      "bindings": [
+        { "event": "horror.triage.played", "volume": 0.5, "cooldownTicks": 90, "maxVoices": 1 },
+        { "event": "horror.recorder.recovered", "volume": 0.5, "cooldownTicks": 90, "maxVoices": 1 }
+      ]
+    },
+    {
+      "id": "interact-click",
+      "source": "recorder-handling.wav",
+      "category": "interaction",
+      "description": "A physical latch/button click, no oscillator UI beep.",
+      "channels": 1,
+      "filters": ["highpass=f=120", "lowpass=f=8500"],
+      "startSeconds": 0.21,
+      "endSeconds": 0.75,
+      "targetLufs": -28,
+      "maxTruePeakDbtp": -15,
+      "bitrateKbps": 80,
+      "bindings": [
+        { "event": "horror.fuse.taken", "volume": 0.6, "cooldownTicks": 12, "maxVoices": 1 },
+        { "event": "horror.bus.isolated", "volume": 0.65, "cooldownTicks": 12, "maxVoices": 1 },
+        { "event": "horror.arrival.read", "volume": 0.45, "cooldownTicks": 12, "maxVoices": 1 },
+        { "event": "horror.maintenance.read", "volume": 0.45, "cooldownTicks": 12, "maxVoices": 1 },
+        {
+          "event": "horror.interaction.denied",
+          "volume": 0.5,
+          "cooldownTicks": 12,
+          "maxVoices": 1
+        },
+        { "event": "horror.flashlight.changed", "volume": 0.4, "cooldownTicks": 6, "maxVoices": 1 }
+      ]
+    },
+    {
+      "id": "coolant-release",
+      "source": "airlock-cycle.wav",
+      "category": "mechanism",
+      "description": "Controlled pressure wash and valve mechanism, not explosive decompression.",
+      "channels": 1,
+      "filters": ["highpass=f=90", "lowpass=f=5800"],
+      "startSeconds": 4.2,
+      "endSeconds": 8.1,
+      "releaseSeconds": 0.7,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "bindings": [
+        {
+          "event": "horror.coolant.isolated",
+          "volume": 0.65,
+          "cooldownTicks": 180,
+          "maxVoices": 1,
+          "spatial": {
+            "target": { "entity": "coolant-valve" },
+            "refDistance": 2,
+            "maxDistance": 16,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "airlock-seal",
+      "source": "airlock-cycle.wav",
+      "category": "mechanism",
+      "description": "Hatch bolts, gasket compression and settling pressure at extraction.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7000"],
+      "startSeconds": 0.05,
+      "endSeconds": 13.5,
+      "releaseSeconds": 1.2,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "bindings": [
+        { "event": "level.completed", "volume": 0.7, "cooldownTicks": 600, "maxVoices": 1 }
+      ]
+    },
+    {
+      "id": "responder-stop",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Muted final machine placement; no scream or abrupt full-scale death sting.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=4500"],
+      "startSeconds": 10.63,
+      "endSeconds": 11.5,
+      "releaseSeconds": 0.2,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "bindings": [{ "event": "player.died", "volume": 0.6, "cooldownTicks": 600, "maxVoices": 1 }]
+    }
+  ]
+}

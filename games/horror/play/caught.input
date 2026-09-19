@@ -1,0 +1,57 @@
+# Inspect the wall-mounted arrival terminal, then diagnose and isolate the failed rescue bus.
+aim 0 0 @10
+axis Forward 1 10..100
+aim 90 0 @102
+axis Forward 1 102..192
+aim 90 0 @194
+hold Interact 196..197
+aim -90 0 @200
+axis Forward 1 200..290
+aim 0 0 @292
+axis Forward 1 292..472
+aim -90 0 @474
+axis Forward 1 474..834
+aim 180 0 @836
+axis Forward 1 836..896
+aim 180 0 @898
+hold Interact 900..901
+aim 90 0 @904
+axis Forward 1 904..1084
+aim 0 0 @1086
+axis Forward 1 1086..1296
+aim -90 0 @1298
+hold Interact 1300..1301
+aim 0 0 @1304
+axis Forward 1 1304..1454
+aim -90 0 @1456
+axis Forward 1 1456..1606
+aim 0 0 @1608
+hold Interact 1610..1730
+aim 90 0 @1733
+axis Forward 1 1733..1793
+aim 0 0 @1795
+axis Forward 1 1795..1915
+aim 90 0 @1917
+axis Forward 1 1917..2007
+aim 0 0 @2009
+axis Forward 1 2009..2129
+aim 0 0 @2131
+hold Interact 2133..2193
+aim -90 0 @2196
+axis Forward 1 2196..2376
+aim 0 0 @2378
+press Select @2380
+aim 0 0 @2382
+press Select @2384
+aim 0 0 @2386
+hold Interact 2388..2478
+
+# Stand in the returning responder's lane instead of avoiding it or breaking sight.
+aim 90 0 @2481
+axis Forward 1 2481..2841
+aim 180 0 @2843
+axis Forward 1 2843..3083
+aim 90 0 @3085
+axis Forward 1 3085..3235
+hold Interact 3500..3800
+press Flashlight @3501

@@ -1,0 +1,25 @@
+{
+  "name": "@aegis/game-horror",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "NULL MERIDIAN - a deterministic, non-combat orbital survival-horror mission.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/content": "*",
+    "@aegis/harness": "*",
+    "@aegis/mode-fps": "*"
+  }
+}

@@ -1,0 +1,1330 @@
+{
+  "schema": "null-meridian-audio-inventory/1",
+  "runtimeCodec": "Ogg Opus",
+  "sampleRate": 48000,
+  "totalRuntimeBytes": 985520,
+  "masterDirectory": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files\\processed-masters",
+  "sourceDirectory": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files\\sfx-native",
+  "mix": {
+    "masterHeadroom": 0.65,
+    "noRuntimeCrossfadeForLoops": true
+  },
+  "cues": [
+    {
+      "id": "amb-room",
+      "source": "station-air.wav",
+      "category": "ambience",
+      "description": "Low continuous station room air; stereo non-positional foundation.",
+      "channels": 2,
+      "filters": ["highpass=f=35", "lowpass=f=7500"],
+      "loopOverlapSeconds": 4,
+      "targetLufs": -32,
+      "maxTruePeakDbtp": -16,
+      "bitrateKbps": 96,
+      "processingFilters": ["highpass=f=35", "lowpass=f=7500"],
+      "url": "runtime/amb-room.ogg",
+      "durationSeconds": 28,
+      "frames": 1344000,
+      "loop": {
+        "startSeconds": 0,
+        "endSeconds": 28,
+        "offlineOverlapSeconds": 4,
+        "decodedBoundaryStep": 0.00030684657394886017
+      },
+      "sha256": "3f7928dca75d7b26cd8ab232a4dd48be3e9521e6119234f683ccc3a58c9b8b77",
+      "masterSha256": "faa95024baf5135f289eaaa12de24bbc97dbb2e2535be1986bd0bf6b2cc55261",
+      "sourceSha256": "6573b4f8ed30159c12575c7bb0db07756fe0f203d2ccb297b0fcf9afa4e1bf9f",
+      "gainDb": -2.6099999999999994,
+      "measured": {
+        "durationSeconds": 28.0065,
+        "bytes": 232504,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 2,
+        "integratedLufs": -32,
+        "truePeakDbtp": -20.32,
+        "loudnessRangeLu": 0.4,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "layer": {
+        "volume": 0.6,
+        "fadeSeconds": 2,
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "ended",
+          "equals": false
+        }
+      }
+    },
+    {
+      "id": "amb-vent",
+      "source": "station-air.wav",
+      "category": "ambience",
+      "description": "Separate mono ventilation emitter at the restored power cabinet.",
+      "channels": 1,
+      "filters": ["highpass=f=130", "lowpass=f=3600"],
+      "startSeconds": 16,
+      "endSeconds": 32,
+      "loopOverlapSeconds": 2,
+      "targetLufs": -29,
+      "maxTruePeakDbtp": -14,
+      "bitrateKbps": 64,
+      "processingFilters": [
+        "highpass=f=130",
+        "lowpass=f=3600",
+        "atrim=start=16:end=32",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/amb-vent.ogg",
+      "durationSeconds": 14,
+      "frames": 672000,
+      "loop": {
+        "startSeconds": 0,
+        "endSeconds": 14,
+        "offlineOverlapSeconds": 2,
+        "decodedBoundaryStep": 0.0013658395037055016
+      },
+      "sha256": "66f7c1c037fd27ac1adf1ad3d81829ae684afd9dcfc8d4737b087cc1ff415b26",
+      "masterSha256": "58badaa964c682154497bc6e4b1a48ac9eeb89ba7bb04f9dcb7be2a039b265c2",
+      "sourceSha256": "6573b4f8ed30159c12575c7bb0db07756fe0f203d2ccb297b0fcf9afa4e1bf9f",
+      "gainDb": 3.520000000000003,
+      "measured": {
+        "durationSeconds": 14.0065,
+        "bytes": 99937,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -29.01,
+        "truePeakDbtp": -16.03,
+        "loudnessRangeLu": 0.2,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "layer": {
+        "volume": 0.45,
+        "fadeSeconds": 3,
+        "spatial": {
+          "target": {
+            "entity": "power-console"
+          },
+          "refDistance": 2,
+          "maxDistance": 16,
+          "rolloffFactor": 1
+        },
+        "enabledWhen": {
+          "entity": "mission",
+          "component": "HorrorMission",
+          "field": "power",
+          "equals": true
+        }
+      }
+    },
+    {
+      "id": "amb-hull",
+      "source": "hull-stress.wav",
+      "category": "ambience",
+      "description": "Distant structural flexing, with deliberately long quiet intervals rather than a continuous drone.",
+      "channels": 1,
+      "filters": [
+        "highpass=f=35",
+        "lowpass=f=4200",
+        "adelay=13000:all=1",
+        "apad=whole_dur=53",
+        "atrim=duration=53"
+      ],
+      "loopOverlapSeconds": 5,
+      "targetLufs": -31,
+      "maxTruePeakDbtp": -15,
+      "bitrateKbps": 64,
+      "processingFilters": [
+        "highpass=f=35",
+        "lowpass=f=4200",
+        "adelay=13000:all=1",
+        "apad=whole_dur=53",
+        "atrim=duration=53"
+      ],
+      "url": "runtime/amb-hull.ogg",
+      "durationSeconds": 48,
+      "frames": 2304000,
+      "loop": {
+        "startSeconds": 0,
+        "endSeconds": 48,
+        "offlineOverlapSeconds": 5,
+        "decodedBoundaryStep": 1.401298464324817e-45
+      },
+      "sha256": "3ffaa9d2496f415bf8fa9481a56e0e914e8c56b273b45b26057649d9060732b0",
+      "masterSha256": "ccb46d4d558cfac81e577b5957fa1736f1d954ce5348debdb0d058f96a1e46ee",
+      "sourceSha256": "c0518ffb63440a5735d3e8b0ffe33e5198052cec91f8fe72db3994304d643081",
+      "gainDb": -13.14,
+      "measured": {
+        "durationSeconds": 48.0065,
+        "bytes": 117678,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -31.03,
+        "truePeakDbtp": -14.79,
+        "loudnessRangeLu": 12.3,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0
+          },
+          {
+            "boundary": "end",
+            "seconds": 8
+          },
+          {
+            "boundary": "start",
+            "seconds": 19.650875
+          },
+          {
+            "boundary": "end",
+            "seconds": 48
+          }
+        ]
+      },
+      "humanListening": "pending",
+      "layer": {
+        "volume": 0.6,
+        "fadeSeconds": 2,
+        "spatial": {
+          "target": {
+            "position": [16, 2.9, 23]
+          },
+          "refDistance": 4,
+          "maxDistance": 40,
+          "rolloffFactor": 0.8
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "ended",
+          "equals": false
+        }
+      }
+    },
+    {
+      "id": "door-open",
+      "source": "pressure-door.wav",
+      "category": "mechanism",
+      "description": "Pressure seal, worn motor travel and cushioned heavy latch.",
+      "channels": 1,
+      "filters": ["highpass=f=40", "lowpass=f=8200"],
+      "startSeconds": 0.06,
+      "endSeconds": 9.5,
+      "releaseSeconds": 0.7,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=40",
+        "lowpass=f=8200",
+        "acompressor=threshold=0.025:ratio=3:attack=2:release=180:knee=4:makeup=1",
+        "atrim=start=0.06:end=9.5",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/door-open.ogg",
+      "durationSeconds": 9.44,
+      "frames": 453120,
+      "loop": null,
+      "sha256": "a60943934e64491303d416cd15e67ce424f7d8be68fd2b4f71ed54a40b21a1d5",
+      "masterSha256": "c26586cabfa10a500e086e03b58b26c6e0f8821642739ae9154c1f850ca85a08",
+      "sourceSha256": "4984a84196abaf827c4985d4f715c3aafb00ff9794cffe2524f752f64ce188b5",
+      "gainDb": 4.619999999999999,
+      "measured": {
+        "durationSeconds": 9.4465,
+        "bytes": 87586,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -30.32,
+        "truePeakDbtp": -10.07,
+        "loudnessRangeLu": 3.6,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.service.opened",
+          "volume": 0.75,
+          "cooldownTicks": 120,
+          "maxVoices": 1,
+          "spatial": {
+            "target": {
+              "entity": "service-door"
+            },
+            "refDistance": 2,
+            "maxDistance": 20,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.uplink.transmitted",
+          "volume": 0.6,
+          "cooldownTicks": 120,
+          "maxVoices": 1,
+          "spatial": {
+            "target": {
+              "entity": "evac-door"
+            },
+            "refDistance": 2,
+            "maxDistance": 20,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "power-rise",
+      "source": "power-relay.wav",
+      "category": "mechanism",
+      "description": "Staggered breaker engagement and transformer/fan rise; transitions into the vent loop.",
+      "channels": 1,
+      "filters": ["highpass=f=30", "lowpass=f=7000"],
+      "startSeconds": 0.05,
+      "endSeconds": 12.6,
+      "releaseSeconds": 2,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=30",
+        "lowpass=f=7000",
+        "acompressor=threshold=0.025:ratio=3:attack=2:release=180:knee=4:makeup=1",
+        "atrim=start=0.05:end=12.6",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/power-rise.ogg",
+      "durationSeconds": 12.55,
+      "frames": 602400,
+      "loop": null,
+      "sha256": "ca4edefffcb86146c962e6b27c2f04d4e28a5f1b1ad0a359b476dfa4a84654e2",
+      "masterSha256": "9c408254a1cde25285d3d957fa6faad03b3792a9951beaa9c082eb4e43814bbf",
+      "sourceSha256": "c9c897f418d0b374f72b069ca9fc6efa67e5047dce414decb64c8864b88c54e6",
+      "gainDb": 8.559999999999999,
+      "measured": {
+        "durationSeconds": 12.5565,
+        "bytes": 132865,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -27.13,
+        "truePeakDbtp": -10.14,
+        "loudnessRangeLu": 5,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.power.restored",
+          "volume": 0.65,
+          "cooldownTicks": 600,
+          "maxVoices": 1,
+          "spatial": {
+            "target": {
+              "entity": "power-console"
+            },
+            "refDistance": 2,
+            "maxDistance": 24,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-01",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 1.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 0.08,
+      "endSeconds": 0.64,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=55",
+        "lowpass=f=8000",
+        "acompressor=threshold=0.035:ratio=4:attack=0.2:release=80:knee=4:makeup=1",
+        "atrim=start=0.08:end=0.64",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/boots-metal-01.ogg",
+      "durationSeconds": 0.56,
+      "frames": 26880,
+      "loop": null,
+      "sha256": "c44c9e8db6a9232ea2d8efe4b4c60d9750322ba68807b0ef3362169d17555271",
+      "masterSha256": "b2bbd3a6b2ca7d4e69804d7c23b64fbd932d749b8692db401e0426153281b2d4",
+      "sourceSha256": "1b68e382818a7b45abf0a591d5625f95094d93fa5f857c43e70e87cbce840a69",
+      "gainDb": 9.010000000000002,
+      "measured": {
+        "durationSeconds": 0.5665,
+        "bytes": 5360,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -35.39,
+        "truePeakDbtp": -11.96,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": {
+            "field": "variant",
+            "equals": 0
+          },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": {
+              "entity": "player"
+            },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-02",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 2.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 0.68,
+      "endSeconds": 1.25,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=55",
+        "lowpass=f=8000",
+        "acompressor=threshold=0.035:ratio=4:attack=0.2:release=80:knee=4:makeup=1",
+        "atrim=start=0.68:end=1.25",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/boots-metal-02.ogg",
+      "durationSeconds": 0.57,
+      "frames": 27360,
+      "loop": null,
+      "sha256": "4510b88253ef7e7226fd6e2ae50a45f301238b7cdbbf2e4547623539b786cf98",
+      "masterSha256": "90a59b78b83365baa035378a3d644a37e7953f357ca8dda5c51b3321642d6286",
+      "sourceSha256": "1b68e382818a7b45abf0a591d5625f95094d93fa5f857c43e70e87cbce840a69",
+      "gainDb": 8.29,
+      "measured": {
+        "durationSeconds": 0.5765,
+        "bytes": 5856,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -37.13,
+        "truePeakDbtp": -11.97,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": {
+            "field": "variant",
+            "equals": 1
+          },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": {
+              "entity": "player"
+            },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-03",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 3.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 1.46,
+      "endSeconds": 2.07,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=55",
+        "lowpass=f=8000",
+        "acompressor=threshold=0.035:ratio=4:attack=0.2:release=80:knee=4:makeup=1",
+        "atrim=start=1.46:end=2.07",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/boots-metal-03.ogg",
+      "durationSeconds": 0.61,
+      "frames": 29280,
+      "loop": null,
+      "sha256": "e6cbcb6f557e55cfdfc69e5e30f55007cf1945fadb134ac46670301afbb4cc98",
+      "masterSha256": "469369186555b50f6e9726191efebfbfa34bd1f3716246cef36241bd7cc8d21a",
+      "sourceSha256": "1b68e382818a7b45abf0a591d5625f95094d93fa5f857c43e70e87cbce840a69",
+      "gainDb": 8.440000000000001,
+      "measured": {
+        "durationSeconds": 0.6165,
+        "bytes": 6342,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -37.17,
+        "truePeakDbtp": -11.9,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": {
+            "field": "variant",
+            "equals": 2
+          },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": {
+              "entity": "player"
+            },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "boots-metal-04",
+      "source": "boots-metal.wav",
+      "category": "footstep",
+      "description": "Solid deck work-boot step, independent source strike 4.",
+      "channels": 1,
+      "filters": ["highpass=f=55", "lowpass=f=8000"],
+      "startSeconds": 2.24,
+      "endSeconds": 2.85,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=55",
+        "lowpass=f=8000",
+        "acompressor=threshold=0.035:ratio=4:attack=0.2:release=80:knee=4:makeup=1",
+        "atrim=start=2.24:end=2.85",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/boots-metal-04.ogg",
+      "durationSeconds": 0.61,
+      "frames": 29280,
+      "loop": null,
+      "sha256": "88deefc9fdcb9c74ac1cdd5c8c18821d66af282112df8aba26a378bc5e4ab0cf",
+      "masterSha256": "fde5e24392e99e0383b58676d2e88388be8ef6fe5d7769df736705d1a1d6dc7e",
+      "sourceSha256": "1b68e382818a7b45abf0a591d5625f95094d93fa5f857c43e70e87cbce840a69",
+      "gainDb": 7.27,
+      "measured": {
+        "durationSeconds": 0.6165,
+        "bytes": 6098,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -38.83,
+        "truePeakDbtp": -11.99,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.player.step",
+          "when": {
+            "field": "variant",
+            "equals": 3
+          },
+          "volume": 0.55,
+          "cooldownTicks": 8,
+          "maxVoices": 2,
+          "spatial": {
+            "target": {
+              "entity": "player"
+            },
+            "refDistance": 2,
+            "maxDistance": 10,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-step-01",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Heavy articulated support placement, distinct first strike.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7800"],
+      "startSeconds": 0.21,
+      "endSeconds": 1.18,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=35",
+        "lowpass=f=7800",
+        "acompressor=threshold=0.03:ratio=4:attack=0.5:release=140:knee=4:makeup=1",
+        "atrim=start=0.21:end=1.18",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/threat-step-01.ogg",
+      "durationSeconds": 0.97,
+      "frames": 46560,
+      "loop": null,
+      "sha256": "d6a4ead5cc239387e268d419be99955b9db771580c003cfefdb9a2c6af1b68a8",
+      "masterSha256": "b0972936ed74bae539797970ab91b481cc2a1acde67b15d00aa97323c5fc1e4d",
+      "sourceSha256": "a6a2d884676dcb993ab3f6ab692440437ee5a7d8107886b66a7f967f37c6e30e",
+      "gainDb": 9.629999999999999,
+      "measured": {
+        "durationSeconds": 0.9765,
+        "bytes": 9297,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -26.78,
+        "truePeakDbtp": -10.07,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.threat.step",
+          "when": {
+            "field": "variant",
+            "equals": 0
+          },
+          "volume": 0.85,
+          "cooldownTicks": 10,
+          "maxVoices": 3,
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-step-02",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Heavy articulated support placement, distinct second selected strike.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7800"],
+      "startSeconds": 3.86,
+      "endSeconds": 4.84,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=35",
+        "lowpass=f=7800",
+        "acompressor=threshold=0.03:ratio=4:attack=0.5:release=140:knee=4:makeup=1",
+        "atrim=start=3.86:end=4.84",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/threat-step-02.ogg",
+      "durationSeconds": 0.98,
+      "frames": 47040,
+      "loop": null,
+      "sha256": "d6292aa51c28e994d83e12453ca1beb4744c32371e82d672efcb7b21a1f4bb2b",
+      "masterSha256": "ccdbe8b7d7113976c9c244b7096ba62c3b99ac1d2e16c2515093dc0feeee9174",
+      "sourceSha256": "a6a2d884676dcb993ab3f6ab692440437ee5a7d8107886b66a7f967f37c6e30e",
+      "gainDb": 11.66,
+      "measured": {
+        "durationSeconds": 0.9865,
+        "bytes": 9550,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -24.89,
+        "truePeakDbtp": -9.61,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.threat.step",
+          "when": {
+            "field": "variant",
+            "equals": 1
+          },
+          "volume": 0.85,
+          "cooldownTicks": 10,
+          "maxVoices": 3,
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-step-03",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Heavy articulated support placement, distinct third selected strike.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7800"],
+      "startSeconds": 6,
+      "endSeconds": 6.9,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=35",
+        "lowpass=f=7800",
+        "acompressor=threshold=0.03:ratio=4:attack=0.5:release=140:knee=4:makeup=1",
+        "atrim=start=6:end=6.9",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/threat-step-03.ogg",
+      "durationSeconds": 0.9,
+      "frames": 43200,
+      "loop": null,
+      "sha256": "daa36e291b24bb8b79c5646ce5dc11b0e9d167ced749ebf1f7379daccd532956",
+      "masterSha256": "dbffc2a679bc90487f44e6a0e204ba54f91b9f445f85aea47053b36bc50e4cb4",
+      "sourceSha256": "a6a2d884676dcb993ab3f6ab692440437ee5a7d8107886b66a7f967f37c6e30e",
+      "gainDb": 10.940000000000001,
+      "measured": {
+        "durationSeconds": 0.9065,
+        "bytes": 9004,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -24.98,
+        "truePeakDbtp": -9.93,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.threat.step",
+          "when": {
+            "field": "variant",
+            "equals": 2
+          },
+          "volume": 0.85,
+          "cooldownTicks": 10,
+          "maxVoices": 3,
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-search",
+      "source": "responder-search.wav",
+      "category": "threat",
+      "description": "Inspection head servo and ratchet movement, dry mono to follow the responder.",
+      "channels": 1,
+      "filters": ["highpass=f=100", "lowpass=f=7600"],
+      "startSeconds": 0.15,
+      "endSeconds": 3.9,
+      "releaseSeconds": 0.25,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -11,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=100",
+        "lowpass=f=7600",
+        "acompressor=threshold=0.03:ratio=4:attack=0.5:release=140:knee=4:makeup=1",
+        "atrim=start=0.15:end=3.9",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/threat-search.ogg",
+      "durationSeconds": 3.75,
+      "frames": 180000,
+      "loop": null,
+      "sha256": "3b8be7af34f1ddb19496f2af6365d3bb72e1ee15e7312d6f6f5a56b311d1ac15",
+      "masterSha256": "ec173ef33326e13ee9afa63799d4b3502e5b050b3899d706c2b56c458dda6e2c",
+      "sourceSha256": "30e157d6ecf29073271c1c6aac5e38dc41e3aae30257a1e881ec8de866945e15",
+      "gainDb": 10.260000000000002,
+      "measured": {
+        "durationSeconds": 3.7565,
+        "bytes": 39296,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -36.18,
+        "truePeakDbtp": -10.99,
+        "loudnessRangeLu": 1.2,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0.395896
+          },
+          {
+            "boundary": "end",
+            "seconds": 0.877896
+          },
+          {
+            "boundary": "start",
+            "seconds": 1.219062
+          },
+          {
+            "boundary": "end",
+            "seconds": 1.801375
+          },
+          {
+            "boundary": "start",
+            "seconds": 2.066625
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.632542
+          },
+          {
+            "boundary": "start",
+            "seconds": 2.903938
+          },
+          {
+            "boundary": "end",
+            "seconds": 3.560792
+          }
+        ]
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.threat.search",
+          "volume": 0.85,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2.5,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.threat.suspicious",
+          "volume": 0.65,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2.5,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.rescue.called",
+          "volume": 0.7,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2.5,
+            "maxDistance": 28,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "threat-alert",
+      "source": "responder-search.wav",
+      "category": "threat",
+      "description": "More sustained mechanical head movement, not a musical stinger or roar.",
+      "channels": 1,
+      "filters": ["highpass=f=70", "lowpass=f=7600"],
+      "startSeconds": 4.1,
+      "endSeconds": 7.2,
+      "releaseSeconds": 0.3,
+      "targetLufs": -24,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=70",
+        "lowpass=f=7600",
+        "acompressor=threshold=0.03:ratio=4:attack=0.5:release=140:knee=4:makeup=1",
+        "atrim=start=4.1:end=7.2",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/threat-alert.ogg",
+      "durationSeconds": 3.1,
+      "frames": 148800,
+      "loop": null,
+      "sha256": "a0589788f63021a08e9ace4e593f45a7e2f9bf0349ee462d047b4bbfb62aff2a",
+      "masterSha256": "51eace270a8d093cf379122bcc6dbe5f08ab69a296d1e7519db60fb78117a578",
+      "sourceSha256": "30e157d6ecf29073271c1c6aac5e38dc41e3aae30257a1e881ec8de866945e15",
+      "gainDb": 11.11,
+      "measured": {
+        "durationSeconds": 3.1065,
+        "bytes": 30839,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -34.55,
+        "truePeakDbtp": -9.94,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0
+          },
+          {
+            "boundary": "end",
+            "seconds": 0.316104
+          },
+          {
+            "boundary": "start",
+            "seconds": 0.574896
+          },
+          {
+            "boundary": "end",
+            "seconds": 1.195188
+          },
+          {
+            "boundary": "start",
+            "seconds": 1.471937
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.017187
+          },
+          {
+            "boundary": "start",
+            "seconds": 2.2965
+          },
+          {
+            "boundary": "end",
+            "seconds": 3.1
+          }
+        ]
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.threat.awakened",
+          "volume": 0.8,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2.5,
+            "maxDistance": 30,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.threat.chase",
+          "volume": 0.85,
+          "cooldownTicks": 300,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2.5,
+            "maxDistance": 30,
+            "rolloffFactor": 1
+          }
+        },
+        {
+          "event": "horror.threat.warning",
+          "volume": 0.65,
+          "cooldownTicks": 480,
+          "maxVoices": 1,
+          "voiceGroup": "responder-servo",
+          "spatial": {
+            "target": {
+              "entity": "responder"
+            },
+            "refDistance": 2.5,
+            "maxDistance": 30,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "recorder-handle",
+      "source": "recorder-handling.wav",
+      "category": "interaction",
+      "description": "Two small physical recorder transport/latch movements.",
+      "channels": 1,
+      "filters": ["highpass=f=120", "lowpass=f=8500"],
+      "startSeconds": 1.94,
+      "endSeconds": 2.95,
+      "targetLufs": -28,
+      "maxTruePeakDbtp": -15,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=120",
+        "lowpass=f=8500",
+        "acompressor=threshold=0.04:ratio=3:attack=0.2:release=60:knee=4:makeup=1",
+        "atrim=start=1.94:end=2.95",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/recorder-handle.ogg",
+      "durationSeconds": 1.01,
+      "frames": 48480,
+      "loop": null,
+      "sha256": "422416e38a93bfdad5b3d9bc95dbeac46c4ce680b988884c447c3b655ec2f0a6",
+      "masterSha256": "5281717558cc2dcc54ca96200525bf6e08e4a1dc283e30b5a7c52fb3737958ed",
+      "sourceSha256": "856215914fbeda763876b687498c142a6713944f37962741dcb2f19a06a09087",
+      "gainDb": 3.2600000000000016,
+      "measured": {
+        "durationSeconds": 1.0165,
+        "bytes": 11014,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -40.45,
+        "truePeakDbtp": -14.94,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0.195792
+          },
+          {
+            "boundary": "end",
+            "seconds": 0.579937
+          }
+        ]
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.triage.played",
+          "volume": 0.5,
+          "cooldownTicks": 90,
+          "maxVoices": 1
+        },
+        {
+          "event": "horror.recorder.recovered",
+          "volume": 0.5,
+          "cooldownTicks": 90,
+          "maxVoices": 1
+        }
+      ]
+    },
+    {
+      "id": "interact-click",
+      "source": "recorder-handling.wav",
+      "category": "interaction",
+      "description": "A physical latch/button click, no oscillator UI beep.",
+      "channels": 1,
+      "filters": ["highpass=f=120", "lowpass=f=8500"],
+      "startSeconds": 0.21,
+      "endSeconds": 0.75,
+      "targetLufs": -28,
+      "maxTruePeakDbtp": -15,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=120",
+        "lowpass=f=8500",
+        "acompressor=threshold=0.04:ratio=3:attack=0.2:release=60:knee=4:makeup=1",
+        "atrim=start=0.21:end=0.75",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/interact-click.ogg",
+      "durationSeconds": 0.54,
+      "frames": 25920,
+      "loop": null,
+      "sha256": "5a67580f0200c4ccd2834c96fb2ce6cd86c51edb074885db991a0d4c8a680f98",
+      "masterSha256": "42aebc68f882d2bf57aa7447c0cb4ce4f8f61252bfc415d91d2aec4e4982f715",
+      "sourceSha256": "856215914fbeda763876b687498c142a6713944f37962741dcb2f19a06a09087",
+      "gainDb": 3.539999999999999,
+      "measured": {
+        "durationSeconds": 0.5465,
+        "bytes": 6226,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -35.62,
+        "truePeakDbtp": -15.04,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0.164708
+          },
+          {
+            "boundary": "end",
+            "seconds": 0.54
+          }
+        ]
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.fuse.taken",
+          "volume": 0.6,
+          "cooldownTicks": 12,
+          "maxVoices": 1
+        },
+        {
+          "event": "horror.bus.isolated",
+          "volume": 0.65,
+          "cooldownTicks": 12,
+          "maxVoices": 1
+        },
+        {
+          "event": "horror.arrival.read",
+          "volume": 0.45,
+          "cooldownTicks": 12,
+          "maxVoices": 1
+        },
+        {
+          "event": "horror.maintenance.read",
+          "volume": 0.45,
+          "cooldownTicks": 12,
+          "maxVoices": 1
+        },
+        {
+          "event": "horror.interaction.denied",
+          "volume": 0.5,
+          "cooldownTicks": 12,
+          "maxVoices": 1
+        },
+        {
+          "event": "horror.flashlight.changed",
+          "volume": 0.4,
+          "cooldownTicks": 6,
+          "maxVoices": 1
+        }
+      ]
+    },
+    {
+      "id": "coolant-release",
+      "source": "airlock-cycle.wav",
+      "category": "mechanism",
+      "description": "Controlled pressure wash and valve mechanism, not explosive decompression.",
+      "channels": 1,
+      "filters": ["highpass=f=90", "lowpass=f=5800"],
+      "startSeconds": 4.2,
+      "endSeconds": 8.1,
+      "releaseSeconds": 0.7,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=90",
+        "lowpass=f=5800",
+        "acompressor=threshold=0.025:ratio=3:attack=2:release=180:knee=4:makeup=1",
+        "atrim=start=4.2:end=8.1",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/coolant-release.ogg",
+      "durationSeconds": 3.9,
+      "frames": 187200,
+      "loop": null,
+      "sha256": "9bf915466320820b5f686156181c31dc2bfd3f69880075c9a54c699282de6528",
+      "masterSha256": "2c50d86ad58cd4cb065b6bc79fbb96af33ace89df7c946b2287596fa7b6a3580",
+      "sourceSha256": "fde015f6fbc7a018b1215b52416a7f59c1ffff09bb0fcced33676bb1f70aaa48",
+      "gainDb": 10.630000000000003,
+      "measured": {
+        "durationSeconds": 3.9065,
+        "bytes": 39248,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -26.02,
+        "truePeakDbtp": -11.89,
+        "loudnessRangeLu": 2,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "horror.coolant.isolated",
+          "volume": 0.65,
+          "cooldownTicks": 180,
+          "maxVoices": 1,
+          "spatial": {
+            "target": {
+              "entity": "coolant-valve"
+            },
+            "refDistance": 2,
+            "maxDistance": 16,
+            "rolloffFactor": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "airlock-seal",
+      "source": "airlock-cycle.wav",
+      "category": "mechanism",
+      "description": "Hatch bolts, gasket compression and settling pressure at extraction.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=7000"],
+      "startSeconds": 0.05,
+      "endSeconds": 13.5,
+      "releaseSeconds": 1.2,
+      "targetLufs": -25,
+      "maxTruePeakDbtp": -10,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=35",
+        "lowpass=f=7000",
+        "acompressor=threshold=0.025:ratio=3:attack=2:release=180:knee=4:makeup=1",
+        "atrim=start=0.05:end=13.5",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/airlock-seal.ogg",
+      "durationSeconds": 13.45,
+      "frames": 645600,
+      "loop": null,
+      "sha256": "61adbcbedb4b7f64032eaf3c424833bb474e975bc433fb3cce858a2442b5416c",
+      "masterSha256": "97ff8e5acab91dd360e12a1a6fdc574fb372986ac3e84ef8cd274b6bdcd8d9f4",
+      "sourceSha256": "fde015f6fbc7a018b1215b52416a7f59c1ffff09bb0fcced33676bb1f70aaa48",
+      "gainDb": 3.8200000000000003,
+      "measured": {
+        "durationSeconds": 13.4565,
+        "bytes": 127852,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -31.33,
+        "truePeakDbtp": -10.07,
+        "loudnessRangeLu": 2.2,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 0.898187
+          },
+          {
+            "boundary": "end",
+            "seconds": 1.202896
+          },
+          {
+            "boundary": "start",
+            "seconds": 8.864604
+          },
+          {
+            "boundary": "end",
+            "seconds": 9.400292
+          },
+          {
+            "boundary": "start",
+            "seconds": 12.940604
+          },
+          {
+            "boundary": "end",
+            "seconds": 13.45
+          }
+        ]
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "level.completed",
+          "volume": 0.7,
+          "cooldownTicks": 600,
+          "maxVoices": 1
+        }
+      ]
+    },
+    {
+      "id": "responder-stop",
+      "source": "responder-steps.wav",
+      "category": "threat",
+      "description": "Muted final machine placement; no scream or abrupt full-scale death sting.",
+      "channels": 1,
+      "filters": ["highpass=f=35", "lowpass=f=4500"],
+      "startSeconds": 10.63,
+      "endSeconds": 11.5,
+      "releaseSeconds": 0.2,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 80,
+      "processingFilters": [
+        "highpass=f=35",
+        "lowpass=f=4500",
+        "acompressor=threshold=0.03:ratio=4:attack=0.5:release=140:knee=4:makeup=1",
+        "atrim=start=10.63:end=11.5",
+        "asetpts=PTS-STARTPTS"
+      ],
+      "url": "runtime/responder-stop.ogg",
+      "durationSeconds": 0.87,
+      "frames": 41760,
+      "loop": null,
+      "sha256": "c76a79522efb2dc9b87d5be7c11bc3305c2dbfee6ff6bbffa6110c27ca766ee4",
+      "masterSha256": "9b518e7967c4fc3639f7cdfc4cb737bfa71428de48158ecc3d406b384b32bf91",
+      "sourceSha256": "a6a2d884676dcb993ab3f6ab692440437ee5a7d8107886b66a7f967f37c6e30e",
+      "gainDb": 9.649999999999999,
+      "measured": {
+        "durationSeconds": 0.8765,
+        "bytes": 8968,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -28.86,
+        "truePeakDbtp": -12.17,
+        "loudnessRangeLu": 0,
+        "silenceCandidates": []
+      },
+      "humanListening": "pending",
+      "bindings": [
+        {
+          "event": "player.died",
+          "volume": 0.6,
+          "cooldownTicks": 600,
+          "maxVoices": 1
+        }
+      ]
+    }
+  ]
+}

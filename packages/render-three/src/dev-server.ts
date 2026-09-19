@@ -36,6 +36,8 @@ import {
 import type { PreparedPresentation } from './presentation/files.js';
 import { isAssetPath } from './presentation/diagnostics.js';
 import { resolveVendorPath } from './vendor.js';
+import { FrameClients, validFrameClient } from './frame-clients.js';
+import type { FrameClientState, FrameInputStatus } from './frame-clients.js';
 import type {
   ControlRequest,
   EventLine,
@@ -105,6 +107,7 @@ interface GameRuntime {
   session: LiveSession;
   lastFrameAt: number | undefined;
   eventCursor: number;
+  clients: FrameClients;
   generation: number;
   presentation?: PreparedPresentation;
 }
@@ -220,6 +223,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       // Only /frame starts a presentation clock; legacy API priming remains unchanged.
       lastFrameAt: primeLegacyClock && presentation === undefined ? clock() : undefined,
       eventCursor: 0,
+      clients: new FrameClients(),
       generation: 0,
       presentation,
     };
@@ -242,26 +246,36 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const frameBody = (
     runtime: GameRuntime,
     steps: number,
-    options: { drainEvents?: boolean; withHash?: boolean; withEventHistory?: boolean } = {},
+    options: {
+      drainEvents?: boolean;
+      withHash?: boolean;
+      withEventHistory?: boolean;
+      client?: FrameClientState;
+      inputStatus?: FrameInputStatus;
+    } = {},
   ): FrameResponse => {
     let fresh: readonly GameEvent[] = [];
     const history =
       options.drainEvents === true || options.withEventHistory === true
         ? runtime.session.world.events.history()
         : [];
-    const offset = runtime.eventCursor;
+    const cursor = options.client ?? runtime;
+    const offset = cursor.eventCursor;
     if (options.drainEvents === true) {
-      fresh = history.slice(runtime.eventCursor);
-      runtime.eventCursor = history.length;
+      fresh = history.slice(cursor.eventCursor);
+      cursor.eventCursor = history.length;
     }
     return {
       tick: runtime.session.tick,
       steps,
       paused: runtime.session.paused,
+      ...(options.inputStatus === undefined ? {} : { inputStatus: options.inputStatus }),
       ...(options.withHash === true ? { hash: runtime.session.hash() } : {}),
       snapshot: runtime.session.snapshot(),
       events: toEventLines(fresh, runtime.presentation !== undefined, offset),
-      ...(runtime.presentation === undefined ? {} : { generation: runtime.generation }),
+      ...(runtime.presentation === undefined && options.client === undefined
+        ? {}
+        : { generation: runtime.generation }),
       ...(options.withEventHistory === true ? { eventHistory: toEventLines(history, true) } : {}),
     };
   };
@@ -461,6 +475,16 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       if (endpoint === 'frame' && request.method === 'POST') {
         const body = await readJsonBody<FrameRequest>(request);
         if (
+          body?.input !== undefined &&
+          (body.input === null ||
+            typeof body.input !== 'object' ||
+            !Number.isSafeInteger(body.input.seq) ||
+            body.input.seq < 0)
+        ) {
+          sendJson(response, 400, { error: 'input.seq must be a nonnegative safe integer.' });
+          return;
+        }
+        if (
           body?.presentationGeneration !== undefined &&
           body.presentationGeneration !== null &&
           (!Number.isSafeInteger(body.presentationGeneration) || body.presentationGeneration < 0)
@@ -470,9 +494,42 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
           });
           return;
         }
-        if (body?.input !== undefined) runtime.session.input.submit(body.input);
-        // Wall-clock in, whole fixed ticks out. The simulation never sees a variable dt.
         const now = clock();
+        let client: FrameClientState | undefined;
+        let inputStatus: FrameInputStatus | undefined;
+        if (body?.client !== undefined) {
+          if (
+            !validFrameClient(body.client) ||
+            !Number.isSafeInteger(body.input?.seq) ||
+            body.input.seq < 0
+          ) {
+            sendJson(response, 400, {
+              error:
+                'client requires a bounded page id, boolean claim, observed generation and nonnegative safe input.seq.',
+            });
+            return;
+          }
+          client = runtime.clients.client(body.client.id, now, runtime.session.input);
+          if (client === undefined) {
+            sendJson(response, 429, {
+              error:
+                'This game has 32 recent browser clients. Close unused views and retry after idle clients expire.',
+            });
+            return;
+          }
+          inputStatus = runtime.clients.submit(
+            runtime.session.input,
+            client,
+            body.client,
+            body.input,
+            runtime.generation,
+            now,
+          );
+        } else if (body?.input !== undefined) {
+          const status = runtime.clients.submitLegacy(runtime.session.input, body.input, now);
+          if (!status.accepted) inputStatus = status;
+        } else runtime.clients.expire(now, runtime.session.input);
+        // Wall-clock in, whole fixed ticks out. The simulation never sees a variable dt.
         const elapsed =
           runtime.lastFrameAt === undefined
             ? 0
@@ -484,6 +541,8 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
           200,
           frameBody(runtime, steps, {
             drainEvents: true,
+            ...(client === undefined ? {} : { client }),
+            ...(inputStatus === undefined ? {} : { inputStatus }),
             withEventHistory:
               runtime.presentation !== undefined &&
               body?.presentationGeneration !== undefined &&
@@ -507,6 +566,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
           for (let i = 0; i < ticks; i++) runtime.session.step();
         } else if (command === 'restart') {
           runtime.session.restart();
+          runtime.clients.reset();
           runtime.eventCursor = 0;
           runtime.generation++;
           if (runtime.presentation !== undefined) runtime.lastFrameAt = undefined;

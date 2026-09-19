@@ -1,0 +1,3 @@
+# A straight rush cannot bypass the observation quarantine.
+axis Forward 1 0..1800
+hold Interact 1600..1700

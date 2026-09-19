@@ -1,0 +1,77 @@
+{
+  "inventoryName": "score",
+  "cues": [
+    {
+      "id": "score-explore",
+      "source": "null-meridian-score-9182604-r2.flac",
+      "category": "score",
+      "description": "Sparse opening pressure and distant harmonics; original ACE-Step source, offline loop edit.",
+      "channels": 2,
+      "filters": ["highpass=f=30", "lowpass=f=10500"],
+      "startSeconds": 5,
+      "endSeconds": 67,
+      "loopOverlapSeconds": 6,
+      "targetLufs": -29,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 128,
+      "layer": {
+        "volume": 0.6,
+        "fadeSeconds": 3,
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "explore"
+        }
+      }
+    },
+    {
+      "id": "score-threat",
+      "source": "null-meridian-score-9182604-r2.flac",
+      "category": "score",
+      "description": "Middle tension section, maintained at a bounded level rather than a jump-scare sting.",
+      "channels": 2,
+      "filters": ["highpass=f=35", "lowpass=f=10000"],
+      "startSeconds": 63,
+      "endSeconds": 119,
+      "loopOverlapSeconds": 6,
+      "targetLufs": -27,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 128,
+      "layer": {
+        "volume": 0.65,
+        "fadeSeconds": 2,
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "threat"
+        }
+      }
+    },
+    {
+      "id": "score-escape",
+      "source": "null-meridian-score-9182604-r2.flac",
+      "category": "score",
+      "description": "Late unresolved motion from the same original composition; no new generated song.",
+      "channels": 2,
+      "filters": ["highpass=f=35", "lowpass=f=10500"],
+      "startSeconds": 112,
+      "endSeconds": 171,
+      "loopOverlapSeconds": 5,
+      "targetLufs": -26,
+      "maxTruePeakDbtp": -12,
+      "bitrateKbps": 128,
+      "layer": {
+        "volume": 0.6,
+        "fadeSeconds": 3,
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "escape"
+        }
+      }
+    }
+  ]
+}

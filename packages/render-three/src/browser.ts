@@ -907,9 +907,40 @@ export function describeDeadline(
   };
 }
 
+export class CdpDisconnectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CdpDisconnectedError';
+  }
+}
+
+export class CdpProtocolError extends Error {
+  constructor(
+    readonly method: string,
+    readonly protocolMessage: string,
+    readonly code?: number,
+  ) {
+    super(`[cdp] ${method} failed${code === undefined ? '' : ` (${code})`}: ${protocolMessage}`);
+    this.name = 'CdpProtocolError';
+  }
+}
+
+export interface CdpEventObserver {
+  event(method: string, params: Readonly<Record<string, unknown>>): void;
+  disconnected(error: CdpDisconnectedError): void;
+}
+
 export class CdpSession {
   readonly #socket: WebSocket;
-  readonly #pending = new Map<number, { ok: (value: unknown) => void; fail: (e: Error) => void }>();
+  readonly #pending = new Map<
+    number,
+    {
+      method: string;
+      ok: (value: unknown) => void;
+      fail: (e: Error) => void;
+    }
+  >();
+  readonly #observers = new Set<CdpEventObserver>();
   readonly #diagnostics: string[] = [];
   readonly #warnings: string[] = [];
   /**
@@ -926,16 +957,20 @@ export class CdpSession {
    */
   readonly #roundTrips: number[] = [];
   #nextId = 1;
+  #closed = false;
 
   private constructor(socket: WebSocket) {
     this.#socket = socket;
+    socket.addEventListener('close', (event) =>
+      this.#disconnected(`CDP socket closed (code ${event.code}, clean ${event.wasClean}).`),
+    );
     socket.addEventListener('message', (event: MessageEvent) => {
       const message = JSON.parse(String(event.data)) as {
         id?: number;
         method?: string;
         params?: Record<string, unknown>;
         result?: unknown;
-        error?: { message: string };
+        error?: { message: string; code?: number };
       };
       // CDP multiplexes command replies (which carry `id`) and events (which carry `method`) down
       // one socket. Events used to be dropped here, which meant a page that threw on load was
@@ -943,15 +978,37 @@ export class CdpSession {
       // being waited on — the timeout said only what was awaited, never why it never arrived.
       if (message.method !== undefined) {
         this.#record(message.method, message.params);
+        for (const observer of this.#observers)
+          observer.event(message.method, message.params ?? {});
         return;
       }
       if (message.id === undefined) return;
       const waiter = this.#pending.get(message.id);
       if (waiter === undefined) return;
       this.#pending.delete(message.id);
-      if (message.error !== undefined) waiter.fail(new Error(message.error.message));
+      if (message.error !== undefined)
+        waiter.fail(new CdpProtocolError(waiter.method, message.error.message, message.error.code));
       else waiter.ok(message.result);
     });
+  }
+
+  #disconnected(message: string): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    const error = new CdpDisconnectedError(message);
+    for (const waiter of this.#pending.values()) waiter.fail(error);
+    this.#pending.clear();
+    for (const observer of this.#observers) observer.disconnected(error);
+    this.#observers.clear();
+  }
+
+  /** Observe future protocol events only; dispose the subscription when its operation finishes. */
+  observe(observer: CdpEventObserver): () => void {
+    if (this.#closed) throw new CdpDisconnectedError('CDP session is closed.');
+    this.#observers.add(observer);
+    return () => {
+      this.#observers.delete(observer);
+    };
   }
 
   /** Connect to a CDP WebSocket endpoint. */
@@ -1082,6 +1139,7 @@ export class CdpSession {
     params: object = {},
     timeoutMs = TRANSPORT_TIMEOUT_MS,
   ): Promise<T> {
+    if (this.#closed) return Promise.reject(new CdpDisconnectedError('CDP session is closed.'));
     const id = this.#nextId++;
     return new Promise<T>((ok, fail) => {
       const startedAt = Date.now();
@@ -1127,6 +1185,7 @@ export class CdpSession {
       // is what callers see, and a stray timer outliving the run would be its own defect.
       timer.unref?.();
       this.#pending.set(id, {
+        method,
         ok: (value) => {
           clearTimeout(timer);
           this.#roundTrips.push(Date.now() - startedAt);
@@ -1138,12 +1197,19 @@ export class CdpSession {
           fail(e);
         },
       });
-      this.#socket.send(JSON.stringify({ id, method, params }));
+      try {
+        this.#socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        this.#pending.delete(id);
+        clearTimeout(timer);
+        fail(error);
+      }
     });
   }
 
   /** Close the socket. */
   close(): void {
+    this.#disconnected('CDP session was closed by its owner.');
     this.#socket.close();
   }
 }
@@ -1237,32 +1303,46 @@ export async function describePage(cdp: CdpSession): Promise<string> {
   }
 }
 
-/** Virtual key codes for every key the binding tables can name. */
-const VIRTUAL_KEYS: Readonly<Record<string, { key: string; vk: number }>> = {
-  KeyA: { key: 'a', vk: 65 },
-  KeyD: { key: 'd', vk: 68 },
-  KeyF: { key: 'f', vk: 70 },
-  KeyS: { key: 's', vk: 83 },
-  KeyW: { key: 'w', vk: 87 },
+/** Non-alphanumeric keys supported by the browser input driver. */
+const VIRTUAL_KEYS: Readonly<
+  Record<string, { key: string; vk: number; location?: number; text?: string }>
+> = {
+  ShiftLeft: { key: 'Shift', vk: 16, location: 1 },
+  ShiftRight: { key: 'Shift', vk: 16, location: 2 },
+  ControlLeft: { key: 'Control', vk: 17, location: 1 },
+  ControlRight: { key: 'Control', vk: 17, location: 2 },
+  AltLeft: { key: 'Alt', vk: 18, location: 1 },
+  AltRight: { key: 'Alt', vk: 18, location: 2 },
+  MetaLeft: { key: 'Meta', vk: 91, location: 1 },
+  MetaRight: { key: 'Meta', vk: 92, location: 2 },
+  Escape: { key: 'Escape', vk: 27 },
+  Enter: { key: 'Enter', vk: 13, text: '\r' },
+  Tab: { key: 'Tab', vk: 9 },
+  Backspace: { key: 'Backspace', vk: 8 },
+  Delete: { key: 'Delete', vk: 46 },
   Space: { key: ' ', vk: 32 },
   ArrowUp: { key: 'ArrowUp', vk: 38 },
   ArrowDown: { key: 'ArrowDown', vk: 40 },
   ArrowLeft: { key: 'ArrowLeft', vk: 37 },
   ArrowRight: { key: 'ArrowRight', vk: 39 },
   Home: { key: 'Home', vk: 36 },
-  // The three session controls (`SESSION_CONTROLS` in bindings.ts). They are not gameplay input,
-  // which is why they were absent: the screenshot capture drives pause/step through the dev
-  // server's `/control` endpoint instead of the keyboard. The static site has no such endpoint —
-  // its pages handle P, `.` and R locally — so the only way to check that they work is to press
-  // them, and the only way to press them is for the mapping to exist.
-  KeyP: { key: 'p', vk: 80 },
-  KeyR: { key: 'r', vk: 82 },
   Period: { key: '.', vk: 190 },
 };
 
 /** Dispatch a real key event into the page. */
-export async function key(cdp: CdpSession, code: string, down: boolean): Promise<void> {
-  const spec = VIRTUAL_KEYS[code];
+export async function key(
+  cdp: { send(method: string, params?: object): Promise<unknown> },
+  code: string,
+  down: boolean,
+): Promise<void> {
+  const letter = /^Key([A-Z])$/.exec(code)?.[1];
+  const digit = /^Digit([0-9])$/.exec(code)?.[1];
+  const spec: { key: string; vk: number; location?: number; text?: string } | undefined =
+    letter !== undefined
+      ? { key: letter.toLowerCase(), vk: letter.charCodeAt(0), location: 0 }
+      : digit !== undefined
+        ? { key: digit, vk: digit.charCodeAt(0), location: 0 }
+        : VIRTUAL_KEYS[code];
   if (spec === undefined) {
     throw new Error(
       `[aegis:render-three] no virtual-key mapping for "${code}". Add it to VIRTUAL_KEYS ` +
@@ -1275,7 +1355,8 @@ export async function key(cdp: CdpSession, code: string, down: boolean): Promise
     key: spec.key,
     windowsVirtualKeyCode: spec.vk,
     nativeVirtualKeyCode: spec.vk,
-    text: down && spec.key.length === 1 ? spec.key : undefined,
+    ...(spec.location === undefined || spec.location === 0 ? {} : { location: spec.location }),
+    text: down ? (spec.text ?? (spec.key.length === 1 ? spec.key : undefined)) : undefined,
   });
 }
 
@@ -1592,6 +1673,8 @@ export interface LaunchedBrowser {
 
 /** Options for {@link launchBrowser}. */
 export interface LaunchOptions {
+  /** Software remains the reproducible CI default; hardware is opt-in for actual GPU measurements. */
+  graphics?: 'software' | 'hardware';
   /** Show a real window instead of running headless. */
   headed?: boolean;
   /**
@@ -1641,8 +1724,9 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Launch
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-extensions',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
+    ...(options.graphics === 'hardware'
+      ? []
+      : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']),
     // These four remove Chrome's background/occlusion throttles. **They are NOT what makes
     // `windows-latest` paint, and believing they were cost two landings and four CI runs.**
     //

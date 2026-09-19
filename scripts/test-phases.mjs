@@ -94,6 +94,54 @@ export function importsBrowserLauncher(path, source) {
 }
 
 /**
+ * Native high-resolution clock references in executable syntax, not quoted browser programs.
+ * Aliased perf_hooks imports count; conservatively isolate clock reads as well as direct calls.
+ * @param {string} path
+ * @param {string} source
+ * @returns {boolean}
+ */
+export function usesPerformanceClock(path, source) {
+  const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const clocks = new Set(['performance']);
+  const namespaces = new Set(['globalThis', 'window']);
+  for (const statement of parsed.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+      continue;
+    if (!['node:perf_hooks', 'perf_hooks'].includes(statement.moduleSpecifier.text)) continue;
+    const binding = statement.importClause?.namedBindings;
+    if (binding !== undefined && ts.isNamespaceImport(binding)) namespaces.add(binding.name.text);
+    if (binding !== undefined && ts.isNamedImports(binding)) {
+      for (const item of binding.elements) {
+        if ((item.propertyName ?? item.name).text === 'performance') clocks.add(item.name.text);
+      }
+    }
+  }
+  /** @param {import('typescript').Node} node @returns {boolean} */
+  function visit(node) {
+    const receiver =
+      ts.isPropertyAccessExpression(node) && node.name.text === 'now'
+        ? node.expression
+        : ts.isElementAccessExpression(node) &&
+            ts.isStringLiteral(node.argumentExpression) &&
+            node.argumentExpression.text === 'now'
+          ? node.expression
+          : undefined;
+    if (receiver !== undefined) {
+      if (ts.isIdentifier(receiver) && clocks.has(receiver.text)) return true;
+      if (
+        ts.isPropertyAccessExpression(receiver) &&
+        receiver.name.text === 'performance' &&
+        ts.isIdentifier(receiver.expression) &&
+        namespaces.has(receiver.expression.text)
+      )
+        return true;
+    }
+    return ts.forEachChild(node, visit) === true;
+  }
+  return visit(parsed);
+}
+
+/**
  * Spec paths, mirroring `vitest.config.ts`'s `include`.
  *
  * Kept honest by `test/browser-specs-run-solo.test.ts`, which asserts the corpus this selects is
@@ -148,6 +196,22 @@ export function browserSpecs(root, read, paths) {
     );
   }
   return found;
+}
+
+/**
+ * Timing acceptance must not compete with this runner's parallel worker pool. The unchanged
+ * FPS ratio measured 0.62 alone and 1.03 under the full shared load: its compute control does
+ * not cancel every form of contention. This phase still runs on hosted Windows (no browser).
+ * @param {string} root
+ * @param {(path: string) => string} read
+ * @param {string[]} [paths]
+ * @returns {string[]}
+ */
+export function timingSpecs(root, read, paths) {
+  return (paths ?? specFiles(root)).filter((path) => {
+    const source = read(path);
+    return !importsBrowserLauncher(path, source) && usesPerformanceClock(path, source);
+  });
 }
 
 /**
@@ -236,20 +300,31 @@ export function testPhases(root, read, platform = process.platform, hosted = isH
   // against a classifier that silently returns every browser spec to the shared pool. Skipping
   // the call on Windows would skip that check exactly where the split matters most.
   const solo = browserSpecs(root, read);
+  const timing = timingSpecs(root, read);
   const phases = [
     {
       name: 'shared',
-      why: 'everything that does not drive a browser, in parallel',
+      why: 'specs without browsers or native timing measurements, in parallel',
       report: '.vitest-report.json',
-      args: solo.flatMap((path) => ['--exclude', path]),
+      args: [...solo, ...timing].flatMap((path) => ['--exclude', path]),
       minFiles: 50,
       minTests: 800,
     },
   ];
+  if (timing.length > 0) {
+    phases.push({
+      name: 'timing',
+      why: `${String(timing.length)} Node timing spec(s), without competing shared workers`,
+      report: '.vitest-report.timing.json',
+      args: [...timing, '--no-file-parallelism'],
+      minFiles: timing.length,
+      minTests: timing.length,
+    });
+  }
   if (soloEnabled(platform, hosted)) {
     phases.push({
       name: 'solo',
-      why: `${String(solo.length)} browser spec(s), one at a time, with the machine to themselves`,
+      why: `${String(solo.length)} browser spec(s), one at a time after the other phases`,
       report: '.vitest-report.solo.json',
       // File parallelism off is the point: the two browser specs were measured overlapping on
       // the runner, each with its own software-rasterising Chrome.

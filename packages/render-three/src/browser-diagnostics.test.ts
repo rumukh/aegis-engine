@@ -925,6 +925,15 @@ describe('a transport deadline says which side of the socket stopped', () => {
     ).toBe('late');
   });
 
+  it('does not infer BLOCKED from the gate failure pair merely because the sibling was quiet', () => {
+    const witness = { ...BAND, maxMs: 207 };
+    expect(witness.maxMs).toBeLessThan(WITNESS_QUIET_LAG_MS);
+    expect(describeWitness(1_999, witness)).toMatch(
+      /neither BLOCKED nor machine-wide starvation is established/,
+    );
+    expect(describeWitness(11_950, witness)).toMatch(/BLOCKED rather than starved of CPU/);
+  });
+
   it('tells a BLOCKED process apart from a box that could not schedule anything', async () => {
     // The fork `cpuRatio` could not resolve, and the one this whole CI investigation has turned on.
     // `0% CPU` is equally true of a process the OS refused to run and of a process sitting inside a
@@ -932,77 +941,87 @@ describe('a transport deadline says which side of the socket stopped', () => {
     // blocking call. Runs 30377421271, 30381542084 and 30390018561 all reported `0% -- NOT
     // SCHEDULED` and none of them could say which, because nothing in this process can observe
     // another one. A sibling Node process on the same box can, and nothing else can.
-    startExternalLagWitness();
-    // The parent's own sampler, without which `maxLagSince` answers over zero samples. The first
-    // draft omitted this and the anti-vacuity arm below caught it: `parent.samples` was 0, so the
-    // disparity ratio would have been computed from a parent that had measured nothing. An arm
-    // asserting the instrument ran is not a formality here — it is the whole difference between
-    // "the parent stalled and the witness did not" and "the parent was never watched".
-    startEventLoopLagMonitor();
-    // Long enough for several emit intervals to land, so both windows below have buckets.
-    await idle(WITNESS_EMIT_INTERVAL_MS * 5);
-
-    const blockedFrom = Date.now();
-    await idle(100);
-    // THE ISOLATING ARM: this process stops dead while the box stays free. That is precisely the
-    // shape being diagnosed, reproduced rather than simulated -- the witness is a real second
-    // process, scheduled by the real OS, and it either keeps time or it does not.
-    block(2_000);
-    await idle(WITNESS_EMIT_INTERVAL_MS * 4);
-
-    const parent = maxLagSince(blockedFrom);
-    const witness = witnessSince(blockedFrom);
-
-    // Anti-vacuity, and it is not a formality: a witness that failed to spawn reports `undefined`,
-    // and every assertion below would otherwise be vacuously satisfiable by a missing instrument.
-    expect(witness).toBeDefined();
-    expect(witness?.buckets ?? 0).toBeGreaterThan(0);
-    expect(witness?.ticks ?? 0).toBeGreaterThan(0);
-    expect(parent.samples).toBeGreaterThan(0);
-
-    // The parent really did stall. Without this the disparity below could be produced by a healthy
-    // parent rather than by a healthy witness. Stated against WITNESS_QUIET_LAG_MS rather than a
-    // literal 1000, because that constant is the floor `describeWitness` answers first: if the
-    // parent did not clear it, the verdict below is "neither was starved" and this case would be
-    // asserting a disparity the function never reached.
-    expect(parent.maxMs).toBeGreaterThanOrEqual(WITNESS_QUIET_LAG_MS);
-
-    // And the witness did not, by a wide margin. Asserted as a RATIO, never as a millisecond bound:
-    // three landings here shipped an absolute threshold that turned out to sit inside its own
-    // quantity's band, and a comparison of two processes on one box at one moment cancels the
-    // machine out. Run 30390018561's gap was 23ms against 74823ms, so this is nowhere near an edge.
-    expect(parent.maxMs).toBeGreaterThan((witness?.maxMs ?? 0) * WITNESS_DISPARITY_RATIO);
-
-    // AND the testimony actually reaches into the stall. Without this the disparity below is not
-    // evidence the sibling kept time — it is evidence the parent stopped listening, which is the
-    // censored-testimony defect. Asserted as a PRECONDITION here rather than left to the classifier,
-    // because a case that silently drifted into the coverage branch would go red on the wording
-    // assertions below and read as a regression in the disparity logic.
-    expect(witness?.newestAgeMs ?? Infinity).toBeLessThan(parent.maxMs);
-
-    // The verdict says so in words, and says the actionable half: look at THIS side.
-    const text = describeWitness(parent.maxMs, witness);
-    expect(text).toMatch(/THE BOX COULD SCHEDULE WORK/);
-    expect(text).toMatch(/BLOCKED rather than starved of CPU/);
-
-    // The witness reports its own CPU share so the claim that it costs nothing is checkable in
-    // every log rather than taken on trust. A witness burning real CPU has become part of the load
-    // it exists to measure.
-    expect(witness?.cpuRatio).toBeDefined();
-    expect(witness?.cpuRatio ?? 1).toBeLessThan(0.25);
-
-    // Printed, not merely asserted. A pass that prints nothing leaves the disparity unknown to
-    // everyone reading the log, which is how three deadlines in this file came to sit inside their
-    // own quantity's band for four landings.
-    console.log(
-      `[witness] parent lagged ${parent.maxMs}ms over ${parent.samples} of ~${parent.expected} ` +
-        `sample(s) while a sibling process on the same box lagged ${witness?.maxMs}ms over ` +
-        `${witness?.ticks} of ~${witness?.expected} reading(s), using ` +
-        `${Math.round((witness?.cpuRatio ?? 0) * 100)}% CPU — ratio ` +
-        `${Math.round(parent.maxMs / Math.max(witness?.maxMs ?? 1, 1))}x`,
+    // The old 2s stimulus required a sibling below 200ms despite a 1000ms quiet floor.
+    // The gate measured 1999ms vs 207ms: legitimately quiet, but not a 10x disparity.
+    const blockMs = 12_000;
+    expect(blockMs - LAG_SAMPLE_INTERVAL_MS).toBeGreaterThan(
+      WITNESS_QUIET_LAG_MS * WITNESS_DISPARITY_RATIO,
     );
+    startExternalLagWitness();
+    try {
+      // The parent's own sampler, without which `maxLagSince` answers over zero samples. The first
+      // draft omitted this and the anti-vacuity arm below caught it: `parent.samples` was 0, so the
+      // disparity ratio would have been computed from a parent that had measured nothing. An arm
+      // asserting the instrument ran is not a formality here — it is the whole difference between
+      // "the parent stalled and the witness did not" and "the parent was never watched".
+      startEventLoopLagMonitor();
+      // Long enough for several emit intervals to land, so both windows below have buckets.
+      await idle(WITNESS_EMIT_INTERVAL_MS * 5);
 
-    stopExternalLagWitness();
+      const blockedFrom = Date.now();
+      await idle(100);
+      // THE ISOLATING ARM: this process stops dead while the box stays free. That is precisely the
+      // shape being diagnosed, reproduced rather than simulated -- the witness is a real second
+      // process, scheduled by the real OS, and it either keeps time or it does not.
+      block(blockMs);
+      await idle(WITNESS_EMIT_INTERVAL_MS * 4);
+
+      const parent = maxLagSince(blockedFrom);
+      const witness = witnessSince(blockedFrom);
+
+      // Anti-vacuity, and it is not a formality: a witness that failed to spawn reports `undefined`,
+      // and every assertion below would otherwise be vacuously satisfiable by a missing instrument.
+      expect(witness).toBeDefined();
+      expect(witness?.buckets ?? 0).toBeGreaterThan(0);
+      expect(witness?.ticks ?? 0).toBeGreaterThan(0);
+      expect(parent.samples).toBeGreaterThan(0);
+
+      // The parent really did stall. Without this the disparity below could be produced by a healthy
+      // parent rather than by a healthy witness. Stated against WITNESS_QUIET_LAG_MS rather than a
+      // literal 1000, because that constant is the floor `describeWitness` answers first: if the
+      // parent did not clear it, the verdict below is "neither was starved" and this case would be
+      // asserting a disparity the function never reached.
+      expect(parent.maxMs).toBeGreaterThanOrEqual(WITNESS_QUIET_LAG_MS);
+
+      // Establish the isolating arm across the classifier's entire quiet band. A genuinely starved
+      // witness is still a failed precondition, never a retry or a weaker attribution threshold.
+      expect(
+        witness?.maxMs ?? Infinity,
+        `The isolating witness was not quiet: ${JSON.stringify({ parent, witness })}`,
+      ).toBeLessThan(WITNESS_QUIET_LAG_MS);
+      expect(parent.maxMs).toBeGreaterThan((witness?.maxMs ?? 0) * WITNESS_DISPARITY_RATIO);
+
+      // AND the testimony actually reaches into the stall. Without this the disparity below is not
+      // evidence the sibling kept time — it is evidence the parent stopped listening, which is the
+      // censored-testimony defect. Asserted as a PRECONDITION here rather than left to the classifier,
+      // because a case that silently drifted into the coverage branch would go red on the wording
+      // assertions below and read as a regression in the disparity logic.
+      expect(witness?.newestAgeMs ?? Infinity).toBeLessThan(parent.maxMs);
+
+      // The verdict says so in words, and says the actionable half: look at THIS side.
+      const text = describeWitness(parent.maxMs, witness);
+      expect(text).toMatch(/THE BOX COULD SCHEDULE WORK/);
+      expect(text).toMatch(/BLOCKED rather than starved of CPU/);
+
+      // The witness reports its own CPU share so the claim that it costs nothing is checkable in
+      // every log rather than taken on trust. A witness burning real CPU has become part of the load
+      // it exists to measure.
+      expect(witness?.cpuRatio).toBeDefined();
+      expect(witness?.cpuRatio ?? 1).toBeLessThan(0.25);
+
+      // Printed, not merely asserted. A pass that prints nothing leaves the disparity unknown to
+      // everyone reading the log, which is how three deadlines in this file came to sit inside their
+      // own quantity's band for four landings.
+      console.log(
+        `[witness] parent lagged ${parent.maxMs}ms over ${parent.samples} of ~${parent.expected} ` +
+          `sample(s) while a sibling process on the same box lagged ${witness?.maxMs}ms over ` +
+          `${witness?.ticks} of ~${witness?.expected} reading(s), using ` +
+          `${Math.round((witness?.cpuRatio ?? 0) * 100)}% CPU — ratio ` +
+          `${Math.round(parent.maxMs / Math.max(witness?.maxMs ?? 1, 1))}x`,
+      );
+    } finally {
+      stopExternalLagWitness();
+    }
   }, 30_000);
 
   it('says nothing at all when there is no witness, rather than reporting a healthy zero', () => {

@@ -1,0 +1,508 @@
+{
+  "schema": "null-meridian-audio-inventory/1",
+  "runtimeCodec": "Ogg Opus",
+  "sampleRate": 48000,
+  "totalRuntimeBytes": 339764,
+  "masterDirectory": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files\\processed-masters",
+  "sourceDirectory": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files\\voice-final-r1\\segments\\final",
+  "mix": {
+    "masterHeadroom": 0.65,
+    "noRuntimeCrossfadeForLoops": true
+  },
+  "cues": [
+    {
+      "id": "vo-arrival",
+      "source": "vo-arrival.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=160",
+        "lowpass=f=6200",
+        "equalizer=f=2400:width_type=q:w=0.7:g=1.2",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "horror.arrived",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Station",
+        "text": "Emergency lights are active. Please follow the marked route."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "6340638b8c10e157668b7bd5378cda8478151719d92e949897fba219f53b88f1",
+      "speechAssessment": {
+        "accuracy": 95,
+        "fluency": 78,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-arrival.ogg",
+      "durationSeconds": 4.42175,
+      "frames": 212244,
+      "loop": null,
+      "sha256": "cab6cc911f7a86319152febab48232f8eccf818a2ff462e7a364a2fcd9c33fc8",
+      "masterSha256": "a19b93cdba0cffcfec3662b37bb219414d55abd27aed97157d4136d71195057b",
+      "sourceSha256": "cfe5a133baee8ef37b0ee6ec33ef28c878d8b695c5f8cad16ac1de458fd81014",
+      "gainDb": 10.27,
+      "measured": {
+        "durationSeconds": 4.42825,
+        "bytes": 37344,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -21.19,
+        "truePeakDbtp": -5.93,
+        "loudnessRangeLu": 1.7,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 1.774229
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.915083
+          }
+        ]
+      },
+      "humanListening": "pending"
+    },
+    {
+      "id": "vo-bus",
+      "source": "vo-bus.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=160",
+        "lowpass=f=6200",
+        "equalizer=f=2400:width_type=q:w=0.7:g=1.2",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "horror.bus.isolated",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Station",
+        "text": "Rescue bus disconnected. Auxiliary power can now be restored."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "7278e192206fb0c9a09b265235ad16c45449f4d03d5665a608c88cf875fc777c",
+      "speechAssessment": {
+        "accuracy": 96,
+        "fluency": 79,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-bus.ogg",
+      "durationSeconds": 4.870458333333334,
+      "frames": 233782,
+      "loop": null,
+      "sha256": "f3dd3bd0167175a1312771c793144f06d7621ed380f80ba283166a7f6f70def5",
+      "masterSha256": "86164f14f1d29cdc81f03ae2ccae318f018b856c61ca7ac8c54d44e68fa6eb50",
+      "sourceSha256": "3a691f2b8fc391376c10db31b062fe7d33021b456316e507fa4e4e87d0e183c1",
+      "gainDb": 8.14,
+      "measured": {
+        "durationSeconds": 4.876958,
+        "bytes": 42155,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -22.88,
+        "truePeakDbtp": -6.25,
+        "loudnessRangeLu": 1.3,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 1.536583
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.682125
+          }
+        ]
+      },
+      "humanListening": "pending"
+    },
+    {
+      "id": "vo-power",
+      "source": "vo-power.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=160",
+        "lowpass=f=6200",
+        "equalizer=f=2400:width_type=q:w=0.7:g=1.2",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "horror.power.restored",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Station",
+        "text": "Auxiliary power restored. Medical and archive access available."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "99bea34040b8d00ab19e85264b85f26acf1ab59b84a0f5660b366672045919ec",
+      "speechAssessment": {
+        "accuracy": 92,
+        "fluency": 81,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-power.ogg",
+      "durationSeconds": 5.0095833333333335,
+      "frames": 240460,
+      "loop": null,
+      "sha256": "dab51b9f854417f9ecf631a4e4bde92d7b999ae3cff32c78484ce70934e47a63",
+      "masterSha256": "12be2269e74e9b55110c1882322e2bc66ef87cf22044ed345ac3a13aeb99634c",
+      "sourceSha256": "4ac2c36efda05da6d18fc9c4079f809ad6b07bb99ffe7135ef3d8be33c1ed8aa",
+      "gainDb": 8.25,
+      "measured": {
+        "durationSeconds": 5.016083,
+        "bytes": 42926,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -22.99,
+        "truePeakDbtp": -6.09,
+        "loudnessRangeLu": 0.6,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 1.586083
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.736417
+          }
+        ]
+      },
+      "humanListening": "pending"
+    },
+    {
+      "id": "vo-triage",
+      "source": "vo-triage.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=180",
+        "lowpass=f=5800",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "horror.triage.played",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Crew recording",
+        "text": "My visitor token still works. Do not call the rescue network."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "1fa907342a215eef02ab07112987a6246538ab8e9ca5690e6d538a0923c6a336",
+      "speechAssessment": {
+        "accuracy": 93,
+        "fluency": 81,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-triage.ogg",
+      "durationSeconds": 5.453291666666667,
+      "frames": 261758,
+      "loop": null,
+      "sha256": "c0c70db0313bb1d6efff9480c3615906490a10cab36617530f131eef428abfef",
+      "masterSha256": "b4ac76b1531d060d56b4ed424b6e7838b29ea25f2032d70201b9177d2b7cf697",
+      "sourceSha256": "26989659db9c0ff4aead831717d93e98d2f9497cfbba4e60adf5fe6c2b9de9e2",
+      "gainDb": 11.43,
+      "measured": {
+        "durationSeconds": 5.459792,
+        "bytes": 49156,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -20.99,
+        "truePeakDbtp": -6.88,
+        "loudnessRangeLu": 1.2,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 2.246458
+          },
+          {
+            "boundary": "end",
+            "seconds": 3.434229
+          }
+        ]
+      },
+      "humanListening": "pending"
+    },
+    {
+      "id": "vo-recorder",
+      "source": "vo-recorder.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=180",
+        "lowpass=f=5800",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "horror.recorder.recovered",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Crew recording",
+        "text": "Close the coolant return, not the pressure supply. Send this to the independent capsule."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "d4363ebad00bcdd082f12e6ace7537dce967cec0430ff02e680652f28fc4e69d",
+      "speechAssessment": {
+        "accuracy": 94,
+        "fluency": 84,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-recorder.ogg",
+      "durationSeconds": 6.687625,
+      "frames": 321006,
+      "loop": null,
+      "sha256": "06bf98d526773afb057ff338e8ef43b7b5cb0a1557995f21389ce0b59391b5f5",
+      "masterSha256": "43efd0c2aa330126d393234f26c8a6c26d24fbe47df935d803aad43f38bbf266",
+      "sourceSha256": "5d54d98dd739aa2fbbd473010d61da7d403a509b302d3068b86e746556d79425",
+      "gainDb": 10.57,
+      "measured": {
+        "durationSeconds": 6.694125,
+        "bytes": 63954,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -21.36,
+        "truePeakDbtp": -6.04,
+        "loudnessRangeLu": 1.3,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 3.212312
+          },
+          {
+            "boundary": "end",
+            "seconds": 4.396875
+          }
+        ]
+      },
+      "humanListening": "pending"
+    },
+    {
+      "id": "vo-coolant",
+      "source": "vo-coolant.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=160",
+        "lowpass=f=6200",
+        "equalizer=f=2400:width_type=q:w=0.7:g=1.2",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "horror.coolant.isolated",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Station",
+        "text": "Coolant return isolated. Observation quarantine released."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "e928043f3150b6afeec7b37f49af5a1e7dc6e2f588df00a8c621406c232b0a7b",
+      "speechAssessment": {
+        "accuracy": 92,
+        "fluency": 78,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-coolant.ogg",
+      "durationSeconds": 4.467,
+      "frames": 214416,
+      "loop": null,
+      "sha256": "b3745f395c375b679cbfce1c3f4d17a5d14e250804cb4a5ab559c7ddf52622d8",
+      "masterSha256": "254dc361d7bbeb2ebbe95c5353c2fc22e9e5aa27c5124211e94a25a2719d585d",
+      "sourceSha256": "12b8795d969a5b80dddcf8b82a18d1063d58eb436e92660373e28862e726d3d3",
+      "gainDb": 9.34,
+      "measured": {
+        "durationSeconds": 4.4735,
+        "bytes": 38913,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -21.58,
+        "truePeakDbtp": -5.81,
+        "loudnessRangeLu": 0.4,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 1.488771
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.605104
+          }
+        ]
+      },
+      "humanListening": "pending"
+    },
+    {
+      "id": "vo-uplink",
+      "source": "vo-uplink.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=160",
+        "lowpass=f=6200",
+        "equalizer=f=2400:width_type=q:w=0.7:g=1.2",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "horror.uplink.transmitted",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Station",
+        "text": "Recording received. One evacuation berth is available."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "3a4749e01f80cd3a95d13d1e03177c09bee86bb3d796143e5dfcc02672c0cb40",
+      "speechAssessment": {
+        "accuracy": 93,
+        "fluency": 78,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-uplink.ogg",
+      "durationSeconds": 4.3799166666666665,
+      "frames": 210236,
+      "loop": null,
+      "sha256": "52992477b2618c06d5b27a7351a0e3eb1b2fe67ff511049c300a565b1488110a",
+      "masterSha256": "de2bc6f1a49a350eef16ea608226ca6c12fc93ec2ad1817ceb6748c7ef99cf77",
+      "sourceSha256": "b3c08a957860f63de23d352e11f192bb113610eb498ec2f3e0c92c193a4d03f5",
+      "gainDb": 9.760000000000002,
+      "measured": {
+        "durationSeconds": 4.386417,
+        "bytes": 34347,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -20.98,
+        "truePeakDbtp": -6.83,
+        "loudnessRangeLu": 0.6,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 1.153812
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.338271
+          }
+        ]
+      },
+      "humanListening": "pending"
+    },
+    {
+      "id": "vo-exit",
+      "source": "vo-exit.wav",
+      "category": "speech",
+      "channels": 1,
+      "filters": [
+        "highpass=f=160",
+        "lowpass=f=6200",
+        "equalizer=f=2400:width_type=q:w=0.7:g=1.2",
+        "acompressor=threshold=0.03:ratio=3:attack=2:release=90:knee=4:makeup=1"
+      ],
+      "targetLufs": -21,
+      "minimumLufs": -23,
+      "maxTruePeakDbtp": -6,
+      "bitrateKbps": 64,
+      "event": "level.completed",
+      "volume": 1,
+      "maxVoices": 1,
+      "voiceGroup": "dialogue",
+      "cooldownTicks": 600,
+      "caption": {
+        "speaker": "Station",
+        "text": "Separation confirmed. You are clear of the station."
+      },
+      "spatial": null,
+      "nativeMasterSha256": "ec357ddfef15bd8d95588e222578fc1c5cb99eb9bbd57050bb6c9f8c8450d356",
+      "speechAssessment": {
+        "accuracy": 97,
+        "fluency": 75,
+        "completeness": 100,
+        "fitFactor": 1
+      },
+      "url": "runtime/vo-exit.ogg",
+      "durationSeconds": 4.138458333333333,
+      "frames": 198646,
+      "loop": null,
+      "sha256": "e686f6056685fc491d020d6953d04d34eb7c2da2dea0f29d72f7b3b794f0078c",
+      "masterSha256": "46952b365cac7347e97e426b40a70e0c67ed6fe388cd794803fec964d4d00c8d",
+      "sourceSha256": "51f841c184e866fedd1f03bcb78c1d999c4bae0de1aa558cc1bfabf3861ea6c5",
+      "gainDb": 9.649999999999999,
+      "measured": {
+        "durationSeconds": 4.144958,
+        "bytes": 30969,
+        "codec": "opus",
+        "sampleRate": 48000,
+        "channels": 1,
+        "integratedLufs": -21,
+        "truePeakDbtp": -7.76,
+        "loudnessRangeLu": 0.4,
+        "silenceCandidates": [
+          {
+            "boundary": "start",
+            "seconds": 1.405771
+          },
+          {
+            "boundary": "end",
+            "seconds": 2.605229
+          }
+        ]
+      },
+      "humanListening": "pending"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "direction": "NULL MERIDIAN: grounded abandoned orbital research/rescue station, restrained ivory ceramic, graphite structure, brushed metal, worn ochre labeling, desaturated teal instruments, warm practical pools, dark space and a pale ringed gas giant.",
+  "conceptApproval": {
+    "status": "human-approved",
+    "date": "2026-09-18",
+    "relay": "Parent Tech demo 4 session b3e4d9e1-746a-4cbe-9266-39afd91ce2e7",
+    "decision": "Yes--keep this grounded, worn look, with slightly clearer gameplay lighting",
+    "scope": "Art direction only. Concept is not in-engine evidence, gameplay acceptance, or proof of final visual quality.",
+    "file": "observation-concept.png"
+  },
+  "generations": [
+    {
+      "file": "observation-concept.png",
+      "role": "CONCEPT ONLY; excluded from runtime assets",
+      "service": "Azure OpenAI",
+      "deployment": "gpt-image-2",
+      "helper": "azure-image-generation/scripts/generate-image.ps1",
+      "size": "1536x1024",
+      "quality": "high",
+      "format": "png",
+      "prompt": "Original grounded science-fiction horror environment concept for NULL MERIDIAN, an abandoned orbital research and rescue station. Interior of a believable observation gallery at human eye level, asymmetrical cinematic wide composition. Thick ivory ceramic pressure panels with fine surface crazing, deep graphite structural ribs and beveled machined joints, brushed-metal utility cabinets, exposed cable looms contained in trays, warm practical pools, restrained aged ochre warning markings, small desaturated teal CRT instruments. A massive segmented pressure window on the far wall reveals a pale cream ringed gas giant against truly dark space. Sparse red emergency lights provide contrast, but surfaces remain readable. Signs of long neglect: maintenance cart left open, a removed panel, dust at edges, no gore, no people. Sophisticated AAA game environment concept, physically plausible material hierarchy, fine contact depth, architectural rhythm, 28mm camera. No recognizable franchise design, no logos, no neon cyberpunk, no fog-smothered darkness, no generic cube corridor. This is a concept painting, not a screenshot of a running game.",
+      "revisedPrompt": null,
+      "rights": "Original commissioned AI-generated output; Azure OpenAI service terms apply. Not third-party CC0; no independent copyright or exclusivity claim."
+    },
+    {
+      "file": "ceramic-albedo.azure.png",
+      "role": "Neutral reusable base-color material source",
+      "service": "Azure OpenAI",
+      "deployment": "gpt-image-2",
+      "helper": "azure-image-generation/scripts/generate-image.ps1",
+      "size": "1024x1024",
+      "quality": "high",
+      "format": "png",
+      "prompt": "A single seamless physically based base-color texture swatch filling the entire square edge to edge: aged warm ivory ceramic enamel over spacecraft pressure-panel substrate. Fine realistic pale eggshell ceramic microstructure, scattered hairline crazing, subtle beige grime mottling, extremely restrained grey scratches and pinhole chips, naturally varied but mostly clean off-white. Orthographic straight-on scan, absolutely uniform diffuse neutral illumination, no highlights, no ambient shadows, no vignette, no directional lighting, no perspective. This is raw reusable material albedo, NOT a wall photograph: no panels, no seams, no bolts, no borders, no text, no icons, no furniture, no logos. Fine non-repeating natural variation at a physical one meter scale, tileable edges, color average light warm grey rather than pure white.",
+      "revisedPrompt": null,
+      "rights": "Original commissioned AI-generated output; Azure OpenAI service terms apply. Not third-party CC0; no independent copyright or exclusivity claim."
+    },
+    {
+      "file": "graphite-albedo.azure.png",
+      "role": "Neutral reusable base-color material source",
+      "service": "Azure OpenAI",
+      "deployment": "gpt-image-2",
+      "helper": "azure-image-generation/scripts/generate-image.ps1",
+      "size": "1024x1024",
+      "quality": "high",
+      "format": "png",
+      "prompt": "A single seamless physically based base-color texture swatch filling the entire square edge to edge: dark charcoal graphite powder-coated aerospace metal, worn abandoned research station utility equipment. Fine dry mottled microstructure, subtle horizontal tooling grain, sparse extremely thin light-grey abrasion scratches, tiny aged specks, believable quiet wear. Orthographic flat scan with absolutely uniform diffuse neutral illumination, no cast shadows, no highlights, no vignette, no directional lighting and no perspective. Raw reusable albedo material, NOT a photograph of a wall: no seams, no panels, no bolts, no borders, no text, no icons, no logos. Average value medium-dark graphite grey, not black, with enough visible microstructure. Tileable edges, fine physically plausible one-meter scale.",
+      "revisedPrompt": null,
+      "rights": "Original commissioned AI-generated output; Azure OpenAI service terms apply. Not third-party CC0; no independent copyright or exclusivity claim."
+    },
+    {
+      "file": "planet-clouds.azure.png",
+      "role": "Neutral fictional gas-giant surface color map for an actual distant3D sphere; not a planet portrait or room backdrop",
+      "service": "Azure OpenAI",
+      "deployment": "gpt-image-2",
+      "helper": "azure-image-generation/scripts/generate-image.ps1",
+      "size": "1536x1024",
+      "quality": "high",
+      "format": "png",
+      "prompt": "Original fictional pale gas giant atmospheric surface texture for mapping onto a real 3D sphere. Edge-to-edge rectangular latitude-longitude color map, parallel cloud belts running strictly horizontally left to right across the entire image, seamless left and right edges, both poles at the top and bottom. Restrained cream, ivory, pale stone, dusty taupe and desaturated grey-blue. Extremely detailed believable turbulent cloud bands, fine organic wisps, layered pale vortices and subtle atmospheric weather cells; quiet natural astronomical realism, not graphic stripes or candy colors. Uniform neutral albedo lighting with no sun, no terminator shadow, no highlights, no perspective, no sphere shape or circle, no horizon, no sky, no stars, no rings, no labels, no text, no logo. The entire image is surface cloud material, not a rendered planet portrait. This is an original research-station game asset, not an image of a known planet.",
+      "revisedPrompt": null,
+      "rights": "Original commissioned AI-generated output; Azure OpenAI service terms apply. Not third-party CC0; no independent copyright or exclusivity claim."
+    }
+  ],
+  "processing": {
+    "runtime": "Node-only deterministic build; no Python runtime dependency, downloaded model, decoder service, or runtime CDN.",
+    "materials": "Azure albedo sources are 1024 square. Ceramic 2048 output is explicitly a bilinear upsample with seam crossfade, not native 2K generation. Microheight/roughness/metalness are documented artistic approximations, not recovered physical ground truth.",
+    "geometry": "Original authored meshes in meters, batched by sector/material. Three.js geometry tools used offline. Threat has continuous pressure-textile lofts, distinct composite shell edges, purpose-sized garment badges and articulated rigid-node glTF clips, not skinned mocap or production skeletal animation.",
+    "exterior": "Original Azure neutral cloud source remapped to a true distant sphere, with an authored day/night lighting approximation. The v10 bounded repair replaces disconnected opaque rings with one continuous annulus carrying an original512x4 muted radial RGBA density texture, with two broad troughs and feathered edges. Center, original inner/outer radii and orientation are unchanged. Original station spar/antenna geometry. Not a flat picture substituted for3D environment.",
+    "visorV10": "Dedicated non-emissive tinted material and physically curved visor surface replace the planar polished cap only. Revision2 uses a globally smooth paraboloid with analytical surface normals, removing the first candidate's radial-X facet highlight found in actual unchanged game lighting. Roughness0.42/metalness0.08; shared equipment visor material unchanged. No exposure/flashlight reduction. Rig, clip samples, body bounds and other geometry remain v9-identical.",
+    "reflection": "Original low-dynamic-range equirectangular reflection field; not HDR and not a photographed probe."
+  }
+}

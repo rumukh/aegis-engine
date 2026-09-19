@@ -3,6 +3,25 @@
 > Isometric / three-quarter tactical. Reference feel: _Fallout 2_, _Dragon Age: Origins_.
 > Mode: `iso` (`@aegis/mode-iso`). Runs headless, verified without pixels.
 
+## Browser controls
+
+| Action               | Keyboard / mouse    | Standard controller     |
+| -------------------- | ------------------- | ----------------------- |
+| Aim the order cursor | Move mouse          | Left stick              |
+| Move / attack-move   | Click floor / guard | A at the visible cursor |
+| Pause / resume       | P                   | Menu                    |
+| Restart              | R                   | View                    |
+
+The controller cursor uses the same floor picker and pathfinding as mouse clicks; the stick
+does not directly move the operative. Moving the mouse hides the controller cursor; moving
+the stick reveals it again.
+
+These controls work in both `npm run play` and the static demo. Press a controller button to
+expose the device to the browser, then release all controls to arm it. Repeat that neutral
+release after reconnecting, refocusing or resuming. The in-game **Controls** panel lists the
+bindings and **Diagnostics** reports controller status. Click **Enable sound** for browser audio.
+See [controller setup and lifecycle](../api/gamepad-input.md).
+
 ## Concept and fantasy
 
 A one-agent tactical infiltration on a grid. You control a single operative who must slip through a

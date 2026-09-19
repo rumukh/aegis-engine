@@ -1,6 +1,7 @@
 import { ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LaunchedBrowser } from '../browser.js';
+import { CdpDisconnectedError } from '../browser.js';
 import { closeOwnedBrowser } from './browser-lifecycle.js';
 
 const mocks = vi.hoisted(() => ({
@@ -8,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn(),
 }));
 vi.mock('../browser.js', () => ({
+  CdpDisconnectedError: class extends Error {},
   CdpSession: {
     connect: vi.fn(async () => ({ send: mocks.send, close: mocks.close })),
   },
@@ -47,6 +49,63 @@ function browser() {
 }
 
 describe('owned browser test lifetimes', () => {
+  it('accepts an expected close-socket disconnect only alongside a separately observed clean exit', async () => {
+    const own = browser();
+    const kill = vi.spyOn(own.process, 'kill');
+    const events: string[] = [];
+    mocks.send.mockImplementation(async () => {
+      queueMicrotask(() => {
+        own.process.exitCode = 0;
+        own.process.emit('exit', 0, null);
+      });
+      throw new CdpDisconnectedError('socket closed before Browser.close reply');
+    });
+    await closeOwnedBrowser(own, { onTrace: (event) => events.push(event.phase) });
+    expect(events).toContain('close-command-rejected');
+    expect(events).toContain('root-exit-delivered');
+    expect(events).toContain('graceful-exit-confirmed');
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a disconnect without root exit or call force-kill cleanup graceful', async () => {
+    vi.useFakeTimers();
+    const own = browser();
+    const events: string[] = [];
+    mocks.send.mockRejectedValue(new CdpDisconnectedError('socket closed'));
+    vi.spyOn(own.process, 'kill').mockImplementation(() => {
+      own.process.exitCode = 1;
+      own.process.emit('exit', 1, null);
+      return true;
+    });
+    const closed = expect(
+      closeOwnedBrowser(own, { onTrace: (event) => events.push(event.phase) }),
+    ).rejects.toThrow('did not exit within 10000ms');
+    await vi.advanceTimersByTimeAsync(10_010);
+    await closed;
+    expect(events).toContain('force-kill-requested');
+    expect(events).not.toContain('graceful-exit-confirmed');
+  });
+
+  it('records late exit delivery without converting a missed deadline into a pass', async () => {
+    vi.useFakeTimers();
+    const own = browser();
+    const kill = vi.spyOn(own.process, 'kill');
+    mocks.send.mockResolvedValue({});
+    const closed = expect(
+      closeOwnedBrowser(own, {
+        onTrace: (event) => {
+          if (event.phase === 'root-exit-deadline') {
+            own.process.exitCode = 0;
+            own.process.emit('exit', 0, null);
+          }
+        },
+      }),
+    ).rejects.toThrow('delivered exit code after poll: 0');
+    await vi.advanceTimersByTimeAsync(10_010);
+    await closed;
+    expect(kill).not.toHaveBeenCalled();
+  });
+
   it('requires browser-level close and a clean process exit, not empty target enumeration', async () => {
     const own = browser();
     const kill = vi.spyOn(own.process, 'kill');

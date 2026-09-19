@@ -1,0 +1,23 @@
+{
+  "id": "station-air",
+  "seed": 9182701,
+  "duration": 32,
+  "prompt": "Interior room tone of a deserted industrial control room. Very quiet broad ventilation air, low distant physical fan rumble, faint intermittent loose metal panel vibration. Continuous natural machinery ambience, no discrete loud events. Detailed subdued field recording, spacious but dry enough to layer, no music, no voices.",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "distribution": "DeepBeepMeep/TTS",
+  "distributionRevision": "5020589aa562cea206a25eea208d7cbb1f6efae7",
+  "wanGpRevision": "bb68ded24f8a25d51789f8a49b66cc63eccf53c9",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "attention": "sdpa",
+  "negativePrompt": "music, melody, singing, speech, voices, drums, digital beeps, laser sounds, cinematic explosion, distorted clipping",
+  "sampleRate": 44100,
+  "channels": 2,
+  "frames": 1411200,
+  "nativePeak": 0.1494140625,
+  "nativeFormat": "WAV IEEE float32; no normalization",
+  "sha256": "6573b4f8ed30159c12575c7bb0db07756fe0f203d2ccb297b0fcf9afa4e1bf9f",
+  "configSha256": "9396ee61a60a869f9fca1f50d1c8352345c3fa891da0fda433df2e9012ca147e",
+  "humanListening": "pending"
+}

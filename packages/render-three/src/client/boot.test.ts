@@ -15,12 +15,27 @@ import type { InputPacket } from '../live-input.js';
 import { virtualGamepad } from '../testing/gamepad.js';
 import { createLiveSession } from '../session.js';
 
+const cinematic = vi.hoisted(() => ({ render: vi.fn() }));
+vi.mock('../presentation/pipeline.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../presentation/pipeline.js')>()),
+  CinematicPipeline: class {
+    render = cinematic.render;
+    resize(): void {}
+    setQuality(): void {}
+    stats(): object {
+      return {};
+    }
+    dispose(): void {}
+  },
+}));
+
 // Keep the real boot, input, mirror, HUD and presentation runtime; only GPU drawing is absent.
 vi.mock('three', async (importOriginal) => ({
   ...(await importOriginal<typeof import('three')>()),
   WebGLRenderer: class {
     info = { render: { calls: 0, triangles: 0 } };
     setPixelRatio(): void {}
+    forceContextLoss(): void {}
     setSize(): void {}
     render(): void {}
     dispose(): void {}
@@ -55,6 +70,7 @@ interface PendingRequest {
   url: string;
   body: string | undefined;
   resolve(response: Response): void;
+  reject(error: unknown): void;
 }
 
 const manifest: PresentationManifest = {
@@ -77,6 +93,7 @@ let requests: PendingRequest[];
 let nextFrame = 0;
 
 beforeEach(() => {
+  cinematic.render.mockReset();
   dom = installFakeDom();
   globalEvents = new EventTarget();
   elements = new Map(
@@ -85,6 +102,7 @@ beforeEach(() => {
       'hud-outcome',
       'hud-step-0',
       'hud-status',
+      'action-pause',
       'hud-events',
       'loading-message',
     ].map((id) => [id, new HudElement()]),
@@ -107,11 +125,12 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     (url: string, init?: RequestInit) =>
-      new Promise<Response>((resolve) => {
+      new Promise<Response>((resolve, reject) => {
         requests.push({
           url,
           body: typeof init?.body === 'string' ? init.body : undefined,
           resolve,
+          reject,
         });
       }),
   );
@@ -194,6 +213,61 @@ async function start(
 }
 
 describe('dev-client controller polling', () => {
+  it.each([
+    { presentation: false, paused: true },
+    { presentation: true, paused: true },
+    { presentation: false, paused: false },
+    { presentation: true, paused: false },
+  ])(
+    'keeps View restart pause state before another display frame: %j',
+    async ({ presentation, paused }) => {
+      const pad = virtualGamepad();
+      vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+      const initialGeneration = presentation ? 0 : undefined;
+      await start(presentation, response(12, initialGeneration, [], paused));
+      await display();
+      await answer(takeRequest('frame'), response(12, initialGeneration, [], paused));
+      const button = elements.get('action-pause');
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      pad.buttons[8]!.value = 1;
+      await display();
+      const oldFrame = takeRequest('frame');
+      const restart = takeRequest('control');
+      expect(JSON.parse(restart.body!)).toEqual({ command: 'restart' });
+      await answer(restart, response(0, presentation ? 1 : undefined, [], paused));
+      // No display() here: restart publishes tick 0 before the next animation frame.
+      expect(debug().tick()).toBe(0);
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      expect(button?.textContent).toBe(paused ? 'Resume' : 'Pause');
+      pad.buttons[8]!.value = 0;
+      await answer(oldFrame, response(13, initialGeneration, [], paused));
+      expect(debug().tick()).toBe(0);
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      await display();
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+    },
+  );
+
+  it('draws a cold cinematic generation before arming another HTTP deadline', async () => {
+    await start(true, response(0, 0), {
+      ...manifest,
+      quality: 'high',
+      pipeline: { toneMapping: 'aces' },
+    });
+    cinematic.render.mockImplementation(() => expect(requests).toHaveLength(0));
+    await display();
+    expect(cinematic.render).toHaveBeenCalledOnce();
+    cinematic.render.mockImplementation(() => undefined);
+    await display();
+    expect(requests).toHaveLength(1);
+    await answer(takeRequest('frame'), response(0, 1));
+    cinematic.render.mockImplementation(() => expect(requests).toHaveLength(0));
+    await display();
+    cinematic.render.mockImplementation(() => undefined);
+    await display();
+    expect(requests).toHaveLength(1);
+  });
+
   it('captures a press/release between exchanges while the preceding HTTP frame is in flight', async () => {
     const pad = virtualGamepad();
     vi.stubGlobal('navigator', { getGamepads: () => [pad] });
@@ -244,6 +318,64 @@ describe('dev-client controller polling', () => {
 });
 
 describe('dev-client synchronization', () => {
+  it('distinguishes body-read cancellation after HTTP 200 from request and validation errors', async () => {
+    await start();
+    await display();
+    const reply = new Response('{}', { status: 200 });
+    vi.spyOn(reply, 'text').mockRejectedValue(
+      new DOMException('The user aborted a request.', 'AbortError'),
+    );
+    takeRequest('frame').resolve(reply);
+    await settle();
+    expect(debug().timings()).toMatchObject({
+      exchangeErrors: 1,
+      firstExchangeFailure: {
+        stage: 'body',
+        responseStatus: 200,
+        name: 'AbortError',
+        message: 'The user aborted a request.',
+      },
+    });
+  });
+
+  it('keeps genuine request failures counted and retains their first cause through recovery', async () => {
+    await start();
+    await display();
+    const failed = takeRequest('frame');
+    const seq = (JSON.parse(failed.body!) as { input: InputPacket }).input.seq;
+    failed.reject(new DOMException('Timed out at the unchanged deadline', 'TimeoutError'));
+    await settle();
+    expect(debug().timings()).toMatchObject({
+      exchangeErrors: 1,
+      firstExchangeFailure: {
+        stage: 'request',
+        message: 'Timed out at the unchanged deadline',
+        name: 'TimeoutError',
+        requestSequence: seq,
+        requestGeneration: 0,
+        generation: 0,
+      },
+    });
+    const first = debug().timings().firstExchangeFailure!;
+    first.message = 'caller mutation';
+    expect(debug().timings().firstExchangeFailure?.message).not.toBe('caller mutation');
+    await display();
+    await answer(takeRequest('frame'), response(1, 0));
+    expect(debug().timings().exchangeErrors).toBe(1);
+    expect(debug().timings().firstExchangeFailure?.message).toBe(
+      'Timed out at the unchanged deadline',
+    );
+    await display();
+    const refused = takeRequest('frame');
+    refused.resolve(new Response('bad input is still an error', { status: 400 }));
+    await settle();
+    expect(debug().timings().exchangeErrors).toBe(2);
+    expect(elements.get('loading-message')?.textContent).toContain('responded 400');
+    expect(debug().timings().firstExchangeFailure?.message).toBe(
+      'Timed out at the unchanged deadline',
+    );
+  });
+
   it('cannot execute paused key taps while the resume acknowledgement is delayed', async () => {
     await start(true, response(0, 0, [], true));
     const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
@@ -393,6 +525,12 @@ describe('dev-client synchronization', () => {
         expect(ready).not.toHaveBeenCalled();
         expect(debug().tick()).toBe(-1);
         expect(debug().timings().exchangeErrors).toBe(index + 1);
+        expect(debug().timings().firstExchangeFailure).toMatchObject({
+          stage: 'response',
+          name: 'Error',
+          requestGeneration: 0,
+          tick: -1,
+        });
         expect(elements.get('loading-message')?.textContent).toMatch(/history.*retry/i);
       }
       await display();

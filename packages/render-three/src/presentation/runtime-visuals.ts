@@ -278,6 +278,8 @@ export class ManagedVisual {
   #eventFrame = false;
   #lastState?: SpriteState;
   #stateStart = 0;
+  #loopKey?: string;
+  #loopStart = 0;
   #disposed = false;
 
   constructor(
@@ -342,6 +344,7 @@ export class ManagedVisual {
     if (spec.kind === 'model') {
       if (spec.clip !== undefined) this.clip(spec.clip);
       for (const name of Object.values(spec.animations ?? {})) this.clip(name);
+      for (const entry of spec.stateClips ?? []) this.clip(entry.clip);
     } else if (spec.kind === 'sprite') {
       this.#rememberFrame(spec.frame);
       for (const sequence of Object.values(spec.animations ?? {}))
@@ -499,7 +502,13 @@ export class ManagedVisual {
     }
   }
 
-  sample(tick: number, tickRate: number, state: SpriteState, override?: AnimationOverride): void {
+  sample(
+    tick: number,
+    tickRate: number,
+    state: SpriteState,
+    override?: AnimationOverride,
+    matches?: (condition: import('./schema.js').StateCondition) => boolean,
+  ): void {
     this.restoreFlash();
     if (state !== this.#lastState) {
       this.#stateStart = this.#lastState === undefined ? 0 : tick;
@@ -524,8 +533,22 @@ export class ManagedVisual {
         this.#applyMaterials(state);
       }
     } else if (spec.kind === 'model') {
+      if (spec.stateClips !== undefined && matches === undefined)
+        throw visualError(
+          this.#path,
+          'State clips need a presentation state reader.',
+          'Sample state-bound models through the presentation runtime.',
+        );
+      const loop = spec.stateClips?.find((entry) => matches?.(entry.when));
+      const loopKey = loop === undefined ? '' : `${loop.clip}:${loop.timeScale ?? 1}`;
+      if (loopKey !== this.#loopKey) {
+        this.#loopStart = this.#loopKey === undefined ? 0 : tick;
+        this.#loopKey = loopKey;
+      }
       const name =
-        override?.kind === 'clip' ? override.clip : (spec.animations?.[state] ?? spec.clip);
+        override?.kind === 'clip'
+          ? override.clip
+          : (loop?.clip ?? spec.animations?.[state] ?? spec.clip);
       this.#mixer?.stopAllAction();
       if (name !== undefined && this.#mixer !== undefined) {
         const oneShot = override?.kind === 'clip';
@@ -540,7 +563,9 @@ export class ManagedVisual {
         this.#mixer.setTime(
           oneShot
             ? Math.min(1, Math.max(0, override.progress)) * clip.duration
-            : Math.max(0, tick - this.#stateStart) / tickRate,
+            : (Math.max(0, tick - (loop === undefined ? this.#stateStart : this.#loopStart)) /
+                tickRate) *
+                (loop?.timeScale ?? 1),
         );
       }
     }
@@ -591,6 +616,8 @@ export class ManagedVisual {
     this.#mixer?.stopAllAction();
     this.#lastState = undefined;
     this.#stateStart = 0;
+    this.#loopKey = undefined;
+    this.#loopStart = 0;
     this.#eventFrame = false;
     this.#frame = this.#authoredFrame;
     if (this.#spec.kind === 'sprite') this.#applyMaterials('idle');

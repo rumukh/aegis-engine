@@ -1,0 +1,59 @@
+{
+  "schema": "null-meridian-audio-production/1",
+  "scope": "Original offline generated audio for a noncommercial hobby/evaluation game. No model weights, inference server, Python or ffmpeg required by shipped game.",
+  "creativeDirection": "Grounded abandoned industrial station; restrained pressure, sparse original bowed-metal score, tactile mechanical foley, clear short dialogue, no gunfire or musical jump-scare stingers.",
+  "runtimeBudgetBytes": 12582912,
+  "nativeMasters": "Retain native ACE-Step FLAC, SFX float32 WAV and Azure raw/final WAV in the session production archive. Runtime Ogg Opus is an encode, not a master.",
+  "soundEffects": {
+    "method": "Nine original model-generated waveforms, not physical field recordings or third-party sample-library recordings. DSP adds filtering, controlled dynamics, editorial cuts, endpoint fades and offline loop overlaps; no oscillator beep is substituted for a generated sound.",
+    "actualSourceMetadata": "source/native-sfx/*.json contains actual native output hashes, shapes, seeds, prompts and settings. Native WAV files remain in the production archive.",
+    "deferred": "Separate grating footsteps were not generated: integrator confirmed no authored grating surface state, so four distinct solid-deck source strikes are the used variants."
+  },
+  "licenses": [
+    {
+      "component": "ACE-Step 1.5 XL-SFT and 1.7B planner",
+      "url": "https://huggingface.co/ACE-Step/acestep-v15-xl-sft",
+      "terms": "Model card labels generated music commercially usable; retain upstream MIT model/software notices. Not a guarantee of exclusive copyright in generated output.",
+      "softwareRevision": "ca1e85fe9430179831e6bc6be790c332190a3866"
+    },
+    {
+      "component": "Stable Audio 3 Small SFX and SAME-S",
+      "url": "https://huggingface.co/stabilityai/stable-audio-3-small-sfx/blob/main/LICENSE.md",
+      "license": "Stability AI Community License Agreement",
+      "version": "2024-07-05",
+      "outputs": "Section IV(c)(iii) assigns ownership of outputs as between user and Stability, to extent permitted by law. Section V excludes outputs from Derivative Works; output use still subject to AUP and applicable law.",
+      "authorization": "User selected: This is my noncommercial hobby/evaluation project; I accept both linked terms. Relayed by Tech demo 4 parent on 2026-09-18.",
+      "commercialLimitation": "Commercial model use requires Stability registration and eligibility under aggregate annual revenue threshold or enterprise license. Recheck authorization before commercial deployment.",
+      "weightsIncluded": false
+    },
+    {
+      "component": "T5Gemma b-b-ul2 text conditioner",
+      "url": "https://ai.google.dev/gemma/terms",
+      "license": "Gemma Terms of Use",
+      "version": "2026-04-01",
+      "outputs": "Section 3.3: Google claims no rights in outputs. Outputs are not Model Derivatives. User remains responsible for uses.",
+      "authorization": "Same explicit user acceptance as Stability terms.",
+      "weightsIncluded": false
+    },
+    {
+      "component": "Stable Audio 3 inference software",
+      "url": "https://github.com/Stability-AI/stable-audio-3/blob/main/LICENSE",
+      "license": "MIT",
+      "version": "Copyright 2026 Stability AI",
+      "note": "This is the SOFTWARE license, not the checkpoint license. Existing WanGP adaptation used in its isolated production environment."
+    },
+    {
+      "component": "Azure Speech generated English dialogue",
+      "url": "https://learn.microsoft.com/azure/ai-services/speech-service/text-to-speech",
+      "terms": "Generated through the user's configured Azure Speech resource; Microsoft service/product terms apply. No voice cloning, third-party recording or supplied sample used.",
+      "voices": ["en-US-JennyNeural", "en-US-GuyNeural"],
+      "humanApproval": "Parent relayed user choice Use both voices on 2026-09-18.",
+      "approvedAuditions": {
+        "station": "cfe5a133baee8ef37b0ee6ec33ef28c878d8b695c5f8cad16ac1de458fd81014",
+        "recorder": "8ea53c53d3b82409fa6d7fd8e7599f1abfe17f322f919a8d3488c2054c87adf3"
+      }
+    }
+  ],
+  "pronunciation": "No unusual names, acronyms, homographs or numbers in approved English scripts. No phoneme markup is relied upon, so the four-variant phoneme capability probe is not required. Pronunciation and completeness still assessed per final line with unchanged thresholds.",
+  "review": "Automated decoding, loudness, silence and speech scores are not human listening, acting approval, sound-design approval or integrated spatial-mix acceptance."
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "language": "en-US",
+  "default_voice": "en-US-JennyNeural",
+  "backend": {
+    "provider": "azure-speech",
+    "preferred_region": "eastus2"
+  },
+  "quality": {
+    "min_accuracy": 90,
+    "min_fluency": 70,
+    "min_completeness": 90,
+    "min_target_word_accuracy": 90,
+    "max_fit_factor": 1.08
+  },
+  "segments": [
+    {
+      "id": "station-audition",
+      "speaker": "Station",
+      "voice": "en-US-JennyNeural",
+      "text": "Emergency lights are active. Please follow the marked route.",
+      "ssml": "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xmlns:mstts=\"https://www.w3.org/2001/mstts\" xml:lang=\"en-US\"><voice name=\"en-US-JennyNeural\"><mstts:express-as style=\"calm\" styledegree=\"0.7\"><prosody rate=\"-5%\" pitch=\"-2%\">Emergency lights are active.<break time=\"200ms\"/>Please follow the marked route.</prosody></mstts:express-as></voice></speak>",
+      "max_duration_seconds": 8,
+      "critical": true
+    }
+  ]
+}

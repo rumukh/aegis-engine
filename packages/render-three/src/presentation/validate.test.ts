@@ -4,6 +4,30 @@ import { RenderCode, isAssetPath } from './diagnostics.js';
 import { validatePresentation } from './validate.js';
 
 describe('presentation data validation', () => {
+  it('bounds opt-in loss fading and requires authoritative loss events without changing omission defaults', () => {
+    const hud = { playerName: 'player', winEvent: 'won', loseEvents: ['lost'] };
+    expect(
+      validatePresentation({
+        aegis: 'presentation/1',
+        hud,
+        ui: { lossEnding: { fadeSeconds: 1, title: 'Caught' } },
+      }).ok,
+    ).toBe(true);
+    for (const lossEnding of [
+      null,
+      { fadeSeconds: -1 },
+      { fadeSeconds: 3 },
+      { fadeSeconds: Infinity },
+      { cameraFall: true },
+    ])
+      expect(validatePresentation({ aegis: 'presentation/1', hud, ui: { lossEnding } }).ok).toBe(
+        false,
+      );
+    expect(validatePresentation({ aegis: 'presentation/1', ui: { lossEnding: {} } }).ok).toBe(
+      false,
+    );
+    expect(validatePresentation({ aegis: 'presentation/1', hud, ui: {} }).ok).toBe(true);
+  });
   it('accepts a real textured/model/audio fixture and an explicit primitive-only descriptor', () => {
     expect(validatePresentation(FIXTURE_MANIFEST).ok).toBe(true);
     expect(validatePresentation({ aegis: 'presentation/1' }).ok).toBe(true);

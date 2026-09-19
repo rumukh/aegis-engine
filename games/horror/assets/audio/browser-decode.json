@@ -1,0 +1,73 @@
+{
+  "scope": "Actual shipped Chromium WebAudio decode; no playback or human-listening claim",
+  "inventoryCount": 1,
+  "assetCount": 8,
+  "decision": "PASS",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+  "results": [
+    {
+      "id": "vo-arrival",
+      "frames": 212244,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 4.42175,
+      "peak": 0.5044985413551331
+    },
+    {
+      "id": "vo-bus",
+      "frames": 233782,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 4.870458333333334,
+      "peak": 0.4871542155742645
+    },
+    {
+      "id": "vo-power",
+      "frames": 240460,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 5.0095833333333335,
+      "peak": 0.4941941797733307
+    },
+    {
+      "id": "vo-triage",
+      "frames": 261758,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 5.453291666666667,
+      "peak": 0.4519919753074646
+    },
+    {
+      "id": "vo-recorder",
+      "frames": 321006,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 6.687625,
+      "peak": 0.4987815022468567
+    },
+    {
+      "id": "vo-coolant",
+      "frames": 214416,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 4.467,
+      "peak": 0.5123355388641357
+    },
+    {
+      "id": "vo-uplink",
+      "frames": 210236,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 4.3799166666666665,
+      "peak": 0.45525962114334106
+    },
+    {
+      "id": "vo-exit",
+      "frames": 198646,
+      "sampleRate": 48000,
+      "channels": 1,
+      "durationSeconds": 4.138458333333333,
+      "peak": 0.40930452942848206
+    }
+  ]
+}

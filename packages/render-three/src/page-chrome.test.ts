@@ -33,6 +33,57 @@ const CATALOG_GAME: CatalogGame = {
 };
 
 describe('shared play-page body', () => {
+  it('creates a labelled native loss dialog only on explicit opt-in and escapes authored text', () => {
+    expect(renderGameChrome(GAME)).not.toContain('id="loss-ending"');
+    const html = renderGameChrome({
+      ...GAME,
+      manifest: {
+        ...MANIFEST,
+        ui: { lossEnding: { title: 'Caught <again>', message: 'Restart & try again.' } },
+      },
+    });
+    expect(html).toContain(
+      '<dialog id="loss-ending" aria-modal="true" aria-labelledby="loss-title" aria-describedby="loss-message"',
+    );
+    expect(html).toContain('Caught &lt;again&gt;');
+    expect(html).toContain('Restart &amp; try again.');
+    for (const id of [
+      'loss-ending',
+      'loss-shade',
+      'loss-title',
+      'loss-message',
+      'loss-restart',
+      'loss-error',
+    ])
+      expect(html.split(`id="${id}"`)).toHaveLength(2);
+    expect(html).toContain('<button id="loss-restart" type="button">Restart</button>');
+  });
+  it('keeps cinematic status and session controls accessible on demand without changing defaults', () => {
+    const standard = renderGameChrome({ ...GAME, manifest: MANIFEST });
+    const compact = renderGameChrome({
+      ...GAME,
+      manifest: { ...MANIFEST, ui: { ...MANIFEST.ui, layout: 'cinematic' } },
+    });
+    expect(standard).not.toContain('id="mission-status"');
+    expect(compact).toContain('data-layout="cinematic"');
+    expect(compact).toMatch(
+      /<details class="compact-menu" id="mission-status"><summary>Status<\/summary>/,
+    );
+    expect(compact).toMatch(
+      /<details class="compact-menu" id="session-menu"><summary>Session<\/summary>/,
+    );
+    for (const id of [
+      'hud-objective',
+      'hud-prompt',
+      'hud-subtitle',
+      'hud-step-0',
+      'action-pause',
+      'quality',
+      'loading-panel',
+    ])
+      expect(compact.split(`id="${id}"`)).toHaveLength(2);
+    expect(compact).not.toMatch(/id="(?:mission-status|session-menu)" open/);
+  });
   it('contains one of every host hook without taking ownership of the HTML document or boot script', () => {
     const body = renderGameChrome(GAME);
     for (const id of [

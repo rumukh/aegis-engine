@@ -1,0 +1,72 @@
+{
+  "schema": "null-meridian-score-generation/1",
+  "model": "acestep-v15-xl-sft",
+  "planner": "acestep-5Hz-lm-1.7B",
+  "softwareRevision": "ca1e85fe9430179831e6bc6be790c332190a3866",
+  "seed": 9182604,
+  "durationSeconds": 180,
+  "steps": 50,
+  "guidanceScale": 7,
+  "requestedShift": 3,
+  "routeLimitation": "Installed Gradio release_task route does not forward requested shift; GenerationParams default is 1.0. Record saved generation metadata rather than claiming the helper's requested shift was applied.",
+  "instrumental": true,
+  "format": "flac",
+  "quantization": "int8_weight_only",
+  "cpuOffload": true,
+  "ditCpuOffload": true,
+  "attention": "flash_attention_2",
+  "caption": "Original instrumental cinematic ambient space-station horror underscore, restrained and unnervingly quiet, no voices, no choir, no drums, no song beat. Dark bowed metal, slowly changing low string friction, distant fragile glass harmonics, dry structural creaks and soft sub-bass pressure beneath wide empty air. An abandoned industrial habitat, believable physical space rather than fantasy. Begin almost empty with breathing room between small sounds; gradually introduce an uneasy dissonant bowed-metal layer in the middle; develop toward a more urgent tightly restrained tremolo texture late in the piece, without a percussion groove or loud stingers; recede into a suspended unresolved quiet ending. Sparse, evolving, detailed acoustic-electroacoustic timbres, long restrained resonances, controlled transients, warm low-mid weight, headphone-friendly dynamic range, no sudden explosive accents, no heroic melody.",
+  "attempts": [
+    {
+      "id": "r1",
+      "status": "failed-no-native-output",
+      "taskId": null,
+      "taskIdReason": "The synchronous release_task response failed before returning its generated UUID; do not invent an identifier.",
+      "jobDirectory": "C:\\AI\\ACE-Step-1.5\\acestep\\ui\\gradio_outputs\\api_1789760072",
+      "failure": "GenerateMusicExecuteMixin's default600s timeout returned an error before VAE decode/save. Its daemon diffusion thread continued50steps, then discarded latent output because caller had returned.",
+      "diffusionCompletedLocal": "2026-09-18T21:51:35+02:00",
+      "modelOffloadCompletedLocal": "2026-09-18T21:52:08+02:00",
+      "plannerCodeCount": 900,
+      "plannerCodePayloadSha256": "5202ec35a19cb03b4c3a020ca60243735dada9371ef9aa8e98c0ac5f483399b7",
+      "plannerArchive": "Session artifacts/score-failure-r1/planner-codes.json",
+      "recovery": "Healthy200 API, idle GPU, empty exact job directory, source inspection confirms no native-save path in latent-only service thread. No output was recovered or claimed.",
+      "logs": "Session artifacts/score-failure-r1/ace-step.stdout.log and ace-step.stderr.log"
+    },
+    {
+      "id": "r2",
+      "status": "failed-preparation-timeout-no-native-output",
+      "authorization": "Parent explicitly authorized one same-seed/same180s/same50step reproduction only after original completed with no recoverable native output.",
+      "environment": { "ACESTEP_GENERATION_TIMEOUT": "3600" },
+      "ownedServiceRootPid": 23996,
+      "ownedWorkerPid": 14560,
+      "jobDirectory": "C:\\AI\\ACE-Step-1.5\\acestep\\ui\\gradio_outputs\\api_1789762549",
+      "plannerCompletedLocal": "2026-09-18T22:16:07+02:00",
+      "plannerCodeCount": 900,
+      "plannerCodeValuesPersisted": true,
+      "plannerCodePayloadSha256": "db923e5f7fd83537b7ee898ee018ef98f8269c7a58480ed1ea669338118e4b22",
+      "plannerArchive": "Session artifacts/score-recovery-r2/planner-codes.json",
+      "plannerRecoveryCorrection": "The earlier unavailable-code claim was incorrect: the full DEBUG log contains all900 codes. Both r1 and r2 payloads were extracted and hash-bound without touching the process. Their differing hashes prove the plans were not bit-identical despite the same requested seed/settings.",
+      "lastObservedStage": "Code-to-latent preparation; whole DiT loaded inside VAE context at22:16:14. No diffusion progress or saved audio before the3600s service deadline.",
+      "failedLocal": "2026-09-18T23:16:08.603+02:00",
+      "failure": "The service_generate wrapper exceeded3600seconds during preparation. The native output directory and expected final output path were empty; no finished score exists.",
+      "guardBoundaryCorrection": "The earlier claim that this guard starts after preparation was incorrect. It wraps service_generate including its preprocessing; the observed3600s timeout occurred before the90min HTTP deadline.",
+      "ownedServiceCleanup": {
+        "verified": true,
+        "terminatedPids": [23996, 26656, 36912, 14560],
+        "scope": "Only the positively verified owned failed ACE service tree. Review server, browsers and foreign processes were not stopped."
+      },
+      "finalLogs": "Session artifacts/score-recovery-r2/ace-step.stderr.final.log and ace-step.stdout.final.log",
+      "furtherInference": "Not authorized or started. Retained planner codes could support a separately authorized memory-staged DiT-only recovery.",
+      "diagnostics": {
+        "observedLocal": "2026-09-18T22:36:37+02:00",
+        "cpuDeltaSeconds": 5.125,
+        "cpuWindowSeconds": 7.1137935,
+        "dedicatedGpuBytes": 15249453056,
+        "sharedGpuBytes": 916455424,
+        "owned3dEnginePercentRange": [6.46, 9.1],
+        "scope": "Measurements do not prove either harmless computation or WDDM spill. Public API has no safe in-process unload/retrieval control for the blocked synchronous preparation."
+      },
+      "reproducibilityLimitation": "Same requested seed/settings do not prove bit-identical planner codes or music. No such claim is made."
+    }
+  ]
+}

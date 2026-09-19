@@ -109,6 +109,20 @@ const ENGINE_MODULE_PATHS: readonly {
     root: 'node_modules/three',
     entry: 'node_modules/three/examples/jsm/utils/SkeletonUtils.js',
   },
+  ...[
+    'EffectComposer',
+    'RenderPass',
+    'SSAOPass',
+    'UnrealBloomPass',
+    'OutputPass',
+    'ShaderPass',
+    'Pass',
+  ].map((name) => ({
+    specifier: `three/addons/postprocessing/${name}.js`,
+    name: 'three',
+    root: 'node_modules/three',
+    entry: `node_modules/three/examples/jsm/postprocessing/${name}.js`,
+  })),
   {
     specifier: '@aegis/core',
     name: '@aegis/core',
