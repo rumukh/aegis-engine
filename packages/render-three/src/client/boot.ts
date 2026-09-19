@@ -63,6 +63,21 @@ export interface FrameTimings {
   triangles: number;
   /** Exchanges that failed since boot. A latched loop shows up here, or as a stalled `snapshots`. */
   exchangeErrors: number;
+  /** First failed exchange, retained across recovery so a zero-error assertion has a cause. */
+  firstExchangeFailure?: {
+    stage: 'request' | 'body' | 'parse' | 'response';
+    responseStatus?: number;
+    message: string;
+    name: string;
+    elapsedMs: number;
+    requestSequence?: number;
+    requestGeneration: number;
+    generation: number;
+    tick: number;
+    renderedGeneration: number;
+    lastRenderMs: number;
+    longestRenderWhilePendingMs: number;
+  };
   /** Whether an exchange is outstanding right now. */
   inFlight: boolean;
 }
@@ -147,13 +162,18 @@ const COMMANDS: Readonly<Record<SessionCommand, ControlCommand>> = {
 const FRAME_TIMEOUT_MS = 2000;
 
 /** Post JSON and parse the JSON response, abandoning the request if it stalls. */
-async function postJson<T>(url: string, body: unknown): Promise<{ value: T; bytes: number }> {
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  progress?: (stage: 'body' | 'parse', status: number) => void,
+): Promise<{ value: T; bytes: number }> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(FRAME_TIMEOUT_MS),
   });
+  progress?.('body', response.status);
   if (!response.ok)
     throw new Error(
       `${url} responded ${response.status}: ${(await response.text()).slice(0, 600)}`,
@@ -161,6 +181,7 @@ async function postJson<T>(url: string, body: unknown): Promise<{ value: T; byte
   // Read the text rather than `response.json()` so the payload size is a measured fact: the
   // whole world crosses this wire every frame, and nothing else in the page can see how big it is.
   const text = await response.text();
+  progress?.('parse', response.status);
   return { value: JSON.parse(text) as T, bytes: text.length };
 }
 
@@ -198,6 +219,7 @@ export function boot(config: BootConfig): void {
   let claimInput = false;
   let inFlight = false;
   let frameExchange: Promise<void> | undefined;
+  let pendingExchangeProfile: { longestRenderMs: number } | undefined;
   let pauseBarrier: Promise<void> | undefined;
   let generation = 0;
   let hydratedGeneration: number | null = null;
@@ -412,14 +434,29 @@ export function boot(config: BootConfig): void {
     const requestGeneration = generation;
     const claim = claimInput;
     claimInput = false;
+    let requestSequence: number | undefined;
+    let stage: 'request' | 'body' | 'parse' | 'response' = 'request';
+    let responseStatus: number | undefined;
+    const profile = { longestRenderMs: 0 };
+    pendingExchangeProfile = profile;
     try {
-      const { value: response, bytes } = await postJson<FrameResponse>(`${config.api}/frame`, {
-        input: collector.take(),
-        client: { id: clientId, claim, generation: inputGeneration },
-        ...(config.presentation === undefined
-          ? {}
-          : { presentationGeneration: hydratedGeneration }),
-      });
+      const packet = collector.take();
+      requestSequence = packet.seq;
+      const { value: response, bytes } = await postJson<FrameResponse>(
+        `${config.api}/frame`,
+        {
+          input: packet,
+          client: { id: clientId, claim, generation: inputGeneration },
+          ...(config.presentation === undefined
+            ? {}
+            : { presentationGeneration: hydratedGeneration }),
+        },
+        (nextStage, status) => {
+          stage = nextStage;
+          responseStatus = status;
+        },
+      );
+      stage = 'response';
       if (stopped) return;
       timings.exchange = performance.now() - started;
       record(exchangeSamples, timings.exchange);
@@ -432,11 +469,27 @@ export function boot(config: BootConfig): void {
     } catch (error) {
       timings.exchange = performance.now() - started;
       timings.exchangeErrors++;
+      timings.firstExchangeFailure ??= {
+        stage,
+        ...(responseStatus === undefined ? {} : { responseStatus }),
+        message: error instanceof Error ? error.message : String(error),
+        name: error instanceof Error ? error.name : typeof error,
+        elapsedMs: timings.exchange,
+        ...(requestSequence === undefined ? {} : { requestSequence }),
+        requestGeneration,
+        generation,
+        tick: lastTick,
+        renderedGeneration,
+        lastRenderMs: timings.render,
+        longestRenderWhilePendingMs: profile.longestRenderMs,
+      };
       host.connection(error);
       // A failed exchange never delivered the input, so put the waiters back rather than
       // resolving them — otherwise automation would step on input the server never saw.
       syncWaiters.push(...settling);
       throw error;
+    } finally {
+      if (pendingExchangeProfile === profile) pendingExchangeProfile = undefined;
     }
   };
 
@@ -499,6 +552,11 @@ export function boot(config: BootConfig): void {
     const t3 = performance.now();
     timings.sync = t2 - t1;
     timings.render = t3 - t2;
+    if (pendingExchangeProfile !== undefined)
+      pendingExchangeProfile.longestRenderMs = Math.max(
+        pendingExchangeProfile.longestRenderMs,
+        timings.render,
+      );
     timings.drawCalls = renderer.info.render.calls;
     timings.triangles = renderer.info.render.triangles;
 
@@ -539,7 +597,14 @@ export function boot(config: BootConfig): void {
       return host.adapter;
     },
     tick: () => lastTick,
-    timings: () => ({ ...timings }),
+    timings: () => ({
+      ...timings,
+      ...(timings.firstExchangeFailure === undefined
+        ? {}
+        : {
+            firstExchangeFailure: { ...timings.firstExchangeFailure },
+          }),
+    }),
     samples: () => ({
       gaps: [...gapSamples],
       work: [...workSamples],

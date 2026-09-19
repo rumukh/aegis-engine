@@ -70,6 +70,7 @@ interface PendingRequest {
   url: string;
   body: string | undefined;
   resolve(response: Response): void;
+  reject(error: unknown): void;
 }
 
 const manifest: PresentationManifest = {
@@ -124,11 +125,12 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     (url: string, init?: RequestInit) =>
-      new Promise<Response>((resolve) => {
+      new Promise<Response>((resolve, reject) => {
         requests.push({
           url,
           body: typeof init?.body === 'string' ? init.body : undefined,
           resolve,
+          reject,
         });
       }),
   );
@@ -316,6 +318,64 @@ describe('dev-client controller polling', () => {
 });
 
 describe('dev-client synchronization', () => {
+  it('distinguishes body-read cancellation after HTTP 200 from request and validation errors', async () => {
+    await start();
+    await display();
+    const reply = new Response('{}', { status: 200 });
+    vi.spyOn(reply, 'text').mockRejectedValue(
+      new DOMException('The user aborted a request.', 'AbortError'),
+    );
+    takeRequest('frame').resolve(reply);
+    await settle();
+    expect(debug().timings()).toMatchObject({
+      exchangeErrors: 1,
+      firstExchangeFailure: {
+        stage: 'body',
+        responseStatus: 200,
+        name: 'AbortError',
+        message: 'The user aborted a request.',
+      },
+    });
+  });
+
+  it('keeps genuine request failures counted and retains their first cause through recovery', async () => {
+    await start();
+    await display();
+    const failed = takeRequest('frame');
+    const seq = (JSON.parse(failed.body!) as { input: InputPacket }).input.seq;
+    failed.reject(new DOMException('Timed out at the unchanged deadline', 'TimeoutError'));
+    await settle();
+    expect(debug().timings()).toMatchObject({
+      exchangeErrors: 1,
+      firstExchangeFailure: {
+        stage: 'request',
+        message: 'Timed out at the unchanged deadline',
+        name: 'TimeoutError',
+        requestSequence: seq,
+        requestGeneration: 0,
+        generation: 0,
+      },
+    });
+    const first = debug().timings().firstExchangeFailure!;
+    first.message = 'caller mutation';
+    expect(debug().timings().firstExchangeFailure?.message).not.toBe('caller mutation');
+    await display();
+    await answer(takeRequest('frame'), response(1, 0));
+    expect(debug().timings().exchangeErrors).toBe(1);
+    expect(debug().timings().firstExchangeFailure?.message).toBe(
+      'Timed out at the unchanged deadline',
+    );
+    await display();
+    const refused = takeRequest('frame');
+    refused.resolve(new Response('bad input is still an error', { status: 400 }));
+    await settle();
+    expect(debug().timings().exchangeErrors).toBe(2);
+    expect(elements.get('loading-message')?.textContent).toContain('responded 400');
+    expect(debug().timings().firstExchangeFailure?.message).toBe(
+      'Timed out at the unchanged deadline',
+    );
+  });
+
   it('cannot execute paused key taps while the resume acknowledgement is delayed', async () => {
     await start(true, response(0, 0, [], true));
     const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
@@ -465,6 +525,12 @@ describe('dev-client synchronization', () => {
         expect(ready).not.toHaveBeenCalled();
         expect(debug().tick()).toBe(-1);
         expect(debug().timings().exchangeErrors).toBe(index + 1);
+        expect(debug().timings().firstExchangeFailure).toMatchObject({
+          stage: 'response',
+          name: 'Error',
+          requestGeneration: 0,
+          tick: -1,
+        });
         expect(elements.get('loading-message')?.textContent).toMatch(/history.*retry/i);
       }
       await display();
