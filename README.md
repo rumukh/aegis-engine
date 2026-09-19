@@ -176,7 +176,7 @@ npx aegis test
 
 The first command runs the composed Coyote Gap plugin selected by its `aegis.json`.
 The second discovers the built gameplay specifications, including winning and losing routes
-across all three PoCs. No browser is started.
+across all four demos. No browser is started.
 
 ## Engine capabilities
 
