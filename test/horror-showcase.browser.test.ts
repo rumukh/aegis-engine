@@ -29,6 +29,7 @@ import {
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
 import { navigateAndWait } from '../packages/render-three/src/browser-navigation.js';
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
+import { closeHorrorPage, reportHorrorFailure } from './support/horror-failure-context.js';
 import {
   gamepadFrames,
   installVirtualPad,
@@ -161,6 +162,35 @@ afterAll(async () => {
 
 async function sync(page: CdpSession): Promise<void> {
   await evaluate(page, 'globalThis.aegis.sync().then(()=>null)');
+}
+
+async function diagnoseFailure(
+  page: CdpSession,
+  transport: Transport,
+  route: string,
+  error: unknown,
+): Promise<void> {
+  await reportHorrorFailure(error, {
+    label: `${transport}: ${route}`,
+    page,
+    ...(transport === 'static'
+      ? {}
+      : {
+          authoritative: () => {
+            const session = dev.session('horror');
+            if (session === undefined) throw new Error('The live horror session is unavailable.');
+            return {
+              snapshot: session.snapshot(),
+              events: session.world.events.history(),
+              observations: {
+                tick: session.tick,
+                paused: session.paused,
+                hash: session.hash(),
+              },
+            };
+          },
+        }),
+  });
 }
 
 async function capture(page: CdpSession, name: string): Promise<void> {
@@ -373,6 +403,7 @@ describe('NULL MERIDIAN real browser mission', () => {
       await page.send('Page.addScriptToEvaluateOnNewDocument', {
         source: `globalThis.__horrorAudio=[];const original=AudioBufferSourceNode.prototype.start;AudioBufferSourceNode.prototype.start=function(...args){const result=original.apply(this,args);globalThis.__horrorAudio.push({loop:this.loop,duration:this.buffer?.duration});return result;};`,
       });
+      let failed = false;
       try {
         await page.send('Page.navigate', {
           url: `${transport === 'live' ? dev.url : staticUrl}/play/horror/`,
@@ -466,9 +497,12 @@ describe('NULL MERIDIAN real browser mission', () => {
         );
         expect(result.pipeline.width).toBe(HARDWARE ? 2560 : 480);
         expect(result.pipeline.height).toBe(HARDWARE ? 1440 : 270);
+      } catch (error) {
+        failed = true;
+        await diagnoseFailure(page, transport, 'win route', error);
+        throw error;
       } finally {
-        await page.send('Page.navigate', { url: 'about:blank' });
-        page.close();
+        await closeHorrorPage(page, failed);
       }
     }, 300_000);
   }
@@ -477,6 +511,7 @@ describe('NULL MERIDIAN real browser mission', () => {
     it(`${transport}: the visible responder catches the visitor and shows an accessible restart ending`, async () => {
       assert.ok(browser);
       const page = await openPage(browser.port, 'about:blank', VIEWPORT);
+      let failed = false;
       try {
         await page.send('Emulation.setEmulatedMedia', {
           features: [
@@ -699,9 +734,12 @@ describe('NULL MERIDIAN real browser mission', () => {
             "document.getElementById('action-pause').getAttribute('aria-pressed')",
           ),
         ).toBe('true');
+      } catch (error) {
+        failed = true;
+        await diagnoseFailure(page, transport, 'caught route', error);
+        throw error;
       } finally {
-        await page.send('Page.navigate', { url: 'about:blank' });
-        page.close();
+        await closeHorrorPage(page, failed);
       }
     }, 240_000);
   }
