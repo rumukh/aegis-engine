@@ -14,6 +14,11 @@ separate record, not implied by creative approval. Earlier checkpoint sections a
 hash-pinned recipes/provenance describe their production stage; their old pending fields are
 historical, not current release status. Do not rewrite those receipts after approval.
 
+The evacuation ending's `sourceSha256` records its cook-time source bytes. Its asset test
+accepts the LF and CRLF representations of that same text so Git checkout conversion does
+not invalidate the receipt. Other source edits still fail; the recorded fingerprint is not
+rewritten, and model, image and audio fingerprints remain byte-exact.
+
 From the repository root, with the normal locked dependencies and engine build available:
 
 ```powershell

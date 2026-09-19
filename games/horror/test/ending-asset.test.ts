@@ -33,18 +33,24 @@ function track(node: string, path = 'translation') {
   return { times: values(sampler.input), values: values(sampler.output) };
 }
 
+function sourceFingerprints(text: string): string[] {
+  const lf = text.replaceAll('\r\n', '\n');
+  return [lf, lf.replaceAll('\n', '\r\n')].map((source) =>
+    createHash('sha256').update(source).digest('hex'),
+  );
+}
+
 describe('NULL MERIDIAN authored evacuation asset', () => {
+  const provenance = JSON.parse(
+    readFileSync('games/horror/assets/ending-provenance.json', 'utf8'),
+  ) as { sha256: string; sourceSha256: string; bytes: number; durationSeconds: number };
+  const source = readFileSync('games/horror/assets/build-ending.mjs', 'utf8');
+
   it('ships the fingerprinted separate 18-second model without adding new texture dependencies', () => {
-    const provenance = JSON.parse(
-      readFileSync('games/horror/assets/ending-provenance.json', 'utf8'),
-    ) as { sha256: string; sourceSha256: string; bytes: number; durationSeconds: number };
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(provenance.sha256);
     expect(bytes.length).toBe(provenance.bytes);
-    expect(
-      createHash('sha256')
-        .update(readFileSync('games/horror/assets/build-ending.mjs'))
-        .digest('hex'),
-    ).toBe(provenance.sourceSha256);
+    // The receipt pins cook-time bytes; Git may change only their newline encoding.
+    expect(sourceFingerprints(source)).toContain(provenance.sourceSha256);
     expect(bytes.length).toBeLessThan(2 * 1024 * 1024);
     expect(provenance.durationSeconds).toBe(18);
     expect(gltf.animations).toHaveLength(1);
@@ -58,6 +64,18 @@ describe('NULL MERIDIAN authored evacuation asset', () => {
         inventory.files.some((entry) => entry.file === image.uri),
         image.uri,
       ).toBe(true);
+  });
+
+  it.each(['LF', 'CRLF'] as const)('recognizes the pinned source in an %s checkout', (ending) => {
+    const lf = source.replaceAll('\r\n', '\n');
+    const checkedOut = ending === 'LF' ? lf : lf.replaceAll('\n', '\r\n');
+    expect(sourceFingerprints(checkedOut)).toContain(provenance.sourceSha256);
+  });
+
+  it('rejects a source edit that is not a checkout newline conversion', () => {
+    const changed = source.replace("'Departure'", "'ChangedDeparture'");
+    expect(changed).not.toBe(source);
+    expect(sourceFingerprints(changed)).not.toContain(provenance.sourceSha256);
   });
 
   it('actually closes both hatch leaves and moves the capsule, not only the camera', () => {
