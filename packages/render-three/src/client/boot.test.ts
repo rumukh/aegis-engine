@@ -15,12 +15,27 @@ import type { InputPacket } from '../live-input.js';
 import { virtualGamepad } from '../testing/gamepad.js';
 import { createLiveSession } from '../session.js';
 
+const cinematic = vi.hoisted(() => ({ render: vi.fn() }));
+vi.mock('../presentation/pipeline.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../presentation/pipeline.js')>()),
+  CinematicPipeline: class {
+    render = cinematic.render;
+    resize(): void {}
+    setQuality(): void {}
+    stats(): object {
+      return {};
+    }
+    dispose(): void {}
+  },
+}));
+
 // Keep the real boot, input, mirror, HUD and presentation runtime; only GPU drawing is absent.
 vi.mock('three', async (importOriginal) => ({
   ...(await importOriginal<typeof import('three')>()),
   WebGLRenderer: class {
     info = { render: { calls: 0, triangles: 0 } };
     setPixelRatio(): void {}
+    forceContextLoss(): void {}
     setSize(): void {}
     render(): void {}
     dispose(): void {}
@@ -77,6 +92,7 @@ let requests: PendingRequest[];
 let nextFrame = 0;
 
 beforeEach(() => {
+  cinematic.render.mockReset();
   dom = installFakeDom();
   globalEvents = new EventTarget();
   elements = new Map(
@@ -85,6 +101,7 @@ beforeEach(() => {
       'hud-outcome',
       'hud-step-0',
       'hud-status',
+      'action-pause',
       'hud-events',
       'loading-message',
     ].map((id) => [id, new HudElement()]),
@@ -194,6 +211,61 @@ async function start(
 }
 
 describe('dev-client controller polling', () => {
+  it.each([
+    { presentation: false, paused: true },
+    { presentation: true, paused: true },
+    { presentation: false, paused: false },
+    { presentation: true, paused: false },
+  ])(
+    'keeps View restart pause state before another display frame: %j',
+    async ({ presentation, paused }) => {
+      const pad = virtualGamepad();
+      vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+      const initialGeneration = presentation ? 0 : undefined;
+      await start(presentation, response(12, initialGeneration, [], paused));
+      await display();
+      await answer(takeRequest('frame'), response(12, initialGeneration, [], paused));
+      const button = elements.get('action-pause');
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      pad.buttons[8]!.value = 1;
+      await display();
+      const oldFrame = takeRequest('frame');
+      const restart = takeRequest('control');
+      expect(JSON.parse(restart.body!)).toEqual({ command: 'restart' });
+      await answer(restart, response(0, presentation ? 1 : undefined, [], paused));
+      // No display() here: restart publishes tick 0 before the next animation frame.
+      expect(debug().tick()).toBe(0);
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      expect(button?.textContent).toBe(paused ? 'Resume' : 'Pause');
+      pad.buttons[8]!.value = 0;
+      await answer(oldFrame, response(13, initialGeneration, [], paused));
+      expect(debug().tick()).toBe(0);
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      await display();
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+    },
+  );
+
+  it('draws a cold cinematic generation before arming another HTTP deadline', async () => {
+    await start(true, response(0, 0), {
+      ...manifest,
+      quality: 'high',
+      pipeline: { toneMapping: 'aces' },
+    });
+    cinematic.render.mockImplementation(() => expect(requests).toHaveLength(0));
+    await display();
+    expect(cinematic.render).toHaveBeenCalledOnce();
+    cinematic.render.mockImplementation(() => undefined);
+    await display();
+    expect(requests).toHaveLength(1);
+    await answer(takeRequest('frame'), response(0, 1));
+    cinematic.render.mockImplementation(() => expect(requests).toHaveLength(0));
+    await display();
+    cinematic.render.mockImplementation(() => undefined);
+    await display();
+    expect(requests).toHaveLength(1);
+  });
+
   it('captures a press/release between exchanges while the preceding HTTP frame is in flight', async () => {
     const pad = virtualGamepad();
     vi.stubGlobal('navigator', { getGamepads: () => [pad] });

@@ -17,9 +17,11 @@ import { platformer } from '../poc/platformer.mjs';
 import { pocGames, pocStaticGames, pocStaticModules } from '../poc/poc-games.mjs';
 import {
   click,
+  DEFAULT_UNTIL_TIMEOUT_MS,
   evaluate,
   key,
   launchBrowser,
+  NAVIGATION_TIMEOUT_MS,
   openPage,
   screenshot,
   stopExternalLagWitness,
@@ -27,6 +29,7 @@ import {
   waitForPaint,
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
+import { navigateAndWait } from '../packages/render-three/src/browser-navigation.js';
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
 import { startDevServer } from '../packages/render-three/src/dev-server.js';
 import type { DevServer } from '../packages/render-three/src/dev-server.js';
@@ -309,11 +312,31 @@ async function events(transport: Transport, cdp: CdpSession): Promise<readonly E
 }
 
 async function pressControl(cdp: CdpSession, selector: string): Promise<void> {
-  const point = await evaluate<{ x: number; y: number }>(
+  const point = await controlPoint(cdp, selector);
+  await click(cdp, point.x, point.y);
+}
+
+function controlPoint(cdp: CdpSession, selector: string): Promise<{ x: number; y: number }> {
+  return evaluate<{ x: number; y: number }>(
     cdp,
     `(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   );
-  await click(cdp, point.x, point.y);
+}
+
+async function navigateReady(
+  cdp: CdpSession,
+  trigger: () => Promise<unknown>,
+  expression: string,
+  transport: Transport = 'static',
+): Promise<void> {
+  const deadline = Date.now() + DEFAULT_UNTIL_TIMEOUT_MS;
+  const navigation = await navigateAndWait(cdp, trigger, {
+    timeoutMs: Math.min(NAVIGATION_TIMEOUT_MS, deadline - Date.now()),
+  });
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error('Navigation exhausted the existing readiness budget.');
+  await until<boolean>(cdp, expression, Boolean, remaining);
+  record('lifecycle', { transport, navigation });
 }
 
 async function drive(
@@ -426,11 +449,11 @@ describe('Coyote Gap real browser acceptance', () => {
 
         if (transport === 'dev') {
           const timeOrigin = await evaluate<number>(cdp, 'performance.timeOrigin');
-          await cdp.send('Page.reload', { ignoreCache: true });
-          await until<boolean>(
+          await navigateReady(
             cdp,
+            () => cdp.send('Page.reload', { ignoreCache: true }),
             `performance.timeOrigin !== ${timeOrigin} && globalThis.aegis?.presentation().status === 'ready'`,
-            Boolean,
+            transport,
           );
           const reloaded = await evaluate<Seen>(cdp, READ);
           expect(reloaded.hash).toBe(final.hash);
@@ -491,6 +514,35 @@ describe('Coyote Gap real browser acceptance', () => {
 
     it(`${transport}: keeps controls usable at narrow sizes and unlocks, mutes, restarts and disposes real resources`, async () => {
       await withPage(transport, async (cdp) => {
+        // Static reset sends trusted keyboard events. Prove the synthetic-event refusal before
+        // any reset can start a real asynchronous unlock and confound that negative control.
+        expect((await evaluate<Seen>(cdp, READ)).host.audio.status).toBe('locked');
+        const syntheticContexts = await evaluate<number>(
+          cdp,
+          `(() => {
+            const Original=globalThis.AudioContext;
+            globalThis.coyoteContextProbe={Original,created:0};
+            globalThis.AudioContext=new Proxy(Original,{construct(target,args,newTarget){
+              globalThis.coyoteContextProbe.created++;
+              return Reflect.construct(target,args,newTarget);
+            }});
+            document.getElementById('stage').dispatchEvent(new Event('pointerdown'));
+            return globalThis.coyoteContextProbe.created;
+          })()`,
+        );
+        expect(syntheticContexts).toBe(0);
+        expect((await evaluate<Seen>(cdp, READ)).host.audio.status).toBe('locked');
+        await pressControl(cdp, '#action-mute');
+        await until<string>(
+          cdp,
+          'globalThis.aegis.presentation().audio.status',
+          (status) => status === 'ready',
+        );
+        expect(await evaluate<number>(cdp, 'globalThis.coyoteContextProbe.created')).toBe(1);
+        await evaluate(
+          cdp,
+          'globalThis.AudioContext=globalThis.coyoteContextProbe.Original; delete globalThis.coyoteContextProbe; null',
+        );
         await reset(cdp, transport);
         const initial = await evaluate<Seen>(cdp, READ);
         const assetUrls = await evaluate<string[]>(
@@ -505,20 +557,6 @@ describe('Coyote Gap real browser acceptance', () => {
             for(const m of Array.isArray(o.material)?o.material:[o.material]) if(m?.map) ids.add(m.map.uuid);
           });return [...ids].sort();
         })()`,
-        );
-        // A synthetic event is not an autoplay authorization.
-        if (initial.host.audio.status === 'locked') {
-          await evaluate(
-            cdp,
-            "document.getElementById('stage').dispatchEvent(new Event('pointerdown')); null",
-          );
-          expect((await evaluate<Seen>(cdp, READ)).host.audio.status).toBe('locked');
-        }
-        await pressControl(cdp, '#action-mute');
-        await until<string>(
-          cdp,
-          'globalThis.aegis.presentation().audio.status',
-          (status) => status === 'ready',
         );
         if ((await evaluate<Seen>(cdp, READ)).host.audio.muted)
           await pressControl(cdp, '#action-mute');
@@ -646,13 +684,14 @@ describe('Coyote Gap real browser acceptance', () => {
           cdp,
           `addEventListener('beforeunload',()=>sessionStorage.setItem('coyote-disposed',JSON.stringify(globalThis.aegis.presentation()))); null`,
         );
-        await cdp.send('Page.navigate', {
-          url: transport === 'dev' ? `${dev.url}/` : `${origin}${PREFIX}`,
-        });
-        await until<boolean>(
+        await navigateReady(
           cdp,
+          () =>
+            cdp.send('Page.navigate', {
+              url: transport === 'dev' ? `${dev.url}/` : `${origin}${PREFIX}`,
+            }),
           'globalThis.aegis === undefined && document.readyState === "complete"',
-          Boolean,
+          transport,
         );
         const disposed = await evaluate<HostStats>(
           cdp,
@@ -687,11 +726,10 @@ describe('Coyote Gap real browser acceptance', () => {
       holdAsset = new Promise<void>((done) => {
         releaseAsset = done;
       });
-      await cdp.send('Page.navigate', { url: urlFor('static') });
-      await until<string>(
+      await navigateReady(
         cdp,
-        'globalThis.aegis?.presentation().status',
-        (status) => status === 'loading',
+        () => cdp.send('Page.navigate', { url: urlFor('static') }),
+        "globalThis.aegis?.presentation().status === 'loading'",
       );
       expect(await evaluate(cdp, 'globalThis.aegis.tick()')).toBe(-1);
       await tap(cdp, 'KeyP');
@@ -710,11 +748,10 @@ describe('Coyote Gap real browser acceptance', () => {
       await cdp.send('Network.enable');
       await cdp.send('Network.setBlockedURLs', { urls: ['*assets/platformer/engineer.svg*'] });
       const timeOrigin = await evaluate<number>(cdp, 'performance.timeOrigin');
-      await cdp.send('Page.reload', { ignoreCache: true });
-      await until<boolean>(
+      await navigateReady(
         cdp,
+        () => cdp.send('Page.reload', { ignoreCache: true }),
         `performance.timeOrigin !== ${timeOrigin} && globalThis.aegis?.presentation().status === 'error'`,
-        Boolean,
       );
       expect(await evaluate(cdp, 'globalThis.aegis.tick()')).toBe(-1);
       expect(await evaluate(cdp, "document.getElementById('loading-message').textContent")).toMatch(
@@ -728,11 +765,11 @@ describe('Coyote Gap real browser acceptance', () => {
       );
       await cdp.send('Network.setBlockedURLs', { urls: [] });
       const failedOrigin = await evaluate<number>(cdp, 'performance.timeOrigin');
-      await pressControl(cdp, '#action-retry');
-      await until<boolean>(
+      const retry = await controlPoint(cdp, '#action-retry');
+      await navigateReady(
         cdp,
+        () => click(cdp, retry.x, retry.y),
         `performance.timeOrigin !== ${failedOrigin} && globalThis.aegis !== undefined`,
-        Boolean,
       );
       await ready(cdp);
       expect(await evaluate(cdp, 'globalThis.aegis.presentation().assets.loadedFiles')).toBe(27);

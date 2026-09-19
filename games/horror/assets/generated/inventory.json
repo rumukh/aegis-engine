@@ -1,0 +1,2013 @@
+{
+  "aegis": "null-meridian-visual-assets/1",
+  "coordinateSystem": {
+    "units": "meters",
+    "up": "+Y",
+    "forward": "+Z",
+    "floor": 0,
+    "ceiling": 3.6,
+    "gridCellCenters": "integer X,Z"
+  },
+  "sourceScene": {
+    "canonical": "games/horror/levels/null-meridian.scene.json",
+    "sha256": "b813645272b39897cecb0dbee587412acc5bb052e3ba3de16100f4797814f660",
+    "floorplanSha256": "bf485c36998b2bdc99e59f0828852952a5419fb160d1e378cb00f6c1c0f598c7",
+    "purpose": "Cook must be rerun if authoritative floorplan/door anchors change; unrelated component edits may change whole-scene hash without changing geometry."
+  },
+  "budget": {
+    "totalBytes": 38117885,
+    "maximumVisualBytes": 50331648,
+    "reservedAudioBytes": 16777216,
+    "maximumFileBytes": 33554432,
+    "decodedUniqueTextureBytesWithMipmaps": 144015360,
+    "textureMemoryCaveat": "GPU texture instances may repeat across independently loaded GLBs. This is unique-image lower bound, not measured GPU residency."
+  },
+  "files": [
+    {
+      "file": "archive-recorder.glb",
+      "bytes": 51868,
+      "sha256": "38cea1424faa3e275010a9c703c2152ea9e08a2fb1a3b16a9a342fe4f153f0d1"
+    },
+    {
+      "file": "arrival-terminal.glb",
+      "bytes": 50488,
+      "sha256": "39566978f71d199ecaec53f9f5183b52a2d9739e5a034eca4d25fee9f56256e9"
+    },
+    {
+      "file": "bus-isolator.glb",
+      "bytes": 45224,
+      "sha256": "44af2791a1284b7a40ee11620e8c816eda94430460d083b5297fdc4146c25ab6"
+    },
+    {
+      "file": "ceramic-basecolor.png",
+      "bytes": 4664567,
+      "sha256": "5652eca06efd234fa84ee75f7462725fc51d1bf4c56004ff7ef2a0fcbb3667e6"
+    },
+    {
+      "file": "ceramic-normal.png",
+      "bytes": 1156152,
+      "sha256": "d61f8f0e13086823792025ff97f0a07e85035038454953c39355ed048ad105ad"
+    },
+    {
+      "file": "ceramic-orm.png",
+      "bytes": 698212,
+      "sha256": "de985599cd66361326cfcead39d00c56bcc08e8bda2208e43ce86a35db4ee9cd"
+    },
+    {
+      "file": "coolant-valve.glb",
+      "bytes": 80040,
+      "sha256": "b3ecc0f610984ba06e9ec6e1e9b05e0801906ddd8638c26a71daa37c8964041a"
+    },
+    {
+      "file": "crt-panels.png",
+      "bytes": 25953,
+      "sha256": "3ed4e403cb3c28418c8919cbae3e92043cbffcd8387a0b950941218a884039bf"
+    },
+    {
+      "file": "deck-basecolor.png",
+      "bytes": 1225362,
+      "sha256": "f99d5d58bb071f9cc3810b1fe2c1523d3e1eda4a560e9578f88b86ff486ed5aa"
+    },
+    {
+      "file": "deck-normal.png",
+      "bytes": 987440,
+      "sha256": "fc6c5955c30a79a3027fa721b83afd0422b35ed9d4e846174f87baa144eeda23"
+    },
+    {
+      "file": "deck-orm.png",
+      "bytes": 838342,
+      "sha256": "19b607efa1e020374e558812bafba1fa02500a34ab1acc5da1075004cad03f0f"
+    },
+    {
+      "file": "evac-control.glb",
+      "bytes": 67684,
+      "sha256": "35eaaa21fe40f73e370b48d3745ce2f73273b1fdd4f6e874300a655ebbb7157d"
+    },
+    {
+      "file": "facility.glb",
+      "bytes": 14572712,
+      "sha256": "d3ddd97286e9036bb23ff4f8545c680a3603b871173d58af2047641a14a57473"
+    },
+    {
+      "file": "fuse-locker.glb",
+      "bytes": 95624,
+      "sha256": "a6dcc857cd04c7ed214ef143a87268b2d0be70065f9662424e241144dd30495b"
+    },
+    {
+      "file": "graphite-basecolor.png",
+      "bytes": 1706898,
+      "sha256": "9a497dc2a621be5a3c9f4267519b40f02faf5cfd5ee0e2be131a7d05da0e11bb"
+    },
+    {
+      "file": "graphite-normal.png",
+      "bytes": 881572,
+      "sha256": "e7c2603c41773ad7e8cc647f1f92f69317679fe06547b7a6dae3d64448f211a5"
+    },
+    {
+      "file": "graphite-orm.png",
+      "bytes": 697246,
+      "sha256": "0a3bfb62ec293a231339eba103e0e0583f831e762d52b76b0fe00da1968122ee"
+    },
+    {
+      "file": "labels.png",
+      "bytes": 1944896,
+      "sha256": "0df5e8fd17adeb35f4689f0352a38c0379482ec325d9558364c3a883eea8db95"
+    },
+    {
+      "file": "maintenance-note.glb",
+      "bytes": 45464,
+      "sha256": "afe88124cd6c1527c5f8062fe049410f3d144367d10b681787d32d270d394c6e"
+    },
+    {
+      "file": "orbital-exterior.glb",
+      "bytes": 495620,
+      "sha256": "c39e043aa25548dd9bc69db434291e7d4e78bb645628076a4f93604e0b6d8f5e"
+    },
+    {
+      "file": "planet-bands.png",
+      "bytes": 1560085,
+      "sha256": "ece29667fee998e30471e8eb40b19d8852dcfc2b0d2a4291ff984175f1976e5c"
+    },
+    {
+      "file": "power-console.glb",
+      "bytes": 67536,
+      "sha256": "00b177643ca31fb367db5d601529ae2dc98ac702cb306abd9383eb54d0e7898b"
+    },
+    {
+      "file": "pressure-door.glb",
+      "bytes": 90228,
+      "sha256": "d73931ff92ee818e95e59348f9b2defb2fa6875571a540037968414d21afb7fc"
+    },
+    {
+      "file": "rescue-badges.png",
+      "bytes": 230801,
+      "sha256": "88cbe27a3eeac1ac6fec8214e961f745e747fc3fba4f7f33e8f1d4f0d779e12c"
+    },
+    {
+      "file": "responder.glb",
+      "bytes": 1047880,
+      "sha256": "3533cba36418b82445b809ea3a9ad462fc8a3622bd999af64ab34058658c516a"
+    },
+    {
+      "file": "ring-density.png",
+      "bytes": 270,
+      "sha256": "3c699294d7c94b5df847a46e794208aa9fc401f04dfc05f5fafaa0e9bf839434"
+    },
+    {
+      "file": "service-wheel.glb",
+      "bytes": 80028,
+      "sha256": "1fbc016db04973dab6b6ada95a5fefeceeb7b958e36cc036e4c400087e57119f"
+    },
+    {
+      "file": "station-reflection.png",
+      "bytes": 26611,
+      "sha256": "194be97ad20022a0d4ce167298d1d027b3f70c93c6b55d3bd63b167d60efd741"
+    },
+    {
+      "file": "suit-shell-basecolor.png",
+      "bytes": 1709038,
+      "sha256": "8bb5e5acb962960b55415652a504c42893f1fc0211a67a588f17c3a86b894fe1"
+    },
+    {
+      "file": "suit-shell-normal.png",
+      "bytes": 583546,
+      "sha256": "54ee2ecfe71501160aa43925952cadefa35fe32ec952a063938d12facd871ad9"
+    },
+    {
+      "file": "suit-shell-orm.png",
+      "bytes": 710474,
+      "sha256": "4bb79632f0c387bbb584beb9dfcd2f0be0fe028ccd2e4be1f473e49df71a273e"
+    },
+    {
+      "file": "suit-textile-basecolor.png",
+      "bytes": 928992,
+      "sha256": "24a495490ed0e3df8cf2a920714a2cc9afdb09928a2497f7a23a1a60af733978"
+    },
+    {
+      "file": "suit-textile-normal.png",
+      "bytes": 48597,
+      "sha256": "682264c2ea1894a8ddb15af56109bb1a12bc29c793549499a2a119c388962e0a"
+    },
+    {
+      "file": "suit-textile-orm.png",
+      "bytes": 561143,
+      "sha256": "3a7769d10bcdb445e4e6a5201f2bf558b8e9d7076ee1d530e78085362bf1545b"
+    },
+    {
+      "file": "triage-recorder.glb",
+      "bytes": 75024,
+      "sha256": "d1b2bb202d6e25910f28de1c5bb270a98f484179095e7fa095bdd9e58bc05c9d"
+    },
+    {
+      "file": "uplink-console.glb",
+      "bytes": 66268,
+      "sha256": "8145b878b7a14aae8362afd4387c1c789846c0afd17b9ddfa3bfe95abcc81d1f"
+    }
+  ],
+  "textures": [
+    {
+      "file": "ceramic-basecolor.png",
+      "width": 2048,
+      "height": 2048,
+      "bytes": 4664567,
+      "recipe": "Azure source 1024x1024; bilinear 2048px cook and symmetric edge crossfade; no perspective source."
+    },
+    {
+      "file": "ceramic-normal.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 1156152,
+      "recipe": "1024px heuristic microheight from weak albedo luminance plus seeded micrograin; authored approximation, not measured photogrammetric normals."
+    },
+    {
+      "file": "ceramic-orm.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 698212,
+      "recipe": "1024px linear RGB: R=1 (no baked geometric AO), G=authored roughness around 0.63, B=authored metalness 0.02; neither measured nor AI-predicted PBR."
+    },
+    {
+      "file": "graphite-basecolor.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 1706898,
+      "recipe": "Azure source 1024x1024; bilinear 1024px cook and symmetric edge crossfade; no perspective source."
+    },
+    {
+      "file": "graphite-normal.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 881572,
+      "recipe": "1024px heuristic microheight from weak albedo luminance plus seeded micrograin; authored approximation, not measured photogrammetric normals."
+    },
+    {
+      "file": "graphite-orm.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 697246,
+      "recipe": "1024px linear RGB: R=1 (no baked geometric AO), G=authored roughness around 0.73, B=authored metalness 0.16; neither measured nor AI-predicted PBR."
+    },
+    {
+      "file": "deck-basecolor.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 1225362,
+      "recipe": "Original seeded non-slip machined metal pattern, 1m tile; no external art."
+    },
+    {
+      "file": "deck-orm.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 838342,
+      "recipe": "Authored contact/groove occlusion, roughness and metalness; linear ORM."
+    },
+    {
+      "file": "deck-normal.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 987440,
+      "recipe": "Normal differentiated from authored stamped deck heightfield, OpenGL +Y convention."
+    },
+    {
+      "file": "labels.png",
+      "width": 2048,
+      "height": 2048,
+      "bytes": 1944896,
+      "recipe": "Original deterministic stencil/CRT decal atlas, 16 horizontal rows, exact readable text; seeded wear. Opaque physical label plaques, not concept art."
+    },
+    {
+      "file": "crt-panels.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 25953,
+      "recipe": "Original eight 512x256 instrument identity/control displays with exact text and restrained CRT scanlines. Static equipment labeling, not authoritative live mission status."
+    },
+    {
+      "file": "suit-textile-basecolor.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 928992,
+      "recipe": "Original directional twill weave, restrained grey-olive pressure textile; no external art."
+    },
+    {
+      "file": "suit-textile-normal.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 48597,
+      "recipe": "Differentiated authored relative heightfield, artistic OpenGL normal approximation, not recovered measured material."
+    },
+    {
+      "file": "suit-textile-orm.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 561143,
+      "recipe": "Authored linear ORM. Pressure weave high roughness/nonmetal; ceramic-composite shell has rough painted face and small semi-metal substrate chips. Artistic parameters, not measured."
+    },
+    {
+      "file": "suit-shell-basecolor.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 1709038,
+      "recipe": "Azure ceramic source derivative with hand-authored directional scoring, panel-edge chipping and dust; UVs matched to authored hard-shell outlines, not uniform mottling."
+    },
+    {
+      "file": "suit-shell-normal.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 583546,
+      "recipe": "Differentiated authored relative heightfield, artistic OpenGL normal approximation, not recovered measured material."
+    },
+    {
+      "file": "suit-shell-orm.png",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 710474,
+      "recipe": "Authored linear ORM. Pressure weave high roughness/nonmetal; ceramic-composite shell has rough painted face and small semi-metal substrate chips. Artistic parameters, not measured."
+    },
+    {
+      "file": "rescue-badges.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 230801,
+      "recipe": "Original purpose-sized4:1 rescue garment patches, exact stencil text and seeded thread wear; no compressed station-sign typography."
+    },
+    {
+      "file": "planet-bands.png",
+      "width": 2048,
+      "height": 1024,
+      "bytes": 1560085,
+      "recipe": "Azure original1536x1024 neutral cloud source remapped2048x1024, seam crossfade and explicit authored day-night illumination; used on a real distant sphere mesh, not a room wallpaper or measured astronomical albedo."
+    },
+    {
+      "file": "station-reflection.png",
+      "width": 1024,
+      "height": 512,
+      "bytes": 26611,
+      "recipe": "Original authored LDR equirectangular reflection field, broad warm practical and cold window lobes; not HDR or a captured environment."
+    },
+    {
+      "file": "ring-density.png",
+      "width": 512,
+      "height": 4,
+      "bytes": 270,
+      "recipe": "Original deterministic512x4 radial RGBA density: muted warm-grey RGB, low-contrast continuous alpha with two broad troughs and feathered edges. No generation, new imagery, opaque strip gaps, tilt or celestial reframing."
+    }
+  ],
+  "models": [
+    {
+      "file": "facility.glb",
+      "bytes": 14572712,
+      "triangles": 389394,
+      "primitives": 91,
+      "nodes": [
+        "null-meridian-facility",
+        "sector-ingress",
+        "sector-maintenance",
+        "sector-power",
+        "sector-infirmary",
+        "sector-archive",
+        "sector-spine",
+        "sector-observation",
+        "sector-evacuation",
+        "sealed-pressure-envelope"
+      ],
+      "materials": [
+        "hull",
+        "deck",
+        "graphite",
+        "ceramic",
+        "steel",
+        "rubber",
+        "satin",
+        "copper",
+        "ochre",
+        "labels",
+        "fabric",
+        "screen",
+        "padding",
+        "teal",
+        "red",
+        "warm"
+      ],
+      "dependencies": [
+        "deck-basecolor.png",
+        "deck-orm.png",
+        "deck-normal.png",
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png",
+        "labels.png",
+        "suit-textile-normal.png"
+      ],
+      "bounds": {
+        "min": [-0.5, -0.009999999776482582, -0.5],
+        "max": [30.5, 3.609999895095825, 40.5]
+      },
+      "clips": []
+    },
+    {
+      "file": "orbital-exterior.glb",
+      "bytes": 495620,
+      "triangles": 14320,
+      "primitives": 6,
+      "nodes": [
+        "meridian-orbital-exterior",
+        "pale-gas-giant",
+        "external-antenna-array",
+        "distant-star-field"
+      ],
+      "materials": ["planet", "ring-density", "graphite", "steel", "visor", "star"],
+      "dependencies": [
+        "planet-bands.png",
+        "ring-density.png",
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png"
+      ],
+      "bounds": {
+        "min": [-889.419677734375, -578.2413940429688, 41.5],
+        "max": [899.035400390625, 586.2413940429688, 1059.9902038574219]
+      },
+      "clips": []
+    },
+    {
+      "file": "arrival-terminal.glb",
+      "bytes": 50488,
+      "triangles": 1152,
+      "primitives": 8,
+      "nodes": ["meridian-arrival-terminal", "wall-housing"],
+      "materials": ["graphite", "steel", "rubber", "satin", "ceramic", "panel", "labels", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png",
+        "crt-panels.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.4699999988079071, 0.8650000095367432, -0.3100000023841858],
+        "max": [0.4699999988079071, 1.5950000286102295, 0]
+      },
+      "clips": []
+    },
+    {
+      "file": "fuse-locker.glb",
+      "bytes": 95624,
+      "triangles": 2136,
+      "primitives": 8,
+      "nodes": ["meridian-fuse-locker", "wall-housing"],
+      "materials": ["graphite", "steel", "rubber", "satin", "labels", "ceramic", "copper", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "labels.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png"
+      ],
+      "bounds": {
+        "min": [-0.4399999976158142, 0.6700000166893005, -0.3100000023841858],
+        "max": [0.4399999976158142, 1.8299999237060547, -0.001449999981559813]
+      },
+      "clips": []
+    },
+    {
+      "file": "maintenance-note.glb",
+      "bytes": 45464,
+      "triangles": 936,
+      "primitives": 8,
+      "nodes": ["meridian-maintenance-note", "wall-housing"],
+      "materials": ["steel", "rubber", "satin", "graphite", "ceramic", "panel", "labels", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png",
+        "crt-panels.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.28999999165534973, 0.9200000166893005, -0.3100000023841858],
+        "max": [0.28999999165534973, 1.6799999475479126, 0]
+      },
+      "clips": []
+    },
+    {
+      "file": "service-wheel.glb",
+      "bytes": 80028,
+      "triangles": 1760,
+      "primitives": 10,
+      "nodes": ["meridian-service-wheel", "wall-housing", "manual-wheel"],
+      "materials": ["graphite", "steel", "rubber", "satin", "labels", "ochre", "visor", "warm"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.3100000023841858, 0.5900000333786011, -0.3100000023841858],
+        "max": [0.3100000023841858, 1.7699999809265137, -0.00004999998782295734]
+      },
+      "clips": [
+        {
+          "name": "Turn",
+          "duration": 1,
+          "tracks": 1
+        }
+      ]
+    },
+    {
+      "file": "power-console.glb",
+      "bytes": 67536,
+      "triangles": 1644,
+      "primitives": 8,
+      "nodes": ["meridian-power-console", "wall-housing"],
+      "materials": ["graphite", "steel", "rubber", "satin", "ceramic", "panel", "labels", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png",
+        "crt-panels.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.46000000834465027, 0.7099999785423279, -0.3100000023841858],
+        "max": [0.46000000834465027, 1.7899999618530273, 0]
+      },
+      "clips": []
+    },
+    {
+      "file": "bus-isolator.glb",
+      "bytes": 45224,
+      "triangles": 934,
+      "primitives": 8,
+      "nodes": ["meridian-bus-isolator", "wall-housing", "isolator-lever"],
+      "materials": ["graphite", "steel", "rubber", "satin", "labels", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.3700000047683716, 0.7000000476837158, -0.3100000023841858],
+        "max": [0.3700000047683716, 1.7599999904632568, -0.0009999999310821295]
+      },
+      "clips": [
+        {
+          "name": "Turn",
+          "duration": 1,
+          "tracks": 1
+        }
+      ]
+    },
+    {
+      "file": "triage-recorder.glb",
+      "bytes": 75024,
+      "triangles": 1564,
+      "primitives": 8,
+      "nodes": ["meridian-triage-recorder", "wall-housing"],
+      "materials": ["graphite", "steel", "rubber", "satin", "labels", "panel", "ceramic", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "labels.png",
+        "crt-panels.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png"
+      ],
+      "bounds": {
+        "min": [-0.4000000059604645, 0.7799999713897705, -0.3100000023841858],
+        "max": [0.4000000059604645, 1.7599999904632568, 0]
+      },
+      "clips": []
+    },
+    {
+      "file": "archive-recorder.glb",
+      "bytes": 51868,
+      "triangles": 1154,
+      "primitives": 7,
+      "nodes": ["meridian-archive-recorder", "wall-housing"],
+      "materials": ["graphite", "steel", "rubber", "satin", "labels", "ochre", "panel"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "labels.png",
+        "crt-panels.png"
+      ],
+      "bounds": {
+        "min": [-0.44999998807907104, 0.800000011920929, -0.3100000023841858],
+        "max": [0.44999998807907104, 1.7599999904632568, -0.0010000000474974513]
+      },
+      "clips": []
+    },
+    {
+      "file": "coolant-valve.glb",
+      "bytes": 80040,
+      "triangles": 1760,
+      "primitives": 10,
+      "nodes": ["meridian-coolant-valve", "wall-housing", "manual-wheel"],
+      "materials": ["graphite", "steel", "rubber", "satin", "labels", "ochre", "visor", "warm"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.3100000023841858, 0.550000011920929, -0.3100000023841858],
+        "max": [0.3100000023841858, 1.850000023841858, -0.00004999998782295734]
+      },
+      "clips": [
+        {
+          "name": "Turn",
+          "duration": 1,
+          "tracks": 1
+        }
+      ]
+    },
+    {
+      "file": "uplink-console.glb",
+      "bytes": 66268,
+      "triangles": 1464,
+      "primitives": 8,
+      "nodes": ["meridian-uplink-console", "wall-housing"],
+      "materials": ["graphite", "steel", "rubber", "satin", "ceramic", "panel", "labels", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png",
+        "crt-panels.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.4749999940395355, 0.7100000381469727, -0.3100000023841858],
+        "max": [0.4749999940395355, 1.75, 0]
+      },
+      "clips": []
+    },
+    {
+      "file": "evac-control.glb",
+      "bytes": 67684,
+      "triangles": 1560,
+      "primitives": 8,
+      "nodes": ["meridian-evac-control", "wall-housing"],
+      "materials": ["graphite", "steel", "rubber", "satin", "ceramic", "panel", "labels", "ochre"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png",
+        "crt-panels.png",
+        "labels.png"
+      ],
+      "bounds": {
+        "min": [-0.44999998807907104, 0.6600000262260437, -0.3100000023841858],
+        "max": [0.44999998807907104, 1.8399999141693115, 0]
+      },
+      "clips": []
+    },
+    {
+      "file": "pressure-door.glb",
+      "bytes": 90228,
+      "triangles": 2012,
+      "primitives": 15,
+      "nodes": ["meridian-pressure-bulkhead", "bulkhead-frame", "leaf-left", "leaf-right"],
+      "materials": ["graphite", "steel", "labels", "ceramic", "ochre", "satin"],
+      "dependencies": [
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png",
+        "labels.png",
+        "ceramic-basecolor.png",
+        "ceramic-orm.png",
+        "ceramic-normal.png"
+      ],
+      "bounds": {
+        "min": [-1.600000023841858, -1.0430813157658037e-10, -0.4399999976158142],
+        "max": [1.600000023841858, 3.5999999046325684, 0.4399999976158142]
+      },
+      "clips": [
+        {
+          "name": "Open",
+          "duration": 0.7,
+          "tracks": 2
+        }
+      ]
+    },
+    {
+      "file": "responder.glb",
+      "bytes": 1047880,
+      "triangles": 27700,
+      "primitives": 71,
+      "nodes": [
+        "meridian-corrupted-responder",
+        "pelvis",
+        "thorax",
+        "helmet",
+        "hip-left",
+        "knee-left",
+        "ankle-left",
+        "shoulder-left",
+        "elbow-left",
+        "hip-right",
+        "knee-right",
+        "ankle-right",
+        "shoulder-right",
+        "elbow-right"
+      ],
+      "materials": [
+        "suit-textile",
+        "rubber",
+        "steel",
+        "suit-shell",
+        "shell-edge",
+        "badge",
+        "graphite",
+        "ochre",
+        "copper",
+        "rescue-visor",
+        "satin"
+      ],
+      "dependencies": [
+        "suit-textile-basecolor.png",
+        "suit-textile-orm.png",
+        "suit-textile-normal.png",
+        "suit-shell-basecolor.png",
+        "suit-shell-orm.png",
+        "suit-shell-normal.png",
+        "rescue-badges.png",
+        "graphite-basecolor.png",
+        "graphite-orm.png",
+        "graphite-normal.png"
+      ],
+      "bounds": {
+        "min": [-0.39416886276006696, -2.0861626315316073e-9, -0.3179999923706055],
+        "max": [0.39948038166761396, 2.0290000003576276, 0.2677024303901752]
+      },
+      "clips": [
+        {
+          "name": "Idle",
+          "duration": 3.4,
+          "tracks": 4
+        },
+        {
+          "name": "Stalk",
+          "duration": 2.2,
+          "tracks": 11
+        },
+        {
+          "name": "Search",
+          "duration": 4.4,
+          "tracks": 3
+        },
+        {
+          "name": "Lunge",
+          "duration": 0.8,
+          "tracks": 6
+        }
+      ]
+    }
+  ],
+  "rooms": [
+    "ingress",
+    "maintenance",
+    "power",
+    "infirmary",
+    "archive",
+    "spine",
+    "observation",
+    "evacuation"
+  ],
+  "authoredFeatures": [
+    {
+      "type": "docking-insulation",
+      "cell": [11, 2],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [19, 2],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "docking-insulation",
+      "cell": [11, 3],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [19, 3],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "docking-insulation",
+      "cell": [11, 4],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [19, 4],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "docking-insulation",
+      "cell": [11, 5],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [19, 5],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "arrival-terminal",
+      "cell": [19, 6],
+      "face": [1, 0],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "fuse-locker",
+      "cell": [3, 9],
+      "face": [0, -1],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 10],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [17, 10],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 10],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 11],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 11],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 12],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 13],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "triage-recorder",
+      "cell": [29, 13],
+      "face": [1, 0],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 14],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 14],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 15],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 16],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [17, 16],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 16],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 17],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "maintenance-note",
+      "cell": [8, 17],
+      "face": [-1, 0],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [17, 17],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 17],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "folded-medical-berth",
+      "cell": [29, 18],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 19],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 20],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [13, 20],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [1, 22],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "coolant-valve",
+      "cell": [3, 23],
+      "face": [0, 1],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "service-wheel",
+      "cell": [4, 23],
+      "face": [0, 1],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [17, 24],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "power-capacitors",
+      "cell": [1, 25],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "power-capacitors",
+      "cell": [1, 26],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "power-capacitors",
+      "cell": [1, 27],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "power-capacitors",
+      "cell": [1, 28],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "power-capacitors",
+      "cell": [1, 29],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [17, 29],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "power-capacitors",
+      "cell": [1, 30],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [17, 30],
+      "face": [1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "power-console",
+      "cell": [3, 31],
+      "face": [0, 1],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "bus-isolator",
+      "cell": [9, 31],
+      "face": [0, 1],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [13, 31],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [20, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "archive-recorder",
+      "cell": [21, 31],
+      "face": [0, 1],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [22, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [23, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [24, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [25, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [26, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [27, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "recorder-cassettes",
+      "cell": [28, 31],
+      "face": [0, 1],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "open-service-bay",
+      "cell": [13, 32],
+      "face": [-1, 0],
+      "collision": "recessed entirely behind wall collision plane"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "evac-control",
+      "cell": [29, 38],
+      "face": [1, 0],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "interactive-recess",
+      "entity": "uplink-console",
+      "cell": [6, 39],
+      "face": [0, 1],
+      "depth": 0.4,
+      "clearance": "No ceramic pressure panel behind interactive front face"
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "ingress",
+      "points": [
+        [18.6, 3.42, 1.5],
+        [18.4, 3.13, 4],
+        [18.6, 3.4, 7]
+      ],
+      "wires": 4,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "maintenance",
+      "points": [
+        [1.4, 3.3, 10],
+        [2.1, 2.97, 13],
+        [1.8, 3.16, 18],
+        [1.3, 3.35, 23]
+      ],
+      "wires": 5,
+      "minimumClearance": 2.9
+    },
+    {
+      "type": "overhead-contained-cable-loom",
+      "sector": "power",
+      "points": [
+        [1.6, 3.33, 30],
+        [4, 3.02, 29.8],
+        [7, 3.2, 30.2],
+        [10.7, 3.4, 30]
+      ],
+      "wires": 6,
+      "minimumClearance": 2.9
+    },
+    {
+      "id": "coolant",
+      "collision": "entire fixture contained in existing solid cells",
+      "center": [6, 0, 16.5],
+      "size": [3, 3.6, 4],
+      "sector": "maintenance",
+      "type": "coolant"
+    },
+    {
+      "id": "transformer",
+      "collision": "entire fixture contained in existing solid cells",
+      "center": [6, 0, 27.5],
+      "size": [3, 3.6, 2],
+      "sector": "power",
+      "type": "transformer"
+    },
+    {
+      "id": "medical-services",
+      "collision": "entire fixture contained in existing solid cells",
+      "center": [24, 0, 15.5],
+      "size": [3, 3.6, 2],
+      "sector": "infirmary",
+      "type": "medical-services"
+    },
+    {
+      "id": "recorder-bank",
+      "collision": "entire fixture contained in existing solid cells",
+      "center": [24, 0, 25],
+      "size": [3, 3.6, 3],
+      "sector": "archive",
+      "type": "recorder-bank"
+    }
+  ],
+  "recipeInputs": [
+    {
+      "file": "generate.mjs",
+      "bytes": 13652,
+      "sha256": "87daa7c7870e75e77092ab85d6f6e29207d2dfee396e5d9efbaadffa54f02f2e"
+    },
+    {
+      "file": "source/recipes.json",
+      "bytes": 8591,
+      "sha256": "7dca03bd1883738f44164d50b67d3e0b572cd376968a842a8ad56f8d97d8fd56"
+    },
+    {
+      "file": "lib/door.mjs",
+      "bytes": 1739,
+      "sha256": "841ece2d52e2039bdb95f118e0e835c6e86af1533a5dfee08091a8c061378afb"
+    },
+    {
+      "file": "lib/facility.mjs",
+      "bytes": 25748,
+      "sha256": "7d15cc72e2ca5dba07ccf88fe6bf802c5c64b425d65fd0757616f07ca558f5e4"
+    },
+    {
+      "file": "lib/interactables.mjs",
+      "bytes": 9368,
+      "sha256": "14287e5f608b3d1af8d23792153226951aae27a46646f9f4be4ab98421bcc032"
+    },
+    {
+      "file": "lib/model.mjs",
+      "bytes": 15542,
+      "sha256": "e32f9d0b88c4b31ac4b9f4d8aa6d6ba1b0888d27c234ab6605e56f47cc731fc4"
+    },
+    {
+      "file": "lib/optical-surfaces.mjs",
+      "bytes": 3256,
+      "sha256": "9430cfd24a4411f8fc7992e9d080fec771f62c31510a311d23f8e7590bc3583a"
+    },
+    {
+      "file": "lib/raster.mjs",
+      "bytes": 7704,
+      "sha256": "f055da9a362fc37fb9c0cfd2589fd72a3722592d375682fc947cf3a4bcda7175"
+    },
+    {
+      "file": "lib/responder.mjs",
+      "bytes": 19940,
+      "sha256": "616a601c5e647a272cc9246b2f1e2e09a06b79e6ed2890332929c2994bfb6267"
+    },
+    {
+      "file": "lib/textures.mjs",
+      "bytes": 20089,
+      "sha256": "5b0193ffced3e1eddbaa97e20706643a2f350d93d9f83e59b7c0c26e4f5cb8b5"
+    }
+  ],
+  "toolchain": {
+    "node": "25.6.0",
+    "three": "0.169.0"
+  },
+  "placement": {
+    "facility": {
+      "model": "facility.glb",
+      "position": [0, 0, 0],
+      "fit": "authored",
+      "replacesLegacyLevel": true
+    },
+    "exterior": {
+      "model": "orbital-exterior.glb",
+      "position": [0, 0, 0],
+      "fit": "authored"
+    },
+    "doors": [
+      {
+        "entity": "service-door",
+        "position": [6, 0, 24],
+        "rotation": [0, 0, 0],
+        "cells": [
+          [5, 24],
+          [6, 24],
+          [7, 24]
+        ],
+        "event": "horror.service.opened",
+        "model": "pressure-door.glb",
+        "clip": "Open",
+        "duration": 0.7,
+        "holdLast": true,
+        "origin": "feet center",
+        "collisionDrivenBy": "gameplay, never animation"
+      },
+      {
+        "entity": "power-door",
+        "position": [12, 0, 29],
+        "rotation": [0, 90, 0],
+        "cells": [
+          [12, 28],
+          [12, 29],
+          [12, 30]
+        ],
+        "event": "horror.power.restored",
+        "model": "pressure-door.glb",
+        "clip": "Open",
+        "duration": 0.7,
+        "holdLast": true,
+        "origin": "feet center",
+        "collisionDrivenBy": "gameplay, never animation"
+      },
+      {
+        "entity": "archive-west-door",
+        "position": [18, 0, 22],
+        "rotation": [0, 90, 0],
+        "cells": [
+          [18, 21],
+          [18, 22],
+          [18, 23]
+        ],
+        "event": "horror.power.restored",
+        "model": "pressure-door.glb",
+        "clip": "Open",
+        "duration": 0.7,
+        "holdLast": true,
+        "origin": "feet center",
+        "collisionDrivenBy": "gameplay, never animation"
+      },
+      {
+        "entity": "archive-south-door",
+        "position": [24, 0, 20],
+        "rotation": [0, 0, 0],
+        "cells": [
+          [23, 20],
+          [24, 20],
+          [25, 20]
+        ],
+        "event": "horror.power.restored",
+        "model": "pressure-door.glb",
+        "clip": "Open",
+        "duration": 0.7,
+        "holdLast": true,
+        "origin": "feet center",
+        "collisionDrivenBy": "gameplay, never animation"
+      },
+      {
+        "entity": "observation-door",
+        "position": [15, 0, 34],
+        "rotation": [0, 0, 0],
+        "cells": [
+          [14, 34],
+          [15, 34],
+          [16, 34]
+        ],
+        "event": "horror.coolant.isolated",
+        "model": "pressure-door.glb",
+        "clip": "Open",
+        "duration": 0.7,
+        "holdLast": true,
+        "origin": "feet center",
+        "collisionDrivenBy": "gameplay, never animation"
+      },
+      {
+        "entity": "evac-door",
+        "position": [24, 0, 37],
+        "rotation": [0, 90, 0],
+        "cells": [
+          [24, 36],
+          [24, 37],
+          [24, 38]
+        ],
+        "event": "horror.uplink.transmitted",
+        "model": "pressure-door.glb",
+        "clip": "Open",
+        "duration": 0.7,
+        "holdLast": true,
+        "origin": "feet center",
+        "collisionDrivenBy": "gameplay, never animation"
+      }
+    ],
+    "props": [
+      {
+        "entity": "arrival-terminal",
+        "model": "arrival-terminal.glb",
+        "position": [19.45, 0, 6],
+        "rotation": [0, -90, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [19.45, 0.8650000095367432, 5.530000001192093],
+          "max": [19.760000002384185, 1.5950000286102295, 6.469999998807907]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "fuse-locker",
+        "model": "fuse-locker.glb",
+        "position": [3, 0, 8.55],
+        "rotation": [0, 0, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [2.560000002384186, 0.6700000166893005, 8.239999997615815],
+          "max": [3.439999997615814, 1.8299999237060547, 8.548550000018441]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "maintenance-note",
+        "model": "maintenance-note.glb",
+        "position": [7.55, 0, 17],
+        "rotation": [0, 90, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [7.239999997615814, 0.9200000166893005, 16.71000000834465],
+          "max": [7.55, 1.6799999475479126, 17.28999999165535]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "service-wheel",
+        "model": "service-wheel.glb",
+        "position": [4, 0, 23.45],
+        "rotation": [0, 180, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [3.689999997615814, 0.5900000333786011, 23.450049999987822],
+          "max": [4.310000002384186, 1.7699999809265137, 23.760000002384185]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "power-console",
+        "model": "power-console.glb",
+        "position": [3, 0, 31.45],
+        "rotation": [0, 180, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [2.5399999916553497, 0.7099999785423279, 31.45],
+          "max": [3.4600000083446503, 1.7899999618530273, 31.760000002384185]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "bus-isolator",
+        "model": "bus-isolator.glb",
+        "position": [9, 0, 31.45],
+        "rotation": [0, 180, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [8.629999995231628, 0.7000000476837158, 31.45099999993108],
+          "max": [9.370000004768372, 1.7599999904632568, 31.760000002384185]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "triage-recorder",
+        "model": "triage-recorder.glb",
+        "position": [29.45, 0, 13],
+        "rotation": [0, -90, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [29.45, 0.7799999713897705, 12.599999994039536],
+          "max": [29.760000002384185, 1.7599999904632568, 13.400000005960464]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "archive-recorder",
+        "model": "archive-recorder.glb",
+        "position": [21, 0, 31.45],
+        "rotation": [0, 180, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [20.55000001192093, 0.800000011920929, 31.451000000047497],
+          "max": [21.44999998807907, 1.7599999904632568, 31.760000002384185]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "coolant-valve",
+        "model": "coolant-valve.glb",
+        "position": [3, 0, 23.45],
+        "rotation": [0, 180, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [2.689999997615814, 0.550000011920929, 23.450049999987822],
+          "max": [3.310000002384186, 1.850000023841858, 23.760000002384185]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "uplink-console",
+        "model": "uplink-console.glb",
+        "position": [6, 0, 39.45],
+        "rotation": [0, 180, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [5.5250000059604645, 0.7100000381469727, 39.45],
+          "max": [6.4749999940395355, 1.75, 39.76000000238419]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      },
+      {
+        "entity": "evac-control",
+        "model": "evac-control.glb",
+        "position": [29.45, 0, 38],
+        "rotation": [0, -90, 0],
+        "fit": "authored",
+        "worldFootprint": {
+          "min": [29.45, 0.6600000262260437, 37.55000001192093],
+          "max": [29.760000002384185, 1.8399999141693115, 38.44999998807907]
+        },
+        "collision": "All body vertices at or behind local front z0, depth<=.31m, no geometry below.5m; front anchored.05m outside existing wall face. Facility has a matching recessed bay. Existing wall collision remains authoritative; no free-floor pedestal or new blocker."
+      }
+    ],
+    "threat": {
+      "entity": "responder",
+      "model": "responder.glb",
+      "forward": "+Z",
+      "fit": "authored",
+      "clips": {
+        "dormant": "Idle",
+        "patrol": "Stalk",
+        "search": "Search",
+        "chase": "Stalk",
+        "windup": "Lunge"
+      },
+      "motion": "Articulated rigid-node animation, no skeletal skin and no root motion; world motion authoritative.",
+      "locomotion": {
+        "clip": "Stalk",
+        "cycleSeconds": 2.2,
+        "perFootfallTravelMetres": 0.8,
+        "fullCycleTravelMetres": 1.6,
+        "referenceSpeedMetresPerSecond": 0.7272727272727273,
+        "playbackRate": "actual world speed / referenceSpeedMetresPerSecond",
+        "note": "48-sample authored leg IK; stance heel/toe ground and world-space slip tested. Turning, stopping and runtime footstep phase alignment still need actual-game review."
+      }
+    }
+  },
+  "suggestedLighting": {
+    "note": "Integrator converts this recommendation to current engine schema and tunes real captures. Seven world spots leave one camera flashlight slot; only power spot plus flashlight should cast shadows.",
+    "reflections": {
+      "texture": "station-reflection.png",
+      "intensity": 0.32,
+      "dynamicRange": "LDR"
+    },
+    "spots": [
+      {
+        "id": "ingress-practical",
+        "position": [15, 3.33, 5],
+        "target": [15, 0, 5],
+        "color": "#f2cf97",
+        "intensity": 24,
+        "distance": 13,
+        "angle": 65,
+        "shadow": false
+      },
+      {
+        "id": "maintenance-practical",
+        "position": [3, 3.33, 17],
+        "target": [4, 0, 18],
+        "color": "#dec69b",
+        "intensity": 23,
+        "distance": 17,
+        "angle": 65,
+        "shadow": false
+      },
+      {
+        "id": "power-practical",
+        "position": [7, 3.33, 29],
+        "target": [6, 0, 29],
+        "color": "#efd4a4",
+        "intensity": 35,
+        "distance": 17,
+        "angle": 65,
+        "shadow": true
+      },
+      {
+        "id": "infirmary-practical",
+        "position": [26, 3.33, 14],
+        "target": [26, 0, 14],
+        "color": "#b4c9be",
+        "intensity": 23,
+        "distance": 17,
+        "angle": 65,
+        "shadow": false
+      },
+      {
+        "id": "archive-practical",
+        "position": [22, 3.33, 28],
+        "target": [24, 0, 28],
+        "color": "#e4bf83",
+        "intensity": 28,
+        "distance": 17,
+        "angle": 65,
+        "shadow": false
+      },
+      {
+        "id": "spine-practical",
+        "position": [15, 3.33, 24],
+        "target": [15, 0, 25],
+        "color": "#afc5c5",
+        "intensity": 26,
+        "distance": 17,
+        "angle": 65,
+        "shadow": false
+      },
+      {
+        "id": "observation-practical",
+        "position": [15, 3.33, 37],
+        "target": [15, 0, 38],
+        "color": "#e8c99b",
+        "intensity": 26,
+        "distance": 15,
+        "angle": 70,
+        "shadow": false
+      }
+    ],
+    "ambient": {
+      "color": "#7c9292",
+      "intensity": 0.17
+    },
+    "background": "#030509",
+    "fog": "Omit initially; do not hide geometry in fog."
+  },
+  "decals": [
+    {
+      "row": 0,
+      "title": "NULL MERIDIAN",
+      "subtitle": "ORBITAL RESEARCH / RESCUE STATION   NM-07",
+      "rect": [0, 0, 1, 0.0625]
+    },
+    {
+      "row": 1,
+      "title": "01 / INGRESS",
+      "subtitle": "DOCKING COLLAR   /   VERIFY PRESSURE BEFORE RELEASE",
+      "rect": [0, 0.0625, 1, 0.0625]
+    },
+    {
+      "row": 2,
+      "title": "02 / MAINTENANCE",
+      "subtitle": "SERVICE ACCESS   /   AUXILIARY POWER BUS",
+      "rect": [0, 0.125, 1, 0.0625]
+    },
+    {
+      "row": 3,
+      "title": "03 / POWER GALLERY",
+      "subtitle": "CAUTION   /   ISOLATE SUPPLY BEFORE OPENING",
+      "rect": [0, 0.1875, 1, 0.0625]
+    },
+    {
+      "row": 4,
+      "title": "04 / INFIRMARY",
+      "subtitle": "TRIAGE RECORDS   /   MEDICAL SUPPORT",
+      "rect": [0, 0.25, 1, 0.0625]
+    },
+    {
+      "row": 5,
+      "title": "05 / ARCHIVE",
+      "subtitle": "RECORDER STORAGE   /   CHAIN OF CUSTODY",
+      "rect": [0, 0.3125, 1, 0.0625]
+    },
+    {
+      "row": 6,
+      "title": "06 / OBSERVATION",
+      "subtitle": "NORTH GALLERY   /   EXTERNAL COMMUNICATIONS",
+      "rect": [0, 0.375, 1, 0.0625]
+    },
+    {
+      "row": 7,
+      "title": "07 / EVACUATION",
+      "subtitle": "RESCUE CAPSULE   /   AUTHORIZATION REQUIRED",
+      "rect": [0, 0.4375, 1, 0.0625]
+    },
+    {
+      "row": 8,
+      "title": "PRESSURE BULKHEAD",
+      "subtitle": "KEEP CLEAR   /   03.00 M   /   MANUAL RELEASE",
+      "rect": [0, 0.5, 1, 0.0625]
+    },
+    {
+      "row": 9,
+      "title": "AUXILIARY FUSE",
+      "subtitle": "NM-7   /   CERAMIC LINK   /   480 V",
+      "rect": [0, 0.5625, 1, 0.0625]
+    },
+    {
+      "row": 10,
+      "title": "COOLANT RETURN",
+      "subtitle": "ISOLATE   /   ROTATE CLOCKWISE   /   LINE C-04",
+      "rect": [0, 0.625, 1, 0.0625]
+    },
+    {
+      "row": 11,
+      "title": "RESCUE DIVISION",
+      "subtitle": "R-09   /   PRESSURE SYSTEM   /   NO RESPONSE",
+      "rect": [0, 0.6875, 1, 0.0625]
+    },
+    {
+      "row": 12,
+      "title": "AUX BUS / OFFLINE",
+      "subtitle": "MANUAL OVERRIDE   /   FAULT 07   /   LOCAL CONTROL",
+      "rect": [0, 0.75, 1, 0.0625]
+    },
+    {
+      "row": 13,
+      "title": "RECORDER / LOCKED",
+      "subtitle": "LAST SIGNAL   04:17   /   CREW COUNT   00",
+      "rect": [0, 0.8125, 1, 0.0625]
+    },
+    {
+      "row": 14,
+      "title": "UPLINK / STANDBY",
+      "subtitle": "MERIDIAN RELAY   /   READY TO TRANSMIT",
+      "rect": [0, 0.875, 1, 0.0625]
+    },
+    {
+      "row": 15,
+      "title": "SEAL / RELEASE",
+      "subtitle": "EVACUATION CONTROL   /   LOCAL AUTHORITY",
+      "rect": [0, 0.9375, 1, 0.0625]
+    }
+  ],
+  "limitations": [
+    "Source concept is not an engine screenshot.",
+    "Rigid articulated threat is not production skeletal animation.",
+    "Authored planet illumination is baked into an Azure-generated neutral cloud derivative, with true distant geometric depth and rings.",
+    "No claim of AAA completion or1440p60 performance until integrated engine measurements and visual acceptance."
+  ]
+}

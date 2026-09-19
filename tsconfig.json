@@ -11,6 +11,7 @@
     { "path": "./packages/cli" },
     { "path": "./games/platformer" },
     { "path": "./games/iso" },
-    { "path": "./games/fps" }
+    { "path": "./games/fps" },
+    { "path": "./games/horror" }
   ]
 }

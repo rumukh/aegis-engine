@@ -103,6 +103,23 @@ export function validatePresentation(
   const named = (v: unknown, p: string): void => {
     text(v, p, ID);
   };
+  const stateField = (v: unknown, p: string, condition = false): void => {
+    const r = record(v, p, ['entity', 'component', 'field', ...(condition ? ['equals'] : [])]);
+    text(r.entity, `${p}.entity`);
+    text(r.component, `${p}.component`);
+    if (text(r.field, `${p}.field`, /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/)) {
+      if (
+        r.field.split('.').some((part) => ['__proto__', 'prototype', 'constructor'].includes(part))
+      )
+        fail(`${p}.field`, 'State paths must name data properties, not prototypes.');
+    }
+    if (condition) {
+      if (typeof r.equals === 'number') number(r.equals, `${p}.equals`);
+      else if (typeof r.equals !== 'boolean' && typeof r.equals !== 'string')
+        fail(`${p}.equals`, 'Expected a boolean, finite number or string equality value.');
+    }
+  };
+  const condition = (v: unknown, p: string): void => stateField(v, p, true);
   const root = record(input, 'presentation', [
     'aegis',
     'assets',
@@ -117,10 +134,49 @@ export function validatePresentation(
     'camera',
     'ui',
     'quality',
+    'pipeline',
     'legacy',
   ]);
   enumeration(root.aegis, 'aegis', ['presentation/1']);
-  optional(root, 'quality', 'presentation', (v, p) => enumeration(v, p, ['low', 'standard']));
+  optional(root, 'quality', 'presentation', (v, p) =>
+    enumeration(v, p, ['low', 'standard', 'high', 'photo']),
+  );
+  if ((root.quality === 'high' || root.quality === 'photo') && root.pipeline === undefined)
+    fail('pipeline', 'High and photo quality require an explicitly declared cinematic pipeline.');
+  if (root.pipeline !== undefined) {
+    const p = record(root.pipeline, 'pipeline', [
+      'toneMapping',
+      'exposure',
+      'saturation',
+      'bloom',
+      'ambientOcclusion',
+    ]);
+    enumeration(p.toneMapping, 'pipeline.toneMapping', ['aces']);
+    optional(p, 'exposure', 'pipeline', (v, at) => number(v, at, 0.05, 8));
+    optional(p, 'saturation', 'pipeline', (v, at) => number(v, at, 0, 2));
+    if (p.bloom !== undefined) {
+      const b = record(p.bloom, 'pipeline.bloom', ['strength', 'radius', 'threshold']);
+      number(b.strength, 'pipeline.bloom.strength', 0, 1);
+      unit(b.radius, 'pipeline.bloom.radius');
+      number(b.threshold, 'pipeline.bloom.threshold', 0, 10);
+    }
+    if (p.ambientOcclusion !== undefined) {
+      const a = record(p.ambientOcclusion, 'pipeline.ambientOcclusion', [
+        'radius',
+        'minDistance',
+        'maxDistance',
+      ]);
+      number(a.radius, 'pipeline.ambientOcclusion.radius', 1, 16);
+      number(a.minDistance, 'pipeline.ambientOcclusion.minDistance', 0.0001, 0.05);
+      number(a.maxDistance, 'pipeline.ambientOcclusion.maxDistance', 0.001, 0.2);
+      if (
+        typeof a.minDistance === 'number' &&
+        typeof a.maxDistance === 'number' &&
+        a.minDistance >= a.maxDistance
+      )
+        fail('pipeline.ambientOcclusion', 'maxDistance must exceed minDistance.');
+    }
+  }
   if (root.camera !== undefined) {
     const camera = record(root.camera, 'camera', ['framing', 'padding']);
     enumeration(camera.framing, 'camera.framing', ['follow', 'level']);
@@ -209,6 +265,13 @@ export function validatePresentation(
       'color',
       'map',
       'normalMap',
+      'roughnessMap',
+      'metalnessMap',
+      'aoMap',
+      'emissiveMap',
+      'normalScale',
+      'aoIntensity',
+      'envMapIntensity',
       'emissive',
       'emissiveIntensity',
       'roughness',
@@ -223,13 +286,44 @@ export function validatePresentation(
     for (const k of ['color', 'emissive']) optional(m, k, p, color);
     for (const k of ['roughness', 'metalness', 'opacity', 'alphaTest']) optional(m, k, p, unit);
     optional(m, 'emissiveIntensity', p, nonnegative);
+    optional(m, 'normalScale', p, (v, at) => number(v, at, 0, 4));
+    optional(m, 'aoIntensity', p, unit);
+    optional(m, 'envMapIntensity', p, (v, at) => number(v, at, 0, 4));
     optional(m, 'doubleSided', p, bool);
-    for (const k of ['map', 'normalMap']) optional(m, k, p, (v, at) => asset(v, at, 'texture'));
+    for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'])
+      optional(m, k, p, (v, at) => asset(v, at, 'texture'));
+    for (const k of ['roughnessMap', 'metalnessMap', 'aoMap']) {
+      const id = m[k];
+      if (typeof id === 'string' && assets.get(id)?.colorSpace !== 'linear')
+        fail(`${p}.${k}`, 'Scalar PBR maps require a texture declared with colorSpace: "linear".');
+    }
+    if (
+      root.pipeline !== undefined &&
+      typeof m.normalMap === 'string' &&
+      assets.get(m.normalMap)?.colorSpace !== 'linear'
+    )
+      fail(
+        `${p}.normalMap`,
+        'Cinematic normal maps require a texture declared with colorSpace: "linear".',
+      );
+    if (typeof m.emissiveMap === 'string' && assets.get(m.emissiveMap)?.colorSpace === 'linear')
+      fail(`${p}.emissiveMap`, 'Emissive color maps require sRGB sampling.');
     if (
       m.shading === 'unlit' &&
-      ['normalMap', 'roughness', 'metalness', 'emissive', 'emissiveIntensity'].some(
-        (k) => m[k] !== undefined,
-      )
+      [
+        'normalMap',
+        'roughness',
+        'metalness',
+        'emissive',
+        'emissiveIntensity',
+        'roughnessMap',
+        'metalnessMap',
+        'aoMap',
+        'emissiveMap',
+        'normalScale',
+        'aoIntensity',
+        'envMapIntensity',
+      ].some((k) => m[k] !== undefined)
     )
       fail(p, 'Lighting fields require a standard material.');
     if (m.repeat !== undefined) {
@@ -247,6 +341,7 @@ export function validatePresentation(
       'mesh',
       'clip',
       'animations',
+      'stateClips',
     ]);
     enumeration(r.kind, `${p}.kind`, ['primitive', 'sprite', 'model']);
     optional(r, 'material', p, material);
@@ -281,6 +376,14 @@ export function validatePresentation(
     if (r.kind === 'model') {
       asset(r.mesh, `${p}.mesh`, 'gltf');
       optional(r, 'clip', p, text);
+      if (r.stateClips !== undefined)
+        list(r.stateClips, `${p}.stateClips`, 16).forEach((value, i) => {
+          const at = `${p}.stateClips[${i}]`;
+          const clip = record(value, at, ['when', 'clip', 'timeScale']);
+          condition(clip.when, `${at}.when`);
+          text(clip.clip, `${at}.clip`);
+          optional(clip, 'timeScale', at, (v, path) => number(v, path, 0, 4));
+        });
       if (r.animations !== undefined) {
         const animations = record(r.animations, `${p}.animations`, [
           'idle',
@@ -298,8 +401,8 @@ export function validatePresentation(
         ? ['shape']
         : r.kind === 'sprite'
           ? ['texture', 'frame', 'animations']
-          : ['mesh', 'clip', 'animations'];
-    for (const k of ['shape', 'texture', 'frame', 'mesh', 'clip', 'animations'])
+          : ['mesh', 'clip', 'animations', 'stateClips'];
+    for (const k of ['shape', 'texture', 'frame', 'mesh', 'clip', 'animations', 'stateClips'])
       if (!own.includes(k) && r[k] !== undefined)
         fail(`${p}.${k}`, `Field does not apply to ${String(r.kind)}.`);
   };
@@ -343,11 +446,13 @@ export function validatePresentation(
       'parallax',
       'motion',
       'instances',
+      'visibleWhen',
     ]);
     unique(r.id, `${p}.id`, objects);
     visual(r.visual, `${p}.visual`);
     optional(r, 'pose', p, pose);
     optional(r, 'parallax', p, unit);
+    optional(r, 'visibleWhen', p, condition);
     if (object(r.anchor))
       text(record(r.anchor, `${p}.anchor`, ['entity']).entity, `${p}.anchor.entity`);
     else optional(r, 'anchor', p, (v, at) => enumeration(v, at, ['world', 'camera']));
@@ -370,6 +475,8 @@ export function validatePresentation(
         fail(p, 'Instanced objects are static and world-anchored.');
       if (object(r.visual) && r.visual.clip !== undefined)
         fail(`${p}.visual.clip`, 'Instanced models cannot play a clip.');
+      if (object(r.visual) && r.visual.stateClips !== undefined)
+        fail(`${p}.visual.stateClips`, 'Instanced models cannot play state clips.');
     }
   }
   if (instanceCount > PRESENTATION_LIMITS.instances)
@@ -432,6 +539,8 @@ export function validatePresentation(
       'directional',
       'points',
       'fog',
+      'spots',
+      'reflections',
     ]);
     optional(r, 'background', p, color);
     const light = (v: unknown, at: string, kind: string): void => {
@@ -450,6 +559,67 @@ export function validatePresentation(
     optional(r, 'directional', p, (v, at) => light(v, at, 'directional'));
     if (r.points !== undefined)
       list(r.points, `${p}.points`, 8).forEach((v, i) => light(v, `${p}.points[${i}]`, 'point'));
+    if (r.spots !== undefined) {
+      const ids = new Set<string>();
+      let shadows = 0;
+      list(r.spots, `${p}.spots`, PRESENTATION_LIMITS.spotLights).forEach((v, i) => {
+        const at = `${p}.spots[${i}]`;
+        const s = record(v, at, [
+          'id',
+          'color',
+          'intensity',
+          'position',
+          'target',
+          'distance',
+          'angle',
+          'penumbra',
+          'decay',
+          'anchor',
+          'enabledWhen',
+          'shadow',
+        ]);
+        unique(s.id, `${at}.id`, ids);
+        color(s.color, `${at}.color`);
+        number(s.intensity, `${at}.intensity`, 0, 10000);
+        vector(s.position, `${at}.position`);
+        vector(s.target, `${at}.target`);
+        if (
+          Array.isArray(s.position) &&
+          Array.isArray(s.target) &&
+          s.position.length === 3 &&
+          s.position.every((value, index) => value === (s.target as unknown[])[index])
+        )
+          fail(at, 'Spotlight position and target must differ.');
+        number(s.distance, `${at}.distance`, 0.1, 200);
+        number(s.angle, `${at}.angle`, 1, 85);
+        optional(s, 'penumbra', at, unit);
+        optional(s, 'decay', at, (v, path) => number(v, path, 1, 2));
+        optional(s, 'enabledWhen', at, condition);
+        if (object(s.anchor))
+          text(record(s.anchor, `${at}.anchor`, ['entity']).entity, `${at}.anchor.entity`);
+        else optional(s, 'anchor', at, (v, path) => enumeration(v, path, ['world', 'camera']));
+        if (s.shadow !== undefined) {
+          shadows++;
+          const shadow = record(s.shadow, `${at}.shadow`, ['mapSize', 'bias', 'normalBias']);
+          optional(shadow, 'mapSize', `${at}.shadow`, (v, path) => {
+            if (![512, 1024, 2048].includes(v as number)) fail(path, 'Expected 512, 1024 or 2048.');
+          });
+          optional(shadow, 'bias', `${at}.shadow`, (v, path) => number(v, path, -0.01, 0.01));
+          optional(shadow, 'normalBias', `${at}.shadow`, (v, path) => number(v, path, 0, 0.2));
+        }
+      });
+      if (shadows > PRESENTATION_LIMITS.shadowLights)
+        fail(`${p}.spots`, 'At most 4 shadow-casting lights may be declared.', RenderCode.Budget);
+      if (shadows > 0 && root.pipeline === undefined)
+        fail('pipeline', 'Shadowed spotlights require the opt-in cinematic pipeline.');
+    }
+    if (r.reflections !== undefined) {
+      const f = record(r.reflections, `${p}.reflections`, ['texture', 'intensity']);
+      asset(f.texture, `${p}.reflections.texture`, 'texture');
+      optional(f, 'intensity', `${p}.reflections`, (v, at) => number(v, at, 0, 4));
+      if (root.pipeline === undefined)
+        fail('pipeline', 'Environment reflections require the opt-in cinematic pipeline.');
+    }
     if (r.fog !== undefined) {
       const f = record(r.fog, `${p}.fog`, ['color', 'near', 'far']);
       color(f.color, `${p}.fog.color`);
@@ -460,30 +630,119 @@ export function validatePresentation(
     }
   }
   if (root.audio !== undefined) {
-    const r = record(root.audio, 'audio', ['volume', 'ambient', 'cues']);
+    const r = record(root.audio, 'audio', ['volume', 'headroom', 'ambient', 'layers', 'cues']);
     optional(r, 'volume', 'audio', unit);
+    optional(r, 'headroom', 'audio', unit);
+    const spatial = (v: unknown, p: string): void => {
+      const s = record(v, p, ['target', 'refDistance', 'maxDistance', 'rolloffFactor']);
+      const t = record(s.target, `${p}.target`, ['entity', 'position']);
+      if ((t.entity === undefined) === (t.position === undefined))
+        fail(`${p}.target`, 'Specify exactly one entity or position.');
+      optional(t, 'entity', `${p}.target`, text);
+      optional(t, 'position', `${p}.target`, vector);
+      optional(s, 'refDistance', p, (v, at) => number(v, at, 0.01, 100));
+      optional(s, 'maxDistance', p, (v, at) => number(v, at, 0.01, 1000));
+      optional(s, 'rolloffFactor', p, (v, at) => number(v, at, 0, 4));
+      if (
+        typeof (s.refDistance ?? 1.5) === 'number' &&
+        typeof (s.maxDistance ?? 22) === 'number' &&
+        Number(s.refDistance ?? 1.5) >= Number(s.maxDistance ?? 22)
+      )
+        fail(p, 'maxDistance must exceed refDistance.');
+    };
     const cue = (v: unknown, p: string, ambient: boolean): void => {
       const c = record(
         v,
         p,
-        ambient ? ['asset', 'volume'] : ['event', 'asset', 'volume', 'cooldownTicks'],
+        ambient
+          ? ['asset', 'volume']
+          : [
+              'event',
+              'when',
+              'asset',
+              'volume',
+              'cooldownTicks',
+              'maxVoices',
+              'voiceGroup',
+              'fadeSeconds',
+              'spatial',
+              'caption',
+            ],
       );
-      asset(c.asset, `${p}.asset`, 'audio');
+      if (ambient || c.asset !== undefined) asset(c.asset, `${p}.asset`, 'audio');
+      else if (c.caption === undefined) fail(p, 'A cue needs an audio asset or a caption.');
       optional(c, 'volume', p, unit);
       if (!ambient) {
         text(c.event, `${p}.event`);
+        optional(c, 'voiceGroup', p, named);
+        if (c.when !== undefined) {
+          const w = record(c.when, `${p}.when`, ['field', 'equals']);
+          stateField({ ...w, entity: 'event', component: 'data' }, `${p}.when`, true);
+        }
         optional(c, 'cooldownTicks', p, nonnegative);
+        optional(c, 'spatial', p, spatial);
+        if (c.spatial !== undefined && c.asset === undefined)
+          fail(p, 'Spatial playback requires an audio asset.');
+        optional(c, 'fadeSeconds', p, (v, at) => number(v, at, 0, 5));
+        optional(c, 'maxVoices', p, (v, at) => {
+          if (number(v, at, 1, 16) && !Number.isInteger(v))
+            fail(at, 'maxVoices must be an integer.');
+        });
+        if (c.caption !== undefined) {
+          const caption = record(c.caption, `${p}.caption`, ['text', 'speaker', 'durationTicks']);
+          text(caption.text, `${p}.caption.text`);
+          optional(caption, 'speaker', `${p}.caption`, text);
+          optional(caption, 'durationTicks', `${p}.caption`, (v, at) => number(v, at, 1, 36000));
+        }
       }
     };
     optional(r, 'ambient', 'audio', (v, p) => cue(v, p, true));
     if (r.cues !== undefined)
       list(r.cues, 'audio.cues', 128).forEach((v, i) => cue(v, `audio.cues[${i}]`, false));
+    if (r.layers !== undefined) {
+      const ids = new Set<string>();
+      list(r.layers, 'audio.layers', PRESENTATION_LIMITS.audioLayers).forEach((v, i) => {
+        const p = `audio.layers[${i}]`;
+        const l = record(v, p, ['id', 'asset', 'volume', 'spatial', 'enabledWhen', 'fadeSeconds']);
+        unique(l.id, `${p}.id`, ids);
+        asset(l.asset, `${p}.asset`, 'audio');
+        optional(l, 'volume', p, unit);
+        optional(l, 'spatial', p, spatial);
+        optional(l, 'enabledWhen', p, condition);
+        optional(l, 'fadeSeconds', p, (v, at) => number(v, at, 0, 5));
+      });
+      if (
+        list(r.layers, 'audio.layers').length + (r.ambient === undefined ? 0 : 1) >
+        PRESENTATION_LIMITS.audioLayers
+      )
+        fail(
+          'audio.layers',
+          'Combined ambience layers and legacy ambient exceed 8.',
+          RenderCode.Budget,
+        );
+    }
   }
   if (root.hud !== undefined) {
-    const r = record(root.hud, 'hud', ['playerName', 'winEvent', 'loseEvents', 'steps']);
+    const r = record(root.hud, 'hud', [
+      'playerName',
+      'winEvent',
+      'loseEvents',
+      'steps',
+      'bindings',
+    ]);
     text(r.playerName, 'hud.playerName');
     text(r.winEvent, 'hud.winEvent');
     list(r.loseEvents, 'hud.loseEvents', 32).forEach((v, i) => text(v, `hud.loseEvents[${i}]`));
+    if (r.bindings !== undefined) {
+      const b = record(r.bindings, 'hud.bindings', [
+        'objective',
+        'prompt',
+        'subtitle',
+        'subtitleUntil',
+        'status',
+      ]);
+      for (const [key, value] of Object.entries(b)) stateField(value, `hud.bindings.${key}`);
+    }
     const ids = new Set<string>();
     if (r.steps !== undefined)
       list(r.steps, 'hud.steps', 32).forEach((v, i) => {
@@ -495,10 +754,26 @@ export function validatePresentation(
       });
   }
   if (root.ui !== undefined) {
-    const r = record(root.ui, 'ui', ['accent', 'eyebrow', 'cover']);
+    const r = record(root.ui, 'ui', ['accent', 'eyebrow', 'cover', 'layout', 'lossEnding']);
+    optional(r, 'layout', 'ui', (v, p) => enumeration(v, p, ['standard', 'cinematic']));
     optional(r, 'accent', 'ui', color);
     optional(r, 'eyebrow', 'ui', text);
     optional(r, 'cover', 'ui', (v, p) => asset(v, p, 'texture'));
+    if (r.lossEnding !== undefined) {
+      const ending = record(r.lossEnding, 'ui.lossEnding', ['title', 'message', 'fadeSeconds']);
+      optional(ending, 'title', 'ui.lossEnding', text);
+      optional(ending, 'message', 'ui.lossEnding', text);
+      optional(ending, 'fadeSeconds', 'ui.lossEnding', (v, p) => number(v, p, 0, 2));
+      if (
+        !object(root.hud) ||
+        !Array.isArray(root.hud.loseEvents) ||
+        root.hud.loseEvents.length === 0
+      )
+        fail(
+          'ui.lossEnding',
+          'A loss ending requires at least one authoritative hud.loseEvents entry.',
+        );
+    }
   }
   if (root.legacy !== undefined) {
     const r = record(root.legacy, 'legacy', ['level', 'triggers']);

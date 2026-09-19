@@ -11,11 +11,14 @@ import type { StateHash, WorldSnapshot } from '@aegis/core';
 import type { InputPacket } from './live-input.js';
 import type { ModeBindings } from './bindings.js';
 import type { ResolvedPresentation } from './presentation/schema.js';
+import type { FrameClient, FrameInputStatus } from './frame-clients.js';
 
 /** POST body sent once per displayed frame. */
 export interface FrameRequest {
   /** The human's input since the previous frame. */
   input: InputPacket;
+  /** One browser page's ordered input stream and explicit fresh-intent ownership claim. */
+  client?: FrameClient;
   /** Last hydrated presentation generation; null requests initial history. Omit for legacy clients. */
   presentationGeneration?: number | null;
 }
@@ -64,6 +67,8 @@ export interface FrameResponse {
   steps: number;
   /** Whether the session is paused. */
   paused: boolean;
+  /** Live-host input ownership/ordering feedback; absent on legacy responses. */
+  inputStatus?: FrameInputStatus;
   /**
    * Deterministic digest of the state in `snapshot`, when the endpoint computes one.
    *

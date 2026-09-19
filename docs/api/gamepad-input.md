@@ -160,6 +160,13 @@ custom collectors, and `dispose()` detaches listeners. A supplied `gamepad` inst
 disposed by the collector; its caller retains that ownership.
 
 Automated coverage uses virtual standard devices with real browser collectors and live/static
-pages, plus public-import graph and unit tests. It does **not** claim physical Xbox hardware,
+pages, plus public-import graph and unit tests. `test/poc-gamepad.browser.test.ts` also drives
+the shipped PoC catalog, composed plugins, levels and presentation assets in both transports:
+Coyote Gap movement/jump/disconnect, Server Vault cursor orders, Sector Breach movement/jump
+and a right-stick/RT blast-door shot, plus Menu/View pause/restart/resume in each game.
+Those are controller integration checks, not controller-only full-playthrough proofs.
+The [platformer](../games/platformer.md#browser-controls),
+[iso](../games/iso.md#browser-controls) and [FPS](../games/fps.md#browser-controls) guides list
+the player-facing controls. Coverage does **not** claim physical Xbox hardware,
 Bluetooth/USB driver compatibility, haptics, non-standard layouts, browser menu focus navigation,
 aim assistance or universal controller playability for arbitrary game plugins.

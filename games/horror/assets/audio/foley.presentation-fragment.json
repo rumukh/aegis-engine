@@ -1,0 +1,643 @@
+{
+  "status": "Complete foley-only asset bindings. Human listening and integrated spatial balance remain acceptance gates.",
+  "assetRoot": "games/horror/assets",
+  "note": "Merge assets and audio.cues/layers into presentation/1. These wrapper notes are not presentation schema. Headroom0.65 applies ONCE to the combined audio mix, not once per fragment.",
+  "assets": [
+    {
+      "id": "amb-room",
+      "kind": "audio",
+      "src": "audio/runtime/amb-room.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "station-air.wav; original prompt/seed and offline edit recipe in audio/source; sha256:3f7928dca75d7b26cd8ab232a4dd48be3e9521e6119234f683ccc3a58c9b8b77"
+      }
+    },
+    {
+      "id": "amb-vent",
+      "kind": "audio",
+      "src": "audio/runtime/amb-vent.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "station-air.wav; original prompt/seed and offline edit recipe in audio/source; sha256:66f7c1c037fd27ac1adf1ad3d81829ae684afd9dcfc8d4737b087cc1ff415b26"
+      }
+    },
+    {
+      "id": "amb-hull",
+      "kind": "audio",
+      "src": "audio/runtime/amb-hull.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "hull-stress.wav; original prompt/seed and offline edit recipe in audio/source; sha256:3ffaa9d2496f415bf8fa9481a56e0e914e8c56b273b45b26057649d9060732b0"
+      }
+    },
+    {
+      "id": "door-open",
+      "kind": "audio",
+      "src": "audio/runtime/door-open.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "pressure-door.wav; original prompt/seed and offline edit recipe in audio/source; sha256:a60943934e64491303d416cd15e67ce424f7d8be68fd2b4f71ed54a40b21a1d5"
+      }
+    },
+    {
+      "id": "power-rise",
+      "kind": "audio",
+      "src": "audio/runtime/power-rise.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "power-relay.wav; original prompt/seed and offline edit recipe in audio/source; sha256:ca4edefffcb86146c962e6b27c2f04d4e28a5f1b1ad0a359b476dfa4a84654e2"
+      }
+    },
+    {
+      "id": "boots-metal-01",
+      "kind": "audio",
+      "src": "audio/runtime/boots-metal-01.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "boots-metal.wav; original prompt/seed and offline edit recipe in audio/source; sha256:c44c9e8db6a9232ea2d8efe4b4c60d9750322ba68807b0ef3362169d17555271"
+      }
+    },
+    {
+      "id": "boots-metal-02",
+      "kind": "audio",
+      "src": "audio/runtime/boots-metal-02.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "boots-metal.wav; original prompt/seed and offline edit recipe in audio/source; sha256:4510b88253ef7e7226fd6e2ae50a45f301238b7cdbbf2e4547623539b786cf98"
+      }
+    },
+    {
+      "id": "boots-metal-03",
+      "kind": "audio",
+      "src": "audio/runtime/boots-metal-03.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "boots-metal.wav; original prompt/seed and offline edit recipe in audio/source; sha256:e6cbcb6f557e55cfdfc69e5e30f55007cf1945fadb134ac46670301afbb4cc98"
+      }
+    },
+    {
+      "id": "boots-metal-04",
+      "kind": "audio",
+      "src": "audio/runtime/boots-metal-04.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "boots-metal.wav; original prompt/seed and offline edit recipe in audio/source; sha256:88deefc9fdcb9c74ac1cdd5c8c18821d66af282112df8aba26a378bc5e4ab0cf"
+      }
+    },
+    {
+      "id": "threat-step-01",
+      "kind": "audio",
+      "src": "audio/runtime/threat-step-01.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "responder-steps.wav; original prompt/seed and offline edit recipe in audio/source; sha256:d6a4ead5cc239387e268d419be99955b9db771580c003cfefdb9a2c6af1b68a8"
+      }
+    },
+    {
+      "id": "threat-step-02",
+      "kind": "audio",
+      "src": "audio/runtime/threat-step-02.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "responder-steps.wav; original prompt/seed and offline edit recipe in audio/source; sha256:d6292aa51c28e994d83e12453ca1beb4744c32371e82d672efcb7b21a1f4bb2b"
+      }
+    },
+    {
+      "id": "threat-step-03",
+      "kind": "audio",
+      "src": "audio/runtime/threat-step-03.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "responder-steps.wav; original prompt/seed and offline edit recipe in audio/source; sha256:daa36e291b24bb8b79c5646ce5dc11b0e9d167ced749ebf1f7379daccd532956"
+      }
+    },
+    {
+      "id": "threat-search",
+      "kind": "audio",
+      "src": "audio/runtime/threat-search.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "responder-search.wav; original prompt/seed and offline edit recipe in audio/source; sha256:3b8be7af34f1ddb19496f2af6365d3bb72e1ee15e7312d6f6f5a56b311d1ac15"
+      }
+    },
+    {
+      "id": "threat-alert",
+      "kind": "audio",
+      "src": "audio/runtime/threat-alert.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "responder-search.wav; original prompt/seed and offline edit recipe in audio/source; sha256:a0589788f63021a08e9ace4e593f45a7e2f9bf0349ee462d047b4bbfb62aff2a"
+      }
+    },
+    {
+      "id": "recorder-handle",
+      "kind": "audio",
+      "src": "audio/runtime/recorder-handle.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "recorder-handling.wav; original prompt/seed and offline edit recipe in audio/source; sha256:422416e38a93bfdad5b3d9bc95dbeac46c4ce680b988884c447c3b655ec2f0a6"
+      }
+    },
+    {
+      "id": "interact-click",
+      "kind": "audio",
+      "src": "audio/runtime/interact-click.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "recorder-handling.wav; original prompt/seed and offline edit recipe in audio/source; sha256:5a67580f0200c4ccd2834c96fb2ce6cd86c51edb074885db991a0d4c8a680f98"
+      }
+    },
+    {
+      "id": "coolant-release",
+      "kind": "audio",
+      "src": "audio/runtime/coolant-release.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "airlock-cycle.wav; original prompt/seed and offline edit recipe in audio/source; sha256:9bf915466320820b5f686156181c31dc2bfd3f69880075c9a54c699282de6528"
+      }
+    },
+    {
+      "id": "airlock-seal",
+      "kind": "audio",
+      "src": "audio/runtime/airlock-seal.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "airlock-cycle.wav; original prompt/seed and offline edit recipe in audio/source; sha256:61adbcbedb4b7f64032eaf3c424833bb474e975bc433fb3cce858a2442b5416c"
+      }
+    },
+    {
+      "id": "responder-stop",
+      "kind": "audio",
+      "src": "audio/runtime/responder-stop.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX",
+        "license": "Original project-generated output. Noncommercial model-use authorization and output terms in audio/source/production-policy.json; no model weights shipped.",
+        "source": "responder-steps.wav; original prompt/seed and offline edit recipe in audio/source; sha256:c76a79522efb2dc9b87d5be7c11bc3305c2dbfee6ff6bbffa6110c27ca766ee4"
+      }
+    }
+  ],
+  "audio": {
+    "volume": 1,
+    "headroom": 0.65,
+    "layers": [
+      {
+        "id": "amb-room",
+        "asset": "amb-room",
+        "volume": 0.6,
+        "fadeSeconds": 2,
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "ended",
+          "equals": false
+        }
+      },
+      {
+        "id": "amb-vent",
+        "asset": "amb-vent",
+        "volume": 0.45,
+        "fadeSeconds": 3,
+        "spatial": {
+          "target": {
+            "entity": "power-console"
+          },
+          "refDistance": 2,
+          "maxDistance": 16,
+          "rolloffFactor": 1
+        },
+        "enabledWhen": {
+          "entity": "mission",
+          "component": "HorrorMission",
+          "field": "power",
+          "equals": true
+        }
+      },
+      {
+        "id": "amb-hull",
+        "asset": "amb-hull",
+        "volume": 0.6,
+        "fadeSeconds": 2,
+        "spatial": {
+          "target": {
+            "position": [16, 2.9, 23]
+          },
+          "refDistance": 4,
+          "maxDistance": 40,
+          "rolloffFactor": 0.8
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "ended",
+          "equals": false
+        }
+      }
+    ],
+    "cues": [
+      {
+        "asset": "door-open",
+        "fadeSeconds": 0.008,
+        "event": "horror.service.opened",
+        "volume": 0.75,
+        "cooldownTicks": 120,
+        "maxVoices": 1,
+        "spatial": {
+          "target": {
+            "entity": "service-door"
+          },
+          "refDistance": 2,
+          "maxDistance": 20,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "door-open",
+        "fadeSeconds": 0.008,
+        "event": "horror.uplink.transmitted",
+        "volume": 0.6,
+        "cooldownTicks": 120,
+        "maxVoices": 1,
+        "spatial": {
+          "target": {
+            "entity": "evac-door"
+          },
+          "refDistance": 2,
+          "maxDistance": 20,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "power-rise",
+        "fadeSeconds": 0.008,
+        "event": "horror.power.restored",
+        "volume": 0.65,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "spatial": {
+          "target": {
+            "entity": "power-console"
+          },
+          "refDistance": 2,
+          "maxDistance": 24,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "boots-metal-01",
+        "fadeSeconds": 0.008,
+        "event": "horror.player.step",
+        "when": {
+          "field": "variant",
+          "equals": 0
+        },
+        "volume": 0.55,
+        "cooldownTicks": 8,
+        "maxVoices": 2,
+        "spatial": {
+          "target": {
+            "entity": "player"
+          },
+          "refDistance": 2,
+          "maxDistance": 10,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "boots-metal-02",
+        "fadeSeconds": 0.008,
+        "event": "horror.player.step",
+        "when": {
+          "field": "variant",
+          "equals": 1
+        },
+        "volume": 0.55,
+        "cooldownTicks": 8,
+        "maxVoices": 2,
+        "spatial": {
+          "target": {
+            "entity": "player"
+          },
+          "refDistance": 2,
+          "maxDistance": 10,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "boots-metal-03",
+        "fadeSeconds": 0.008,
+        "event": "horror.player.step",
+        "when": {
+          "field": "variant",
+          "equals": 2
+        },
+        "volume": 0.55,
+        "cooldownTicks": 8,
+        "maxVoices": 2,
+        "spatial": {
+          "target": {
+            "entity": "player"
+          },
+          "refDistance": 2,
+          "maxDistance": 10,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "boots-metal-04",
+        "fadeSeconds": 0.008,
+        "event": "horror.player.step",
+        "when": {
+          "field": "variant",
+          "equals": 3
+        },
+        "volume": 0.55,
+        "cooldownTicks": 8,
+        "maxVoices": 2,
+        "spatial": {
+          "target": {
+            "entity": "player"
+          },
+          "refDistance": 2,
+          "maxDistance": 10,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-step-01",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.step",
+        "when": {
+          "field": "variant",
+          "equals": 0
+        },
+        "volume": 0.85,
+        "cooldownTicks": 10,
+        "maxVoices": 3,
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2,
+          "maxDistance": 28,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-step-02",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.step",
+        "when": {
+          "field": "variant",
+          "equals": 1
+        },
+        "volume": 0.85,
+        "cooldownTicks": 10,
+        "maxVoices": 3,
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2,
+          "maxDistance": 28,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-step-03",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.step",
+        "when": {
+          "field": "variant",
+          "equals": 2
+        },
+        "volume": 0.85,
+        "cooldownTicks": 10,
+        "maxVoices": 3,
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2,
+          "maxDistance": 28,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-search",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.search",
+        "volume": 0.85,
+        "cooldownTicks": 300,
+        "maxVoices": 1,
+        "voiceGroup": "responder-servo",
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2.5,
+          "maxDistance": 28,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-search",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.suspicious",
+        "volume": 0.65,
+        "cooldownTicks": 300,
+        "maxVoices": 1,
+        "voiceGroup": "responder-servo",
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2.5,
+          "maxDistance": 28,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-search",
+        "fadeSeconds": 0.008,
+        "event": "horror.rescue.called",
+        "volume": 0.7,
+        "cooldownTicks": 300,
+        "maxVoices": 1,
+        "voiceGroup": "responder-servo",
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2.5,
+          "maxDistance": 28,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-alert",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.awakened",
+        "volume": 0.8,
+        "cooldownTicks": 300,
+        "maxVoices": 1,
+        "voiceGroup": "responder-servo",
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2.5,
+          "maxDistance": 30,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-alert",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.chase",
+        "volume": 0.85,
+        "cooldownTicks": 300,
+        "maxVoices": 1,
+        "voiceGroup": "responder-servo",
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2.5,
+          "maxDistance": 30,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "threat-alert",
+        "fadeSeconds": 0.008,
+        "event": "horror.threat.warning",
+        "volume": 0.65,
+        "cooldownTicks": 480,
+        "maxVoices": 1,
+        "voiceGroup": "responder-servo",
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2.5,
+          "maxDistance": 30,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "recorder-handle",
+        "fadeSeconds": 0.008,
+        "event": "horror.triage.played",
+        "volume": 0.5,
+        "cooldownTicks": 90,
+        "maxVoices": 1
+      },
+      {
+        "asset": "recorder-handle",
+        "fadeSeconds": 0.008,
+        "event": "horror.recorder.recovered",
+        "volume": 0.5,
+        "cooldownTicks": 90,
+        "maxVoices": 1
+      },
+      {
+        "asset": "interact-click",
+        "fadeSeconds": 0.008,
+        "event": "horror.fuse.taken",
+        "volume": 0.6,
+        "cooldownTicks": 12,
+        "maxVoices": 1
+      },
+      {
+        "asset": "interact-click",
+        "fadeSeconds": 0.008,
+        "event": "horror.bus.isolated",
+        "volume": 0.65,
+        "cooldownTicks": 12,
+        "maxVoices": 1
+      },
+      {
+        "asset": "interact-click",
+        "fadeSeconds": 0.008,
+        "event": "horror.arrival.read",
+        "volume": 0.45,
+        "cooldownTicks": 12,
+        "maxVoices": 1
+      },
+      {
+        "asset": "interact-click",
+        "fadeSeconds": 0.008,
+        "event": "horror.maintenance.read",
+        "volume": 0.45,
+        "cooldownTicks": 12,
+        "maxVoices": 1
+      },
+      {
+        "asset": "interact-click",
+        "fadeSeconds": 0.008,
+        "event": "horror.interaction.denied",
+        "volume": 0.5,
+        "cooldownTicks": 12,
+        "maxVoices": 1
+      },
+      {
+        "asset": "interact-click",
+        "fadeSeconds": 0.008,
+        "event": "horror.flashlight.changed",
+        "volume": 0.4,
+        "cooldownTicks": 6,
+        "maxVoices": 1
+      },
+      {
+        "asset": "coolant-release",
+        "fadeSeconds": 0.008,
+        "event": "horror.coolant.isolated",
+        "volume": 0.65,
+        "cooldownTicks": 180,
+        "maxVoices": 1,
+        "spatial": {
+          "target": {
+            "entity": "coolant-valve"
+          },
+          "refDistance": 2,
+          "maxDistance": 16,
+          "rolloffFactor": 1
+        }
+      },
+      {
+        "asset": "airlock-seal",
+        "fadeSeconds": 0.008,
+        "event": "level.completed",
+        "volume": 0.7,
+        "cooldownTicks": 600,
+        "maxVoices": 1
+      },
+      {
+        "asset": "responder-stop",
+        "fadeSeconds": 0.008,
+        "event": "player.died",
+        "volume": 0.6,
+        "cooldownTicks": 600,
+        "maxVoices": 1
+      }
+    ]
+  }
+}

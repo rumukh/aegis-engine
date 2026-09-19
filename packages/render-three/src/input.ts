@@ -24,6 +24,7 @@ export type {
   InputCollector,
   InputCollectorOptions,
   InputDevice,
+  InputCaptureState,
   SessionCommand,
 } from './client/input.js';
 export { BINDINGS, SESSION_CONTROLS, CONTROLLER_SESSION_CONTROLS } from './bindings.js';

@@ -1,0 +1,23 @@
+{
+  "id": "responder-search",
+  "seed": 9182708,
+  "duration": 10,
+  "prompt": "A worn robotic industrial inspection head slowly turning, pausing, and returning. Small geared servo friction, restrained ratcheting metal clicks, a soft pneumatic adjustment and cable movement. Very physical close dry machinery, tense and quiet, no electronic alarm, no pitched musical tone, no voices.",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "distribution": "DeepBeepMeep/TTS",
+  "distributionRevision": "5020589aa562cea206a25eea208d7cbb1f6efae7",
+  "wanGpRevision": "bb68ded24f8a25d51789f8a49b66cc63eccf53c9",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "attention": "sdpa",
+  "negativePrompt": "music, melody, singing, speech, voices, drums, digital beeps, laser sounds, cinematic explosion, distorted clipping",
+  "sampleRate": 44100,
+  "channels": 2,
+  "frames": 441000,
+  "nativePeak": 0.177734375,
+  "nativeFormat": "WAV IEEE float32; no normalization",
+  "sha256": "30e157d6ecf29073271c1c6aac5e38dc41e3aae30257a1e881ec8de866945e15",
+  "configSha256": "9396ee61a60a869f9fca1f50d1c8352345c3fa891da0fda433df2e9012ca147e",
+  "humanListening": "pending"
+}

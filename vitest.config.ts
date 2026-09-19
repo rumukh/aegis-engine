@@ -36,6 +36,7 @@ const aegisSourceAliases = [
 export default defineConfig({
   resolve: { alias: aegisSourceAliases },
   test: {
+    setupFiles: ['./test/setup/cooperative-worker.ts'],
     // The whole workspace is the gate (docs/working-agreement.md §3): every package *and* every
     // PoC game under `games`. The games are what CHARTER §4.3 means by "all three PoCs complete
     // their scripted playthrough headlessly in CI, and assert on gameplay outcomes", so their

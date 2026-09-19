@@ -25,7 +25,8 @@ Humans get playable browser games, original asset-backed environments, animated 
 audio and an interactive asset studio. Rendering is a consumer of the simulation, not a
 prerequisite for it.
 
-**Status:** an experimental reference engine with three playable proof-of-concept games.
+**Status:** an experimental reference engine with three established proof-of-concept games and
+the fourth, survival-horror mission **NULL MERIDIAN**, undergoing integrated presentation review.
 The long-term goal is an agent-first engine capable of supporting AAA production.
 That is a roadmap, **not a claim that the current engine is AAA-ready**.
 
@@ -51,10 +52,10 @@ own their renderer and animation loop.
 Nor does it mean an LLM runs inside the engine: Aegis exposes tools that coding agents can use,
 while authoritative gameplay remains explicit code and data.
 
-## Three games, one engine
+## Four games, one engine
 
 Each PoC has its own composed game plugin, authored level, input script, win/lose cases and
-asset-backed presentation. They are practical examples of the engine's boundaries, not three
+asset-backed presentation. They are practical examples of the engine's boundaries, not
 unrelated render demos.
 
 ### Coyote Gap: The Amber Traverse
@@ -69,6 +70,7 @@ moving-platform carry and hazards**. Layered scenery, sprite animation, terrain 
 event-driven effects stay outside authoritative gameplay.
 
 **Controls:** A/D or arrow keys to run; Space/W/Up to jump.
+**Controller:** left stick or D-pad to run; A to jump. The stick preserves analog speed.
 
 ### The Server Vault
 
@@ -84,6 +86,8 @@ blocked-path handling and a dynamically opened door**. Articulated glTF actors, 
 partitions and readable console/door states keep the map legible.
 
 **Controls:** click the floor to move; click the guard to attack-move.
+**Controller:** left stick moves the on-screen cursor; A orders movement or attack-move through
+the same picker as the mouse.
 
 ### Sector Breach
 
@@ -99,10 +103,35 @@ hitscan and triggers**. The presentation adds an authored facility, a weapon vie
 animated machinery and enemy feedback without changing the aim or collision model.
 
 **Controls:** WASD to move, Space to jump, click the canvas for mouse look, left-click to fire.
+**Controller:** left stick to move, right stick to look, A to jump, RT to fire. Controller look
+does not require clicking the canvas or capturing the mouse.
 
-All three games expose pause/resume, restart, mute, quality controls and collapsible diagnostics.
+### NULL MERIDIAN
+
+[Play NULL MERIDIAN](https://rumukh.github.io/aegis-engine/play/horror/) ·
+[Game guide and acceptance limits](docs/games/horror.md) · [Source](games/horror)
+
+Investigate an abandoned orbital station, diagnose and restore auxiliary power, recover the
+crew evidence, evade a corrupted rescue responder and depart. **No gun combat.** Spatially
+gated interactions, recoverable system-routing decisions, sight/noise detection and real
+chase/search/evasion run in the deterministic simulation.
+
+**Controls:** WASD/mouse; E interacts, Q selects a labeled option, C crouches, Shift sprints,
+F toggles the flashlight. **Controller:** sticks move/look; A interacts, X selects, B crouches,
+LB sprints, Y toggles the light. See the guide for the measured foreknowledge route and the
+still-required human duration/presentation review.
+
+All four games expose pause/resume, restart, mute, quality controls and collapsible diagnostics.
 Keyboard controls also include **P** to pause, **R** to restart and **.** to step a paused game.
-Browser audio requires a user gesture.
+On a standard-mapped controller, **Menu** pauses/resumes and **View** restarts.
+Open a game, press a controller button so the browser exposes it, then release all controls to
+arm input. Refocusing, reconnecting and resuming likewise require neutral controls. The
+**Controls** panel lists bindings; **Diagnostics** reports connection and rearm status.
+Browser audio still requires a click or key gesture; use **Enable sound**.
+
+Controller support is shared by `npm run play` and the static demos, with no separate gamepad
+build or configuration. Automated controller coverage drives all four games with
+virtual standard-mapped devices; physical controller/driver compatibility is not claimed.
 
 The screenshots are actual browser renders of the shipped PoCs, not concept art or mockups.
 See their [capture notes](docs/images/captures.json).
@@ -340,7 +369,7 @@ diagnostics, discovery limits and bounded inspection.
 
 ## Architecture
 
-The repository contains **eight engine packages and three game workspaces**, with TypeScript
+The repository contains **eight engine packages and four game workspaces**, with TypeScript
 project references and mechanically enforced dependency boundaries.
 
 | Package                                                  | Responsibility                                                                                                  |
@@ -358,7 +387,7 @@ project references and mechanically enforced dependency boundaries.
 not import a concrete mode.** A game's `ModePlugin` composes registered components,
 resource/prefab declarations, initialization, systems and observation providers.
 
-`poc/platformer.mjs`, `poc/iso.mjs` and `poc/fps.mjs` connect each game to its presentation.
+`poc/platformer.mjs`, `poc/iso.mjs`, `poc/fps.mjs` and `poc/horror.mjs` connect each game to its presentation.
 Engine packages never import the PoC games.
 
 The dev server hosts the simulation in Node and sends snapshots to a browser mirror.
@@ -393,7 +422,7 @@ game backend. The repository's [Pages workflow](.github/workflows/pages.yml) pub
 ## Status and roadmap
 
 The current engine is deliberately small enough to understand and exercise through its
-three PoCs. It is not yet a general-purpose production replacement for established AAA tools.
+four demos. It is not yet a general-purpose production replacement for established AAA tools.
 
 | Stage                                        | Direction                                                                                                                       |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |

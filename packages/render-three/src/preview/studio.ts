@@ -13,6 +13,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { DiagnosticError } from '@aegis/core';
 import { loadPresentationAssets } from '../presentation/assets.js';
 import type { PresentationAssets } from '../presentation/assets.js';
+import { CinematicPipeline, cinematicSize } from '../presentation/pipeline.js';
 import type {
   PreviewCamera,
   PreviewDocument,
@@ -59,6 +60,7 @@ export class AssetPreviewStudio {
   #controls: OrbitControls;
   #loaded?: LoadedSubject;
   #pending?: LoadedSubject;
+  #pipeline?: CinematicPipeline;
   #controller?: AbortController;
   #revision = 0;
   #serverStatus?: PreviewServerState['status'];
@@ -193,7 +195,20 @@ export class AssetPreviewStudio {
   }
 
   #size(width: number, height: number): void {
-    this.#renderer.setSize(width, height, false);
+    const manifest = this.#loaded?.document.presentation.manifest;
+    const size =
+      manifest?.pipeline === undefined
+        ? { width, height }
+        : cinematicSize(width, height, 1, manifest.quality ?? 'standard');
+    if (this.#capturing && (size.width !== width || size.height !== height))
+      throw previewError(
+        PreviewCode.Settings,
+        'capture',
+        'Requested capture exceeds the declared cinematic pixel budget.',
+        'Reduce capture size or author quality: "photo" in the presentation descriptor for up to 4K.',
+      );
+    this.#renderer.setSize(size.width, size.height, false);
+    this.#pipeline?.resize(size.width, size.height);
     const aspect = width / height;
     if (this.#camera instanceof PerspectiveCamera) this.#camera.aspect = aspect;
     else {
@@ -347,6 +362,7 @@ export class AssetPreviewStudio {
       this.#loaded = { document, assets, subject, loadMs: performance.now() - started };
       this.#settings = settings;
       this.#scene.add(subject.root);
+      this.#setPipeline();
       previous?.subject.dispose();
       previous?.assets.dispose();
       this.#setProjection();
@@ -488,6 +504,7 @@ export class AssetPreviewStudio {
         this.#loaded = loaded;
         this.#pending = undefined;
         this.#scene.add(loaded.subject.root);
+        this.#setPipeline();
         previous?.subject.dispose();
         previous?.assets.dispose();
       }
@@ -550,7 +567,24 @@ export class AssetPreviewStudio {
   };
 
   render(): void {
-    if (!this.#disposed) this.#renderer.render(this.#scene, this.#camera);
+    if (this.#disposed) return;
+    if (this.#pipeline === undefined) this.#renderer.render(this.#scene, this.#camera);
+    else this.#pipeline.render({ scene: this.#scene, camera: this.#camera });
+  }
+
+  #setPipeline(): void {
+    this.#pipeline?.dispose();
+    this.#pipeline = undefined;
+    const loaded = this.#loaded;
+    if (loaded?.document.presentation.manifest.pipeline !== undefined) {
+      this.#pipeline = new CinematicPipeline(
+        this.#renderer,
+        { scene: this.#scene, camera: this.#camera },
+        loaded.document.presentation.manifest,
+        loaded.assets,
+      );
+      this.#size(this.#width, this.#height);
+    }
   }
 
   #cameraState(): PreviewCamera {
@@ -570,6 +604,7 @@ export class AssetPreviewStudio {
 
   #recipe(): PreviewRecipe | null {
     if (this.#loaded === undefined) return null;
+    const manifest = this.#loaded.document.presentation.manifest;
     return {
       selection: this.#loaded.document.selection,
       view: this.#settings.view,
@@ -579,6 +614,17 @@ export class AssetPreviewStudio {
       clip: this.#settings.clip,
       time: this.#settings.time,
       shape: this.#settings.shape,
+      ...(manifest.pipeline === undefined
+        ? {}
+        : {
+            pipeline: {
+              quality: manifest.quality ?? 'standard',
+              settings: manifest.pipeline,
+              ...(manifest.environment?.reflections === undefined
+                ? {}
+                : { reflections: manifest.environment.reflections }),
+            },
+          }),
     };
   }
 
@@ -594,6 +640,7 @@ export class AssetPreviewStudio {
       })),
       library: this.#loaded.assets.stats(),
       gpu: { ...this.#renderer.info.memory },
+      ...(this.#pipeline === undefined ? {} : { pipeline: this.#pipeline.stats() }),
     };
   }
 
@@ -682,8 +729,8 @@ export class AssetPreviewStudio {
       };
     } finally {
       this.#camera.zoom = oldZoom;
-      this.#size(this.#width, this.#height);
       this.#capturing = false;
+      this.#size(this.#width, this.#height);
       this.render();
       this.#startAnimation();
     }
@@ -710,6 +757,7 @@ export class AssetPreviewStudio {
     this.#canvas.removeEventListener('webglcontextlost', this.#contextLost);
     this.#controls.dispose();
     this.#disposePending();
+    this.#pipeline?.dispose();
     this.#loaded?.subject.dispose();
     this.#loaded?.assets.dispose();
     this.#loaded = undefined;

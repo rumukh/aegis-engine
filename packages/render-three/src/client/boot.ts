@@ -14,7 +14,6 @@ import { Vector3 } from 'three';
 import { createWorld } from '@aegis/core';
 import type { GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { RenderAdapter } from '../adapter.js';
-import { renderAdapter } from '../render.js';
 import { BINDINGS } from '../bindings.js';
 import type { BootConfig, ControlCommand, FrameResponse } from '../protocol.js';
 import { assertEventHistory } from '../protocol.js';
@@ -178,6 +177,7 @@ export function boot(config: BootConfig): void {
     ...(config.presentation === undefined ? {} : { presentation: config.presentation }),
     ...(config.tickRate === undefined ? {} : { tickRate: config.tickRate }),
     onCommand: sendCommand,
+    onGameplayBlocked: (blocked) => collector.setGameplayBlocked(blocked),
   });
   const renderer = host.renderer;
   let adapter: RenderAdapter;
@@ -188,6 +188,14 @@ export function boot(config: BootConfig): void {
   let mounted = false;
   let lastTick = -1;
   let paused = false;
+  const clientId =
+    typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : [...globalThis.crypto.getRandomValues(new Uint32Array(4))]
+          .map((value) => value.toString(16).padStart(8, '0'))
+          .join('-');
+  let inputGeneration: number | null = null;
+  let claimInput = false;
   let inFlight = false;
   let frameExchange: Promise<void> | undefined;
   let pauseBarrier: Promise<void> | undefined;
@@ -229,6 +237,7 @@ export function boot(config: BootConfig): void {
   const restoreSamples: number[] = [];
   const syncSamples: number[] = [];
   const renderSamples: number[] = [];
+  let renderedGeneration = -1;
   const hudSamples: number[] = [];
   const exchangeSamples: number[] = [];
   /** Append to a bounded ring, dropping the oldest. Never allocates a new array. */
@@ -240,8 +249,7 @@ export function boot(config: BootConfig): void {
   const resize = (): void => {
     const width = canvas.clientWidth || globalThis.innerWidth;
     const height = canvas.clientHeight || globalThis.innerHeight;
-    renderer.setSize(width, height, false);
-    adapter.resize(width, height);
+    host.resize(width, height);
   };
 
   function sendCommand(command: SessionCommand): void {
@@ -303,6 +311,10 @@ export function boot(config: BootConfig): void {
       return adapter.pick(x, y);
     },
     onCommand: sendCommand,
+    onControlIntent: (claim) => {
+      claimInput = claim;
+    },
+    onCaptureState: (state) => host.captureInput(state),
     onGamepadPointer: gamepadCursor(canvas),
     onGamepadSample: gamepadStatus(),
   });
@@ -367,6 +379,7 @@ export function boot(config: BootConfig): void {
       generation = incomingGeneration;
       collector.clear();
       host.reset(generation);
+      claimInput = false;
       lastTick = -1;
     }
     // Control and frame replies can arrive in either order within the same generation.
@@ -375,6 +388,8 @@ export function boot(config: BootConfig): void {
       collector.setPaused(paused);
       applySnapshot(response.snapshot);
     }
+    inputGeneration = generation;
+    if (response.inputStatus !== undefined) host.inputStatus(response.inputStatus);
     if (history !== undefined) {
       adapter.sync(mirror);
       host.hydrate(history, generation, lastTick);
@@ -395,9 +410,12 @@ export function boot(config: BootConfig): void {
     syncWaiters = [];
     const started = performance.now();
     const requestGeneration = generation;
+    const claim = claimInput;
+    claimInput = false;
     try {
       const { value: response, bytes } = await postJson<FrameResponse>(`${config.api}/frame`, {
         input: collector.take(),
+        client: { id: clientId, claim, generation: inputGeneration },
         ...(config.presentation === undefined
           ? {}
           : { presentationGeneration: hydratedGeneration }),
@@ -437,7 +455,14 @@ export function boot(config: BootConfig): void {
     windowFrames++;
     timings.meanGap = windowFrames > 1 ? (frameStart - windowStart) / (windowFrames - 1) : 0;
 
-    if (!inFlight && pauseBarrier === undefined) {
+    // A cold cinematic draw can compile many shaders synchronously. Do not arm a network
+    // deadline immediately before that draw blocks the main thread.
+    const coldCinematic =
+      config.presentation?.manifest.pipeline !== undefined &&
+      mounted &&
+      hydratedGeneration === generation &&
+      renderedGeneration !== generation;
+    if (!inFlight && pauseBarrier === undefined && !coldCinematic) {
       inFlight = true;
       timings.inFlight = true;
       frameExchange = exchange()
@@ -463,7 +488,8 @@ export function boot(config: BootConfig): void {
     }
     const t2 = performance.now();
     try {
-      renderAdapter(renderer, adapter);
+      host.render();
+      renderedGeneration = generation;
     } catch (error) {
       stopped = true;
       globalThis.cancelAnimationFrame(animationFrame);

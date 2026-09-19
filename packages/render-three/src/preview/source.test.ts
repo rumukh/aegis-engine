@@ -34,6 +34,47 @@ function rejected(work: () => unknown, code: string): readonly string[] {
 }
 
 describe('asset-only source preparation', () => {
+  it('retains all PBR maps and cinematic reflections, but refuses a missing dependency', () => {
+    const provenance = { author: 'fixture', license: 'MIT', source: 'test' };
+    const descriptor = {
+      aegis: 'presentation/1',
+      quality: 'high',
+      pipeline: { toneMapping: 'aces' },
+      assets: [
+        { id: 'color', kind: 'texture', src: 'surface.png', provenance },
+        { id: 'orm', kind: 'texture', src: 'orm.png', colorSpace: 'linear', provenance },
+        { id: 'reflection', kind: 'texture', src: 'reflection.png', provenance },
+      ],
+      materials: [
+        {
+          id: 'metal',
+          shading: 'standard',
+          map: 'color',
+          normalMap: 'orm',
+          roughnessMap: 'orm',
+          metalnessMap: 'orm',
+          aoMap: 'orm',
+          emissiveMap: 'color',
+        },
+      ],
+      environment: { reflections: { texture: 'reflection', intensity: 0.4 } },
+    };
+    writeFileSync(join(root, 'orm.png'), fixturePng());
+    writeFileSync(join(root, 'reflection.png'), fixturePng());
+    writeFileSync(source, JSON.stringify(descriptor));
+    const prepared = prepareAssetPreview({ source, selection: { kind: 'material', id: 'metal' } });
+    expect(prepared.document.dependencies.map((entry) => entry.path).sort()).toEqual([
+      'orm.png',
+      'reflection.png',
+      'surface.png',
+    ]);
+    expect(prepared.document.presentation.manifest.pipeline).toEqual({ toneMapping: 'aces' });
+    expect(prepared.document.presentation.manifest.environment).toEqual(descriptor.environment);
+    rmSync(join(root, 'orm.png'));
+    expect(() =>
+      prepareAssetPreview({ source, selection: { kind: 'material', id: 'metal' } }),
+    ).toThrow(/orm/);
+  });
   it('prepares a direct image without a scene, plugin, descriptor, or invented provenance', () => {
     writeFileSync(join(root, 'aegis.json'), '{"plugin":"./trap.mjs#plugin"}');
     writeFileSync(

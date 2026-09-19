@@ -1,5 +1,9 @@
 # Standalone asset preview
 
+Opt-in cinematic materials and reflection captures use the shared
+[cinematic presentation pipeline](./cinematic-presentation.md). Descriptor previews retain its
+PBR map closure, quality and output transform settings; they still do not create a gameplay world.
+
 `aegis preview` renders an asset in a studio, not in a game. It does not accept a scene,
 resolve a game plugin, create a world, run systems, or replay input. A model, image, or
 material can be reviewed before any game exists.

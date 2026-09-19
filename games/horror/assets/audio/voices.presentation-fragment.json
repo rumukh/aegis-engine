@@ -1,0 +1,205 @@
+{
+  "status": "Complete voice-only delivery. Score and foley are separate pending inventories, not missing references.",
+  "assetRoot": "games/horror/assets",
+  "note": "Merge assets and audio.cues into presentation/1; do not treat these production notes as presentation schema fields. Dialogue is centered PA/handheld; threat/foley provide world HRTF separately.",
+  "assets": [
+    {
+      "id": "vo-arrival",
+      "kind": "audio",
+      "src": "audio/runtime/vo-arrival.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:cab6cc911f7a86319152febab48232f8eccf818a2ff462e7a364a2fcd9c33fc8"
+      }
+    },
+    {
+      "id": "vo-bus",
+      "kind": "audio",
+      "src": "audio/runtime/vo-bus.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:f3dd3bd0167175a1312771c793144f06d7621ed380f80ba283166a7f6f70def5"
+      }
+    },
+    {
+      "id": "vo-power",
+      "kind": "audio",
+      "src": "audio/runtime/vo-power.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:dab51b9f854417f9ecf631a4e4bde92d7b999ae3cff32c78484ce70934e47a63"
+      }
+    },
+    {
+      "id": "vo-triage",
+      "kind": "audio",
+      "src": "audio/runtime/vo-triage.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:c0c70db0313bb1d6efff9480c3615906490a10cab36617530f131eef428abfef"
+      }
+    },
+    {
+      "id": "vo-recorder",
+      "kind": "audio",
+      "src": "audio/runtime/vo-recorder.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:06bf98d526773afb057ff338e8ef43b7b5cb0a1557995f21389ce0b59391b5f5"
+      }
+    },
+    {
+      "id": "vo-coolant",
+      "kind": "audio",
+      "src": "audio/runtime/vo-coolant.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:b3745f395c375b679cbfce1c3f4d17a5d14e250804cb4a5ab559c7ddf52622d8"
+      }
+    },
+    {
+      "id": "vo-uplink",
+      "kind": "audio",
+      "src": "audio/runtime/vo-uplink.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:52992477b2618c06d5b27a7351a0e3eb1b2fe67ff511049c300a565b1488110a"
+      }
+    },
+    {
+      "id": "vo-exit",
+      "kind": "audio",
+      "src": "audio/runtime/vo-exit.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Azure Speech",
+        "license": "Project-generated dialogue; Azure service terms apply. See audio/source/production-policy.json.",
+        "source": "Original line in audio/source/voice-lines.json; sha256:e686f6056685fc491d020d6953d04d34eb7c2da2dea0f29d72f7b3b794f0078c"
+      }
+    }
+  ],
+  "audio": {
+    "volume": 1,
+    "headroom": 0.65,
+    "cues": [
+      {
+        "event": "horror.arrived",
+        "asset": "vo-arrival",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Station",
+          "text": "Emergency lights are active. Please follow the marked route.",
+          "durationTicks": 284
+        }
+      },
+      {
+        "event": "horror.bus.isolated",
+        "asset": "vo-bus",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Station",
+          "text": "Rescue bus disconnected. Auxiliary power can now be restored.",
+          "durationTicks": 311
+        }
+      },
+      {
+        "event": "horror.power.restored",
+        "asset": "vo-power",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Station",
+          "text": "Auxiliary power restored. Medical and archive access available.",
+          "durationTicks": 319
+        }
+      },
+      {
+        "event": "horror.triage.played",
+        "asset": "vo-triage",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Crew recording",
+          "text": "My visitor token still works. Do not call the rescue network.",
+          "durationTicks": 346
+        }
+      },
+      {
+        "event": "horror.recorder.recovered",
+        "asset": "vo-recorder",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Crew recording",
+          "text": "Close the coolant return, not the pressure supply. Send this to the independent capsule.",
+          "durationTicks": 420
+        }
+      },
+      {
+        "event": "horror.coolant.isolated",
+        "asset": "vo-coolant",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Station",
+          "text": "Coolant return isolated. Observation quarantine released.",
+          "durationTicks": 287
+        }
+      },
+      {
+        "event": "horror.uplink.transmitted",
+        "asset": "vo-uplink",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Station",
+          "text": "Recording received. One evacuation berth is available.",
+          "durationTicks": 281
+        }
+      },
+      {
+        "event": "level.completed",
+        "asset": "vo-exit",
+        "volume": 1,
+        "cooldownTicks": 600,
+        "maxVoices": 1,
+        "voiceGroup": "dialogue",
+        "fadeSeconds": 0.015,
+        "caption": {
+          "speaker": "Station",
+          "text": "Separation confirmed. You are clear of the station.",
+          "durationTicks": 267
+        }
+      }
+    ]
+  }
+}

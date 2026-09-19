@@ -1,0 +1,217 @@
+{
+  "aegis": "scene/1",
+  "name": "NULL MERIDIAN",
+  "mode": "fps",
+  "seed": "null-meridian-1",
+  "resources": {
+    "fps.floorplan": {
+      "width": 31,
+      "height": 41,
+      "tileSize": 1,
+      "origin": { "x": 0, "z": 0 },
+      "rows": [
+        "###############################",
+        "#####...................#.....#",
+        "#####...................E.....#",
+        "#####...................E.....#",
+        "#####...................E.....#",
+        "#####...................#.....#",
+        "##############OOO##############",
+        "#############.....#############",
+        "#############.....#############",
+        "#...........#.....#...........#",
+        "#...........P.....#...........#",
+        "#...........P.....#...........#",
+        "#....###....P.....#...........#",
+        "#....###....#.....#...........#",
+        "#...........#.....#....###....#",
+        "#...........#.....#....###....#",
+        "#####DDD#####.....#....###....#",
+        "#.................A...........#",
+        "#.................A...........#",
+        "#.................A...........#",
+        "#...........#.....#####AAA#####",
+        "#...........#.....#...........#",
+        "#....###....#.....#...........#",
+        "#....###....#.....#...........#",
+        "#....###....#.....#....###....#",
+        "#....###....#.....#....###....#",
+        "#...........#.....#...........#",
+        "#.............................#",
+        "#.............................#",
+        "#.............................#",
+        "#...........#.....#...........#",
+        "#...........#.....#...........#",
+        "##############...##############",
+        "###########.........###########",
+        "###########.........###########",
+        "###########.........###########",
+        "###########.........###########",
+        "###########.........###########",
+        "###########.........###########",
+        "###########.........###########",
+        "###############################"
+      ],
+      "legend": {
+        "#": { "solid": true, "floor": 0, "ceil": 3.6 },
+        ".": { "solid": false, "floor": 0, "ceil": 3.6 },
+        "D": { "solid": true, "floor": 0, "ceil": 3.6, "door": true },
+        "P": { "solid": true, "floor": 0, "ceil": 3.6, "door": true },
+        "A": { "solid": true, "floor": 0, "ceil": 3.6, "door": true },
+        "O": { "solid": true, "floor": 0, "ceil": 3.6, "door": true },
+        "E": { "solid": true, "floor": 0, "ceil": 3.6, "door": true }
+      }
+    }
+  },
+  "entities": [
+    {
+      "id": "player",
+      "components": {
+        "Transform": { "position": { "x": 15, "y": 0, "z": 3 } },
+        "CapsuleBody": { "radius": 0.3, "height": 1.75 },
+        "FpsController": { "moveSpeed": 2, "jumpSpeed": 0 },
+        "LookState": {},
+        "FpsCamera": { "eyeHeight": 1.62, "fovDegrees": 70, "near": 0.05 },
+        "Health": { "current": 100, "max": 100 },
+        "HorrorPlayer": {},
+        "HorrorStatus": {}
+      }
+    },
+    {
+      "id": "mission",
+      "components": { "HorrorMission": {} }
+    },
+    {
+      "id": "responder",
+      "components": {
+        "Transform": { "position": { "x": 27, "y": 0, "z": 29 } },
+        "HorrorThreat": {}
+      }
+    },
+    {
+      "id": "arrival-terminal",
+      "components": {
+        "Transform": { "position": { "x": 19.45, "y": 0, "z": 6 } },
+        "HorrorInteractable": { "kind": "arrival", "label": "Read the last docking report" }
+      }
+    },
+    {
+      "id": "fuse-locker",
+      "components": {
+        "Transform": { "position": { "x": 3, "y": 0, "z": 8.55 } },
+        "HorrorInteractable": { "kind": "fuse", "label": "Take the auxiliary fuse" }
+      }
+    },
+    {
+      "id": "maintenance-note",
+      "components": {
+        "Transform": { "position": { "x": 7.55, "y": 0, "z": 17 } },
+        "HorrorInteractable": { "kind": "maintenance", "label": "Read the maintenance slate" }
+      }
+    },
+    {
+      "id": "service-wheel",
+      "components": {
+        "Transform": { "position": { "x": 4, "y": 0, "z": 23.45 } },
+        "HorrorInteractable": {
+          "kind": "service",
+          "label": "Hold to release the service bulkhead",
+          "holdTicks": 120
+        }
+      }
+    },
+    {
+      "id": "bus-isolator",
+      "components": {
+        "Transform": { "position": { "x": 9, "y": 0, "z": 31.45 } },
+        "HorrorInteractable": {
+          "kind": "isolate-bus",
+          "label": "Isolate the failed rescue bus",
+          "holdTicks": 60
+        }
+      }
+    },
+    {
+      "id": "power-console",
+      "components": {
+        "Transform": { "position": { "x": 3, "y": 0, "z": 31.45 } },
+        "HorrorInteractable": { "kind": "power", "label": "Route auxiliary power", "holdTicks": 90 }
+      }
+    },
+    {
+      "id": "triage-recorder",
+      "components": {
+        "Transform": { "position": { "x": 29.45, "y": 0, "z": 13 } },
+        "HorrorInteractable": { "kind": "triage", "label": "Play the infirmary recording" }
+      }
+    },
+    {
+      "id": "archive-recorder",
+      "components": {
+        "Transform": { "position": { "x": 21, "y": 0, "z": 31.45 } },
+        "HorrorInteractable": {
+          "kind": "recorder",
+          "label": "Recover the black-box recorder",
+          "holdTicks": 90
+        }
+      }
+    },
+    {
+      "id": "coolant-valve",
+      "components": {
+        "Transform": { "position": { "x": 3, "y": 0, "z": 23.45 } },
+        "HorrorInteractable": {
+          "kind": "coolant",
+          "label": "Select coolant line / hold to isolate",
+          "holdTicks": 150
+        }
+      }
+    },
+    {
+      "id": "uplink-console",
+      "components": {
+        "Transform": { "position": { "x": 6, "y": 0, "z": 39.45 } },
+        "HorrorInteractable": {
+          "kind": "uplink",
+          "label": "Select evacuation authority / transmit",
+          "holdTicks": 120
+        }
+      }
+    },
+    {
+      "id": "evac-control",
+      "components": {
+        "Transform": { "position": { "x": 29.45, "y": 0, "z": 38 } },
+        "HorrorInteractable": {
+          "kind": "escape",
+          "label": "Seal the capsule and depart",
+          "holdTicks": 90
+        }
+      }
+    },
+    {
+      "id": "service-door",
+      "components": { "Transform": { "position": { "x": 6, "y": 0, "z": 24 } } }
+    },
+    {
+      "id": "power-door",
+      "components": { "Transform": { "position": { "x": 12, "y": 0, "z": 29 } } }
+    },
+    {
+      "id": "archive-west-door",
+      "components": { "Transform": { "position": { "x": 18, "y": 0, "z": 22 } } }
+    },
+    {
+      "id": "archive-south-door",
+      "components": { "Transform": { "position": { "x": 24, "y": 0, "z": 20 } } }
+    },
+    {
+      "id": "observation-door",
+      "components": { "Transform": { "position": { "x": 15, "y": 0, "z": 34 } } }
+    },
+    {
+      "id": "evac-door",
+      "components": { "Transform": { "position": { "x": 24, "y": 0, "z": 37 } } }
+    }
+  ]
+}

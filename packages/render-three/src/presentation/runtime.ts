@@ -22,7 +22,14 @@ import type { VisualRole } from '../appearance.js';
 import type { EventLine } from '../protocol.js';
 import { assertEventHistory } from '../protocol.js';
 import type { PresentationAssets, PresentationAssetStats } from './assets.js';
-import { ContentLights, checkLightBudget, lightStats, renderPosition } from './runtime-lights.js';
+import {
+  ContentLights,
+  PracticalLights,
+  checkLightBudget,
+  lightStats,
+  renderPosition,
+} from './runtime-lights.js';
+import { PresentationState } from './state.js';
 import type { RenderPosition } from './runtime-lights.js';
 import { ManagedVisual, VisualFactory, applyPose, visualError } from './runtime-visuals.js';
 import type { AnimationOverride, StaticBatch } from './runtime-visuals.js';
@@ -186,12 +193,14 @@ function bindingRank(binding: EntityPresentationBinding): number {
 /** Browser-safe; assets must already be loaded. Constructing/mounting never performs IO. */
 export class PresentationRuntime {
   readonly manifest: PresentationManifest;
+  readonly state: PresentationState;
   readonly #scene: Scene;
   readonly #camera: Camera;
   readonly #mode: GameMode;
   readonly #assets: PresentationAssets;
   readonly #factory: VisualFactory;
   readonly #lights: ContentLights;
+  readonly #practicals: PracticalLights;
   readonly #root = new Group();
   readonly #entityRoot = new Group();
   readonly #objectRoot = new Group();
@@ -247,6 +256,8 @@ export class PresentationRuntime {
     this.#mode = options.mode;
     this.#assets = options.assets;
     this.#quality = options.quality ?? options.manifest.quality ?? 'standard';
+    this.state = new PresentationState(options.mode);
+    this.#practicals = new PracticalLights(this.manifest.environment?.spots ?? [], this.#quality);
     this.#factory = new VisualFactory(options.assets);
     this.#lights = new ContentLights(options.scene, options.mode);
     this.#background = options.scene.background;
@@ -257,6 +268,7 @@ export class PresentationRuntime {
     this.#effectRoot.name = 'presentation:effects';
     this.#environment.name = 'presentation:environment';
     this.#root.add(this.#entityRoot, this.#objectRoot, this.#effectRoot, this.#environment);
+    this.#root.add(this.#practicals.root);
     this.#scene.add(this.#root);
     try {
       for (const spec of this.manifest.entities ?? []) {
@@ -450,6 +462,8 @@ export class PresentationRuntime {
   /** Complete one read-only reconciliation, including purely visual Transform entities. */
   endSync(world: World): void {
     if (this.#disposed) return;
+    this.state.sync(world);
+    this.state.validate(this.manifest);
     for (const view of world.query({ has: [Transform] }).views()) {
       if (this.#boundEntities.has(view.entity)) continue;
       const transform = view.get(Transform);
@@ -470,6 +484,7 @@ export class PresentationRuntime {
       this.#bindings.delete(key);
     }
     this.#lights.sync(world);
+    this.#practicals.sync(this.#camera, this.state);
     this.#positionObjects();
     this.#validateTargets(true);
     checkLightBudget(this.#scene);
@@ -584,10 +599,15 @@ export class PresentationRuntime {
   #positionObjects(): void {
     this.#cameraOrigin ??= this.#camera.position.clone();
     for (const object of this.#objects.values()) {
-      if (object.batch !== undefined) continue;
+      const visible =
+        object.spec.visibleWhen === undefined || this.state.matches(object.spec.visibleWhen);
+      if (object.batch !== undefined) {
+        object.root.visible = visible;
+        continue;
+      }
       const root = object.root;
       const anchor = object.spec.anchor;
-      root.visible = true;
+      root.visible = visible;
       root.quaternion.identity();
       root.position.set(0, 0, 0);
       if (anchor === 'camera') {
@@ -595,7 +615,7 @@ export class PresentationRuntime {
         root.quaternion.copy(this.#camera.quaternion);
       } else if (typeof anchor === 'object') {
         const binding = this.#byName.get(anchor.entity);
-        root.visible = binding !== undefined;
+        root.visible = visible && binding !== undefined;
         if (binding !== undefined) {
           root.position.copy(binding.origin);
           if (binding.orientation !== undefined)
@@ -834,13 +854,22 @@ export class PresentationRuntime {
       const override = this.#animation(effect.spec, Math.max(0, tick - effect.start));
       if (override !== undefined) overrides.set(visual, override);
     }
+    const matches = (condition: import('./schema.js').StateCondition): boolean =>
+      this.state.matches(condition);
     for (const binding of this.#bindings.values())
-      binding.visual?.sample(tick, tickRate, this.#state(binding), overrides.get(binding.visual));
-    for (const visual of this.#createdVisuals) visual.sample(tick, tickRate, 'idle');
+      binding.visual?.sample(
+        tick,
+        tickRate,
+        this.#state(binding),
+        overrides.get(binding.visual),
+        matches,
+      );
+    for (const visual of this.#createdVisuals)
+      visual.sample(tick, tickRate, 'idle', undefined, matches);
     for (const object of this.#objects.values()) {
       const visual = object.visual;
       if (visual === undefined) continue;
-      visual.sample(tick, tickRate, 'idle', overrides.get(visual));
+      visual.sample(tick, tickRate, 'idle', overrides.get(visual), matches);
       applyPose(visual.pose, object.spec.pose);
       const motion = object.spec.motion;
       if (motion === undefined || this.#reducedMotion) continue;
@@ -1041,6 +1070,7 @@ export class PresentationRuntime {
 
   setQuality(quality: QualityTier): void {
     this.#quality = quality;
+    this.#practicals.setQuality(quality);
     while (this.#effects.length + this.#extensions.size > QUALITY[quality].effects) this.#evict();
   }
 
@@ -1242,6 +1272,7 @@ export class PresentationRuntime {
     }
     this.#objects.clear();
     this.#lights.dispose();
+    this.#practicals.dispose();
     this.#environment.traverse((node) => {
       if (
         node instanceof AmbientLight ||

@@ -1,4 +1,4 @@
-import { WebGLRenderer } from 'three';
+import { Vector3, WebGLRenderer } from 'three';
 import { DiagnosticError } from '@aegis/core';
 import type { GameMode, World } from '@aegis/core';
 import { createRenderAdapter } from '../adapters/index.js';
@@ -7,6 +7,8 @@ import type { EventLine } from '../protocol.js';
 import { loadPresentationAssets } from '../presentation/assets.js';
 import type { PresentationAssets } from '../presentation/assets.js';
 import { QUALITY } from '../presentation/schema.js';
+import { CinematicPipeline, cinematicSize } from '../presentation/pipeline.js';
+import { renderAdapter } from '../render.js';
 import { validatePresentationWorld } from '../presentation/world.js';
 import type { QualityTier, ResolvedPresentation } from '../presentation/schema.js';
 import { createAudio } from './audio.js';
@@ -14,6 +16,11 @@ import type { AudioController } from './audio.js';
 import { createHud } from './hud.js';
 import type { Hud } from './hud.js';
 import type { SessionCommand } from './input.js';
+import type { InputCaptureState } from './input.js';
+import type { FrameInputStatus } from '../frame-clients.js';
+import { createInputFeedback } from './input-feedback.js';
+import { createLossEnding } from './loss-ending.js';
+import type { LossEnding } from './loss-ending.js';
 
 export interface PresentationHostOptions {
   canvas: HTMLCanvasElement;
@@ -22,10 +29,12 @@ export interface PresentationHostOptions {
   objective?: string;
   tickRate?: number;
   onCommand(command: SessionCommand): void;
+  onGameplayBlocked?(blocked: boolean): void;
 }
 
 /** Shared browser-only lifecycle; neither transport gives this host the simulation's world. */
 export class PresentationHost {
+  readonly #inputFeedback = createInputFeedback();
   readonly renderer: WebGLRenderer;
   readonly hud: Hud;
   readonly ready: Promise<void>;
@@ -36,6 +45,12 @@ export class PresentationHost {
   #adapter: RenderAdapter | undefined;
   #assets: PresentationAssets | undefined;
   #audio: AudioController | undefined;
+  #pipeline: CinematicPipeline | undefined;
+  #ending: LossEnding | undefined;
+  #endingResetPending = false;
+  #endingOutcome: 'win' | 'lose' | undefined;
+  #width = 1;
+  #height = 1;
   #quality: QualityTier;
   #motionPreference: MediaQueryList | undefined;
   #generation = 0;
@@ -64,6 +79,14 @@ export class PresentationHost {
       ...(options.presentation?.manifest.hud === undefined
         ? {}
         : { spec: options.presentation.manifest.hud }),
+      onOutcome: (outcome) => {
+        if (this.#ending === undefined) return;
+        if (outcome === undefined) {
+          this.#endingResetPending = true;
+          this.#endingOutcome = undefined;
+        } else if (this.#endingResetPending) this.#endingOutcome = outcome;
+        else this.#ending.outcome(outcome);
+      },
     });
     this.hud.setLoading('loading', 'Preparing presentation');
     try {
@@ -77,6 +100,19 @@ export class PresentationHost {
       throw error;
     }
     this.#controls();
+    const loss = options.presentation?.manifest.ui?.lossEnding;
+    if (loss !== undefined) {
+      if (options.onGameplayBlocked === undefined)
+        throw new Error(
+          '[aegis:ending] Loss presentation requires a gameplay input blocking callback.',
+        );
+      this.#ending = createLossEnding({
+        spec: loss,
+        canvas: options.canvas,
+        onGameplayBlocked: options.onGameplayBlocked,
+        onRestart: () => options.onCommand('restart'),
+      });
+    }
     if (options.presentation === undefined) {
       this.#adapter = createRenderAdapter(options.mode);
       this.#applyMotionPreference();
@@ -125,13 +161,49 @@ export class PresentationHost {
     this.#adapter = createRenderAdapter(this.#options.mode, {
       presentation: { manifest: config.manifest, assets: this.#assets, quality: this.#quality },
     });
+    if (config.manifest.pipeline !== undefined)
+      this.#pipeline = new CinematicPipeline(
+        this.renderer,
+        this.#adapter,
+        config.manifest,
+        this.#assets,
+        this.#quality,
+      );
     this.#applyMotionPreference();
     const assets = this.#assets;
+    const adapter = this.#adapter;
+    const direction = new Vector3();
+    const position = new Vector3();
+    const up = new Vector3();
+    const runtime = adapter.presentation;
     this.#audio = createAudio({
       ...(config.manifest.audio === undefined ? {} : { spec: config.manifest.audio }),
       readBuffer: (id) => assets.audio(id),
       quality: this.#quality,
-      onState: (state) => this.hud.setAudio(state),
+      onState: (state) => {
+        this.hud.setAudio(state);
+        if (state.error !== undefined) this.#ending?.reportError(`Audio: ${state.error}`);
+      },
+      onCaption: (caption, tick) => this.hud.setCaption(caption, tick),
+      ...(runtime === undefined
+        ? {}
+        : {
+            spatial: {
+              listener: () => {
+                adapter.camera.getWorldPosition(position);
+                adapter.camera.getWorldDirection(direction);
+                up.set(0, 1, 0).transformDirection(adapter.camera.matrixWorld);
+                return {
+                  position: position.toArray(),
+                  forward: direction.toArray(),
+                  up: up.toArray(),
+                };
+              },
+              position: (entity: string) => runtime.state.position(entity),
+              matches: (condition: import('../presentation/schema.js').StateCondition) =>
+                runtime.state.matches(condition),
+            },
+          }),
     });
     this.hud.setAudio(this.#audio.state());
     this.#ready = true;
@@ -164,11 +236,19 @@ export class PresentationHost {
     if (typeof HTMLSelectElement !== 'undefined' && quality instanceof HTMLSelectElement) {
       quality.value = this.#quality;
       this.#listen(quality, 'change', () => {
-        if (quality.value !== 'low' && quality.value !== 'standard') return;
+        if (
+          quality.value !== 'low' &&
+          quality.value !== 'standard' &&
+          quality.value !== 'high' &&
+          quality.value !== 'photo'
+        )
+          return;
         this.#quality = quality.value;
         this.#applyQuality();
         this.#adapter?.presentation?.setQuality(this.#quality);
         this.#audio?.setQuality(this.#quality);
+        this.#pipeline?.setQuality(this.#quality);
+        this.resize(this.#width, this.#height);
       });
     }
     const debug = document.getElementById('collision-debug');
@@ -186,12 +266,39 @@ export class PresentationHost {
 
   #applyQuality(): void {
     this.renderer.setPixelRatio(
-      Math.min(globalThis.devicePixelRatio ?? 1, QUALITY[this.#quality].pixelRatio),
+      this.#options.presentation?.manifest.pipeline !== undefined
+        ? 1
+        : Math.min(globalThis.devicePixelRatio ?? 1, QUALITY[this.#quality].pixelRatio),
     );
+  }
+
+  resize(width: number, height: number): void {
+    this.#width = width;
+    this.#height = height;
+    if (this.#pipeline === undefined) this.renderer.setSize(width, height, false);
+    else {
+      const size = cinematicSize(width, height, globalThis.devicePixelRatio ?? 1, this.#quality);
+      this.renderer.setSize(size.width, size.height, false);
+      this.#pipeline.resize(size.width, size.height);
+    }
+    this.#adapter?.resize(width, height);
+  }
+
+  render(): void {
+    if (this.#pipeline === undefined) renderAdapter(this.renderer, this.adapter);
+    else this.#pipeline.render(this.adapter);
+  }
+
+  captureInput(state: InputCaptureState): void {
+    this.#inputFeedback.capture(state);
+  }
+  inputStatus(state: FrameInputStatus): void {
+    this.#inputFeedback.transport(state);
   }
 
   #applyMotionPreference(): void {
     this.#adapter?.presentation?.setReducedMotion(this.#motionPreference?.matches ?? false);
+    this.#ending?.setReducedMotion(this.#motionPreference?.matches ?? false);
   }
 
   receive(events: readonly EventLine[], generation = this.#generation): void {
@@ -239,6 +346,12 @@ export class PresentationHost {
   }
 
   present(tick: number, paused: boolean): void {
+    if (this.#endingResetPending) {
+      this.#endingResetPending = false;
+      this.#ending?.outcome(undefined);
+      if (this.#endingOutcome !== undefined) this.#ending?.outcome(this.#endingOutcome);
+      this.#endingOutcome = undefined;
+    }
     const events = this.#events;
     this.#events = [];
     this.#adapter?.present?.({
@@ -249,6 +362,7 @@ export class PresentationHost {
       events,
     });
     this.#audio?.setPaused(paused);
+    this.#audio?.sync();
     this.#audio?.consume(events, this.#generation, tick);
   }
 
@@ -267,6 +381,10 @@ export class PresentationHost {
 
   connection(error?: unknown): void {
     if (this.#error !== undefined) return;
+    if (error !== undefined)
+      this.#ending?.reportError(
+        `Connection interrupted: ${error instanceof Error ? error.message : String(error)}. Retrying.`,
+      );
     this.hud.setLoading(
       error === undefined ? 'ready' : 'reconnecting',
       error === undefined
@@ -277,6 +395,7 @@ export class PresentationHost {
 
   audioFailure(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
+    this.#ending?.reportError(`Audio: ${message}`);
     this.hud.setAudio({
       status: 'error',
       muted: this.#audio?.state().muted ?? false,
@@ -298,6 +417,7 @@ export class PresentationHost {
           ? error.message
           : String(error);
     this.hud.setLoading('error', this.#error);
+    this.#ending?.reportError(this.#error);
     console.error('[aegis:presentation]', error);
     this.#audio?.setPaused(true);
     this.#rejectReady(error);
@@ -318,6 +438,9 @@ export class PresentationHost {
       assets: this.#assets?.stats(),
       render: this.#adapter?.presentation?.stats(),
       audio: this.#audio?.state(),
+      input: this.#inputFeedback.state(),
+      ...(this.#ending === undefined ? {} : { ending: this.#ending.state() }),
+      pipeline: this.#pipeline?.stats(),
     };
   }
 
@@ -331,9 +454,12 @@ export class PresentationHost {
       () => this.#abort.abort(),
       ...this.#listeners,
       () => this.#audio?.dispose(),
+      () => this.#ending?.dispose(),
+      () => this.#pipeline?.dispose(),
       () => this.#adapter?.dispose(),
       () => this.#assets?.dispose(),
       () => this.renderer.dispose(),
+      () => this.renderer.forceContextLoss(),
     ];
     for (const release of releases) {
       try {

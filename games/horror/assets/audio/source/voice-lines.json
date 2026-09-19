@@ -1,0 +1,62 @@
+{
+  "schema": "null-meridian-voice-lines/1",
+  "approval": "Jenny and Guy audition pairing approved by user through parent; clue consistency approved by integrator, with auxiliary rather than habitat power correction.",
+  "lines": [
+    {
+      "id": "vo-arrival",
+      "event": "horror.arrived",
+      "speaker": "Station",
+      "text": "Emergency lights are active. Please follow the marked route.",
+      "maxDurationSeconds": 8
+    },
+    {
+      "id": "vo-bus",
+      "event": "horror.bus.isolated",
+      "speaker": "Station",
+      "text": "Rescue bus disconnected. Auxiliary power can now be restored.",
+      "maxDurationSeconds": 8
+    },
+    {
+      "id": "vo-power",
+      "event": "horror.power.restored",
+      "speaker": "Station",
+      "text": "Auxiliary power restored. Medical and archive access available.",
+      "maxDurationSeconds": 8
+    },
+    {
+      "id": "vo-triage",
+      "event": "horror.triage.played",
+      "speaker": "Crew recording",
+      "text": "My visitor token still works. Do not call the rescue network.",
+      "maxDurationSeconds": 9
+    },
+    {
+      "id": "vo-recorder",
+      "event": "horror.recorder.recovered",
+      "speaker": "Crew recording",
+      "text": "Close the coolant return, not the pressure supply. Send this to the independent capsule.",
+      "maxDurationSeconds": 11
+    },
+    {
+      "id": "vo-coolant",
+      "event": "horror.coolant.isolated",
+      "speaker": "Station",
+      "text": "Coolant return isolated. Observation quarantine released.",
+      "maxDurationSeconds": 8
+    },
+    {
+      "id": "vo-uplink",
+      "event": "horror.uplink.transmitted",
+      "speaker": "Station",
+      "text": "Recording received. One evacuation berth is available.",
+      "maxDurationSeconds": 8
+    },
+    {
+      "id": "vo-exit",
+      "event": "level.completed",
+      "speaker": "Station",
+      "text": "Separation confirmed. You are clear of the station.",
+      "maxDurationSeconds": 8
+    }
+  ]
+}

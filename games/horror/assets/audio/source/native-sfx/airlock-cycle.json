@@ -1,0 +1,23 @@
+{
+  "id": "airlock-cycle",
+  "seed": 9182710,
+  "duration": 14,
+  "prompt": "A heavy spacecraft pressure hatch sealing safely. Restrained metal latch bolts rotate into place, a rubber gasket compresses, then a smooth pneumatic pressure equalization wash slowly recedes. Deep physical machinery and short room resonance, quiet controlled weight, no explosive decompression, no music, no voice, no alarm.",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "distribution": "DeepBeepMeep/TTS",
+  "distributionRevision": "5020589aa562cea206a25eea208d7cbb1f6efae7",
+  "wanGpRevision": "bb68ded24f8a25d51789f8a49b66cc63eccf53c9",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "attention": "sdpa",
+  "negativePrompt": "music, melody, singing, speech, voices, drums, digital beeps, laser sounds, cinematic explosion, distorted clipping",
+  "sampleRate": 44100,
+  "channels": 2,
+  "frames": 617400,
+  "nativePeak": 1.0,
+  "nativeFormat": "WAV IEEE float32; no normalization",
+  "sha256": "fde015f6fbc7a018b1215b52416a7f59c1ffff09bb0fcced33676bb1f70aaa48",
+  "configSha256": "9396ee61a60a869f9fca1f50d1c8352345c3fa891da0fda433df2e9012ca147e",
+  "humanListening": "pending"
+}

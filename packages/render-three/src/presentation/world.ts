@@ -1,8 +1,9 @@
-import { Name } from '@aegis/core';
+import { DiagnosticError, Name } from '@aegis/core';
 import type { Diagnostic, Validated, World } from '@aegis/core';
 import { renderDiagnostic, RenderCode } from './diagnostics.js';
 import type { PresentationManifest } from './schema.js';
 import { validatePresentation } from './validate.js';
+import { PresentationState } from './state.js';
 
 /** Check names against initialized state, including expanded prefabs and plugin-init spawns. */
 export function validatePresentationWorld(
@@ -39,6 +40,14 @@ export function validatePresentationWorld(
       requireName(effect.target.entity, `effects[${index}].target.entity`);
   });
   if (manifest.hud !== undefined) requireName(manifest.hud.playerName, 'hud.playerName');
+  const state = new PresentationState('fps');
+  state.sync(world);
+  try {
+    state.validate(manifest);
+  } catch (error) {
+    if (!(error instanceof DiagnosticError)) throw error;
+    diagnostics.push(...error.diagnostics);
+  }
   return diagnostics.length === 0
     ? { ok: true, value: manifest, diagnostics }
     : { ok: false, diagnostics };

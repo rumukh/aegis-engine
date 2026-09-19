@@ -42,6 +42,7 @@ export function importMap(base = '../../'): string {
     imports: {
       three: `${base}vendor/three/build/three.module.js`,
       'three/': `${base}vendor/three/`,
+      'three/addons/': `${base}vendor/three/examples/jsm/`,
       'three/addons/loaders/GLTFLoader.js': `${base}vendor/three/examples/jsm/loaders/GLTFLoader.js`,
       'three/addons/utils/SkeletonUtils.js': `${base}vendor/three/examples/jsm/utils/SkeletonUtils.js`,
       '@aegis/core': `${base}vendor/@aegis/core/dist/index.js`,
