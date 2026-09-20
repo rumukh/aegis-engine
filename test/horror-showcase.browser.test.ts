@@ -31,6 +31,11 @@ import { navigateAndWait } from '../packages/render-three/src/browser-navigation
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
 import { closeHorrorPage, reportHorrorFailure } from './support/horror-failure-context.js';
 import {
+  finishHorrorInputTrace,
+  startHorrorInputTrace,
+  traceHorrorPage,
+} from './support/horror-input-trace.js';
+import {
   gamepadFrames,
   installVirtualPad,
   setPad,
@@ -41,6 +46,8 @@ const HARDWARE = process.env['AEGIS_HORROR_HARDWARE'] === '1';
 const MEASURE_PURSUIT = process.env['AEGIS_HORROR_MEASURE_PURSUIT'] === '1';
 const VIEWPORT = HARDWARE ? { width: 2560, height: 1440 } : { width: 960, height: 540 };
 const ARTIFACTS = process.env['AEGIS_HORROR_ARTIFACTS'];
+const INPUT_TRACE = process.env['AEGIS_HORROR_INPUT_TRACE'];
+let inputTrace: ReturnType<typeof startHorrorInputTrace> | undefined;
 const SHOTS = new Map([
   [2478, 'power'],
   [3812, 'medical'],
@@ -154,12 +161,16 @@ beforeAll(async () => {
 }, 180_000);
 
 beforeEach(async () => {
+  if (INPUT_TRACE !== undefined)
+    inputTrace = startHorrorInputTrace(() => dev.session('horror')?.tick ?? null);
   browser = await launchBrowser({
     viewport: VIEWPORT,
     graphics: HARDWARE ? 'hardware' : 'software',
   });
 });
 afterEach(async () => {
+  inputTrace?.stop();
+  inputTrace = undefined;
   const owned = browser;
   browser = undefined;
   if (owned === undefined) return;
@@ -180,7 +191,24 @@ afterAll(async () => {
 });
 
 async function sync(page: CdpSession): Promise<void> {
-  await evaluate(page, 'globalThis.aegis.sync().then(()=>null)');
+  const started = performance.now();
+  try {
+    await evaluate(page, 'globalThis.aegis.sync().then(()=>null)');
+  } finally {
+    inputTrace?.control('page-sync', 0, started);
+  }
+}
+
+async function closeTracedPage(page: CdpSession, label: string, failed: boolean): Promise<void> {
+  try {
+    if (inputTrace !== undefined && INPUT_TRACE !== undefined)
+      await finishHorrorInputTrace(inputTrace, page, label, INPUT_TRACE);
+  } catch (error) {
+    console.error('[horror-input-trace] could not finish diagnostic output', error);
+    if (!failed) throw error;
+  } finally {
+    await closeHorrorPage(page, failed);
+  }
 }
 
 async function clickUi(page: CdpSession, id: string): Promise<void> {
@@ -249,17 +277,19 @@ async function control(
   command: 'pause' | 'resume' | 'restart' | 'step',
   ticks = 1,
 ): Promise<void> {
-  if (transport === 'live') {
-    const response = await fetch(`${dev.url}/api/horror/control`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ command, ticks }),
-    });
-    expect(response.ok).toBe(true);
-  } else {
-    await evaluate(
-      page,
-      `(() => {
+  const started = performance.now();
+  try {
+    if (transport === 'live') {
+      const response = await fetch(`${dev.url}/api/horror/control`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command, ticks }),
+      });
+      expect(response.ok).toBe(true);
+    } else {
+      await evaluate(
+        page,
+        `(() => {
       const code=${JSON.stringify(command === 'pause' || command === 'resume' ? 'KeyP' : command === 'restart' ? 'KeyR' : 'Period')};
       if (${JSON.stringify(command)}==='pause' && globalThis.aegis.paused()) return;
       if (${JSON.stringify(command)}==='resume' && !globalThis.aegis.paused()) return;
@@ -268,9 +298,12 @@ async function control(
         window.dispatchEvent(new KeyboardEvent('keyup',{code,bubbles:true}));
       }
     })()`,
-    );
+      );
+    }
+    if (command !== 'step') await sync(page);
+  } finally {
+    inputTrace?.control(`${transport}:${command}`, ticks, started);
   }
-  if (command !== 'step') await sync(page);
 }
 
 async function drive(
@@ -442,6 +475,7 @@ describe('NULL MERIDIAN real browser mission', () => {
           }),
         );
         await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'ready');
+        if (INPUT_TRACE !== undefined) await traceHorrorPage(page);
         await control(page, transport, 'pause');
         await control(page, transport, 'restart');
         await until(
@@ -638,7 +672,7 @@ describe('NULL MERIDIAN real browser mission', () => {
         await diagnoseFailure(page, transport, 'win route', error);
         throw error;
       } finally {
-        await closeHorrorPage(page, failed);
+        await closeTracedPage(page, `${transport}-win`, failed);
       }
     }, 300_000);
   }
@@ -668,6 +702,7 @@ describe('NULL MERIDIAN real browser mission', () => {
           }),
         );
         await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'ready');
+        if (INPUT_TRACE !== undefined) await traceHorrorPage(page);
         await control(page, transport, 'pause');
         await control(page, transport, 'restart');
         await until(
@@ -886,7 +921,7 @@ describe('NULL MERIDIAN real browser mission', () => {
         await diagnoseFailure(page, transport, 'caught route', error);
         throw error;
       } finally {
-        await closeHorrorPage(page, failed);
+        await closeTracedPage(page, `${transport}-caught`, failed);
       }
     }, 240_000);
   }

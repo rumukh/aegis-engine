@@ -37,6 +37,8 @@ let generation: number;
 let frameId: number;
 let now: number;
 let frames: Map<number, FrameRequestCallback>;
+let tasks: Map<number, () => void>;
+let nextTask: number;
 let requests: Request[];
 let expiry: { at: number; controller: AbortController }[];
 let renderWork: () => void;
@@ -122,12 +124,20 @@ function elapse(ms: number): void {
     if (!entry.controller.signal.aborted && now >= entry.at)
       entry.controller.abort(new DOMException('Controlled 2000ms deadline', 'TimeoutError'));
 }
-async function display(): Promise<void> {
+async function collectTask(): Promise<void> {
+  const next = tasks.entries().next().value;
+  if (next === undefined) throw new Error('Expected a queued collection task.');
+  tasks.delete(next[0]);
+  next[1]();
+  await settle();
+}
+async function display(collect = true): Promise<void> {
   const next = frames.entries().next().value;
   if (next === undefined) throw new Error('Expected a scheduled display callback.');
   frames.delete(next[0]);
   next[1](now);
   await settle();
+  if (collect && tasks.size > 0) await collectTask();
 }
 async function presentAndPoll(): Promise<void> {
   await display();
@@ -188,6 +198,8 @@ beforeEach(() => {
   now = 100;
   frameId = 0;
   frames = new Map();
+  tasks = new Map();
+  nextTask = 0;
   requests = [];
   expiry = [];
   chronology = [];
@@ -212,6 +224,12 @@ beforeEach(() => {
     return frameId;
   });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
+  vi.stubGlobal('setTimeout', (callback: () => void, delay: number) => {
+    expect(delay).toBe(0);
+    tasks.set(++nextTask, callback);
+    return nextTask;
+  });
+  vi.stubGlobal('clearTimeout', (id: number) => tasks.delete(id));
   vi.spyOn(AbortSignal, 'timeout').mockImplementation((delay) => {
     expect(delay).toBe(2000);
     const controller = new AbortController();
@@ -239,6 +257,71 @@ afterEach(() => {
 });
 
 describe('held input barriers', () => {
+  it('collects a queued release in a coalesced task, not in the draw or its microtasks', async () => {
+    await start();
+    turnAndWalk();
+    await display();
+    await acknowledge();
+    renderWork = () => elapse(STALL_MS);
+    await display(false);
+    expect(requests).toHaveLength(0);
+    await Promise.resolve();
+    expect(requests).toHaveLength(0);
+    expect(tasks.size).toBe(1);
+    renderWork = () => {};
+    await display(false);
+    expect(tasks.size).toBe(1);
+    dom.dispatch('keyup', keyEvent('KeyW'));
+    await collectTask();
+    expect(tasks.size).toBe(0);
+    const release = takeRequest();
+    expect(release.body.input.axes).toEqual({});
+    expect(release.body.client?.claim).toBe(false);
+    expect((await acknowledge(release)).inputStatus).toMatchObject({
+      role: 'observing',
+      accepted: true,
+    });
+    expect(debug().timings().exchangeErrors).toBe(0);
+  });
+
+  it('cancels queued work and fresh waiters on STOP, even if a cancelled callback is delivered', async () => {
+    await start();
+    turnAndWalk();
+    const synced = barrier();
+    await display(false);
+    expect(requests).toHaveLength(0);
+    const cancelled = tasks.values().next().value!;
+    events.dispatchEvent(new Event('beforeunload'));
+    await synced.done;
+    expect(tasks.size).toBe(0);
+    expect(synced.rejected).toHaveBeenCalledOnce();
+    cancelled();
+    await settle();
+    expect(requests).toHaveLength(0);
+  });
+
+  it('cancels old-context collection on blur and samples only reset state in the next task', async () => {
+    await start();
+    turnAndWalk();
+    const synced = barrier();
+    await display(false);
+    expect(requests).toHaveLength(0);
+    dom.dispatch('blur', {});
+    await synced.done;
+    expect(tasks.size).toBe(0);
+    expect(synced.rejected).toHaveBeenCalledOnce();
+    await display();
+    const reset = takeRequest();
+    expect(reset.body.input).toMatchObject({
+      reset: true,
+      held: [],
+      axes: {},
+      look: { dx: 0, dy: 0 },
+    });
+    expect(reset.body.client?.claim).toBe(false);
+    await acknowledge(reset);
+  });
+
   it('settles an unchanged held-input receipt before rendering can expire the next step batch', async () => {
     await start();
     turnAndWalk();

@@ -1,0 +1,57 @@
+name: Horror input diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/horror-input-diagnostic.yml
+      - packages/render-three/src/client/boot.ts
+      - packages/render-three/src/frame-clients.ts
+      - packages/render-three/src/live-input.ts
+      - test/horror-showcase.browser.test.ts
+      - test/support/horror-input-trace.ts
+
+permissions:
+  contents: read
+
+jobs:
+  # Faster Linux feedback for this boundary; the full CI gate remains mandatory.
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      AEGIS_HORROR_INPUT_TRACE: diagnostic-horror
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install
+        run: npm ci
+      - name: Build and check test types
+        run: npm run build && npm run typecheck:tests
+      - name: Run all four Horror cases in their normal order
+        run: npm run test -- test/horror-showcase.browser.test.ts
+      - name: Independently verify the four cases executed
+        if: always()
+        run: |
+          node --input-type=module -e "
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync('.vitest-report.json', 'utf8'));
+          assert.equal(report.success, true);
+          assert.equal(report.numTotalTests, 4);
+          assert.equal(report.numPassedTests, 4);
+          assert.equal(report.numFailedTests, 0);
+          assert.equal(report.numFailedTestSuites, 0);
+          assert.equal(report.numPendingTests, 0);
+          "
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: horror-input-diagnostic
+          path: |
+            .vitest-report.json
+            diagnostic-horror/
+          include-hidden-files: true

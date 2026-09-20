@@ -102,9 +102,17 @@ input may be pending or already consumed. The client retains the actual exchange
 deadline diagnostics, even if focus loss or restart also occurred. A successful response
 cancelled by a proven input-context reset rejects its barrier without inventing a transport
 failure. The request deadline remains 2000 ms. Drawable frames render before
-collecting and starting their next exchange; bootstrap/history discovery can exchange before
-a world is drawable. An older in-flight request can still overlap a later draw, so ordering
-alone is not a delivery guarantee.
+queuing one coalesced browser task to collect and start their next exchange. The task reads
+current input, not a packet captured before yielding: trusted releases queued during a blocking
+draw can reach the collector first. A microtask is not this input-dispatch boundary. Stop,
+capture/context reset and generation changes cancel queued collection; the next valid frame
+may schedule current-context work. Bootstrap/history discovery can still exchange before a
+world is drawable.
+
+This is scheduling, not lease renewal or input replay. If no real release or new intent arrives,
+an expired held resend is still rejected and its synchronization failure remains visible.
+An older in-flight request can still overlap a later draw, so ordering alone is not a delivery
+guarantee.
 
 Invalid client identities, claim/generation fields and non-safe input sequence numbers receive
 HTTP 400 rather than being silently accepted. Sequence and duplicate rejection remain per stream.
@@ -115,3 +123,18 @@ Legacy ordering remains independent of the host's internal sequence translation.
 Opening a viewer, taking control, receiving feedback and consuming presentation events never
 reset or mutate world state directly. Accepted logical input still passes through the existing
 fixed-tick `LiveInput` boundary.
+
+## Diagnosing input stalls
+
+The optional `AEGIS_HORROR_INPUT_TRACE` directory enables bounded diagnostics in
+`test/horror-showcase.browser.test.ts`, independently of screenshot capture. Each case emits
+its trace before page cleanup and saves JSON: actual broker packets and acknowledgements,
+control-call timing, Node event-loop/CPU windows, browser input events, and rendering/sync/task
+timings. Live-only timing APIs are explicitly unavailable in static clients rather than
+reported as zero.
+
+Render-call wall time is not GPU elapsed time, and a display gap alone does not identify which
+process blocked. Correlate the recorded clocks and packet sequences before assigning a cause.
+The **Horror input diagnostic** workflow runs all four cases on Ubuntu for relevant input
+changes, or on manual dispatch, and retains the JSON artifact even on failure. It supplements
+the full CI gate; it does not replace it or relax any route, deadline or assertion.

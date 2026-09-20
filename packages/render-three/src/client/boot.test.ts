@@ -89,6 +89,8 @@ let dom: FakeDom;
 let globalEvents: EventTarget;
 let elements: Map<string, HudElement>;
 let animationFrames: Map<number, FrameRequestCallback>;
+let collectionTasks: Map<number, () => void>;
+let nextTask = 0;
 let requests: PendingRequest[];
 let nextFrame = 0;
 
@@ -108,6 +110,8 @@ beforeEach(() => {
     ].map((id) => [id, new HudElement()]),
   );
   animationFrames = new Map();
+  collectionTasks = new Map();
+  nextTask = 0;
   requests = [];
   nextFrame = 0;
   vi.stubGlobal('document', {
@@ -122,6 +126,12 @@ beforeEach(() => {
     return nextFrame;
   });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => animationFrames.delete(id));
+  vi.stubGlobal('setTimeout', (callback: () => void, delay: number) => {
+    expect(delay).toBe(0);
+    collectionTasks.set(++nextTask, callback);
+    return nextTask;
+  });
+  vi.stubGlobal('clearTimeout', (id: number) => collectionTasks.delete(id));
   vi.stubGlobal(
     'fetch',
     (url: string, init?: RequestInit) =>
@@ -177,12 +187,20 @@ async function answer(request: PendingRequest, value: FrameResponse): Promise<vo
   await settle();
 }
 
-async function display(): Promise<void> {
+async function display(collect = true): Promise<void> {
   const next = animationFrames.entries().next().value;
   if (next === undefined) throw new Error('The real boot did not schedule a display frame.');
   animationFrames.delete(next[0]);
   next[1](0);
   await settle();
+  if (collect) {
+    const task = collectionTasks.entries().next().value;
+    if (task !== undefined) {
+      collectionTasks.delete(task[0]);
+      task[1]();
+      await settle();
+    }
+  }
 }
 
 async function launch(profile: PresentationManifest | undefined): Promise<void> {
@@ -248,6 +266,29 @@ function lossProfile(): PresentationManifest {
 }
 
 describe('live receipts across real presentation lifecycle callbacks', () => {
+  it('drops a queued old-generation collection when restart arrives before the task', async () => {
+    await start();
+    dom.dispatch('keydown', keyEvent('Space'));
+    const rejected = vi.fn();
+    const waiting = debug().sync().then(vi.fn(), rejected);
+    await display(false);
+    expect(requests).toHaveLength(0);
+    expect(collectionTasks.size).toBe(1);
+    dom.dispatch('keydown', keyEvent('KeyR'));
+    await answer(takeRequest('control'), response(0, 1));
+    await waiting;
+    expect(rejected).toHaveBeenCalledOnce();
+    expect(collectionTasks.size).toBe(0);
+    expect(requests).toHaveLength(0);
+    await display();
+    const fresh = takeRequest('frame');
+    expect(JSON.parse(fresh.body!)).toMatchObject({
+      client: { generation: 1, claim: false },
+      input: { held: [], pressed: [], look: { dx: 0, dy: 0 } },
+    });
+    await answer(fresh, response(0, 1));
+  });
+
   it('keeps accepted action delivery valid when that reply opens the loss dialog, without leaking intent into restart', async () => {
     await start(true, response(0, 0), lossProfile());
     dom.dispatch('keydown', keyEvent('Space'));

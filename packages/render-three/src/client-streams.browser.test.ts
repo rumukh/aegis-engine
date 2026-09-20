@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { fpsPlugin } from '@aegis/mode-fps';
 import { BINDINGS } from './bindings.js';
 import { startDevServer } from './dev-server.js';
@@ -73,6 +73,9 @@ beforeAll(async () => {
     ],
   });
 });
+afterEach(async () => {
+  await sessionCommand('resume');
+});
 afterAll(async () => {
   for (const page of pages) {
     try {
@@ -92,6 +95,16 @@ afterAll(async () => {
     if (root !== undefined) rmSync(root, { recursive: true, force: true });
   }
 });
+
+async function sessionCommand(command: 'pause' | 'resume' | 'restart'): Promise<void> {
+  const response = await fetch(`${server.url}/api/streams/control`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command }),
+  });
+  expect(response.ok).toBe(true);
+  await response.arrayBuffer();
+}
 
 async function open(): Promise<CdpSession> {
   const browser = await launchBrowser({ viewport });
@@ -125,6 +138,136 @@ async function frames(page: CdpSession, count = 4): Promise<void> {
 }
 
 describe('independent browser streams on one live session', () => {
+  it.each([true, false])(
+    'yields a task after drawing: trusted release queued during the stall=%s',
+    async (release) => {
+      for (const command of ['pause', 'restart'] as const) await sessionCommand(command);
+      const page = await open();
+      await click(page, 460, 220);
+      await until(page, 'document.pointerLockElement?.id', (id) => id === 'stage');
+      await key(page, 'KeyW', true);
+      await evaluate(page, 'aegis.sync().then(()=>null)');
+      await page.send('Runtime.addBinding', { name: '__drawBoundary' });
+      let began = false;
+      let queuedBeforeEnd = false;
+      let releaseCommand: Promise<void> | undefined;
+      let resolveEnd!: () => void;
+      let rejectEnd!: (error: Error) => void;
+      const ended = new Promise<void>((resolve, reject) => {
+        resolveEnd = resolve;
+        rejectEnd = reject;
+      });
+      const unobserve = page.observe({
+        event(method, params) {
+          if (method !== 'Runtime.bindingCalled' || params['name'] !== '__drawBoundary') return;
+          if (params['payload'] === 'start') {
+            began = true;
+            if (release) {
+              releaseCommand = key(page, 'KeyW', false);
+              void releaseCommand.catch(rejectEnd);
+            }
+          } else if (params['payload'] === 'end') {
+            queuedBeforeEnd = releaseCommand !== undefined;
+            resolveEnd();
+          }
+        },
+        disconnected: rejectEnd,
+      });
+      try {
+        await evaluate(
+          page,
+          `(async()=>{
+          const {PresentationHost}=await import('/vendor/@aegis/render-three/dist/client/presentation-host.js');
+          const proto=PresentationHost.prototype,render=proto.render,fetch=globalThis.fetch;
+          globalThis.__drawTask={requests:[],keys:[],started:0,ended:0};
+          window.addEventListener('keyup',e=>{
+            if(e.code==='KeyW')__drawTask.keys.push({at:performance.now(),trusted:e.isTrusted});
+          },true);
+          globalThis.fetch=function(...args){
+            if(String(args[0]).endsWith('/frame')&&__drawTask.started)
+              __drawTask.requests.push({at:performance.now(),packet:JSON.parse(args[1].body)});
+            return fetch.apply(this,args);
+          };
+          proto.render=function(...args){
+            proto.render=render;
+            const result=render.apply(this,args);
+            __drawTask.started=performance.now();
+            __drawBoundary('start');
+            while(performance.now()-__drawTask.started<2250){}
+            __drawTask.ended=performance.now();
+            __drawBoundary('end');
+            return result;
+          };
+        })()`,
+        );
+        await ended;
+        if (releaseCommand !== undefined) await releaseCommand;
+        await until<number>(page, '__drawTask.requests.length', (count) => count > 0);
+        const proof = await evaluate<{
+          started: number;
+          ended: number;
+          keys: { at: number; trusted: boolean }[];
+          requests: {
+            at: number;
+            packet: {
+              input: { seq: number; axes: Record<string, number> };
+              client: { claim: boolean };
+            };
+          }[];
+        }>(page, '__drawTask');
+        expect(began).toBe(true);
+        expect(proof.ended - proof.started).toBeGreaterThanOrEqual(2250);
+        const first = proof.requests[0]!;
+        await until<number>(
+          page,
+          'aegis.presentation().input.transport.lastSeq',
+          (sequence) => sequence >= first.packet.input.seq,
+        );
+        console.info(
+          '[draw-task-proof]',
+          JSON.stringify({
+            release,
+            queuedBeforeEnd,
+            ...proof,
+            transport: await evaluate(page, 'aegis.presentation().input.transport'),
+            timings: await evaluate(page, 'aegis.timings()'),
+          }),
+        );
+        expect(first.at).toBeGreaterThanOrEqual(proof.ended);
+        expect(first.packet.client.claim).toBe(false);
+        if (release) {
+          expect(queuedBeforeEnd).toBe(true);
+          expect(proof.keys[0]?.trusted).toBe(true);
+          expect(proof.keys[0]!.at).toBeLessThan(first.at);
+          expect(first.packet.input.axes['Forward'] ?? 0).toBe(0);
+          await evaluate(page, 'aegis.sync().then(()=>null)');
+          expect(await evaluate(page, 'aegis.presentation().input.transport')).toMatchObject({
+            role: 'observing',
+            accepted: true,
+            reason: 'accepted',
+          });
+          expect(await evaluate(page, 'aegis.timings().exchangeErrors')).toBe(0);
+        } else {
+          expect(proof.keys).toEqual([]);
+          expect(first.packet.input.axes['Forward']).toBe(1);
+          await until<number>(page, 'aegis.timings().exchangeErrors', (count) => count > 0);
+          expect(await evaluate(page, 'aegis.presentation().input.transport')).toMatchObject({
+            role: 'observing',
+            accepted: false,
+            reason: 'observing',
+          });
+          await expect(evaluate(page, 'aegis.sync().then(()=>null)')).rejects.toThrow(
+            'not accepted',
+          );
+        }
+      } finally {
+        unobserve();
+        await page.send('Page.navigate', { url: 'about:blank' });
+      }
+    },
+    60_000,
+  );
+
   it('accepts the newer trusted page, ignores old neutral/held polls and delivers cues to both viewers', async () => {
     const older = await open();
     await until<number>(older, 'aegis.presentation().input.transport.lastSeq', (seq) => seq > 40);

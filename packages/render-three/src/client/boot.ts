@@ -230,6 +230,12 @@ export function boot(config: BootConfig): void {
   let inputGeneration: number | null = null;
   let claimInput = false;
   let inFlight = false;
+  let exchangeTask: ReturnType<typeof globalThis.setTimeout> | undefined;
+  const cancelExchangeTask = (): void => {
+    if (exchangeTask === undefined) return;
+    globalThis.clearTimeout(exchangeTask);
+    exchangeTask = undefined;
+  };
   let frameExchange: Promise<void> | undefined;
   let pendingExchangeProfile: { longestRenderMs: number } | undefined;
   let pauseBarrier: Promise<void> | undefined;
@@ -258,6 +264,7 @@ export function boot(config: BootConfig): void {
   let inputFailure: Error | undefined;
   let previousLevels = '';
   const rejectSync = (error: unknown): void => {
+    cancelExchangeTask();
     const pending = syncWaiters;
     syncWaiters = [];
     for (const waiter of pending) waiter.reject(error);
@@ -374,6 +381,7 @@ export function boot(config: BootConfig): void {
         intentRevision++;
         return;
       }
+      cancelExchangeTask();
       inputEpoch++;
       intentRevision = acceptedRevision = 0;
       inputFailure = undefined;
@@ -616,7 +624,7 @@ export function boot(config: BootConfig): void {
   };
 
   const startExchange = (): void => {
-    if (inFlight || pauseBarrier !== undefined) return;
+    if (stopped || inFlight || pauseBarrier !== undefined) return;
     inFlight = true;
     timings.inFlight = true;
     frameExchange = exchange()
@@ -626,6 +634,16 @@ export function boot(config: BootConfig): void {
         timings.inFlight = false;
         frameExchange = undefined;
       });
+  };
+
+  const scheduleExchange = (): void => {
+    if (stopped || inFlight || pauseBarrier !== undefined || exchangeTask !== undefined) return;
+    const task = globalThis.setTimeout(() => {
+      if (exchangeTask !== task) return;
+      exchangeTask = undefined;
+      startExchange();
+    }, 0);
+    exchangeTask = task;
   };
 
   const frame = (): void => {
@@ -711,9 +729,9 @@ export function boot(config: BootConfig): void {
         else syncWaiters.push(entry.waiter);
       } else presentationWaiters.push(entry);
     }
-    // Do not arm a new HTTP deadline before synchronous drawing blocks this thread.
-    // An older outstanding exchange can still overlap a draw and must retain real error handling.
-    startExchange();
+    // A real task boundary lets input queued during a blocking draw update the collector first.
+    // Collect in that task, not here; microtasks cannot dispatch queued browser input.
+    scheduleExchange();
   };
 
   globalThis.addEventListener('resize', resize);
