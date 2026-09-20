@@ -41,6 +41,8 @@ export function validFrameClient(value: unknown): value is FrameClient {
 export class FrameClients {
   readonly #clients = new Map<string, FrameClientState>();
   #owner: string | undefined;
+  /** The input aggregate's source survives lease expiry, but not a control handoff. */
+  #inputOwner: string | undefined;
   #ownerSeen = 0;
   #legacySeq = -1;
 
@@ -58,11 +60,12 @@ export class FrameClients {
 
   expire(now: number, input: LiveInput): void {
     if (this.#owner !== undefined && now - this.#ownerSeen > FRAME_OWNER_IDLE_SECONDS) {
-      input.clear();
+      // Release levels without erasing accepted turns/taps waiting for a simulation tick.
+      input.submit({ seq: input.lastSeq + 1, held: [], axes: {} });
       this.#owner = undefined;
     }
     for (const [id, client] of this.#clients)
-      if (id !== this.#owner && now - client.lastSeen > FRAME_CLIENT_IDLE_SECONDS)
+      if (id !== this.#inputOwner && now - client.lastSeen > FRAME_CLIENT_IDLE_SECONDS)
         this.#clients.delete(id);
   }
 
@@ -83,9 +86,12 @@ export class FrameClients {
     if (packet.seq <= client.lastSeq) return result(false, 'stale');
     client.lastSeq = packet.seq;
     if (metadata.generation !== generation) return result(false, 'generation');
+    // A blurred former controller must still be able to cancel its queued impulses after expiry.
+    if (packet.reset === true && this.#inputOwner === metadata.id) input.clear();
     if (metadata.claim && this.#owner !== metadata.id) {
-      input.clear();
+      if (this.#inputOwner !== metadata.id) input.clear();
       this.#owner = metadata.id;
+      this.#inputOwner = metadata.id;
     }
     if (this.#owner !== metadata.id) return result(false, 'observing');
     this.#ownerSeen = now;
@@ -106,12 +112,17 @@ export class FrameClients {
     if (packet.seq <= this.#legacySeq) return result(false, 'stale');
     this.#legacySeq = packet.seq;
     if (this.#owner !== undefined) return result(false, 'observing');
+    if (this.#inputOwner !== undefined) {
+      input.clear();
+      this.#inputOwner = undefined;
+    }
     input.submit({ ...packet, seq: input.lastSeq + 1 });
     return result(true, 'accepted');
   }
 
   reset(): void {
     this.#owner = undefined;
+    this.#inputOwner = undefined;
     this.#legacySeq = -1;
     for (const client of this.#clients.values()) client.eventCursor = 0;
   }

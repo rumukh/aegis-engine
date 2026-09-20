@@ -29,6 +29,93 @@ function rig() {
 }
 
 describe('per-page live input ownership', () => {
+  it('expires held levels at two seconds but keeps accepted turns, taps and clicks for one tick', () => {
+    const { input, submit } = rig();
+    const pointer = { screen: { x: 10, y: 20 }, world: { x: 3, y: 0, z: 4 }, buttons: ['primary'] };
+    submit('driver', 1, true, {
+      held: ['Use'],
+      pressed: ['Use'],
+      released: ['Tap'],
+      axes: { Forward: 1 },
+      look: { dx: 90.02, dy: -2 },
+      pointer,
+    });
+    submit('observer', 1, false, {}, 0, 2.001);
+    expect(input.frameFor(2481)).toMatchObject({
+      actions: { Use: true },
+      pressed: ['Use'],
+      released: ['Tap'],
+      axes: {},
+      look: { dx: 90.02, dy: -2 },
+      pointer,
+    });
+    expect(input.frameFor(2482)).toMatchObject({
+      actions: {},
+      pressed: [],
+      released: [],
+      axes: {},
+      look: { dx: 0, dy: 0 },
+      pointer: null,
+    });
+  });
+
+  it('preserves only the pending aggregate when fresh same-owner movement reacquires after expiry', () => {
+    const { input, submit } = rig();
+    submit('driver', 1, true, { look: { dx: 90.02, dy: 0 } });
+    expect(submit('driver', 2, true, { axes: { Forward: 1 } }, 0, 3.1158).accepted).toBe(true);
+    expect(input.frameFor(2481)).toMatchObject({
+      axes: { Forward: 1 },
+      look: { dx: 90.02, dy: 0 },
+    });
+    expect(input.frameFor(2482).look.dx).toBe(0);
+  });
+
+  it('retains the pending source sequence beyond record expiry without growing an input queue', () => {
+    const { input, clients, submit } = rig();
+    submit('driver', 7, true, { look: { dx: 90.02, dy: 0 } });
+    for (let index = 0; index < FRAME_CLIENT_LIMIT - 1; index++)
+      submit(`observer-${index}`, 1, false);
+    expect(clients.client('fresh', 61, input)).toBeDefined();
+    expect(submit('driver', 7, true, { look: { dx: 90.02, dy: 0 } }, 0, 61).reason).toBe('stale');
+    expect(input.frameFor(0).look.dx).toBe(90.02);
+    expect(input.frameFor(1).look.dx).toBe(0);
+  });
+
+  it.each(['reset', 'handoff', 'restart', 'legacy'] as const)(
+    'cancels the expired source aggregate on explicit %s, never from an unrelated observer',
+    (boundary) => {
+      const { input, clients, submit } = rig();
+      submit('driver', 1, true, {
+        look: { dx: 90.02, dy: 0 },
+        pressed: ['Use'],
+        released: ['Use'],
+        pointer: { screen: { x: 1, y: 2 }, world: null, buttons: ['primary'] },
+      });
+      submit('observer', 1, false, { reset: true }, 0, 3);
+      if (boundary === 'reset') submit('driver', 2, false, { reset: true }, 0, 3);
+      if (boundary === 'handoff') submit('new', 1, true, {}, 0, 3);
+      if (boundary === 'legacy') clients.submitLegacy(input, { seq: 1 }, 3);
+      if (boundary === 'restart') {
+        clients.reset();
+        input.clear();
+      }
+      expect(input.frameFor(0)).toMatchObject({
+        pressed: [],
+        released: [],
+        look: { dx: 0, dy: 0 },
+        pointer: null,
+      });
+    },
+  );
+
+  it('does not let stale or old-generation resets cancel accepted pending input', () => {
+    const { input, submit } = rig();
+    submit('driver', 2, true, { look: { dx: 90.02, dy: 0 } });
+    expect(submit('driver', 1, false, { reset: true }, 0, 3).reason).toBe('stale');
+    expect(submit('driver', 3, false, { reset: true }, 1, 3).reason).toBe('generation');
+    expect(input.frameFor(0).look.dx).toBe(90.02);
+  });
+
   it('accepts a fresh low-sequence page while an older neutral page keeps polling', () => {
     const { input, submit } = rig();
     submit('older', 1057, false, { axes: {} });

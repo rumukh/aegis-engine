@@ -59,6 +59,80 @@ async function frame(
 }
 
 describe('shared live host browser clients', () => {
+  it.each([false, true])(
+    'keeps the accepted paused turn through HTTP expiry with same-owner reacquisition=%s',
+    async (reacquire) => {
+      const host = await start();
+      const control = async (command: string): Promise<FrameResponse> => {
+        const result = await fetch(`${host.url}/api/test/control`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ command }),
+        });
+        expect(result.status).toBe(200);
+        return result.json() as Promise<FrameResponse>;
+      };
+      await control('pause');
+      const accepted = await frame('driver', 1, true, { Forward: 1 }, 0, {
+        look: { dx: 90.02, dy: 0 },
+        pressed: ['Use'],
+        released: ['Use'],
+      });
+      expect(accepted).toMatchObject({ tick: 0, inputStatus: { accepted: true } });
+      now = 3.1158;
+      await frame('observer', 900, false, {}, 0, { reset: true });
+      const next = await frame('driver', 2, reacquire, { Forward: 1 });
+      expect(next.inputStatus?.accepted).toBe(reacquire);
+      const stepped = await control('step');
+      const player = stepped.snapshot.entities.find((entity) => entity.name === 'player')!;
+      expect(player.components['LookState']).toMatchObject({ yawDeg: 90.02 });
+      expect(stepped.paused).toBe(true);
+      const repeated = await control('step');
+      expect(
+        repeated.snapshot.entities.find((entity) => entity.name === 'player')!.components[
+          'LookState'
+        ],
+      ).toMatchObject({ yawDeg: 90.02 });
+      if (!reacquire)
+        expect(
+          repeated.snapshot.entities.find((entity) => entity.name === 'player')!.components[
+            'Transform'
+          ],
+        ).toEqual(
+          stepped.snapshot.entities.find((entity) => entity.name === 'player')!.components[
+            'Transform'
+          ],
+        );
+    },
+  );
+
+  it.each(['focus-reset', 'new-owner', 'restart', 'resume'] as const)(
+    'cancels a paused pending turn across the HTTP %s boundary',
+    async (boundary) => {
+      const host = await start();
+      const control = (command: string) =>
+        fetch(`${host.url}/api/test/control`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ command }),
+        });
+      expect((await control('pause')).ok).toBe(true);
+      await frame('driver', 1, true, {}, 0, { look: { dx: 90.02, dy: 0 } });
+      now = 3;
+      if (boundary === 'focus-reset') await frame('driver', 2, false, {}, 0, { reset: true });
+      if (boundary === 'new-owner') await frame('new', 1, true);
+      if (boundary === 'restart') expect((await control('restart')).ok).toBe(true);
+      if (boundary === 'resume') expect((await control('resume')).ok).toBe(true);
+      const result = await control('step');
+      expect(result.ok).toBe(true);
+      const state = (await result.json()) as FrameResponse;
+      expect(
+        state.snapshot.entities.find((entity) => entity.name === 'player')!.components['LookState'],
+      ).toMatchObject({ yawDeg: 0 });
+      if (boundary === 'restart') expect(state).toMatchObject({ generation: 1, paused: true });
+    },
+  );
+
   it('preserves the complete single-player trajectory with legacy or named input and a neutral observer', async () => {
     const script = 'axis Strafe 0.5 0..12\nlook 6 0 0..12\npress Jump @3';
     const parsed = parseInputScript(script);
