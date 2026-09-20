@@ -3,6 +3,23 @@
 > First-person 3D. Reference feel: _Half-Life_.
 > Mode: `fps` (`@aegis/mode-fps`). Runs headless; verified without pixels via the semantic frame.
 
+## Browser controls
+
+| Action         | Keyboard / mouse                | Standard controller                 |
+| -------------- | ------------------------------- | ----------------------------------- |
+| Move           | WASD                            | Left stick                          |
+| Look           | Mouse after clicking the canvas | Right stick; no pointer lock needed |
+| Jump           | Space                           | A                                   |
+| Fire           | Left click                      | RT; release between shots           |
+| Pause / resume | P                               | Menu                                |
+| Restart        | R                               | View                                |
+
+These controls work in both `npm run play` and the static demo. Press a controller button to
+expose the device to the browser, then release all controls to arm it. Repeat that neutral
+release after reconnecting, refocusing or resuming. The in-game **Controls** panel lists the
+bindings and **Diagnostics** reports controller status. Click **Enable sound** for browser audio.
+See [controller setup and lifecycle](../api/gamepad-input.md).
+
 ## Concept and fantasy
 
 A 30-second Black-Mesa-style facility breach. You spawn in a sealed antechamber, **turn and shoot a

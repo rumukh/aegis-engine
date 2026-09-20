@@ -83,6 +83,7 @@ const ALLOWED = {
   ],
   '@aegis/game-iso': ['@aegis/core', '@aegis/content', '@aegis/harness', '@aegis/mode-iso'],
   '@aegis/game-fps': ['@aegis/core', '@aegis/content', '@aegis/harness', '@aegis/mode-fps'],
+  '@aegis/game-horror': ['@aegis/core', '@aegis/content', '@aegis/harness', '@aegis/mode-fps'],
 };
 
 /** Packages that are forbidden from having ANY runtime dependency at all. */

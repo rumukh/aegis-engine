@@ -15,6 +15,14 @@ import { MAX_CATCHUP_SECONDS } from '../loop.js';
 
 export type SessionCommand = 'pause' | 'step' | 'restart';
 export type InputDevice = 'keyboard' | 'mouse' | 'gamepad' | null;
+export interface InputCaptureState {
+  focused: boolean;
+  visible: boolean;
+  paused: boolean;
+  gameplayBlocked: boolean;
+  pointer: 'not-required' | 'unlocked' | 'pending' | 'locked' | 'denied' | 'unavailable';
+  error?: string;
+}
 
 export interface InputCollectorOptions {
   canvas: HTMLCanvasElement;
@@ -28,6 +36,9 @@ export interface InputCollectorOptions {
   onGamepadPointer?: (point: { x: number; y: number } | null) => void;
   /** Device/permission/rearm feedback, including unavailable states. */
   onGamepadSample?: (sample: GamepadSample) => void;
+  /** Fresh gameplay intent may claim a live view; clears cancel an unsubmitted claim. */
+  onControlIntent?: (claim: boolean) => void;
+  onCaptureState?: (state: InputCaptureState) => void;
 }
 
 export interface InputCollector {
@@ -40,6 +51,8 @@ export interface InputCollector {
   readonly gamepad: GamepadSample | null;
   /** Controller commands still work while paused; keyboard/mouse remain usable for single-step. */
   setPaused(paused: boolean): void;
+  /** End screens suppress gameplay while retaining fresh session-restart shortcuts. */
+  setGameplayBlocked(blocked: boolean): void;
   /** Drop pending input. A held controller must return to neutral before it can rearm. */
   clear(): void;
   /** Stop gameplay capture; resume requires neutral controller controls and fresh key presses. */
@@ -80,6 +93,7 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
   let mouseHeld = false;
   let blockedMouse = false;
   let paused = false;
+  let gameplayBlocked = false;
   let suspended = false;
   let focused = document.hasFocus?.() ?? true;
   let disposed = false;
@@ -88,6 +102,31 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
   let lastActivity = 0;
   let cursor = { x: 0.5, y: 0.5 };
   let cursorVisible = false;
+  let pointer: InputCaptureState['pointer'] =
+    bindings.pointer !== 'lock'
+      ? 'not-required'
+      : document.pointerLockElement === canvas
+        ? 'locked'
+        : 'unlocked';
+  let pointerError: string | undefined;
+  let lockAttempt = 0;
+  let reportedCapture = '';
+
+  const publishCapture = (): void => {
+    if (disposed) return;
+    const state: InputCaptureState = {
+      focused,
+      visible: document.visibilityState !== 'hidden',
+      paused,
+      gameplayBlocked,
+      pointer,
+      ...(pointerError === undefined ? {} : { error: pointerError }),
+    };
+    const encoded = JSON.stringify(state);
+    if (encoded === reportedCapture) return;
+    reportedCapture = encoded;
+    options.onCaptureState?.(state);
+  };
 
   const active = (): boolean =>
     !disposed && !suspended && focused && document.visibilityState !== 'hidden';
@@ -110,6 +149,7 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
     });
   };
   const reset = (rearmKeyboard: boolean): void => {
+    options.onControlIntent?.(false);
     if (rearmKeyboard) {
       for (const code of heldCodes) blockedCodes.add(code);
       blockedMouse ||= mouseHeld;
@@ -126,6 +166,7 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
       reset(true);
       pad?.suspend();
     }
+    publishCapture();
   };
   const onBlur = (): void => {
     focused = false;
@@ -137,7 +178,21 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (!active() || event.ctrlKey || event.metaKey || event.altKey) return;
+    const boundControl =
+      (event.code === 'ControlLeft' || event.code === 'ControlRight') &&
+      isBoundCode(bindings, event.code);
+    if (!active() || (event.ctrlKey && !boundControl) || event.metaKey || event.altKey) return;
+    if (gameplayBlocked) {
+      if (
+        !event.repeat &&
+        !blockedCodes.has(event.code) &&
+        COMMAND_KEYS[event.code] === 'restart'
+      ) {
+        event.preventDefault();
+        options.onCommand('restart');
+      }
+      return;
+    }
     if (
       typeof Element !== 'undefined' &&
       event.target instanceof Element &&
@@ -159,6 +214,7 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
       heldCodes.add(event.code);
       lastActiveDevice = 'keyboard';
       keyboardLevels();
+      options.onControlIntent?.(true);
     }
     event.preventDefault();
   };
@@ -174,14 +230,16 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
       buttons: ['primary'],
     };
     buffer.setPointer(point);
+    options.onControlIntent?.(true);
   };
   const onMouseMove = (event: MouseEvent): void => {
-    if (!active()) return;
+    if (!active() || gameplayBlocked) return;
     if (event.movementX !== 0 || event.movementY !== 0) {
       lastActiveDevice = 'mouse';
       hideCursor();
     }
     if (bindings.pointer !== 'lock' || document.pointerLockElement !== canvas) return;
+    if (event.movementX !== 0 || event.movementY !== 0) options.onControlIntent?.(true);
     const sensitivity = bindings.lookDegreesPerPixel ?? 0.14;
     buffer.addLook(
       event.movementX * sensitivity * (bindings.lookXSign ?? 1),
@@ -189,11 +247,34 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
     );
   };
   const onMouseDown = (event: MouseEvent): void => {
-    if (!active() || blockedMouse || event.button !== 0) return;
+    if (!active() || gameplayBlocked || blockedMouse || event.button !== 0) return;
     lastActiveDevice = 'mouse';
     hideCursor();
     if (bindings.pointer === 'lock') {
-      if (document.pointerLockElement !== canvas) void canvas.requestPointerLock();
+      options.onControlIntent?.(true);
+      if (document.pointerLockElement !== canvas && pointer !== 'pending') {
+        const attempt = ++lockAttempt;
+        pointerError = undefined;
+        if (typeof canvas.requestPointerLock !== 'function') {
+          pointer = 'unavailable';
+          pointerError =
+            'This browser does not provide pointer lock. Mouse-look cannot start here.';
+          publishCapture();
+          if (options.onCaptureState === undefined) console.error('[aegis:input]', pointerError);
+        } else {
+          pointer = 'pending';
+          publishCapture();
+          try {
+            const request = canvas.requestPointerLock();
+            void Promise.resolve(request).catch((error: unknown) => {
+              if (disposed || attempt !== lockAttempt) return;
+              pointerDenied(error instanceof Error ? error.message : String(error));
+            });
+          } catch (error) {
+            pointerDenied(error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
       mouseHeld = true;
       mouseLevels();
     } else if (bindings.pointer === 'click') {
@@ -209,17 +290,38 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
     mouseLevels();
   };
   const onContextMenu = (event: Event): void => event.preventDefault();
+  const pointerDenied = (message: string): void => {
+    if (disposed) return;
+    pointer = 'denied';
+    pointerError = `Mouse capture was denied: ${message}`;
+    publishCapture();
+    if (options.onCaptureState === undefined) console.error('[aegis:input]', pointerError);
+  };
+  const onPointerLockChange = (): void => {
+    if (bindings.pointer !== 'lock') return;
+    lockAttempt++;
+    pointer = document.pointerLockElement === canvas ? 'locked' : 'unlocked';
+    pointerError = undefined;
+    publishCapture();
+  };
+  const onPointerLockError = (): void =>
+    pointerDenied(
+      'The browser rejected pointer lock. Click the game to retry, or use a browser that permits mouse capture.',
+    );
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
   window.addEventListener('focus', onFocus);
   document.addEventListener?.('visibilitychange', updateFocus);
+  document.addEventListener?.('pointerlockchange', onPointerLockChange);
+  document.addEventListener?.('pointerlockerror', onPointerLockError);
   canvas.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mouseup', onMouseUp);
   window.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('contextmenu', onContextMenu);
   if (!active()) updateFocus();
+  publishCapture();
 
   return {
     get pointerLocked() {
@@ -242,19 +344,21 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
         lastActivity = gamepad.activity;
         lastActiveDevice = 'gamepad';
         cursorVisible = true;
+        if (!gameplayBlocked) options.onControlIntent?.(true);
       }
       // A throttled/background frame must not integrate minutes of camera or cursor movement.
       const dt = Math.min(elapsedSeconds, MAX_CATCHUP_SECONDS);
       for (const action of gamepad.pressed) {
         const command = profile?.commands?.[action];
         if (command !== undefined) {
+          if (gameplayBlocked && command !== 'restart') continue;
           if (command !== 'step') reset(true);
           options.onCommand(command);
           // A command can restart/pause synchronously. Never reuse that sample as gameplay.
           return;
         }
       }
-      if (paused) {
+      if (paused || gameplayBlocked) {
         buffer.removeSource('gamepad');
         hideCursor();
         return;
@@ -314,6 +418,13 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
       if (paused === value) return;
       paused = value;
       reset(true);
+      publishCapture();
+    },
+    setGameplayBlocked(value): void {
+      if (gameplayBlocked === value) return;
+      gameplayBlocked = value;
+      reset(true);
+      publishCapture();
     },
     clear(): void {
       reset(false);
@@ -332,12 +443,15 @@ export function createInputCollector(options: InputCollectorOptions): InputColle
       if (disposed) return;
       reset(true);
       disposed = true;
+      lockAttempt++;
       if (options.gamepad === undefined) pad?.dispose();
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener?.('visibilitychange', updateFocus);
+      document.removeEventListener?.('pointerlockchange', onPointerLockChange);
+      document.removeEventListener?.('pointerlockerror', onPointerLockError);
       canvas.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('mousemove', onMouseMove);

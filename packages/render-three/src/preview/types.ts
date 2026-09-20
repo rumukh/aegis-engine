@@ -1,6 +1,12 @@
 import type { Diagnostic } from '@aegis/core';
 import type { PresentationAssetStats } from '../presentation/assets.js';
-import type { Provenance, ResolvedPresentation, Vec3 } from '../presentation/schema.js';
+import type {
+  PipelineSpec,
+  Provenance,
+  QualityTier,
+  ResolvedPresentation,
+  Vec3,
+} from '../presentation/schema.js';
 
 export const PREVIEW_VIEWS = ['three-quarter', 'front', 'back', 'left', 'right', 'top'] as const;
 export const PREVIEW_LIGHTS = ['studio', 'neutral', 'warm'] as const;
@@ -54,6 +60,11 @@ export interface PreviewRecipe {
   clip: string | null;
   time: number;
   shape: (typeof PREVIEW_SHAPES)[number];
+  pipeline?: {
+    quality: QualityTier;
+    settings: PipelineSpec;
+    reflections?: { texture: string; intensity?: number };
+  };
 }
 
 export interface PreviewBounds {
@@ -77,6 +88,7 @@ export interface PreviewStats {
   materialNames: readonly string[];
   library: PresentationAssetStats;
   gpu: { geometries: number; textures: number };
+  pipeline?: object;
 }
 
 export type PreviewProvenance =

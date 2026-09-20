@@ -1,0 +1,49 @@
+{
+  "repository": "DeepBeepMeep/TTS",
+  "revision": "5020589aa562cea206a25eea208d7cbb1f6efae7",
+  "bytes": 2356908559,
+  "files": [
+    {
+      "file": "stable_audio3_small_sfx_bf16.safetensors",
+      "bytes": 918714064,
+      "sha256": "02652886ed24234450343737ccf1e6eb312f9ce2765f60077c0de4304f4b293d"
+    },
+    {
+      "file": "stable_audio3_same_s_bf16.safetensors",
+      "bytes": 216518418,
+      "sha256": "01d5b73153f2255b3f13d4ee9679aa3e4506370862f39a1de2d783da01081f30"
+    },
+    {
+      "file": "t5gemma-b-b-ul2/t5gemma-b-b-ul2_bf16.safetensors",
+      "bytes": 1183023032,
+      "sha256": "ef8e92b4b5664c113cbd883f7d9397ecf2b2441f1a1a97454f51bd6ff0fd9876"
+    },
+    {
+      "file": "t5gemma-b-b-ul2/config.json",
+      "bytes": 2540,
+      "sha256": "575334409716886ac2952f5a275ed92868deef8a0ea560258d9970a431c6fb3a"
+    },
+    {
+      "file": "t5gemma-b-b-ul2/special_tokens_map.json",
+      "bytes": 636,
+      "sha256": "baec30ea10906f16adb8c18af7a34023002c1746542612b8b41c9f09e1351351"
+    },
+    {
+      "file": "t5gemma-b-b-ul2/tokenizer.json",
+      "bytes": 34362429,
+      "sha256": "7794135caa3ea73918949c902a781cc61dab674a4b59c17d85931c77c1114cbd"
+    },
+    {
+      "file": "t5gemma-b-b-ul2/tokenizer.model",
+      "bytes": 4241003,
+      "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2"
+    },
+    {
+      "file": "t5gemma-b-b-ul2/tokenizer_config.json",
+      "bytes": 46437,
+      "sha256": "9546baec0dfefec0e29873edea9488ecde153f846e18c06ea48cb44587bf408f"
+    }
+  ],
+  "authorization": "User confirmed noncommercial hobby/evaluation and accepted Stability and Gemma terms via parent session.",
+  "weightsRedistributedWithGame": false
+}

@@ -227,11 +227,12 @@ afterAll(() => {
   rmSync(siteDir, { recursive: true, force: true });
 });
 
-/** The three play pages the site publishes. */
+/** The four play pages the site publishes. */
 const PLAY_PAGES = [
   'play/platformer/index.html',
   'play/iso/index.html',
   'play/fps/index.html',
+  'play/horror/index.html',
 ] as const;
 
 describe('the exported site is a real artifact (anti-vacuity)', () => {
@@ -245,16 +246,24 @@ describe('the exported site is a real artifact (anti-vacuity)', () => {
     for (const page of PLAY_PAGES) expect(siteFiles).toContain(page);
   });
 
-  it('carries the three games and links each one relatively from the landing page', () => {
+  it('carries the four games and links each one relatively from the landing page', () => {
     const index = readSite('index.html');
     for (const [id, title] of [
       ['platformer', 'Coyote Gap'],
       ['iso', 'The Server Vault'],
       ['fps', 'Sector Breach'],
+      ['horror', 'NULL MERIDIAN'],
     ]) {
       expect(index).toContain(`href="play/${id}/"`);
       expect(index).toContain(title as string);
     }
+  });
+
+  it('requires every play page in the Pages upload check', () => {
+    const workflow = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'pages.yml'), 'utf8');
+    const requiredPages = /for page in ([^;\r\n]+); do/.exec(workflow)?.[1]?.split(/\s+/);
+    expect(requiredPages).toBeDefined();
+    for (const page of PLAY_PAGES) expect(requiredPages).toContain(page);
   });
 });
 
@@ -420,6 +429,7 @@ describe('the pages run the games this repository actually ships', () => {
       ['platformer', 'games/platformer/levels/coyote-gap.scene.json'],
       ['iso', 'games/iso/levels/server-vault.scene.json'],
       ['fps', 'games/fps/levels/sector-breach.scene.json'],
+      ['horror', 'games/horror/levels/null-meridian.scene.json'],
     ]) {
       const onDisk = readFileSync(join(REPO_ROOT, ...(scene as string).split('/')), 'utf8');
       const embedded = readSite(`play/${id}/boot.js`);
@@ -432,6 +442,7 @@ describe('the pages run the games this repository actually ships', () => {
       ['platformer', '@aegis/game-platformer', 'coyoteGapPlugin'],
       ['iso', '@aegis/game-iso', 'serverVaultPlugin'],
       ['fps', '@aegis/game-fps', 'sectorBreachPlugin'],
+      ['horror', '@aegis/game-horror', 'nullMeridianPlugin'],
     ]) {
       const boot = readSite(`play/${id}/boot.js`);
       expect(boot).toContain(`import { ${exportName} } from '${specifier}';`);
@@ -468,7 +479,7 @@ describe('the pages run the games this repository actually ships', () => {
       mode: string | null;
       declaredMode: string;
     }[];
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     for (const row of rows) {
       expect(row.sameObject, `${row.id}: pluginModule#pluginExport is not the plugin it runs`).toBe(
         true,

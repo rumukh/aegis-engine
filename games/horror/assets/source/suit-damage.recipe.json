@@ -1,0 +1,20 @@
+{
+  "revision": "responder-suit-damage-checkpoint-1",
+  "status": "ONE user-selected suit-damage revision; neutral and torch assembled-body checkpoint required before game import",
+  "userDecision": "Make the suit much more damaged and blood-stained",
+  "scope": "Current sculpted responder only. No new infestation/sculpt/model-generation pipeline, concepts, downloads, rooms, cluster, audio, ending, engine, scene, AI, collision, damage rules or server actions.",
+  "geometry": {
+    "armor": "Three localized irregular fractures/dents on existing thorax, left shoulder and defensive left forearm armor. Remove actual front triangles, add explicit material-thickness walls and recessed dark pressure backing. Existing non-target geometry is copied.",
+    "fabric": "One localized right upper-arm pressure-fabric tear with dark backing and attached short irregular frays at the injury interface.",
+    "preservation": "Original nodes, animation data, connected sculpt insert and curved smooth visor remain exact. Geometry and stains stay within the existing model envelope. No scale/exposure/camera trick."
+  },
+  "surface": {
+    "method": "Two small original512x512 responder-only RGBA/packedORM atlases, with four bounded tiles for injury-contact pooling and interrupted gravity trails, transferred arm smears, diagonal abrasion/dirt and one restrained lower-suit transfer.",
+    "blood": "Dark dried/absorbed staining with irregular edges and smaller low-roughness wet areas; not red outlines, uniform rims, all-over noise, new exposed anatomy or dismemberment.",
+    "normalResponse": "Stain overlays retain the exact underlying material normal map through separate original UV coordinates, while their base/roughness atlas uses its own UV set. Physical dent/fracture normals are recomputed only in the edited region.",
+    "ownership": "No existing texture payload is modified, especially shared ceramic/graphite/ending maps. The two added maps are responder-specific and bounded by the remaining actual byte budget; no unrelated texture is reduced."
+  },
+  "provenance": "Original deterministic Node-authored geometry and pigment/roughness masks. No AI generation or downloaded source. Existing Blender source, bakes and accepted sculpt checkpoint are retained unchanged.",
+  "acceptance": "Inspect one neutral and one isolated game-settings torch assembled-body view; report exact changed paths, raw hashes and measured deduplicated byte delta. Stop for parent review before integrator import or game captures.",
+  "internalCheckpointCorrection": "The first internal render showed forearm-pad occlusion of an otherwise under-surface stain and coarse mask-cell edges. The same bounded revision adds conforming contact transfer to that forearm pad, makes the chest-contact smear readable and interpolates low-frequency mask variation continuously. First-draft source/images are retained. No sculpt, visor, lighting, scale or other asset changes."
+}

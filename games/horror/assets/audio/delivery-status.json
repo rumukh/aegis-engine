@@ -1,0 +1,47 @@
+{
+  "schema": "null-meridian-audio-delivery-status/1",
+  "status": "Partial delivery: voice and foley complete as files; score generation blocked.",
+  "deliveredSubsets": ["voices", "foley"],
+  "assetCount": 27,
+  "runtimeBytes": 1325284,
+  "decodedFloatPcmBytes": 40557712,
+  "missingSubset": "score",
+  "missingSubsetReason": "Both authorized ACE-Step jobs failed without a saved native audio file. The second exceeded its3600s service deadline during code-to-latent preparation. No substitute score or third inference attempt is claimed.",
+  "runtimeReferences": "Voice and foley fragments reference only existing assets. score-recipes.json is a pending offline production recipe, not a shipped presentation manifest.",
+  "bindings": "Use current foley.presentation-fragment.json: physical service-door and evac-door targets; power-console and coolant-valve anchors; room/hull end-state gates; global headroom0.65 once.",
+  "nativeMasterArchive": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files",
+  "nativeMasterLocations": [
+    "voice-final-r1/segments/raw",
+    "voice-final-r1/segments/final",
+    "sfx-native",
+    "processed-masters"
+  ],
+  "sourceProvenance": [
+    "source/production-policy.json",
+    "source/model-provenance.json",
+    "source/native-sfx",
+    "source/voice-lines.json",
+    "source/score-generation.json"
+  ],
+  "verification": {
+    "dspTests": "Six passing independent loop, fade, PCM-format and refusal tests.",
+    "runtime": "All27 assets decode in actual Chromium WebAudio with exact frame counts, channel counts, finite nonzero PCM and no clipping.",
+    "voices": "All8 actual runtime encodes pass unchanged Azure pronunciation, fluency and completeness thresholds after processing; maximum timing factor1.0.",
+    "speechAcoustics": "film-assessment CPU NISQA on processed speech-only masters: minimum MOS4.7112. Acoustic metric, not acting or intelligibility-in-game approval.",
+    "gainAssembly": "51-second non-spatial unattenuated assembly at authored gains with headroom0.65 applied once: -25.4LUFS and -9.5dBTP. Not recorded gameplay or spatial proof.",
+    "sourceTooling": "Owned JavaScript passes ESLint and Prettier. Media verification uses explicit delivered-subset arguments.",
+    "workspaceGate": "Final combined game gate belongs to integrator. This isolated asset-only worktree deliberately has no game package.json; no file outside owned audio scope was added to bypass that boundary."
+  },
+  "humanAcceptance": {
+    "casting": "Jenny calm station and Guy restrained crew approved by user through parent.",
+    "foleyDirection": "Pending parent-mediated human review of the immutable audio revision.",
+    "finalGameMix": "Pending actual listening and listener-relative spatial acceptance.",
+    "score": "Not produced or accepted."
+  },
+  "rebuild": {
+    "gameRuntime": "Node/browser only. Python and ffmpeg are offline media-production tools, never runtime or npm-gate requirements.",
+    "integrityCommand": "node games\\horror\\assets\\audio\\source\\verify-audio.mjs voices foley",
+    "processing": "Use the checked source recipes and build-audio.mjs against the retained native master archive. Runtime Opus encoding was verified byte-repeatable on the recorded toolchain.",
+    "generationAuthorization": "Do not start further score inference or represent pending recipes as actual assets without a new explicit decision."
+  }
+}

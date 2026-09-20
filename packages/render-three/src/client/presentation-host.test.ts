@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   createAdapter: vi.fn(),
   rendererDispose: vi.fn(),
+  contextLoss: vi.fn(),
   setLoading: vi.fn(),
   hudReset: vi.fn(),
   audio: vi.fn(),
@@ -20,10 +21,12 @@ vi.mock('./hud.js', () => ({
     setAudio: vi.fn(),
   }),
 }));
-vi.mock('three', () => ({
+vi.mock('three', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('three')>()),
   WebGLRenderer: class {
     setPixelRatio(): void {}
     dispose = mocks.rendererDispose;
+    forceContextLoss = mocks.contextLoss;
   },
 }));
 import { PresentationHost } from './presentation-host.js';
@@ -37,6 +40,7 @@ beforeEach(() => {
   mocks.audio.mockReturnValue({
     state: () => ({ status: 'locked', muted: false, voices: 0, dropped: 0 }),
     setPaused: vi.fn(),
+    sync: vi.fn(),
     reset: vi.fn(),
     consume: vi.fn(),
     dispose: vi.fn(),
@@ -139,6 +143,7 @@ describe('shared browser presentation lifecycle', () => {
     host.dispose();
     expect(order).toEqual(['adapter', 'assets']);
     expect(mocks.rendererDispose).toHaveBeenCalledTimes(1);
+    expect(mocks.contextLoss).toHaveBeenCalledTimes(1);
   });
 
   it('rejects readiness and surfaces the precise asset failure, never starting an empty adapter', async () => {

@@ -22,6 +22,7 @@ import {
   until,
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
+import { navigateAndWait } from '../packages/render-three/src/browser-navigation.js';
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
 import type { GameDefinition } from '../packages/render-three/src/catalog.js';
 import type { EventLine } from '../packages/render-three/src/protocol.js';
@@ -437,7 +438,7 @@ describe('Server Vault actual showcase', () => {
           downloadThroughput: 180_000,
           uploadThroughput: 180_000,
         });
-        await page.send('Page.navigate', { url });
+        await navigateAndWait(page, () => page.send('Page.navigate', { url }));
         await until(page, "globalThis.aegis?.presentation().status==='loading'", Boolean);
         expect(await evaluate(page, "document.getElementById('loading-panel').hidden")).toBe(false);
         expect(await evaluate(page, "document.getElementById('action-restart').disabled")).toBe(
@@ -453,7 +454,7 @@ describe('Server Vault actual showcase', () => {
         await until(page, "globalThis.aegis?.presentation().status==='ready'", Boolean);
         await page.send('Network.setBlockedURLs', { urls: ['*operative.gltf'] });
         const origin = await evaluate<number>(page, 'performance.timeOrigin');
-        await page.send('Page.reload', { ignoreCache: true });
+        await navigateAndWait(page, () => page.send('Page.reload', { ignoreCache: true }));
         await until(
           page,
           `performance.timeOrigin!==${origin} && globalThis.aegis?.presentation().status==='error'`,
@@ -472,7 +473,7 @@ describe('Server Vault actual showcase', () => {
           page,
           "(() => {const r=document.getElementById('action-retry').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()",
         );
-        await click(page, button.x, button.y);
+        await navigateAndWait(page, () => click(page, button.x, button.y));
         await until(page, "globalThis.aegis?.presentation().status==='ready'", Boolean);
         expect(await evaluate(page, 'globalThis.aegis.presentation().assets.modelInstances')).toBe(
           6,
@@ -666,7 +667,7 @@ describe('Server Vault actual showcase', () => {
         } else {
           const beforeReload = await evaluate<AppearanceRead>(page, appearance);
           const origin = await evaluate<number>(page, 'performance.timeOrigin');
-          await page.send('Page.reload', { ignoreCache: true });
+          await navigateAndWait(page, () => page.send('Page.reload', { ignoreCache: true }));
           await until(
             page,
             `performance.timeOrigin!==${origin} && globalThis.aegis?.presentation().status==='ready'`,

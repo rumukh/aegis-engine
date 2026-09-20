@@ -14,7 +14,6 @@ import { Vector3 } from 'three';
 import { createWorld } from '@aegis/core';
 import type { GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { RenderAdapter } from '../adapter.js';
-import { renderAdapter } from '../render.js';
 import { BINDINGS } from '../bindings.js';
 import type { BootConfig, ControlCommand, FrameResponse } from '../protocol.js';
 import { assertEventHistory } from '../protocol.js';
@@ -64,6 +63,21 @@ export interface FrameTimings {
   triangles: number;
   /** Exchanges that failed since boot. A latched loop shows up here, or as a stalled `snapshots`. */
   exchangeErrors: number;
+  /** First failed exchange, retained across recovery so a zero-error assertion has a cause. */
+  firstExchangeFailure?: {
+    stage: 'request' | 'body' | 'parse' | 'response';
+    responseStatus?: number;
+    message: string;
+    name: string;
+    elapsedMs: number;
+    requestSequence?: number;
+    requestGeneration: number;
+    generation: number;
+    tick: number;
+    renderedGeneration: number;
+    lastRenderMs: number;
+    longestRenderWhilePendingMs: number;
+  };
   /** Whether an exchange is outstanding right now. */
   inFlight: boolean;
 }
@@ -115,12 +129,16 @@ export interface AegisDebugHandle {
   /** Project a world point to canvas pixels, or `null` when it is behind the camera. */
   project(x: number, y: number, z: number): { x: number; y: number } | null;
   /**
-   * Resolve once an input packet **collected after this call** has been accepted by the server.
+   * Resolve after a subsequent input receipt, or presentation for a passive observer.
    *
    * Automation that wants tick-exact input needs to know its key events actually landed before it
    * asks the simulation to step. Polling a counter cannot answer that — a packet already in
    * flight was collected *before* the events. So the waiter is registered here and only settled
-   * by an exchange whose `collector.take()` ran strictly afterwards.
+   * by an exchange whose `collector.take()` ran strictly afterwards. Passive observers can
+   * synchronize snapshots without claiming control. Rejected, cancelled or delivery-ambiguous
+   * fresh or held input rejects the barrier; it is never replayed under a new sequence.
+   * Active held input settles at its receipt, not after drawing could expire its lease.
+   * Neutral observer/restart snapshots pass through adapter.sync and host.present, including UI resets.
    */
   sync(): Promise<void>;
 }
@@ -148,13 +166,18 @@ const COMMANDS: Readonly<Record<SessionCommand, ControlCommand>> = {
 const FRAME_TIMEOUT_MS = 2000;
 
 /** Post JSON and parse the JSON response, abandoning the request if it stalls. */
-async function postJson<T>(url: string, body: unknown): Promise<{ value: T; bytes: number }> {
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  progress?: (stage: 'body' | 'parse', status: number) => void,
+): Promise<{ value: T; bytes: number }> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(FRAME_TIMEOUT_MS),
   });
+  progress?.('body', response.status);
   if (!response.ok)
     throw new Error(
       `${url} responded ${response.status}: ${(await response.text()).slice(0, 600)}`,
@@ -162,6 +185,7 @@ async function postJson<T>(url: string, body: unknown): Promise<{ value: T; byte
   // Read the text rather than `response.json()` so the payload size is a measured fact: the
   // whole world crosses this wire every frame, and nothing else in the page can see how big it is.
   const text = await response.text();
+  progress?.('parse', response.status);
   return { value: JSON.parse(text) as T, bytes: text.length };
 }
 
@@ -171,6 +195,7 @@ export function boot(config: BootConfig): void {
   if (canvas === null) throw new Error('[aegis:render-three] missing <canvas id="stage">');
 
   const mode = config.mode as GameMode;
+  let presentationInputReset = false;
   const host = new PresentationHost({
     canvas,
     mode,
@@ -178,6 +203,14 @@ export function boot(config: BootConfig): void {
     ...(config.presentation === undefined ? {} : { presentation: config.presentation }),
     ...(config.tickRate === undefined ? {} : { tickRate: config.tickRate }),
     onCommand: sendCommand,
+    onGameplayBlocked: (blocked) => {
+      presentationInputReset = true;
+      try {
+        collector.setGameplayBlocked(blocked);
+      } finally {
+        presentationInputReset = false;
+      }
+    },
   });
   const renderer = host.renderer;
   let adapter: RenderAdapter;
@@ -188,8 +221,23 @@ export function boot(config: BootConfig): void {
   let mounted = false;
   let lastTick = -1;
   let paused = false;
+  const clientId =
+    typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : [...globalThis.crypto.getRandomValues(new Uint32Array(4))]
+          .map((value) => value.toString(16).padStart(8, '0'))
+          .join('-');
+  let inputGeneration: number | null = null;
+  let claimInput = false;
   let inFlight = false;
+  let exchangeTask: ReturnType<typeof globalThis.setTimeout> | undefined;
+  const cancelExchangeTask = (): void => {
+    if (exchangeTask === undefined) return;
+    globalThis.clearTimeout(exchangeTask);
+    exchangeTask = undefined;
+  };
   let frameExchange: Promise<void> | undefined;
+  let pendingExchangeProfile: { longestRenderMs: number } | undefined;
   let pauseBarrier: Promise<void> | undefined;
   let generation = 0;
   let hydratedGeneration: number | null = null;
@@ -199,7 +247,31 @@ export function boot(config: BootConfig): void {
   let fps = 0;
   let fpsWindowStart = performance.now();
   /** Waiters registered by {@link AegisDebugHandle.sync}, settled by the next exchange. */
-  let syncWaiters: (() => void)[] = [];
+  type SyncWaiter = {
+    resolve(): void;
+    reject(error: unknown): void;
+    needsInput: boolean;
+  };
+  let syncWaiters: SyncWaiter[] = [];
+  let presentationWaiters: {
+    waiter: SyncWaiter;
+    generation: number;
+    tick: number;
+  }[] = [];
+  let inputEpoch = 0;
+  let intentRevision = 0;
+  let acceptedRevision = 0;
+  let inputFailure: Error | undefined;
+  let previousLevels = '';
+  const rejectSync = (error: unknown): void => {
+    cancelExchangeTask();
+    const pending = syncWaiters;
+    syncWaiters = [];
+    for (const waiter of pending) waiter.reject(error);
+    const presented = presentationWaiters;
+    presentationWaiters = [];
+    for (const { waiter } of presented) waiter.reject(error);
+  };
 
   /** Mutable accumulator behind {@link AegisDebugHandle.timings}. */
   const timings: FrameTimings = {
@@ -229,6 +301,7 @@ export function boot(config: BootConfig): void {
   const restoreSamples: number[] = [];
   const syncSamples: number[] = [];
   const renderSamples: number[] = [];
+  let renderedGeneration = -1;
   const hudSamples: number[] = [];
   const exchangeSamples: number[] = [];
   /** Append to a bounded ring, dropping the oldest. Never allocates a new array. */
@@ -240,8 +313,7 @@ export function boot(config: BootConfig): void {
   const resize = (): void => {
     const width = canvas.clientWidth || globalThis.innerWidth;
     const height = canvas.clientHeight || globalThis.innerHeight;
-    renderer.setSize(width, height, false);
-    adapter.resize(width, height);
+    host.resize(width, height);
   };
 
   function sendCommand(command: SessionCommand): void {
@@ -303,6 +375,37 @@ export function boot(config: BootConfig): void {
       return adapter.pick(x, y);
     },
     onCommand: sendCommand,
+    onControlIntent: (claim) => {
+      claimInput = claim;
+      if (claim) {
+        intentRevision++;
+        return;
+      }
+      cancelExchangeTask();
+      inputEpoch++;
+      intentRevision = acceptedRevision = 0;
+      inputFailure = undefined;
+      previousLevels = '';
+      const pending = syncWaiters;
+      syncWaiters = [];
+      for (const waiter of pending) {
+        if (waiter.needsInput)
+          waiter.reject(new Error('[aegis] Input synchronization cancelled by an input reset.'));
+        else syncWaiters.push(waiter);
+      }
+      if (!presentationInputReset) {
+        const accepted = presentationWaiters;
+        presentationWaiters = [];
+        for (const entry of accepted) {
+          if (entry.waiter.needsInput)
+            entry.waiter.reject(
+              new Error('[aegis] Input synchronization cancelled by an input reset.'),
+            );
+          else presentationWaiters.push(entry);
+        }
+      }
+    },
+    onCaptureState: (state) => host.captureInput(state),
     onGamepadPointer: gamepadCursor(canvas),
     onGamepadSample: gamepadStatus(),
   });
@@ -367,6 +470,7 @@ export function boot(config: BootConfig): void {
       generation = incomingGeneration;
       collector.clear();
       host.reset(generation);
+      claimInput = false;
       lastTick = -1;
     }
     // Control and frame replies can arrive in either order within the same generation.
@@ -375,6 +479,8 @@ export function boot(config: BootConfig): void {
       collector.setPaused(paused);
       applySnapshot(response.snapshot);
     }
+    inputGeneration = generation;
+    if (response.inputStatus !== undefined) host.inputStatus(response.inputStatus);
     if (history !== undefined) {
       adapter.sync(mirror);
       host.hydrate(history, generation, lastTick);
@@ -395,31 +501,149 @@ export function boot(config: BootConfig): void {
     syncWaiters = [];
     const started = performance.now();
     const requestGeneration = generation;
+    const requestEpoch = inputEpoch;
+    const collectedRevision = intentRevision;
+    const claim = claimInput;
+    let freshInput = claim;
+    let activeLevels = false;
+    claimInput = false;
+    let requestSequence: number | undefined;
+    let stage: 'request' | 'body' | 'parse' | 'response' = 'request';
+    let responseStatus: number | undefined;
+    const profile = { longestRenderMs: 0 };
+    pendingExchangeProfile = profile;
     try {
-      const { value: response, bytes } = await postJson<FrameResponse>(`${config.api}/frame`, {
-        input: collector.take(),
-        ...(config.presentation === undefined
-          ? {}
-          : { presentationGeneration: hydratedGeneration }),
-      });
-      if (stopped) return;
+      const packet = collector.take();
+      requestSequence = packet.seq;
+      activeLevels =
+        (packet.held?.length ?? 0) > 0 ||
+        Object.values(packet.axes ?? {}).some((value) => value !== 0);
+      const levels = JSON.stringify({ held: packet.held ?? [], axes: packet.axes ?? {} });
+      freshInput ||=
+        (packet.look?.dx ?? 0) !== 0 ||
+        (packet.look?.dy ?? 0) !== 0 ||
+        packet.pointer != null ||
+        (packet.reset !== true &&
+          ((packet.pressed?.length ?? 0) > 0 ||
+            (packet.released?.length ?? 0) > 0 ||
+            (previousLevels !== '' && levels !== previousLevels)));
+      previousLevels = levels;
+      for (const waiter of settling) waiter.needsInput ||= freshInput || activeLevels;
+      const { value: response, bytes } = await postJson<FrameResponse>(
+        `${config.api}/frame`,
+        {
+          input: packet,
+          client: { id: clientId, claim, generation: inputGeneration },
+          ...(config.presentation === undefined
+            ? {}
+            : { presentationGeneration: hydratedGeneration }),
+        },
+        (nextStage, status) => {
+          stage = nextStage;
+          responseStatus = status;
+        },
+      );
+      stage = 'response';
+      if (stopped) throw new Error('[aegis] Input synchronization cancelled by page disposal.');
       timings.exchange = performance.now() - started;
       record(exchangeSamples, timings.exchange);
       timings.exchangeBytes = bytes;
-      if (!acceptResponse(response, requestGeneration, 'frame')) {
+      const resetBeforeReply = requestEpoch !== inputEpoch;
+      const acceptedInput =
+        !resetBeforeReply &&
+        requestGeneration === generation &&
+        (response.generation ?? requestGeneration) === requestGeneration &&
+        response.inputStatus?.accepted === true &&
+        response.inputStatus.lastSeq === requestSequence;
+      const current = acceptResponse(response, requestGeneration, 'frame');
+      if ((freshInput || activeLevels) && resetBeforeReply) {
+        // A proven lifecycle reset cancels the barrier, not the successful HTTP exchange.
+        for (const waiter of settling)
+          waiter.reject(new Error('[aegis] Input synchronization cancelled by an input reset.'));
+        return;
+      }
+      if ((freshInput || activeLevels) && (!current || !acceptedInput)) {
+        throw new Error(
+          `[aegis] Input packet ${requestSequence} was not accepted in its input context ` +
+            `(${response.inputStatus?.reason ?? 'missing acceptance status'}). ` +
+            'Fresh input was not replayed; reset the input context before synchronizing again.',
+        );
+      }
+      if (!current) {
         syncWaiters.push(...settling);
         return;
       }
-      for (const resolve of settling) resolve();
+      if (freshInput && requestEpoch === inputEpoch)
+        acceptedRevision = Math.max(acceptedRevision, collectedRevision);
+      if (inputFailure !== undefined) host.connection(inputFailure);
+      for (const waiter of settling) {
+        if (inputFailure !== undefined) waiter.reject(inputFailure);
+        else if (activeLevels) waiter.resolve();
+        else presentationWaiters.push({ waiter, generation, tick: lastTick });
+      }
     } catch (error) {
       timings.exchange = performance.now() - started;
       timings.exchangeErrors++;
+      timings.firstExchangeFailure ??= {
+        stage,
+        ...(responseStatus === undefined ? {} : { responseStatus }),
+        message: error instanceof Error ? error.message : String(error),
+        name: error instanceof Error ? error.name : typeof error,
+        elapsedMs: timings.exchange,
+        ...(requestSequence === undefined ? {} : { requestSequence }),
+        requestGeneration,
+        generation,
+        tick: lastTick,
+        renderedGeneration,
+        lastRenderMs: timings.render,
+        longestRenderWhilePendingMs: profile.longestRenderMs,
+      };
       host.connection(error);
-      // A failed exchange never delivered the input, so put the waiters back rather than
-      // resolving them — otherwise automation would step on input the server never saw.
-      syncWaiters.push(...settling);
+      if (freshInput || activeLevels) {
+        const failure = new Error(
+          `[aegis] Input synchronization failed for packet ${requestSequence}: ` +
+            `${error instanceof Error ? error.message : String(error)} ` +
+            'Delivery may already have occurred; the packet will not be replayed.',
+          { cause: error },
+        );
+        for (const waiter of settling) waiter.reject(failure);
+        if (requestEpoch === inputEpoch) {
+          inputFailure = failure;
+          rejectSync(failure);
+        }
+      } else if (stopped) {
+        for (const waiter of settling) waiter.reject(error);
+      } else {
+        // A passive snapshot barrier may wait for recovery; it promises no gameplay delivery.
+        syncWaiters.push(...settling);
+      }
       throw error;
+    } finally {
+      if (pendingExchangeProfile === profile) pendingExchangeProfile = undefined;
     }
+  };
+
+  const startExchange = (): void => {
+    if (stopped || inFlight || pauseBarrier !== undefined) return;
+    inFlight = true;
+    timings.inFlight = true;
+    frameExchange = exchange()
+      .catch(() => undefined)
+      .finally(() => {
+        inFlight = false;
+        timings.inFlight = false;
+        frameExchange = undefined;
+      });
+  };
+
+  const scheduleExchange = (): void => {
+    if (stopped || inFlight || pauseBarrier !== undefined || exchangeTask !== undefined) return;
+    const task = globalThis.setTimeout(() => {
+      if (exchangeTask !== task) return;
+      exchangeTask = undefined;
+      startExchange();
+    }, 0);
+    exchangeTask = task;
   };
 
   const frame = (): void => {
@@ -437,19 +661,10 @@ export function boot(config: BootConfig): void {
     windowFrames++;
     timings.meanGap = windowFrames > 1 ? (frameStart - windowStart) / (windowFrames - 1) : 0;
 
-    if (!inFlight && pauseBarrier === undefined) {
-      inFlight = true;
-      timings.inFlight = true;
-      frameExchange = exchange()
-        .catch(() => undefined)
-        .finally(() => {
-          inFlight = false;
-          timings.inFlight = false;
-          frameExchange = undefined;
-        });
-    }
-    if (!mounted || (config.presentation !== undefined && hydratedGeneration !== generation))
+    if (!mounted || (config.presentation !== undefined && hydratedGeneration !== generation)) {
+      startExchange();
       return;
+    }
 
     const t1 = performance.now();
     try {
@@ -459,20 +674,28 @@ export function boot(config: BootConfig): void {
       stopped = true;
       globalThis.cancelAnimationFrame(animationFrame);
       host.fail(error);
+      rejectSync(error);
       return;
     }
     const t2 = performance.now();
     try {
-      renderAdapter(renderer, adapter);
+      host.render();
+      renderedGeneration = generation;
     } catch (error) {
       stopped = true;
       globalThis.cancelAnimationFrame(animationFrame);
       host.fail(error);
+      rejectSync(error);
       return;
     }
     const t3 = performance.now();
     timings.sync = t2 - t1;
     timings.render = t3 - t2;
+    if (pendingExchangeProfile !== undefined)
+      pendingExchangeProfile.longestRenderMs = Math.max(
+        pendingExchangeProfile.longestRenderMs,
+        timings.render,
+      );
     timings.drawCalls = renderer.info.render.calls;
     timings.triangles = renderer.info.render.triangles;
 
@@ -494,6 +717,21 @@ export function boot(config: BootConfig): void {
     record(syncSamples, timings.sync);
     record(renderSamples, timings.render);
     record(hudSamples, timings.hud);
+    const presented = presentationWaiters;
+    presentationWaiters = [];
+    for (const entry of presented) {
+      if (entry.generation === generation && entry.tick <= lastTick) entry.waiter.resolve();
+      else if (entry.generation < generation) {
+        if (entry.waiter.needsInput)
+          entry.waiter.reject(
+            new Error('[aegis] Input synchronization cancelled by a generation reset.'),
+          );
+        else syncWaiters.push(entry.waiter);
+      } else presentationWaiters.push(entry);
+    }
+    // A real task boundary lets input queued during a blocking draw update the collector first.
+    // Collect in that task, not here; microtasks cannot dispatch queued browser input.
+    scheduleExchange();
   };
 
   globalThis.addEventListener('resize', resize);
@@ -503,6 +741,7 @@ export function boot(config: BootConfig): void {
     globalThis.removeEventListener('resize', resize);
     collector.dispose();
     host.dispose();
+    rejectSync(new Error('[aegis] Input synchronization cancelled by page disposal.'));
   });
 
   const debug: AegisDebugHandle = {
@@ -513,7 +752,14 @@ export function boot(config: BootConfig): void {
       return host.adapter;
     },
     tick: () => lastTick,
-    timings: () => ({ ...timings }),
+    timings: () => ({
+      ...timings,
+      ...(timings.firstExchangeFailure === undefined
+        ? {}
+        : {
+            firstExchangeFailure: { ...timings.firstExchangeFailure },
+          }),
+    }),
     samples: () => ({
       gaps: [...gapSamples],
       work: [...workSamples],
@@ -555,7 +801,11 @@ export function boot(config: BootConfig): void {
       };
     },
     sync(): Promise<void> {
-      return new Promise<void>((resolve) => syncWaiters.push(resolve));
+      if (stopped) return Promise.reject(new Error('[aegis] The live client has stopped.'));
+      if (inputFailure !== undefined) return Promise.reject(inputFailure);
+      return new Promise<void>((resolve, reject) =>
+        syncWaiters.push({ resolve, reject, needsInput: intentRevision > acceptedRevision }),
+      );
     },
   };
   (globalThis as unknown as { aegis: AegisDebugHandle }).aegis = debug;

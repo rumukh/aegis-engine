@@ -1,0 +1,32 @@
+{
+  "schema": "null-meridian-horror-layer-handoff/1",
+  "status": "Three approved-source sparse mono layers assembled; integrated playback acceptance pending.",
+  "approval": "User said SFX approved at2026-09-19T19:12:25.081+02:00 for the exact audition manifest3d5713ca6174657dbd9ba32671f97effb435e7a347387905230392427608f5f0.",
+  "changed": "Add only dread-membrane, dread-chitter and responder-breath runtime Opus plus their inventory, fragment and scoped production sources. All27 baseline audio encodes are byte-identical. No casting, source model, musical score, gameplay or existing warning/step cue changed.",
+  "assembly": "Approved lossless gestures copied into long silence. Each appears twice per differing-length loop with the second or first quieter. No new EQ, compression, pitch, stretch or post-assembly normalization. Long start/end silence makes wrap continuity explicit; no loop crossfade is needed.",
+  "durationsSeconds": [37, 41, 47],
+  "authoredQuietFractions": [0.8594594594594595, 0.910731707317073, 0.8872340425531915],
+  "additionalRuntimeBytes": 180503,
+  "additionalDecodedFloatPcmBytes": 24000000,
+  "combinedRuntimeBytes": 1505787,
+  "combinedDecodedFloatPcmBytes": 64557712,
+  "budgets": "Encoded closure and decoded PCM are distinct quantities. These are measured audio totals, not browser process memory, VRAM or the whole-game asset closure.",
+  "bindings": "Maintenance inside machinery[4.7,1.4,16], infirmary behind wall[29.6,2.3,16.5], and actual responder entity. All gated by player.HorrorStatus.musicPhase equals explore with0.2s deactivation fade. Volumes0.30/0.26/0.22. Existing headroom0.65 applied only once.",
+  "playback": "Gesture times in horror-layers.json are relative to each actual source.start, not world tick0. Pause/restart/re-enable behavior depends on the engine and must be measured. Fades alone do not prove danger-warning clarity.",
+  "checks": {
+    "processing": "Nine independent Node tests cover loop continuity, exact placement/gains/silence, WAV format and invalid inputs.",
+    "reproduction": "All3 final lossless master and Opus hashes match a second rebuild in separate directories.",
+    "codec": "All30 baseline and added files decoded in Chromium WebAudio; fetched hashes, frames, channels and finite peaks verified.",
+    "silence": "All authored quiet intervals remain below1e-5 peak after decode outside an80ms codec guard. Wrap discontinuity below1e-6.",
+    "overlap": "Conservative sum for all3 new layers + all3 existing beds + loudest monophonic dialogue + actual warning, all unattenuated and peaks coincident:0.75106 peak (-2.49dBFS) after master. It excludes other one-shots/HRTF overshoot and is not whole-engine or intelligibility proof."
+  },
+  "requiredIntegrationEvidence": [
+    "Actual recorded master output and listener-relative environmental/responder placement",
+    "Existing clue plus active new layer overlap and intelligibility",
+    "Real explore-to-danger transition versus existing warning/catch timing, including gain/source shutdown",
+    "Audio unlock, mute, pause, restart and layer voice-count behavior",
+    "Explicit human final in-game sound/mix decision"
+  ],
+  "productionArchive": "Immutable handoff includes approved audition masters and manifest,3 original native source WAV/metadata, final assembled FLAC masters and QA artifacts outside the repo payload.",
+  "regeneration": "Not authorized or required. Build-layers consumes existing approved cue masters; no model server, Python or model weights are needed to reproduce the edit/encode."
+}

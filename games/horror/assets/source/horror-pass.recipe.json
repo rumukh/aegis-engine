@@ -1,0 +1,35 @@
+{
+  "revision": "horror-prototype-2",
+  "status": "first representative prototype; parent/user creative approval pending",
+  "authorizedIntensity": "Disturbing body horror: torn suit, alien growth, visible wounds and restrained blood. No heavy gore, bodies or dismemberment.",
+  "organism": "Original non-emissive fibrous colony breaking a specific chest/right-shoulder opening: dark recessed core, localized injured contact rim, thick roots buried beneath damaged equipment and closed irregular mineral rind. No leaf/ribbon growth, generic spikes or copied franchise creature.",
+  "firstGate": "Only infected responder plus one intentional maintenance struggle cluster. No multiplication to other proposed locations before parent/user review of actual runtime front/side/gameplay-torch and cluster views.",
+  "firstPrototypeCorrections": "Iteration1a was rejected during actual asset review because parallel thin lamellae read as hanging strips. Iteration1b corrected only the infestation with fewer rooted volumes. Iteration1c corrects a measured backing-plate occlusion bug on the single maintenance cover: shallow protective bars remain in front of their backing and the existing coolant tank, with the original14mm maximum lip and no new collision. Character1b remains byte-identical in1c. These are first-gate corrections, not approval to expand the pass.",
+  "firstGate2Authorization": "Parent explicitly requested one coherent first-gate revision after the five actual1c game views: replace cloth/plant-like decorative growth and clean suit with targeted broken negative space, dark layered wound/root integration and local dried contact residue. Repair only the same maintenance cover to one torn corner, three unequal broken rods, failed fastener, one snagged frayed strip and a single irregular interrupted heel/tool rub with one dried handwipe. No new generation, no additional clusters, no lighting/scale/camera changes. Stop after the same actual2.46m/3.40m/4m and maintenance views for the next creative decision.",
+  "preservation": [
+    "Actor identity, rig hierarchy, bind pose, bounds envelope, semantic clip names and exact lower-body foot-contact channels remain unchanged.",
+    "Search and Lunge channels and timing remain exact; Idle/Stalk receive only declared small involuntary head interruptions.",
+    "The successful smooth v10-r2 visor surface, analytical normals and material remain untouched. Damage/roots surround the lower-side seal rather than replacing accepted optics.",
+    "Planet/ring/window/lighting, existing facility geometry, authoritative floorplan and all interaction anchors are unchanged.",
+    "New environment evidence is a separate world-origin decoration. No new authoritative entities, blockers or hidden collision.",
+    "No audio assets or score changes in this workstream."
+  ],
+  "concept": {
+    "file": "infestation-concept.png",
+    "role": "Original material/organism concept only, not an identity-matched asset or in-engine evidence",
+    "service": "Azure OpenAI",
+    "deployment": "gpt-image-2",
+    "helper": "azure-image-generation/scripts/generate-image.ps1",
+    "size": "1024x1536",
+    "quality": "high",
+    "format": "png",
+    "prompt": "Original character material and organism design concept, not a game screenshot. An adult orbital rescue worker in a grounded worn ivory ceramic and graphite pressure suit, standing three-quarter view from knees upward against a plain desaturated grey background, readable neutral studio light. The worker has survived a violent struggle and been colonized by an original alien organism: one shoulder and the right neck seam are forced apart by overlapping curved chalk-grey calcified lamellae, like irregular broken marine shell fins rather than spikes. Dark olive fibrous roots grow beneath the chest harness and through torn fabric; a small exposed wound shows muted raw maroon tissue only inside the split seam, with restrained dry rust-brown blood. One chest armor plate is buckled and partially detached, straps frayed, metal scraped and punctured. A smooth dark tinted pressure visor remains mostly intact with a jagged lower-side breach revealing tiny pale root structures in the shadow, not a human face. Asymmetric original silhouette with an inward-curled hollow growth near the shoulder, subtle contracted posture. Disturbing biological infestation with plausible layered material and contact depth, high-end science fiction horror concept, no neon glow, no generic glowing spikes, no giant tentacles, no detached limbs, no exposed organs, no heavy gore, no bodies, no franchise symbols or recognizable creatures, no text, no watermark. It should read as a damaged rescue suit being invaded from within, not a clean toy robot or a red repaint.",
+    "revisedPrompt": null,
+    "rights": "Original commissioned AI-generated output under Azure service terms. Not third-party CC0; no exclusivity or independent copyright claim."
+  },
+  "runtimeProvenance": {
+    "geometry": "Original deterministic Node-authored ruptured panel outlines, recessed injury/core surfaces, closed irregular mineral-rind volumes, buried root connections and directional failed protective-cover components using existing Three geometry tools.",
+    "maps": "Original deterministic relative-height/calcification and restrained abrasion/handwipe/impact alpha maps. Artistic PBR approximations, not physical scans. Concept pixels are never projected onto the character or room.",
+    "animation": "Rigid articulated glTF node animation, not skinning or motion capture. Head interruption is presentation only; gameplay AI/hitbox/damage untouched."
+  }
+}

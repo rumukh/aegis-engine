@@ -3,6 +3,21 @@
 > 2D side-scroller. Reference feel: _Super Mario World_, _Ori_.
 > Mode: `platformer` (`@aegis/mode-platformer`). Runs headless, verified without pixels.
 
+## Browser controls
+
+| Action         | Keyboard          | Standard controller                |
+| -------------- | ----------------- | ---------------------------------- |
+| Run            | A/D or Left/Right | Left stick (analog speed) or D-pad |
+| Jump           | Space, W or Up    | A                                  |
+| Pause / resume | P                 | Menu                               |
+| Restart        | R                 | View                               |
+
+These controls work in both `npm run play` and the static demo. Press a controller button to
+expose the device to the browser, then release all controls to arm it. Repeat that neutral
+release after reconnecting, refocusing or resuming. The in-game **Controls** panel lists the
+bindings and **Diagnostics** reports controller status. Click **Enable sound** for browser audio.
+See [controller setup and lifecycle](../api/gamepad-input.md).
+
 ## Concept and fantasy
 
 A tiny run-right-and-jump level. You are a nimble runner crossing a broken ledge: sprint over a

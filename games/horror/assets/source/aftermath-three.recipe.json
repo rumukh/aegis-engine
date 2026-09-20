@@ -1,0 +1,33 @@
+{
+  "revision": "three-restrained-aftermath-sites-1",
+  "authorization": {
+    "humanSelection": "Add restrained aftermath at 3–4 other key locations (Recommended)",
+    "coordinatorScope": "Exactly THREE new sites: arrival, infirmary and archive. Existing maintenance and human-approved e26 responder/two maps remain frozen.",
+    "status": "Authorized execution and immutable handoff; parent/user review of one actual-game view per new site remains required."
+  },
+  "canonicalSceneSha256": "b813645272b39897cecb0dbee587412acc5bb052e3ba3de16100f4797814f660",
+  "baseline": {
+    "files": 75,
+    "bytes": 53347114,
+    "baseVisualBytes": 49852559,
+    "combinedVisualBytes": 51841327,
+    "newUniqueRuntimeBytesStrictlyBelow": 479089
+  },
+  "construction": "One new world-origin GLB, three named site nodes with separate floor-trace children. Compact merged indexed geometry, original existing materials and selected existing atlas regions only. No texture file is generated, modified, recompressed or downscaled.",
+  "stories": {
+    "arrival-aftermath": "Interrupted retreat at the arrival area's east pressure panel: scored removable cover, one torn attachment/dark contact recess and a terminating dirty wipe. Secondary short rub leaves the panel. No repeated full handprint or blood blanket.",
+    "infirmary-aftermath": "Failed aid at an existing folded berth: a thickened frayed wrap caught in a bent clip, one absorbed contact patch following the cloth surface, and a slack restraint tail. No body, new collider or standing furnishing.",
+    "archive-aftermath": "A short brace forced across recorder equipment, not across a passage: opposing seated contacts, a sheared mounting ear and split cassette lip with sparse residue/scoring. No doorway barricade or loose polygon clutter."
+  },
+  "preservation": [
+    "Human-approved character geometry/maps/rig/clips/visor/source/blends/bakes unchanged.",
+    "All 75 prior runtime files byte-identical, including existing maintenance GLB, all maps, final ending, audio, facility, gas giant, windows and hull.",
+    "No authoritative scene/entity/AI/control/door/collider/LOS/input/lighting changes. Presentation-only objects, never scene entities.",
+    "Raised geometry stays in the owner-provided existing-solid envelopes, with at most14mm visual lip. Floor traces stay at3–5mm. Protected control approach rectangles and door sweeps remain clear.",
+    "No new generation, model installation, engine feature, dialogue, score, corpse, exposed anatomy or weapon.",
+    "No actor or old-cluster recapture; integrator captures one representative actual-input view per new site."
+  ],
+  "materialProvenance": "Original authored geometry reuses the already-declared ceramic, graphite, metal and cloth-normal resources plus existing aftermath atlas crops. Actor-specific stain maps are not reused. Existing source/provenance rights remain unchanged; no CC0 or new AI-output claim.",
+  "validation": "Exact baseline scene/inventory/dependency hashes; all raised/floor/protected rectangle checks; actual cooked new-mesh ray hits compared with current facility geometry, not projection alone; strict unique-byte cap and production closure; deterministic second build.",
+  "gate": "One sealed environment-only exact-preimage handoff against current75/e26. Stop after handoff; no further site expansion or art edits until parent/user review."
+}

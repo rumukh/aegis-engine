@@ -264,7 +264,7 @@ async function expectNoBackend(cdp: CdpSession): Promise<void> {
 
 describe('the landing page', () => {
   it(
-    'lists the three games and links each one relative to the Pages prefix',
+    'lists the four games and links each one relative to the Pages prefix',
     async () => {
       const cdp = await openPage(browser.port, `${origin}${BASE}`, VIEWPORT);
       try {
@@ -272,7 +272,7 @@ describe('the landing page', () => {
           cdp,
           "[...document.querySelectorAll('a.card')].map((a) => a.getAttribute('href'))",
         );
-        expect(links).toEqual(['play/platformer/', 'play/iso/', 'play/fps/']);
+        expect(links).toEqual(['play/platformer/', 'play/iso/', 'play/fps/', 'play/horror/']);
         const resolved = await evaluate<string[]>(
           cdp,
           "[...document.querySelectorAll('a.card')].map((a) => a.href)",

@@ -1,4 +1,4 @@
-// Export the three proof-of-concept games as a **static** site — the artifact GitHub Pages serves:
+// Export the four demo games as a **static** site — the artifact GitHub Pages serves:
 //
 //   npm run build
 //   npm run build:site            # writes dist-site/

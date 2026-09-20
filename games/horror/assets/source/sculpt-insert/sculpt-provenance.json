@@ -1,0 +1,172 @@
+{
+  "status": "First sculpt/material checkpoint only; actual assembled-body neutral/torch review pending",
+  "tool": {
+    "name": "Blender",
+    "version": "3.2.2",
+    "device": "CPU",
+    "samples": 16
+  },
+  "space": "Existing Aegis bone-local coordinates authored directly; export_yup=False prevents Blender Z-up conversion. Node assembly must preserve these positions and validate bounds.",
+  "construction": "Continuous voxel-fused volume, multiscale high-poly surface sculpt and targeted cloth thickness; insert-only decimation, shared packed UVs and selected-to-active Cycles bakes.",
+  "limitations": "Scripted sculpt, not artist-hand-sculpted or AI-generated; decimated topology, not hand-retopology. Cross-Blender-version/bake-device bit identity not promised.",
+  "census": [
+    {
+      "target": "thorax",
+      "high_triangles": 638704,
+      "low_triangles": 22000,
+      "connected_components": [
+        10978,
+        26
+      ],
+      "local_bounds": {
+        "min": [
+          0.002895072568207979,
+          -0.20539776980876923,
+          -0.04830699786543846
+        ],
+        "max": [
+          0.30221205949783325,
+          0.3959796130657196,
+          0.2322925329208374
+        ]
+      }
+    },
+    {
+      "target": "shoulder-right",
+      "high_triangles": 143680,
+      "low_triangles": 8500,
+      "connected_components": [
+        4252
+      ],
+      "local_bounds": {
+        "min": [
+          -0.03492157161235809,
+          -0.20315617322921753,
+          0.04464013874530792
+        ],
+        "max": [
+          0.06702444702386856,
+          0.05074587091803551,
+          0.11625026911497116
+        ]
+      }
+    },
+    {
+      "target": "helmet",
+      "high_triangles": 40576,
+      "low_triangles": 3500,
+      "connected_components": [
+        1752
+      ],
+      "local_bounds": {
+        "min": [
+          0.10208156704902649,
+          -0.18590311706066132,
+          0.0957571417093277
+        ],
+        "max": [
+          0.1803322583436966,
+          -0.05061190947890282,
+          0.14119333028793335
+        ]
+      }
+    }
+  ],
+  "uv_atlas_triangle_area": 0.37102241788117507,
+  "bakes": [
+    {
+      "map": "basecolor",
+      "target": "thorax",
+      "seconds": 5.71900000000096
+    },
+    {
+      "map": "basecolor",
+      "target": "shoulder-right",
+      "seconds": 1.4220000000022992
+    },
+    {
+      "map": "basecolor",
+      "target": "helmet",
+      "seconds": 0.9059999999990396
+    },
+    {
+      "map": "normal",
+      "target": "thorax",
+      "seconds": 5.828000000001339
+    },
+    {
+      "map": "normal",
+      "target": "shoulder-right",
+      "seconds": 1.4529999999977008
+    },
+    {
+      "map": "normal",
+      "target": "helmet",
+      "seconds": 0.9220000000022992
+    },
+    {
+      "map": "roughness",
+      "target": "thorax",
+      "seconds": 5.827999999997701
+    },
+    {
+      "map": "roughness",
+      "target": "shoulder-right",
+      "seconds": 1.375
+    },
+    {
+      "map": "roughness",
+      "target": "helmet",
+      "seconds": 0.8600000000005821
+    },
+    {
+      "map": "occlusion",
+      "target": "thorax",
+      "seconds": 6.53099999999904
+    },
+    {
+      "map": "occlusion",
+      "target": "shoulder-right",
+      "seconds": 1.6560000000026776
+    },
+    {
+      "map": "occlusion",
+      "target": "helmet",
+      "seconds": 1.0
+    }
+  ],
+  "files": [
+    {
+      "file": "insert-basecolor.png",
+      "bytes": 3078399,
+      "sha256": "0d17d8333b041f1707b7aedaa1a467bf7e53c6405b978bc314b46fc9a7be9042"
+    },
+    {
+      "file": "insert-normal.png",
+      "bytes": 4543339,
+      "sha256": "0cd409d27ec6def94b55620f5c89a27ec32de3570f01f31b81849eab1ee71bb4"
+    },
+    {
+      "file": "insert-orm.png",
+      "bytes": 2879908,
+      "sha256": "d8795c7697dd4a5123602b5ac981082a88cfcb22952b6e8a61bb1d01b45c3c2f"
+    },
+    {
+      "file": "infestation-insert.glb",
+      "bytes": 10247676,
+      "sha256": "afedf385adcf1b8c19e4e591e79aefe99de2f77d7a19a4deafee36f29272c907"
+    },
+    {
+      "file": "infestation-sculpt.blend",
+      "bytes": 49121832,
+      "sha256": "b9ed48716a850d507efcd2308c1d7c9fb6be96cbaea7ad2c77f5e947d96af9d5"
+    },
+    {
+      "file": "sculpt-source.py",
+      "bytes": 21580,
+      "sha256": "e3225caaf13508d7e84057bb90c8d96618ee2990aa893ce4fbd0d89f977e4310"
+    }
+  ],
+  "no_new_model_or_generation": true,
+  "no_other_body_or_world_export": true
+}

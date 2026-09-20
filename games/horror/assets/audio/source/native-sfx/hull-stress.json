@@ -1,0 +1,23 @@
+{
+  "id": "hull-stress",
+  "seed": 9182702,
+  "duration": 16,
+  "prompt": "A huge heavy steel hull slowly flexing under pressure. Three separated low metallic creaks and long deep resonant groans with tiny ticking fasteners, settling into silence between them. Physical ship structure, restrained realistic field recording, no musical notes, no voice, no explosion.",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "distribution": "DeepBeepMeep/TTS",
+  "distributionRevision": "5020589aa562cea206a25eea208d7cbb1f6efae7",
+  "wanGpRevision": "bb68ded24f8a25d51789f8a49b66cc63eccf53c9",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "attention": "sdpa",
+  "negativePrompt": "music, melody, singing, speech, voices, drums, digital beeps, laser sounds, cinematic explosion, distorted clipping",
+  "sampleRate": 44100,
+  "channels": 2,
+  "frames": 705600,
+  "nativePeak": 0.52734375,
+  "nativeFormat": "WAV IEEE float32; no normalization",
+  "sha256": "c0518ffb63440a5735d3e8b0ffe33e5198052cec91f8fe72db3994304d643081",
+  "configSha256": "9396ee61a60a869f9fca1f50d1c8352345c3fa891da0fda433df2e9012ca147e",
+  "humanListening": "pending"
+}

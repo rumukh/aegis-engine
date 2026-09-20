@@ -1,0 +1,18 @@
+{
+  "schema": "null-meridian-human-approval/1",
+  "approvedAt": "2026-09-19T19:12:25.081+02:00",
+  "userStatement": "SFX approved.",
+  "artifactDirectory": "C:\\Users\\predi\\.copilot\\session-state\\80a5fd52-1a9f-4fe6-8f9b-e619919aac5b\\files\\horror-pass-audition-r1",
+  "auditionManifestSha256": "3d5713ca6174657dbd9ba32671f97effb435e7a347387905230392427608f5f0",
+  "approvedItems": ["dread-membrane", "dread-chitter", "responder-breath", "context-38s"],
+  "scope": "Approval of the first horror SFX audition and sound direction. Proceed with the agreed sparse layer assembly and game integration using the approved sources.",
+  "remainingAcceptance": [
+    "Actual in-game spatial placement, clue intelligibility and warning audibility",
+    "Explore-to-danger transitions, pause, restart, mute and audio unlock",
+    "Infected responder and environmental struggle visual review"
+  ],
+  "notAuthorized": [
+    "Restarting musical score generation",
+    "Treating this as approval of unseen visual changes or final whole-game mix"
+  ]
+}

@@ -13,6 +13,7 @@ import {
   SRGBColorSpace,
   SkinnedMesh,
   TextureLoader,
+  Vector2,
 } from 'three';
 import type { AnimationClip, BufferGeometry, Material, Object3D, Skeleton, Texture } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -24,6 +25,7 @@ import { PRESENTATION_LIMITS } from './schema.js';
 import type { AssetSpec, PresentationManifest, ResolvedPresentation } from './schema.js';
 import { validatePresentation } from './validate.js';
 import { sharedResource } from '../resources.js';
+import { TextureSources } from './texture-sources.js';
 
 export interface PresentationAssetStats {
   textures: number;
@@ -154,11 +156,13 @@ class AssetLibrary implements PresentationAssets {
   readonly #ownedMaterials = new Set<Material>();
   readonly #ownedGeometry = new Set<BufferGeometry>();
   readonly #instances = new Set<ModelInstance>();
+  readonly #sources: TextureSources | undefined;
   #loaded = 0;
   #disposed = false;
 
-  constructor(manifest: PresentationManifest) {
+  constructor(manifest: PresentationManifest, nativeDecoders: boolean) {
     this.#manifest = manifest;
+    this.#sources = nativeDecoders ? new TextureSources() : undefined;
   }
 
   #check(): void {
@@ -170,7 +174,7 @@ class AssetLibrary implements PresentationAssets {
       );
   }
 
-  add(asset: AssetSpec, value: Texture | GLTF | ArrayBuffer): void {
+  add(asset: AssetSpec, value: Texture | GLTF | ArrayBuffer, url: string): void {
     if (asset.kind === 'texture' && 'isTexture' in value) {
       const texture = value;
       texture.colorSpace = asset.colorSpace === 'linear' ? LinearSRGBColorSpace : SRGBColorSpace;
@@ -194,6 +198,7 @@ class AssetLibrary implements PresentationAssets {
             });
           }
         });
+      this.#sources?.reuse(value, url);
     } else if (asset.kind === 'audio' && value instanceof ArrayBuffer) {
       this.#audio.set(asset.id, value);
     } else {
@@ -228,6 +233,23 @@ class AssetLibrary implements PresentationAssets {
                 spec.normalMap === undefined
                   ? null
                   : this.#sampler(spec.normalMap, undefined, spec.repeat),
+              roughnessMap:
+                spec.roughnessMap === undefined
+                  ? null
+                  : this.#sampler(spec.roughnessMap, undefined, spec.repeat),
+              metalnessMap:
+                spec.metalnessMap === undefined
+                  ? null
+                  : this.#sampler(spec.metalnessMap, undefined, spec.repeat),
+              aoMap:
+                spec.aoMap === undefined ? null : this.#sampler(spec.aoMap, undefined, spec.repeat),
+              emissiveMap:
+                spec.emissiveMap === undefined
+                  ? null
+                  : this.#sampler(spec.emissiveMap, undefined, spec.repeat),
+              normalScale: new Vector2(spec.normalScale ?? 1, spec.normalScale ?? 1),
+              aoMapIntensity: spec.aoIntensity ?? 1,
+              envMapIntensity: spec.envMapIntensity ?? 1,
             })
           : new MeshBasicMaterial(base);
       material.name = spec.id;
@@ -237,6 +259,7 @@ class AssetLibrary implements PresentationAssets {
   }
 
   async verifyImages(): Promise<void> {
+    this.#sources?.prune(this.#ownedTextures);
     for (const texture of this.#ownedTextures) {
       const id = this.#textureOwners.get(texture) ?? 'texture';
       const image: unknown = texture.image;
@@ -381,7 +404,7 @@ class AssetLibrary implements PresentationAssets {
     for (const instance of this.#instances) instance.dispose();
     for (const geometry of this.#ownedGeometry) geometry.dispose();
     for (const material of this.#ownedMaterials) material.dispose();
-    const images = new Set<unknown>();
+    const images = new Set<unknown>(this.#sources?.images() ?? []);
     for (const texture of this.#ownedTextures) {
       images.add(texture.source.data);
       texture.dispose();
@@ -397,6 +420,7 @@ class AssetLibrary implements PresentationAssets {
     this.#audio.clear();
     this.#materials.clear();
     this.#samplers.clear();
+    this.#sources?.clear();
     this.#loaded = 0;
   }
 }
@@ -408,7 +432,7 @@ export async function loadPresentationAssets(
 ): Promise<PresentationAssets> {
   const checked = validatePresentation(config.manifest);
   if (!checked.ok) throw new DiagnosticError(checked.diagnostics);
-  const library = new AssetLibrary(config.manifest);
+  const library = new AssetLibrary(config.manifest, options.loaders === undefined);
   const base = new URL(
     config.baseUrl,
     typeof document === 'undefined' ? 'http://localhost/' : document.baseURI,
@@ -538,7 +562,7 @@ export async function loadPresentationAssets(
             : asset.kind === 'gltf'
               ? await loaders.model(url, manager, signal)
               : await loaders.audio(url, signal);
-        library.add(asset, value);
+        library.add(asset, value, url);
         if (asset.kind === 'gltf' && dependencyErrors.length > 0)
           throw assetError(
             asset.id,

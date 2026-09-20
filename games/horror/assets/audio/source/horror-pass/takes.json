@@ -1,0 +1,30 @@
+{
+  "schema": "null-meridian-sfx-takes/1",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "weightDistribution": "DeepBeepMeep/TTS",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "sampleRate": 44100,
+  "negativePrompt": "music, score, melody, singing, speech, intelligible words, screams, gore, wet splatter, eating, gunfire, alarm, footsteps, rhythmic beat, loud impact, jump scare, clipping, harsh distortion",
+  "takes": [
+    {
+      "id": "horror-membrane-native",
+      "seed": 9192801,
+      "duration": 12,
+      "prompt": "Quiet close sound of a thin dry fibrous membrane slowly stretching against an old metal ventilation duct. Small irregular tension creaks, fine papery fibers pulling and a brief subdued scrape from behind the panel, separated by stillness. Restrained unsettling tactile material foley, physical and intimate, no regular cadence, no footsteps, no wet gore, no voices, no music, no sudden loud hit."
+    },
+    {
+      "id": "horror-chitter-native",
+      "seed": 9192802,
+      "duration": 10,
+      "prompt": "A few tiny dry insect-like chitin clicks from an unseen small organism behind a wall. A short irregular cluster of delicate hard-shell ticks, a pause, one faint skitter and a soft brittle crackle. Sparse near-silent close naturalistic foley, strange organic texture rather than electronics, no regular rhythm or footstep cadence, no chirped melody, no human voice, no music, no loud transient."
+    },
+    {
+      "id": "horror-responder-native",
+      "seed": 9192803,
+      "duration": 12,
+      "prompt": "A damaged sealed industrial rescue suit making one weak involuntary respiration-like release. Restrained uneven air passing through a torn respirator gasket, a softly vibrating fibrous throat membrane and a tired small actuator straining under it, then settling into quiet. Unsettling mechanical-organic exhalation without recognizable human words, without melodrama, no scream, no pain performance, no growl, no wet gore, no musical drone, no heartbeat or footstep rhythm."
+    }
+  ]
+}

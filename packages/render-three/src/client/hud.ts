@@ -13,7 +13,8 @@ import { PlatformerController } from '@aegis/mode-platformer';
 import { FpsCamera, LookState } from '@aegis/mode-fps';
 import { Name, Transform } from '@aegis/core';
 import type { EventLine } from '../protocol.js';
-import type { HudSpec } from '../presentation/schema.js';
+import type { CaptionSpec, HudSpec } from '../presentation/schema.js';
+import { PresentationState } from '../presentation/state.js';
 
 /** How many event lines the feed keeps. */
 const FEED_LENGTH = 8;
@@ -21,6 +22,7 @@ const FEED_LENGTH = 8;
 export interface HudOptions {
   spec?: HudSpec;
   objective?: string;
+  onOutcome?(outcome: 'win' | 'lose' | undefined): void;
 }
 
 /** The overlay's live elements, looked up once. */
@@ -31,10 +33,11 @@ export interface Hud {
   setStats(mode: GameMode, world: World): void;
   /** Append newly emitted events to the feed. */
   pushEvents(events: readonly EventLine[]): void;
-  /** Clear run-local readouts without changing audio/quality preferences or stepping the game. */
+  /** Clear run-local readouts without changing session pause or audio/quality preferences. */
   reset(): void;
   setLoading(state: 'loading' | 'ready' | 'error' | 'reconnecting', message: string): void;
   setAudio(state: { status: string; muted: boolean; error?: string }): void;
+  setCaption(caption: CaptionSpec, tick: number): void;
 }
 
 /** Attach the HUD to the elements the served page provides. */
@@ -44,6 +47,9 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
   const statsEl = root.getElementById('hud-stats');
   const feedEl = root.getElementById('hud-events');
   const objectiveEl = root.getElementById('hud-objective');
+  const promptEl = root.getElementById('hud-prompt');
+  const subtitleEl = root.getElementById('hud-subtitle');
+  const threatEl = root.getElementById('hud-narrative-status');
   const healthEl = root.getElementById('hud-health');
   const healthBar = root.getElementById('hud-health-bar');
   const healthReadout = root.getElementById('health-readout');
@@ -53,6 +59,7 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
   const restartButton = root.getElementById('action-restart');
   const muteButton = root.getElementById('action-mute');
   const audioEl = root.getElementById('hud-audio');
+  const sessionMenu = root.getElementById('session-menu');
   const loadingPanel = root.getElementById('loading-panel');
   const loadingTitle = root.getElementById('loading-title');
   const loadingMessage = root.getElementById('loading-message');
@@ -67,6 +74,7 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
   const feed: string[] = [];
   let outcome: 'win' | 'lose' | undefined;
   let lastSequence = -1;
+  let caption: { text: string; until: number } | undefined;
 
   const set = (element: HTMLElement | null, text: string): void => {
     if (element !== null && element.textContent !== text) element.textContent = text;
@@ -117,12 +125,42 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
         attribute(healthBar, 'value', String(Math.max(0, Math.min(health.current, health.max))));
         attribute(healthBar, 'aria-valuetext', `${health.current} of ${health.max} health`);
       }
+      const bindings = options.spec?.bindings;
+      let subtitle = caption !== undefined && world.tick < caption.until ? caption.text : '';
+      if (bindings !== undefined) {
+        const state = new PresentationState(mode);
+        state.sync(world);
+        for (const [field, element] of [
+          ['objective', objectiveEl],
+          ['prompt', promptEl],
+          ['status', threatEl],
+        ] as const) {
+          const binding = bindings[field];
+          if (binding === undefined) continue;
+          const value = state.read(binding);
+          if (typeof value !== 'string')
+            throw new Error(`[aegis:hud] ${field} binding must resolve to a string.`);
+          set(element, value);
+          hidden(element, value === '');
+        }
+        if (bindings.subtitle !== undefined) {
+          const text = state.read(bindings.subtitle);
+          const until =
+            bindings.subtitleUntil === undefined ? Infinity : state.read(bindings.subtitleUntil);
+          if (typeof text !== 'string' || typeof until !== 'number')
+            throw new Error('[aegis:hud] subtitle must be a string and subtitleUntil a number.');
+          if (text !== '' && world.tick < until) subtitle = text;
+        }
+      }
+      set(subtitleEl, subtitle);
+      hidden(subtitleEl, subtitle === '');
     },
 
     pushEvents(events: readonly EventLine[]): void {
       if (events.length === 0) return;
       const previousSequence = lastSequence;
       const batch = new Set<number>();
+      const previousOutcome = outcome;
       for (const event of events) {
         if (event.sequence !== undefined) {
           if (event.sequence <= previousSequence || batch.has(event.sequence)) continue;
@@ -146,6 +184,7 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
         attribute(outcomeEl, 'data-outcome', outcome);
         hidden(outcomeEl, false);
       }
+      if (outcome !== previousOutcome) options.onOutcome?.(outcome);
     },
 
     reset(): void {
@@ -153,6 +192,11 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
       completed.clear();
       outcome = undefined;
       lastSequence = -1;
+      caption = undefined;
+      for (const element of [promptEl, subtitleEl, threatEl]) {
+        set(element, '');
+        hidden(element, true);
+      }
       set(tickEl, 'tick 0');
       set(statusEl, 'starting…');
       set(statsEl, '');
@@ -164,7 +208,7 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
       attribute(outcomeEl, 'data-outcome', '');
       hidden(outcomeEl, true);
       progress();
-      pause(false);
+      options.onOutcome?.(undefined);
     },
 
     setLoading(state, message): void {
@@ -191,6 +235,7 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
       const unavailable = state.status === 'unavailable';
       const locked = state.status === 'locked';
       const failed = state.status === 'error';
+      if (failed && sessionMenu !== null && 'open' in sessionMenu) sessionMenu.open = true;
       set(
         audioEl,
         state.error ??
@@ -217,6 +262,14 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
       attribute(muteButton, 'aria-pressed', String(state.muted));
       disabled(muteButton, unavailable);
       attribute(audioEl, 'data-status', state.status);
+    },
+    setCaption(value, tick): void {
+      caption = {
+        text: value.speaker === undefined ? value.text : `${value.speaker}: ${value.text}`,
+        until: tick + (value.durationTicks ?? 240),
+      };
+      set(subtitleEl, caption.text);
+      hidden(subtitleEl, false);
     },
   };
 }

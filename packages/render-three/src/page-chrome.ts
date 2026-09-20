@@ -132,6 +132,46 @@ export const PAGE_STYLE = `
   .session-actions button { font-size: .77rem; }
   .quality-control { display: flex; align-items: center; gap: .4rem; padding-left: .25rem; font-size: .7rem; color: var(--dim); }
   .quality-control select { font-size: .77rem; padding: .4rem; }
+  .narrative-overlay { position: absolute; left: 50%; bottom: 6rem; transform: translateX(-50%); width: min(42rem, 86%); text-align: center; pointer-events: none; }
+  .narrative-overlay p { background: rgb(5 9 14 / 88%); border-radius: .35rem; padding: .5rem .8rem; margin: .4rem auto; width: fit-content; color: #f1f4f5; line-height: 1.5; }
+  #hud-prompt { font-weight: 600; }
+  #hud-narrative-status { color: #b6c6cf; font-size: .8rem; }
+  #hud-input { position: absolute; bottom: 3.6rem; left: 50%; transform: translateX(-50%); max-width: min(42rem, 80vw); margin: 0; padding: .45rem .7rem; border: 1px solid var(--edge); border-radius: .4rem; background: #09121bea; color: var(--dim); text-align: center; font-size: .75rem; pointer-events: none; }
+  #hud-input[data-state="error"] { color: #ffd29e; border-color: #8d734f; }
+  #loss-ending { position: fixed; inset: 0; width: 100vw; height: 100vh; width: 100dvw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 1rem; border: 0; background: transparent; color: var(--ink); overflow: auto; pointer-events: auto; }
+  #loss-ending[open] { display: grid; place-items: center; }
+  #loss-ending::backdrop { background: transparent; }
+  #loss-shade { position: fixed; inset: 0; background: #020407; opacity: 0; transition: opacity var(--loss-fade, 1s) ease-out; pointer-events: none; }
+  #loss-ending[data-visible="true"] #loss-shade { opacity: .96; }
+  .loss-card { position: relative; z-index: 1; width: min(32rem, 90vw); padding: clamp(1.2rem, 4vw, 2.5rem); border: 1px solid #697d8980; border-radius: .8rem; background: #09121bed; text-align: center; }
+  #loss-title { margin: 0 0 .8rem; font-size: clamp(1.4rem, 3vw, 2.5rem); letter-spacing: .08em; line-height: 1.15; }
+  #loss-message { margin: 0 0 1.5rem; color: #d3dde3; }
+  #loss-restart { min-width: 10rem; border-color: var(--accent); font-weight: 650; }
+  #loss-help { font-size: .75rem; color: var(--dim); }
+  #loss-error { color: #ffd29e; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #game-shell[data-ending="win"] > :is(.game-topbar, .game-bottom, .narrative-overlay, #crosshair, #hud-input) { visibility: hidden; }
+  #win-ending { position: fixed; inset: 0; width: 100vw; height: 100vh; width: 100dvw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--ink); pointer-events: auto; overflow: auto; }
+  #win-ending::backdrop { background: transparent; }
+  #win-ending::before, #win-ending::after { content: ""; position: fixed; left: 0; right: 0; height: 9vh; background: #020407; pointer-events: none; }
+  #win-ending::before { top: 0; }
+  #win-ending::after { bottom: 0; }
+  #win-shade { position: fixed; inset: 0; background: #020407; opacity: 0; pointer-events: none; }
+  .win-actions { position: absolute; top: max(1rem, env(safe-area-inset-top)); right: max(1rem, env(safe-area-inset-right)); display: flex; gap: .5rem; z-index: 2; }
+  .win-actions button { font-size: .8rem; background: #081018e8; }
+  #win-caption { position: absolute; bottom: 12vh; left: 50%; transform: translateX(-50%); width: min(42rem, 88vw); margin: 0; padding: .7rem 1rem; background: #020407de; text-align: center; line-height: 1.5; font-size: clamp(.9rem, 2vw, 1.1rem); }
+  #win-card { position: relative; z-index: 1; width: min(40rem, 88vw); margin: 25vh auto 4rem; padding: 2rem 1rem; text-align: center; }
+  #win-title { font-size: clamp(1.7rem, 5vw, 3.8rem); letter-spacing: .12em; line-height: 1.15; margin: 1rem 0; }
+  #win-message { color: #c5d8c8; line-height: 1.8; margin: 1rem 0 2rem; }
+  #win-restart { margin-right: 1rem; border-color: var(--accent); }
+  #win-error { position: relative; z-index: 3; margin: 12vh auto 1rem; padding: 1rem; max-width: min(42rem, 88vw); color: #ffd29e; background: #09121bf2; white-space: pre-wrap; overflow-wrap: anywhere; }
+  [data-layout="cinematic"] #hud { width: min(24rem, 46vw); padding: .65rem .8rem; }
+  [data-layout="cinematic"] #hud h1 { font-size: .9rem; margin: .25rem 0; }
+  [data-layout="cinematic"] .eyebrow { font-size: .6rem; }
+  [data-layout="cinematic"] .session-controls { padding: .5rem .7rem; }
+  [data-layout="cinematic"] #mission-status[open] .objective-steps { display: block; }
+  .compact-menu > summary { font-size: .75rem; color: var(--dim); padding: .2rem 0; }
+  .compact-menu[open] > summary { margin-bottom: .4rem; }
+  #mission-status { margin-top: .35rem; }
   #hud-audio { margin: .3rem .25rem 0; color: var(--dim); font-size: .67rem; max-width: 28rem; overflow-wrap: anywhere; }
   #hud-audio[data-status="error"] { color: #ffd29e; }
   .game-bottom {
@@ -241,8 +281,13 @@ export function renderGameChrome(options: GameChromeOptions): string {
   const { title, objective, mode, bindings, manifest } = options;
   const steps = manifest?.hud?.steps ?? [];
   const hasAudio =
-    manifest?.audio?.ambient !== undefined || (manifest?.audio?.cues?.length ?? 0) > 0;
+    manifest?.audio?.ambient !== undefined ||
+    (manifest?.audio?.layers?.length ?? 0) > 0 ||
+    (manifest?.audio?.cues?.some((cue) => cue.asset !== undefined) ?? false);
   const quality = manifest?.quality ?? 'standard';
+  const compact = manifest?.ui?.layout === 'cinematic';
+  const ending = manifest?.ui?.lossEnding;
+  const win = manifest?.ui?.winEnding;
   const controls = [
     ...bindings.help,
     ...SESSION_CONTROLS,
@@ -252,7 +297,7 @@ export function renderGameChrome(options: GameChromeOptions): string {
       (line) => `          <dt><kbd>${escape(line.keys)}</kbd></dt><dd>${escape(line.does)}</dd>`,
     )
     .join('\n');
-  return `  <main class="game-shell" id="game-shell" data-mode="${escape(mode)}"${accent(manifest)}>
+  return `  <main class="game-shell" id="game-shell" data-mode="${escape(mode)}"${compact ? ' data-layout="cinematic"' : ''}${accent(manifest)}>
     <canvas id="stage" tabindex="0" aria-label="${escape(title)} game view" aria-busy="true">This game requires a browser with WebGL support.</canvas>
     <div id="gamepad-cursor" aria-hidden="true" hidden></div>
 ${mode === 'fps' ? '    <div id="crosshair" aria-hidden="true"></div>\n' : ''}    <div class="game-topbar">
@@ -260,20 +305,59 @@ ${mode === 'fps' ? '    <div id="crosshair" aria-hidden="true"></div>\n' : ''}  
         <div class="hud-heading"><a class="back-link" href="${localUrl(options.backHref)}"><span aria-hidden="true">← </span>All games</a><p class="eyebrow">${escape(manifest?.ui?.eyebrow ?? MODE_LABELS[mode])}</p></div>
         <h1 id="game-title">${escape(title)}</h1>
         <p id="hud-objective">${escape(objective)}</p>
+${compact ? '        <details class="compact-menu" id="mission-status"><summary>Status</summary>\n' : ''}\
         <div class="health-readout" id="health-readout" hidden><span class="readout-label">Health</span><output id="hud-health">—</output><meter id="hud-health-bar" min="0" max="100" value="100" aria-label="Health"></meter></div>
         <p id="hud-progress" aria-live="polite"${steps.length === 0 ? ' hidden' : ''}>${steps.length === 0 ? '' : `0 / ${steps.length} complete`}</p>
-${steps.length === 0 ? '' : `        <ol class="objective-steps" id="hud-steps" aria-label="Objective steps">\n${steps.map((step, index) => `          <li id="hud-step-${index}" data-complete="false">${escape(step.label)}</li>`).join('\n')}\n        </ol>\n`}        <p id="hud-outcome" role="status" aria-live="polite" hidden></p>
+${steps.length === 0 ? '' : `        <ol class="objective-steps" id="hud-steps" aria-label="Objective steps">\n${steps.map((step, index) => `          <li id="hud-step-${index}" data-complete="false">${escape(step.label)}</li>`).join('\n')}\n        </ol>\n`}${compact ? '        </details>\n' : ''}        <p id="hud-outcome" role="status" aria-live="polite" hidden></p>
       </section>
       <nav class="panel session-controls" aria-label="Session controls">
+${compact ? '        <details class="compact-menu" id="session-menu"><summary>Session</summary>\n' : ''}\
         <div class="session-actions">
           <button id="action-pause" type="button" aria-label="Pause game" aria-pressed="false">Pause</button>
           <button id="action-restart" type="button">Restart</button>
           <button id="action-mute" type="button" aria-pressed="false"${hasAudio ? '' : ' disabled aria-disabled="true"'}>${hasAudio ? 'Enable sound' : 'Sound unavailable'}</button>
-          <label class="quality-control" for="quality"><span>Quality</span><select id="quality" aria-label="Presentation quality"><option value="standard"${quality === 'standard' ? ' selected' : ''}>Standard</option><option value="low"${quality === 'low' ? ' selected' : ''}>Low</option></select></label>
+          <label class="quality-control" for="quality"><span>Quality</span><select id="quality" aria-label="Presentation quality"><option value="standard"${quality === 'standard' ? ' selected' : ''}>Standard</option><option value="low"${quality === 'low' ? ' selected' : ''}>Low</option>${manifest?.pipeline === undefined ? '' : `<option value="high"${quality === 'high' ? ' selected' : ''}>High (1440p budget)</option><option value="photo"${quality === 'photo' ? ' selected' : ''}>Photo (4K budget)</option>`}</select></label>
         </div>
         <p id="hud-audio" role="status" aria-live="polite">${hasAudio ? 'Sound needs a gesture' : 'Sound unavailable'}</p>
+${compact ? '        </details>\n' : ''}\
       </nav>
     </div>
+    <div class="narrative-overlay"><p id="hud-narrative-status" role="status" hidden></p><p id="hud-prompt" hidden></p><p id="hud-subtitle" role="status" aria-live="polite" hidden></p></div>
+    <p id="hud-input" role="status" aria-live="polite" hidden></p>
+${
+  ending === undefined
+    ? ''
+    : `    <dialog id="loss-ending" aria-modal="true" aria-labelledby="loss-title" aria-describedby="loss-message" data-phase="hidden" data-visible="false">
+      <div id="loss-shade" aria-hidden="true"></div>
+      <section class="loss-card"><h2 id="loss-title">${escape(ending.title ?? 'Run ended')}</h2>
+        <p id="loss-message">${escape(ending.message ?? 'Restart to try again.')}</p>
+        <button id="loss-restart" type="button">Restart</button>
+        <p id="loss-help">Press R or the controller restart button.</p>
+        <p id="loss-error" role="alert" hidden></p>
+      </section>
+    </dialog>\n`
+}\
+${
+  win === undefined
+    ? ''
+    : `    <dialog id="win-ending" aria-modal="true" aria-labelledby="win-title" data-phase="hidden">
+      <div id="win-shade" aria-hidden="true"></div>
+      <div class="win-actions">
+        <button id="win-mute" type="button" aria-pressed="false">Enable sound</button>
+        <button id="win-pause" type="button" aria-pressed="false">Pause</button>
+        <button id="win-skip" type="button">Skip / Esc</button>
+      </div>
+      <p id="win-caption" role="status" aria-live="polite" hidden></p>
+      <section id="win-card" hidden><p class="eyebrow">Mission complete</p>
+        <h2 id="win-title">${escape(win.title)}</h2>
+        <p id="win-message">${escape(win.message)}</p>
+        <button id="win-restart" type="button">Play again</button>
+        <a class="back-link" href="${localUrl(options.backHref)}">All games</a>
+        <p class="eyebrow">R / controller restart also starts a new run.</p>
+      </section>
+      <p id="win-error" role="alert" hidden></p>
+    </dialog>\n`
+}\
     <div class="game-bottom">
       <details class="panel details-panel" id="controls">
         <summary>Controls</summary>

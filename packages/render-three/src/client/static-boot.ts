@@ -35,7 +35,6 @@ import type { GameEvent, GameMode, World, WorldSnapshot } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
 import type { RenderAdapter } from '../adapter.js';
-import { renderAdapter } from '../render.js';
 import { BINDINGS } from '../bindings.js';
 import type { ModeBindings } from '../bindings.js';
 import { systemClock, MAX_CATCHUP_SECONDS } from '../loop.js';
@@ -147,8 +146,8 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
     ...(config.presentation === undefined ? {} : { presentation: config.presentation }),
     ...(config.tickRate === undefined ? {} : { tickRate: config.tickRate }),
     onCommand: sendCommand,
+    onGameplayBlocked: (blocked) => collector.setGameplayBlocked(blocked),
   });
-  const renderer = host.renderer;
   let adapter: RenderAdapter;
   // The renderer's detached copy, refreshed only when the authoritative revision changes.
   const mirror: World = createWorld({ seed: 0 });
@@ -189,8 +188,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   const resize = (): void => {
     const width = canvas.clientWidth || globalThis.innerWidth;
     const height = canvas.clientHeight || globalThis.innerHeight;
-    renderer.setSize(width, height, false);
-    adapter.resize(width, height);
+    host.resize(width, height);
   };
 
   function sendCommand(command: SessionCommand): void {
@@ -225,6 +223,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       return adapter.pick(x, y);
     },
     onCommand: sendCommand,
+    onCaptureState: (state) => host.captureInput(state),
     onGamepadPointer: gamepadCursor(canvas),
     onGamepadSample: gamepadStatus(),
   });
@@ -280,7 +279,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       host.receive(drainEvents(), generation);
       adapter.sync(mirror);
       host.present(lastTick, session.paused);
-      renderAdapter(renderer, adapter);
+      host.render();
     } catch (error) {
       stopped = true;
       globalThis.cancelAnimationFrame(animationFrame);

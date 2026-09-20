@@ -1,4 +1,4 @@
-// Start the browser dev server for the three proof-of-concept games:
+// Start the browser dev server for the four demo games:
 //
 //   npm run build
 //   node poc/play.mjs

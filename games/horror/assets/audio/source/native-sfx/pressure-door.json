@@ -1,0 +1,23 @@
+{
+  "id": "pressure-door",
+  "seed": 9182703,
+  "duration": 10,
+  "prompt": "One heavy industrial sliding pressure door opening. A short pneumatic seal release, worn electric motor and metal roller travel, then a heavy cushioned latch and settling metal rattle. Clear mechanical sequence with quiet space before and after, close natural sound effect, no beeps, no speech, no music.",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "distribution": "DeepBeepMeep/TTS",
+  "distributionRevision": "5020589aa562cea206a25eea208d7cbb1f6efae7",
+  "wanGpRevision": "bb68ded24f8a25d51789f8a49b66cc63eccf53c9",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "attention": "sdpa",
+  "negativePrompt": "music, melody, singing, speech, voices, drums, digital beeps, laser sounds, cinematic explosion, distorted clipping",
+  "sampleRate": 44100,
+  "channels": 2,
+  "frames": 441000,
+  "nativePeak": 0.94140625,
+  "nativeFormat": "WAV IEEE float32; no normalization",
+  "sha256": "4984a84196abaf827c4985d4f715c3aafb00ff9794cffe2524f752f64ce188b5",
+  "configSha256": "9396ee61a60a869f9fca1f50d1c8352345c3fa891da0fda433df2e9012ca147e",
+  "humanListening": "pending"
+}

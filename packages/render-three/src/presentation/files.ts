@@ -12,6 +12,7 @@ import { isAssetPath, renderDiagnostic, RenderCode } from './diagnostics.js';
 import { PRESENTATION_LIMITS } from './schema.js';
 import type { PresentationManifest, PresentationSource, Provenance } from './schema.js';
 import { validatePresentation } from './validate.js';
+import { spatialEntities, stateFields } from './state.js';
 
 export interface PreparedPresentationFile {
   /** Portable URL path relative to the asset root. */
@@ -141,6 +142,10 @@ function checkScene(manifest: PresentationManifest, scene: SceneFile): readonly 
     if ('entity' in effect.target) check(effect.target.entity, `effects[${index}].target.entity`);
   });
   if (manifest.hud !== undefined) check(manifest.hud.playerName, 'hud.playerName');
+  stateFields(manifest).forEach((field) =>
+    check(field.entity, `${field.component}.${field.field}`),
+  );
+  spatialEntities(manifest).forEach((name) => check(name, 'spatial.target'));
   return diagnostics;
 }
 

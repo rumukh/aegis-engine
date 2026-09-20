@@ -1,0 +1,4 @@
+{
+  "plugin": "@aegis/game-horror#nullMeridianPlugin",
+  "tests": ["./dist/*.gametest.js"]
+}

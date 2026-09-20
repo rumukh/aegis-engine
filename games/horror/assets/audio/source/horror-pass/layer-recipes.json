@@ -1,0 +1,88 @@
+{
+  "schema": "null-meridian-approved-sparse-layers/1",
+  "baselineCommit": "5e9cdcdbcafc14ada77002322886408c33945890",
+  "approvedAuditionManifestSha256": "3d5713ca6174657dbd9ba32671f97effb435e7a347387905230392427608f5f0",
+  "approvalStatement": "SFX approved.",
+  "approvalTime": "2026-09-19T19:12:25.081+02:00",
+  "processing": "Place only the exact approved lossless cue masters into silence, with bounded amplitude variation. No new synthesis, time stretch, pitch shift, EQ, compression, or post-assembly normalization.",
+  "loopPolicy": "Each loop begins and ends in digital silence; no audio crosses the boundary, so no crossfade is required. The approved gesture already has endpoint fades.",
+  "decodedAdditionalBytesLimit": 24000000,
+  "encodedAdditionalBytesLimit": 1048576,
+  "layers": [
+    {
+      "id": "dread-membrane",
+      "approvedCueId": "dread-membrane",
+      "approvedMasterSha256": "e33d0a96cf391191811aa163ff501c787c974d1ebb21190f4b4fc4d784b152a2",
+      "durationSeconds": 37,
+      "gestures": [
+        { "startSeconds": 5, "gain": 1 },
+        { "startSeconds": 23.4, "gain": 0.72 }
+      ],
+      "description": "Two isolated strained-material movements inside maintenance machinery, separated by long silence. No footstep cadence or damage cue.",
+      "volume": 0.3,
+      "fadeSeconds": 0.2,
+      "spatial": {
+        "target": { "position": [4.7, 1.4, 16] },
+        "refDistance": 1.5,
+        "maxDistance": 12,
+        "rolloffFactor": 1.5
+      },
+      "enabledWhen": {
+        "entity": "player",
+        "component": "HorrorStatus",
+        "field": "musicPhase",
+        "equals": "explore"
+      }
+    },
+    {
+      "id": "dread-chitter",
+      "approvedCueId": "dread-chitter",
+      "approvedMasterSha256": "144980524c27af0390dc551e15b92bac579c0ad1720a3a92754ca9aab2322cc5",
+      "durationSeconds": 41,
+      "gestures": [
+        { "startSeconds": 13.2, "gain": 0.84 },
+        { "startSeconds": 31.6, "gain": 1 }
+      ],
+      "description": "Tiny dry organic click clusters behind the infirmary wall. Quiet irregular appearances are environmental, never substitute hostile footsteps.",
+      "volume": 0.26,
+      "fadeSeconds": 0.2,
+      "spatial": {
+        "target": { "position": [29.6, 2.3, 16.5] },
+        "refDistance": 1.5,
+        "maxDistance": 12,
+        "rolloffFactor": 1.5
+      },
+      "enabledWhen": {
+        "entity": "player",
+        "component": "HorrorStatus",
+        "field": "musicPhase",
+        "equals": "explore"
+      }
+    },
+    {
+      "id": "responder-breath",
+      "approvedCueId": "responder-breath",
+      "approvedMasterSha256": "085ee2925bf8c0079ca252521dc44e1e16f1ca8d36a489fec6933cfb8b25154d",
+      "durationSeconds": 47,
+      "gestures": [
+        { "startSeconds": 21.1, "gain": 1 },
+        { "startSeconds": 39.3, "gain": 0.76 }
+      ],
+      "description": "Involuntary damaged-respirator release from the actual responder. Long gaps avoid a repeated breathing or footfall rhythm; this layer switches off outside exploration.",
+      "volume": 0.22,
+      "fadeSeconds": 0.2,
+      "spatial": {
+        "target": { "entity": "responder" },
+        "refDistance": 2,
+        "maxDistance": 16,
+        "rolloffFactor": 1.5
+      },
+      "enabledWhen": {
+        "entity": "player",
+        "component": "HorrorStatus",
+        "field": "musicPhase",
+        "equals": "explore"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.spec.ts", "test", "dist"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/content" },
+    { "path": "../../packages/harness" },
+    { "path": "../../packages/mode-fps" }
+  ]
+}

@@ -17,6 +17,179 @@ afterEach(() => {
 });
 
 describe('gameplay input and UI controls', () => {
+  it('accepts an explicitly bound Control key itself but not Ctrl+letters or focused text input', () => {
+    class TextField {
+      closest(): TextField {
+        return this;
+      }
+    }
+    vi.stubGlobal('Element', TextField);
+    dom = installFakeDom();
+    collector = createInputCollector({
+      canvas: dom.canvas,
+      bindings: { ...BINDINGS.fps, actions: [{ code: 'ControlLeft', action: 'Crouch' }] },
+      pick: () => null,
+      onCommand: () => undefined,
+    });
+    dom.dispatch('keydown', { ...keyEvent('ControlLeft'), ctrlKey: true, target: new TextField() });
+    expect(collector.take().held).toEqual([]);
+    dom.dispatch('keydown', { ...keyEvent('KeyW'), ctrlKey: true });
+    expect(collector.take().axes).toEqual({});
+    dom.dispatch('keydown', { ...keyEvent('ControlLeft'), ctrlKey: true });
+    expect(collector.take()).toMatchObject({ held: ['Crouch'], pressed: ['Crouch'] });
+    dom.dispatch('keyup', keyEvent('ControlLeft'));
+    expect(collector.take()).toMatchObject({ held: [], released: ['Crouch'] });
+    dom.dispatch('keydown', { ...keyEvent('ControlRight'), ctrlKey: true });
+    expect(collector.take().held).toEqual([]);
+  });
+  it('blocks ended gameplay but retains fresh R on a focused button and neutral-armed View restart', () => {
+    class UiElement {
+      closest(): UiElement {
+        return this;
+      }
+    }
+    vi.stubGlobal('Element', UiElement);
+    dom = installFakeDom();
+    const pad = virtualGamepad();
+    vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+    const command = vi.fn();
+    const intent = vi.fn();
+    collector = createInputCollector({
+      canvas: dom.canvas,
+      bindings: BINDINGS.fps,
+      pick: () => null,
+      onCommand: command,
+      onControlIntent: intent,
+    });
+    collector.poll(0);
+    dom.dispatch('keydown', keyEvent('KeyW'));
+    pad.buttons[0]!.value = 1;
+    collector.poll(0);
+    collector.setGameplayBlocked(true);
+    intent.mockClear();
+    dom.dispatch('mousemove', { movementX: 40, movementY: 5 });
+    dom.dispatch('mousedown', buttonEvent());
+    dom.dispatch('keydown', keyEvent('Space'));
+    collector.poll(1 / 60);
+    expect(collector.take()).toMatchObject({
+      held: [],
+      pressed: [],
+      axes: {},
+      look: { dx: 0, dy: 0 },
+    });
+    expect(command).not.toHaveBeenCalled();
+    expect(intent).not.toHaveBeenCalled();
+    dom.dispatch('keydown', { ...keyEvent('KeyR'), target: new UiElement() });
+    expect(command).toHaveBeenCalledExactlyOnceWith('restart');
+    dom.dispatch('keydown', { ...keyEvent('KeyR'), target: new UiElement(), repeat: true });
+    expect(command).toHaveBeenCalledOnce();
+    pad.buttons[8]!.value = 1;
+    collector.poll(0);
+    expect(command).toHaveBeenCalledOnce();
+    pad.buttons[0]!.value = 0;
+    pad.buttons[8]!.value = 0;
+    collector.poll(0);
+    pad.buttons[8]!.value = 1;
+    collector.poll(0);
+    expect(command).toHaveBeenCalledTimes(2);
+    collector.setGameplayBlocked(false);
+    dom.dispatch('keydown', { ...keyEvent('KeyW'), repeat: true });
+    expect(collector.take().axes).toEqual({});
+    dom.dispatch('keyup', keyEvent('KeyW'));
+    dom.dispatch('keydown', keyEvent('KeyW'));
+    expect(collector.take().axes).toMatchObject({ Forward: 1 });
+  });
+  it('claims only fresh gameplay intent, not held polls, releases, UI keys or cancelled input', () => {
+    class UiElement {
+      closest(): UiElement {
+        return this;
+      }
+    }
+    vi.stubGlobal('Element', UiElement);
+    dom = installFakeDom();
+    const intent = vi.fn();
+    collector = createInputCollector({
+      canvas: dom.canvas,
+      bindings: BINDINGS.fps,
+      pick: () => null,
+      onCommand: () => undefined,
+      onControlIntent: intent,
+    });
+    dom.dispatch('keydown', { ...keyEvent('KeyW'), target: new UiElement() });
+    expect(intent).not.toHaveBeenCalled();
+    dom.dispatch('keydown', keyEvent('KeyW'));
+    expect(intent).toHaveBeenLastCalledWith(true);
+    intent.mockClear();
+    collector.take();
+    collector.poll(1 / 60);
+    dom.dispatch('keydown', { ...keyEvent('KeyW'), repeat: true });
+    collector.take();
+    dom.dispatch('keyup', keyEvent('KeyW'));
+    expect(intent).not.toHaveBeenCalled();
+    dom.dispatch('keydown', keyEvent('KeyW'));
+    dom.dispatch('blur', {});
+    expect(intent).toHaveBeenLastCalledWith(false);
+    expect(collector.take().axes).toEqual({});
+  });
+
+  it('reports pointer-lock promise rejection without an unhandled rejection or a fake mouse-look fallback', async () => {
+    dom = installFakeDom({ pointerLocked: false });
+    const request = vi
+      .fn()
+      .mockRejectedValue(new DOMException('Host denied mouse capture', 'NotSupportedError'));
+    Object.defineProperty(dom.canvas, 'requestPointerLock', { value: request, configurable: true });
+    const state = vi.fn();
+    collector = createInputCollector({
+      canvas: dom.canvas,
+      bindings: BINDINGS.fps,
+      pick: () => null,
+      onCommand: () => undefined,
+      onCaptureState: state,
+    });
+    dom.dispatch('mousedown', buttonEvent());
+    await Promise.resolve();
+    expect(state).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        pointer: 'denied',
+        error: expect.stringContaining('Host denied mouse capture'),
+      }),
+    );
+    dom.dispatch('mousemove', { movementX: 100, movementY: 40 });
+    expect(collector.take().look).toEqual({ dx: 0, dy: 0 });
+    dom.dispatch('mouseup', buttonEvent());
+    dom.dispatch('mousedown', buttonEvent());
+    await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a late capture rejection after disposal and reports paused capture state', async () => {
+    dom = installFakeDom({ pointerLocked: false });
+    let reject!: (reason: unknown) => void;
+    Object.defineProperty(dom.canvas, 'requestPointerLock', {
+      value: () =>
+        new Promise<void>((_done, fail) => {
+          reject = fail;
+        }),
+      configurable: true,
+    });
+    const state = vi.fn();
+    collector = createInputCollector({
+      canvas: dom.canvas,
+      bindings: BINDINGS.fps,
+      pick: () => null,
+      onCommand: () => undefined,
+      onCaptureState: state,
+    });
+    collector.setPaused(true);
+    expect(state).toHaveBeenLastCalledWith(expect.objectContaining({ paused: true }));
+    dom.dispatch('mousedown', buttonEvent());
+    collector.dispose();
+    state.mockClear();
+    reject(new Error('Late denial'));
+    await Promise.resolve();
+    expect(state).not.toHaveBeenCalled();
+  });
+
   it('clears held actions and pending edges on restart without recreating event listeners', () => {
     dom = installFakeDom();
     collector = createInputCollector({

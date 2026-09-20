@@ -1,0 +1,23 @@
+{
+  "id": "responder-steps",
+  "seed": 9182707,
+  "duration": 16,
+  "prompt": "Four slow separated steps of a heavy industrial rescue machine walking on jointed metal supports. Each step is a muted weighty steel contact, a short hydraulic joint strain and a slight scraping rubber pad, with irregular pauses. Physical tired machinery, ominous through weight not loudness. Isolated close foley, no growls, no voice, no music.",
+  "model": "stabilityai/stable-audio-3-small-sfx",
+  "distribution": "DeepBeepMeep/TTS",
+  "distributionRevision": "5020589aa562cea206a25eea208d7cbb1f6efae7",
+  "wanGpRevision": "bb68ded24f8a25d51789f8a49b66cc63eccf53c9",
+  "steps": 8,
+  "guidance": 1,
+  "sampler": "pingpong",
+  "attention": "sdpa",
+  "negativePrompt": "music, melody, singing, speech, voices, drums, digital beeps, laser sounds, cinematic explosion, distorted clipping",
+  "sampleRate": 44100,
+  "channels": 2,
+  "frames": 705600,
+  "nativePeak": 0.8828125,
+  "nativeFormat": "WAV IEEE float32; no normalization",
+  "sha256": "a6a2d884676dcb993ab3f6ab692440437ee5a7d8107886b66a7f967f37c6e30e",
+  "configSha256": "9396ee61a60a869f9fca1f50d1c8352345c3fa891da0fda433df2e9012ca147e",
+  "humanListening": "pending"
+}

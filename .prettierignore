@@ -12,3 +12,15 @@ games/*/assets/**/*.gltf
 # Binding project documents — owned by the PM, never reformat.
 CHARTER.md
 ENVIRONMENT.md
+
+# Immutable hash-pinned offline cook/provenance metadata, checked as JSON and pinned by tests.
+# These exact archival inputs are not executable code or a broad asset-formatting exclusion.
+games/horror/assets/generated/prototype-provenance.json
+games/horror/assets/generated/sculpt-provenance.json
+games/horror/assets/generated/suit-damage-provenance.json
+games/horror/assets/source/sculpt-input/inventory.json
+games/horror/assets/source/sculpt-insert/basecolor-cook.json
+games/horror/assets/source/sculpt-insert/sculpt-provenance.json
+games/horror/assets/source/aftermath-input/baseline-inventory.json
+games/horror/assets/source/aftermath-input/baseline-presentation.json
+games/horror/assets/source/aftermath-input/placement-contract.json

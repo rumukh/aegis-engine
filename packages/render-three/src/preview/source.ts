@@ -138,13 +138,25 @@ function selectManifest(
     );
   const ids = new Set(selection.kind === 'material' ? [] : [selection.id]);
   for (const material of materials) {
-    if (material.map !== undefined) ids.add(material.map);
-    if (material.normalMap !== undefined) ids.add(material.normalMap);
+    for (const id of [
+      material.map,
+      material.normalMap,
+      material.roughnessMap,
+      material.metalnessMap,
+      material.aoMap,
+      material.emissiveMap,
+    ])
+      if (id !== undefined) ids.add(id);
   }
+  const reflections = manifest.environment?.reflections;
+  if (reflections !== undefined) ids.add(reflections.texture);
   return {
     aegis: 'presentation/1',
     assets: (manifest.assets ?? []).filter((asset) => ids.has(asset.id)),
     materials,
+    ...(manifest.pipeline === undefined ? {} : { pipeline: manifest.pipeline }),
+    ...(manifest.quality === undefined ? {} : { quality: manifest.quality }),
+    ...(reflections === undefined ? {} : { environment: { reflections } }),
   };
 }
 

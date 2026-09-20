@@ -1,0 +1,496 @@
+{
+  "recipe": {
+    "revision": "horror-prototype-2",
+    "status": "first representative prototype; parent/user creative approval pending",
+    "authorizedIntensity": "Disturbing body horror: torn suit, alien growth, visible wounds and restrained blood. No heavy gore, bodies or dismemberment.",
+    "organism": "Original non-emissive fibrous colony breaking a specific chest/right-shoulder opening: dark recessed core, localized injured contact rim, thick roots buried beneath damaged equipment and closed irregular mineral rind. No leaf/ribbon growth, generic spikes or copied franchise creature.",
+    "firstGate": "Only infected responder plus one intentional maintenance struggle cluster. No multiplication to other proposed locations before parent/user review of actual runtime front/side/gameplay-torch and cluster views.",
+    "firstPrototypeCorrections": "Iteration1a was rejected during actual asset review because parallel thin lamellae read as hanging strips. Iteration1b corrected only the infestation with fewer rooted volumes. Iteration1c corrects a measured backing-plate occlusion bug on the single maintenance cover: shallow protective bars remain in front of their backing and the existing coolant tank, with the original14mm maximum lip and no new collision. Character1b remains byte-identical in1c. These are first-gate corrections, not approval to expand the pass.",
+    "firstGate2Authorization": "Parent explicitly requested one coherent first-gate revision after the five actual1c game views: replace cloth/plant-like decorative growth and clean suit with targeted broken negative space, dark layered wound/root integration and local dried contact residue. Repair only the same maintenance cover to one torn corner, three unequal broken rods, failed fastener, one snagged frayed strip and a single irregular interrupted heel/tool rub with one dried handwipe. No new generation, no additional clusters, no lighting/scale/camera changes. Stop after the same actual2.46m/3.40m/4m and maintenance views for the next creative decision.",
+    "preservation": [
+      "Actor identity, rig hierarchy, bind pose, bounds envelope, semantic clip names and exact lower-body foot-contact channels remain unchanged.",
+      "Search and Lunge channels and timing remain exact; Idle/Stalk receive only declared small involuntary head interruptions.",
+      "The successful smooth v10-r2 visor surface, analytical normals and material remain untouched. Damage/roots surround the lower-side seal rather than replacing accepted optics.",
+      "Planet/ring/window/lighting, existing facility geometry, authoritative floorplan and all interaction anchors are unchanged.",
+      "New environment evidence is a separate world-origin decoration. No new authoritative entities, blockers or hidden collision.",
+      "No audio assets or score changes in this workstream."
+    ],
+    "concept": {
+      "file": "infestation-concept.png",
+      "role": "Original material/organism concept only, not an identity-matched asset or in-engine evidence",
+      "service": "Azure OpenAI",
+      "deployment": "gpt-image-2",
+      "helper": "azure-image-generation/scripts/generate-image.ps1",
+      "size": "1024x1536",
+      "quality": "high",
+      "format": "png",
+      "prompt": "Original character material and organism design concept, not a game screenshot. An adult orbital rescue worker in a grounded worn ivory ceramic and graphite pressure suit, standing three-quarter view from knees upward against a plain desaturated grey background, readable neutral studio light. The worker has survived a violent struggle and been colonized by an original alien organism: one shoulder and the right neck seam are forced apart by overlapping curved chalk-grey calcified lamellae, like irregular broken marine shell fins rather than spikes. Dark olive fibrous roots grow beneath the chest harness and through torn fabric; a small exposed wound shows muted raw maroon tissue only inside the split seam, with restrained dry rust-brown blood. One chest armor plate is buckled and partially detached, straps frayed, metal scraped and punctured. A smooth dark tinted pressure visor remains mostly intact with a jagged lower-side breach revealing tiny pale root structures in the shadow, not a human face. Asymmetric original silhouette with an inward-curled hollow growth near the shoulder, subtle contracted posture. Disturbing biological infestation with plausible layered material and contact depth, high-end science fiction horror concept, no neon glow, no generic glowing spikes, no giant tentacles, no detached limbs, no exposed organs, no heavy gore, no bodies, no franchise symbols or recognizable creatures, no text, no watermark. It should read as a damaged rescue suit being invaded from within, not a clean toy robot or a red repaint.",
+      "revisedPrompt": null,
+      "rights": "Original commissioned AI-generated output under Azure service terms. Not third-party CC0; no exclusivity or independent copyright claim."
+    },
+    "runtimeProvenance": {
+      "geometry": "Original deterministic Node-authored ruptured panel outlines, recessed injury/core surfaces, closed irregular mineral-rind volumes, buried root connections and directional failed protective-cover components using existing Three geometry tools.",
+      "maps": "Original deterministic relative-height/calcification and restrained abrasion/handwipe/impact alpha maps. Artistic PBR approximations, not physical scans. Concept pixels are never projected onto the character or room.",
+      "animation": "Rigid articulated glTF node animation, not skinning or motion capture. Head interruption is presentation only; gameplay AI/hitbox/damage untouched."
+    }
+  },
+  "sources": [
+    {
+      "file": "generate-horror.mjs",
+      "bytes": 6741,
+      "sha256": "872678160edcf96e9e779ffc51523c682fff9dfaadbd3557653b5509ef2af04c",
+      "lfSha256": "41875701bd3d1ace0134343cc7e79ccc4bbb9b850aacdabdc1d82bab0ab1c356",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "lib/responder.mjs",
+      "bytes": 23462,
+      "sha256": "3cd48c4ecb0dc667f5bc718b41c4375fc6ac055bdf3d31c83b053698279dd4dd",
+      "lfSha256": "4094f67ca0b724223341153fa253c5acad901a865cbbd0b77680ed3f6c1ff61b",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "lib/infestation.mjs",
+      "bytes": 10792,
+      "sha256": "9c483bcaa3d525d8c959a6533b5dd4bd466139ba357efc4612e4fe68ffc1f489",
+      "lfSha256": "27b76909ff5a2e4c637182b56747c8c48c76ec1505b2b0a7346d71b02c61f846",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "lib/struggle.mjs",
+      "bytes": 10430,
+      "sha256": "b65587f7c00e31af5a9ab2584d8f57d4186bc4418020eb3d940b448df1cf2c21",
+      "lfSha256": "8174b3931143e6e1644d2dfb934481845f85c4b925e06a2ddf902666843956d0",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "lib/model.mjs",
+      "bytes": 15542,
+      "sha256": "e32f9d0b88c4b31ac4b9f4d8aa6d6ba1b0888d27c234ab6605e56f47cc731fc4",
+      "lfSha256": "5aac0e84947838a521034fc60b730e1043f1c8ae51c3cf6b300b6fb9b272d75d",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "lib/optical-surfaces.mjs",
+      "bytes": 3256,
+      "sha256": "9430cfd24a4411f8fc7992e9d080fec771f62c31510a311d23f8e7590bc3583a",
+      "lfSha256": "71e02b215b6dc475e8124aebb8e0c7f3b8f2da21834327c1ecfe2536f1f57306",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "lib/textures.mjs",
+      "bytes": 20089,
+      "sha256": "5b0193ffced3e1eddbaa97e20706643a2f350d93d9f83e59b7c0c26e4f5cb8b5",
+      "lfSha256": "cd2efbdddb353ca33e8a7a6ab0fa909f1d3563d49cd0bfb6907be79b8cdc27a3",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "lib/raster.mjs",
+      "bytes": 7704,
+      "sha256": "f055da9a362fc37fb9c0cfd2589fd72a3722592d375682fc947cf3a4bcda7175",
+      "lfSha256": "bac851ab3eba5a873b66303a65a3e3aef0fd86cb1d079a2cb83632a0ecdad20b",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "source/horror-pass.recipe.json",
+      "bytes": 5683,
+      "sha256": "2238c44c17927fa1a4120b0821dd31998887060ffcef76d41c7da4f0899030d4",
+      "lfSha256": "cab872a2fa0e7d5436c3384bdcd7e8f51863d06f6e106a012df1340724f6d0df",
+      "normalization": "CRLF-to-LF only; raw SHA retained, no other content or whitespace normalization"
+    },
+    {
+      "file": "source/infestation-concept.png",
+      "bytes": 2793063,
+      "sha256": "dd1a3690d6346e00d849f6f0034c1f585e6b793285021a2830e5aae89d399d72"
+    }
+  ],
+  "baseline": [
+    {
+      "file": "archive-recorder.glb",
+      "bytes": 51868,
+      "sha256": "38cea1424faa3e275010a9c703c2152ea9e08a2fb1a3b16a9a342fe4f153f0d1"
+    },
+    {
+      "file": "arrival-terminal.glb",
+      "bytes": 50488,
+      "sha256": "39566978f71d199ecaec53f9f5183b52a2d9739e5a034eca4d25fee9f56256e9"
+    },
+    {
+      "file": "bus-isolator.glb",
+      "bytes": 45224,
+      "sha256": "44af2791a1284b7a40ee11620e8c816eda94430460d083b5297fdc4146c25ab6"
+    },
+    {
+      "file": "ceramic-basecolor.png",
+      "bytes": 4664567,
+      "sha256": "5652eca06efd234fa84ee75f7462725fc51d1bf4c56004ff7ef2a0fcbb3667e6"
+    },
+    {
+      "file": "ceramic-normal.png",
+      "bytes": 1156152,
+      "sha256": "d61f8f0e13086823792025ff97f0a07e85035038454953c39355ed048ad105ad"
+    },
+    {
+      "file": "ceramic-orm.png",
+      "bytes": 698212,
+      "sha256": "de985599cd66361326cfcead39d00c56bcc08e8bda2208e43ce86a35db4ee9cd"
+    },
+    {
+      "file": "coolant-valve.glb",
+      "bytes": 80040,
+      "sha256": "b3ecc0f610984ba06e9ec6e1e9b05e0801906ddd8638c26a71daa37c8964041a"
+    },
+    {
+      "file": "crt-panels.png",
+      "bytes": 25953,
+      "sha256": "3ed4e403cb3c28418c8919cbae3e92043cbffcd8387a0b950941218a884039bf"
+    },
+    {
+      "file": "deck-basecolor.png",
+      "bytes": 1225362,
+      "sha256": "f99d5d58bb071f9cc3810b1fe2c1523d3e1eda4a560e9578f88b86ff486ed5aa"
+    },
+    {
+      "file": "deck-normal.png",
+      "bytes": 987440,
+      "sha256": "fc6c5955c30a79a3027fa721b83afd0422b35ed9d4e846174f87baa144eeda23"
+    },
+    {
+      "file": "deck-orm.png",
+      "bytes": 838342,
+      "sha256": "19b607efa1e020374e558812bafba1fa02500a34ab1acc5da1075004cad03f0f"
+    },
+    {
+      "file": "evac-control.glb",
+      "bytes": 67684,
+      "sha256": "35eaaa21fe40f73e370b48d3745ce2f73273b1fdd4f6e874300a655ebbb7157d"
+    },
+    {
+      "file": "facility.glb",
+      "bytes": 14572712,
+      "sha256": "d3ddd97286e9036bb23ff4f8545c680a3603b871173d58af2047641a14a57473"
+    },
+    {
+      "file": "fuse-locker.glb",
+      "bytes": 95624,
+      "sha256": "a6dcc857cd04c7ed214ef143a87268b2d0be70065f9662424e241144dd30495b"
+    },
+    {
+      "file": "graphite-basecolor.png",
+      "bytes": 1706898,
+      "sha256": "9a497dc2a621be5a3c9f4267519b40f02faf5cfd5ee0e2be131a7d05da0e11bb"
+    },
+    {
+      "file": "graphite-normal.png",
+      "bytes": 881572,
+      "sha256": "e7c2603c41773ad7e8cc647f1f92f69317679fe06547b7a6dae3d64448f211a5"
+    },
+    {
+      "file": "graphite-orm.png",
+      "bytes": 697246,
+      "sha256": "0a3bfb62ec293a231339eba103e0e0583f831e762d52b76b0fe00da1968122ee"
+    },
+    {
+      "file": "labels.png",
+      "bytes": 1944896,
+      "sha256": "0df5e8fd17adeb35f4689f0352a38c0379482ec325d9558364c3a883eea8db95"
+    },
+    {
+      "file": "maintenance-note.glb",
+      "bytes": 45464,
+      "sha256": "afe88124cd6c1527c5f8062fe049410f3d144367d10b681787d32d270d394c6e"
+    },
+    {
+      "file": "orbital-exterior.glb",
+      "bytes": 495620,
+      "sha256": "c39e043aa25548dd9bc69db434291e7d4e78bb645628076a4f93604e0b6d8f5e"
+    },
+    {
+      "file": "planet-bands.png",
+      "bytes": 1560085,
+      "sha256": "ece29667fee998e30471e8eb40b19d8852dcfc2b0d2a4291ff984175f1976e5c"
+    },
+    {
+      "file": "power-console.glb",
+      "bytes": 67536,
+      "sha256": "00b177643ca31fb367db5d601529ae2dc98ac702cb306abd9383eb54d0e7898b"
+    },
+    {
+      "file": "pressure-door.glb",
+      "bytes": 90228,
+      "sha256": "d73931ff92ee818e95e59348f9b2defb2fa6875571a540037968414d21afb7fc"
+    },
+    {
+      "file": "rescue-badges.png",
+      "bytes": 230801,
+      "sha256": "88cbe27a3eeac1ac6fec8214e961f745e747fc3fba4f7f33e8f1d4f0d779e12c"
+    },
+    {
+      "file": "responder.glb",
+      "bytes": 1047880,
+      "sha256": "3533cba36418b82445b809ea3a9ad462fc8a3622bd999af64ab34058658c516a"
+    },
+    {
+      "file": "ring-density.png",
+      "bytes": 270,
+      "sha256": "3c699294d7c94b5df847a46e794208aa9fc401f04dfc05f5fafaa0e9bf839434"
+    },
+    {
+      "file": "service-wheel.glb",
+      "bytes": 80028,
+      "sha256": "1fbc016db04973dab6b6ada95a5fefeceeb7b958e36cc036e4c400087e57119f"
+    },
+    {
+      "file": "station-reflection.png",
+      "bytes": 26611,
+      "sha256": "194be97ad20022a0d4ce167298d1d027b3f70c93c6b55d3bd63b167d60efd741"
+    },
+    {
+      "file": "suit-shell-basecolor.png",
+      "bytes": 1709038,
+      "sha256": "8bb5e5acb962960b55415652a504c42893f1fc0211a67a588f17c3a86b894fe1"
+    },
+    {
+      "file": "suit-shell-normal.png",
+      "bytes": 583546,
+      "sha256": "54ee2ecfe71501160aa43925952cadefa35fe32ec952a063938d12facd871ad9"
+    },
+    {
+      "file": "suit-shell-orm.png",
+      "bytes": 710474,
+      "sha256": "4bb79632f0c387bbb584beb9dfcd2f0be0fe028ccd2e4be1f473e49df71a273e"
+    },
+    {
+      "file": "suit-textile-basecolor.png",
+      "bytes": 928992,
+      "sha256": "24a495490ed0e3df8cf2a920714a2cc9afdb09928a2497f7a23a1a60af733978"
+    },
+    {
+      "file": "suit-textile-normal.png",
+      "bytes": 48597,
+      "sha256": "682264c2ea1894a8ddb15af56109bb1a12bc29c793549499a2a119c388962e0a"
+    },
+    {
+      "file": "suit-textile-orm.png",
+      "bytes": 561143,
+      "sha256": "3a7769d10bcdb445e4e6a5201f2bf558b8e9d7076ee1d530e78085362bf1545b"
+    },
+    {
+      "file": "triage-recorder.glb",
+      "bytes": 75024,
+      "sha256": "d1b2bb202d6e25910f28de1c5bb270a98f484179095e7fa095bdd9e58bc05c9d"
+    },
+    {
+      "file": "uplink-console.glb",
+      "bytes": 66268,
+      "sha256": "8145b878b7a14aae8362afd4387c1c789846c0afd17b9ddfa3bfe95abcc81d1f"
+    }
+  ],
+  "outputs": [
+    {
+      "file": "aftermath-decals.png",
+      "bytes": 181187,
+      "sha256": "ae567bbb5a20eab722e507e34eebfeff5da50ce019e60c69a569bb2858d2d62c"
+    },
+    {
+      "file": "archive-recorder.glb",
+      "bytes": 51868,
+      "sha256": "38cea1424faa3e275010a9c703c2152ea9e08a2fb1a3b16a9a342fe4f153f0d1"
+    },
+    {
+      "file": "arrival-terminal.glb",
+      "bytes": 50488,
+      "sha256": "39566978f71d199ecaec53f9f5183b52a2d9739e5a034eca4d25fee9f56256e9"
+    },
+    {
+      "file": "bus-isolator.glb",
+      "bytes": 45224,
+      "sha256": "44af2791a1284b7a40ee11620e8c816eda94430460d083b5297fdc4146c25ab6"
+    },
+    {
+      "file": "ceramic-basecolor.png",
+      "bytes": 4664567,
+      "sha256": "5652eca06efd234fa84ee75f7462725fc51d1bf4c56004ff7ef2a0fcbb3667e6"
+    },
+    {
+      "file": "ceramic-normal.png",
+      "bytes": 1156152,
+      "sha256": "d61f8f0e13086823792025ff97f0a07e85035038454953c39355ed048ad105ad"
+    },
+    {
+      "file": "ceramic-orm.png",
+      "bytes": 698212,
+      "sha256": "de985599cd66361326cfcead39d00c56bcc08e8bda2208e43ce86a35db4ee9cd"
+    },
+    {
+      "file": "colony-shell-basecolor.png",
+      "bytes": 1202890,
+      "sha256": "de5e64cd579bff8fb091391937ae70bf872da11edf73336331d2c35cdb8f32ce"
+    },
+    {
+      "file": "colony-shell-normal.png",
+      "bytes": 897951,
+      "sha256": "139c0af6d12b1dbbd16a278f7545d86fc6f06b9c354eb404398f28443d8dc606"
+    },
+    {
+      "file": "colony-shell-orm.png",
+      "bytes": 844633,
+      "sha256": "00cb007b492202056d584cb96c51ec17cc59d9b985d21dab06807ca3c015708e"
+    },
+    {
+      "file": "coolant-valve.glb",
+      "bytes": 80040,
+      "sha256": "b3ecc0f610984ba06e9ec6e1e9b05e0801906ddd8638c26a71daa37c8964041a"
+    },
+    {
+      "file": "crt-panels.png",
+      "bytes": 25953,
+      "sha256": "3ed4e403cb3c28418c8919cbae3e92043cbffcd8387a0b950941218a884039bf"
+    },
+    {
+      "file": "deck-basecolor.png",
+      "bytes": 1225362,
+      "sha256": "f99d5d58bb071f9cc3810b1fe2c1523d3e1eda4a560e9578f88b86ff486ed5aa"
+    },
+    {
+      "file": "deck-normal.png",
+      "bytes": 987440,
+      "sha256": "fc6c5955c30a79a3027fa721b83afd0422b35ed9d4e846174f87baa144eeda23"
+    },
+    {
+      "file": "deck-orm.png",
+      "bytes": 838342,
+      "sha256": "19b607efa1e020374e558812bafba1fa02500a34ab1acc5da1075004cad03f0f"
+    },
+    {
+      "file": "evac-control.glb",
+      "bytes": 67684,
+      "sha256": "35eaaa21fe40f73e370b48d3745ce2f73273b1fdd4f6e874300a655ebbb7157d"
+    },
+    {
+      "file": "facility.glb",
+      "bytes": 14572712,
+      "sha256": "d3ddd97286e9036bb23ff4f8545c680a3603b871173d58af2047641a14a57473"
+    },
+    {
+      "file": "fuse-locker.glb",
+      "bytes": 95624,
+      "sha256": "a6dcc857cd04c7ed214ef143a87268b2d0be70065f9662424e241144dd30495b"
+    },
+    {
+      "file": "graphite-basecolor.png",
+      "bytes": 1706898,
+      "sha256": "9a497dc2a621be5a3c9f4267519b40f02faf5cfd5ee0e2be131a7d05da0e11bb"
+    },
+    {
+      "file": "graphite-normal.png",
+      "bytes": 881572,
+      "sha256": "e7c2603c41773ad7e8cc647f1f92f69317679fe06547b7a6dae3d64448f211a5"
+    },
+    {
+      "file": "graphite-orm.png",
+      "bytes": 697246,
+      "sha256": "0a3bfb62ec293a231339eba103e0e0583f831e762d52b76b0fe00da1968122ee"
+    },
+    {
+      "file": "labels.png",
+      "bytes": 1944896,
+      "sha256": "0df5e8fd17adeb35f4689f0352a38c0379482ec325d9558364c3a883eea8db95"
+    },
+    {
+      "file": "maintenance-note.glb",
+      "bytes": 45464,
+      "sha256": "afe88124cd6c1527c5f8062fe049410f3d144367d10b681787d32d270d394c6e"
+    },
+    {
+      "file": "orbital-exterior.glb",
+      "bytes": 495620,
+      "sha256": "c39e043aa25548dd9bc69db434291e7d4e78bb645628076a4f93604e0b6d8f5e"
+    },
+    {
+      "file": "planet-bands.png",
+      "bytes": 1560085,
+      "sha256": "ece29667fee998e30471e8eb40b19d8852dcfc2b0d2a4291ff984175f1976e5c"
+    },
+    {
+      "file": "power-console.glb",
+      "bytes": 67536,
+      "sha256": "00b177643ca31fb367db5d601529ae2dc98ac702cb306abd9383eb54d0e7898b"
+    },
+    {
+      "file": "pressure-door.glb",
+      "bytes": 90228,
+      "sha256": "d73931ff92ee818e95e59348f9b2defb2fa6875571a540037968414d21afb7fc"
+    },
+    {
+      "file": "rescue-badges.png",
+      "bytes": 230801,
+      "sha256": "88cbe27a3eeac1ac6fec8214e961f745e747fc3fba4f7f33e8f1d4f0d779e12c"
+    },
+    {
+      "file": "responder.glb",
+      "bytes": 2069628,
+      "sha256": "b5dc140a72512d3eaeee6989ada51a2c7a0fa9581a0f3a4e461e2873e3a745cf"
+    },
+    {
+      "file": "ring-density.png",
+      "bytes": 270,
+      "sha256": "3c699294d7c94b5df847a46e794208aa9fc401f04dfc05f5fafaa0e9bf839434"
+    },
+    {
+      "file": "service-wheel.glb",
+      "bytes": 80028,
+      "sha256": "1fbc016db04973dab6b6ada95a5fefeceeb7b958e36cc036e4c400087e57119f"
+    },
+    {
+      "file": "station-reflection.png",
+      "bytes": 26611,
+      "sha256": "194be97ad20022a0d4ce167298d1d027b3f70c93c6b55d3bd63b167d60efd741"
+    },
+    {
+      "file": "struggle.glb",
+      "bytes": 64572,
+      "sha256": "32ffab85f83cc2c33d81cbd67175a292bee36153d49347e83b1c48e536ed12f0"
+    },
+    {
+      "file": "suit-shell-basecolor.png",
+      "bytes": 1709038,
+      "sha256": "8bb5e5acb962960b55415652a504c42893f1fc0211a67a588f17c3a86b894fe1"
+    },
+    {
+      "file": "suit-shell-normal.png",
+      "bytes": 583546,
+      "sha256": "54ee2ecfe71501160aa43925952cadefa35fe32ec952a063938d12facd871ad9"
+    },
+    {
+      "file": "suit-shell-orm.png",
+      "bytes": 710474,
+      "sha256": "4bb79632f0c387bbb584beb9dfcd2f0be0fe028ccd2e4be1f473e49df71a273e"
+    },
+    {
+      "file": "suit-textile-basecolor.png",
+      "bytes": 928992,
+      "sha256": "24a495490ed0e3df8cf2a920714a2cc9afdb09928a2497f7a23a1a60af733978"
+    },
+    {
+      "file": "suit-textile-normal.png",
+      "bytes": 48597,
+      "sha256": "682264c2ea1894a8ddb15af56109bb1a12bc29c793549499a2a119c388962e0a"
+    },
+    {
+      "file": "suit-textile-orm.png",
+      "bytes": 561143,
+      "sha256": "3a7769d10bcdb445e4e6a5201f2bf558b8e9d7076ee1d530e78085362bf1545b"
+    },
+    {
+      "file": "triage-recorder.glb",
+      "bytes": 75024,
+      "sha256": "d1b2bb202d6e25910f28de1c5bb270a98f484179095e7fa095bdd9e58bc05c9d"
+    },
+    {
+      "file": "uplink-console.glb",
+      "bytes": 66268,
+      "sha256": "8145b878b7a14aae8362afd4387c1c789846c0afd17b9ddfa3bfe95abcc81d1f"
+    }
+  ]
+}

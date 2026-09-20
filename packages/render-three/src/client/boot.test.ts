@@ -15,12 +15,27 @@ import type { InputPacket } from '../live-input.js';
 import { virtualGamepad } from '../testing/gamepad.js';
 import { createLiveSession } from '../session.js';
 
+const cinematic = vi.hoisted(() => ({ render: vi.fn() }));
+vi.mock('../presentation/pipeline.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../presentation/pipeline.js')>()),
+  CinematicPipeline: class {
+    render = cinematic.render;
+    resize(): void {}
+    setQuality(): void {}
+    stats(): object {
+      return {};
+    }
+    dispose(): void {}
+  },
+}));
+
 // Keep the real boot, input, mirror, HUD and presentation runtime; only GPU drawing is absent.
 vi.mock('three', async (importOriginal) => ({
   ...(await importOriginal<typeof import('three')>()),
   WebGLRenderer: class {
     info = { render: { calls: 0, triangles: 0 } };
     setPixelRatio(): void {}
+    forceContextLoss(): void {}
     setSize(): void {}
     render(): void {}
     dispose(): void {}
@@ -55,6 +70,7 @@ interface PendingRequest {
   url: string;
   body: string | undefined;
   resolve(response: Response): void;
+  reject(error: unknown): void;
 }
 
 const manifest: PresentationManifest = {
@@ -73,10 +89,13 @@ let dom: FakeDom;
 let globalEvents: EventTarget;
 let elements: Map<string, HudElement>;
 let animationFrames: Map<number, FrameRequestCallback>;
+let collectionTasks: Map<number, () => void>;
+let nextTask = 0;
 let requests: PendingRequest[];
 let nextFrame = 0;
 
 beforeEach(() => {
+  cinematic.render.mockReset();
   dom = installFakeDom();
   globalEvents = new EventTarget();
   elements = new Map(
@@ -85,11 +104,14 @@ beforeEach(() => {
       'hud-outcome',
       'hud-step-0',
       'hud-status',
+      'action-pause',
       'hud-events',
       'loading-message',
     ].map((id) => [id, new HudElement()]),
   );
   animationFrames = new Map();
+  collectionTasks = new Map();
+  nextTask = 0;
   requests = [];
   nextFrame = 0;
   vi.stubGlobal('document', {
@@ -104,14 +126,21 @@ beforeEach(() => {
     return nextFrame;
   });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => animationFrames.delete(id));
+  vi.stubGlobal('setTimeout', (callback: () => void, delay: number) => {
+    expect(delay).toBe(0);
+    collectionTasks.set(++nextTask, callback);
+    return nextTask;
+  });
+  vi.stubGlobal('clearTimeout', (id: number) => collectionTasks.delete(id));
   vi.stubGlobal(
     'fetch',
     (url: string, init?: RequestInit) =>
-      new Promise<Response>((resolve) => {
+      new Promise<Response>((resolve, reject) => {
         requests.push({
           url,
           body: typeof init?.body === 'string' ? init.body : undefined,
           resolve,
+          reject,
         });
       }),
   );
@@ -158,12 +187,20 @@ async function answer(request: PendingRequest, value: FrameResponse): Promise<vo
   await settle();
 }
 
-async function display(): Promise<void> {
+async function display(collect = true): Promise<void> {
   const next = animationFrames.entries().next().value;
   if (next === undefined) throw new Error('The real boot did not schedule a display frame.');
   animationFrames.delete(next[0]);
   next[1](0);
   await settle();
+  if (collect) {
+    const task = collectionTasks.entries().next().value;
+    if (task !== undefined) {
+      collectionTasks.delete(task[0]);
+      task[1]();
+      await settle();
+    }
+  }
 }
 
 async function launch(profile: PresentationManifest | undefined): Promise<void> {
@@ -193,7 +230,245 @@ async function start(
   await debug().ready;
 }
 
+function lossProfile(): PresentationManifest {
+  class Node extends HudElement {
+    dataset: Record<string, string> = {};
+    style = { setProperty: vi.fn() };
+    getBoundingClientRect = () => ({});
+    focus(): void {
+      Object.defineProperty(document, 'activeElement', { value: this, configurable: true });
+    }
+  }
+  class Dialog extends Node {
+    open = false;
+    showModal(): void {
+      this.open = true;
+    }
+    close(): void {
+      this.open = false;
+    }
+  }
+  class Button extends Node {}
+  vi.stubGlobal('HTMLDialogElement', Dialog);
+  vi.stubGlobal('HTMLButtonElement', Button);
+  elements.set('loss-ending', new Dialog());
+  elements.set('loss-restart', new Button());
+  elements.set('loss-shade', new Node());
+  elements.set('loss-error', new Node());
+  Object.assign(document, {
+    addEventListener: globalEvents.addEventListener.bind(globalEvents),
+    removeEventListener: globalEvents.removeEventListener.bind(globalEvents),
+    exitPointerLock: () =>
+      Object.defineProperty(document, 'pointerLockElement', { value: null, configurable: true }),
+  });
+  Object.assign(dom.canvas, { focus: vi.fn() });
+  return { ...manifest, ui: { lossEnding: { fadeSeconds: 0 } } };
+}
+
+describe('live receipts across real presentation lifecycle callbacks', () => {
+  it('drops a queued old-generation collection when restart arrives before the task', async () => {
+    await start();
+    dom.dispatch('keydown', keyEvent('Space'));
+    const rejected = vi.fn();
+    const waiting = debug().sync().then(vi.fn(), rejected);
+    await display(false);
+    expect(requests).toHaveLength(0);
+    expect(collectionTasks.size).toBe(1);
+    dom.dispatch('keydown', keyEvent('KeyR'));
+    await answer(takeRequest('control'), response(0, 1));
+    await waiting;
+    expect(rejected).toHaveBeenCalledOnce();
+    expect(collectionTasks.size).toBe(0);
+    expect(requests).toHaveLength(0);
+    await display();
+    const fresh = takeRequest('frame');
+    expect(JSON.parse(fresh.body!)).toMatchObject({
+      client: { generation: 1, claim: false },
+      input: { held: [], pressed: [], look: { dx: 0, dy: 0 } },
+    });
+    await answer(fresh, response(0, 1));
+  });
+
+  it('keeps accepted action delivery valid when that reply opens the loss dialog, without leaking intent into restart', async () => {
+    await start(true, response(0, 0), lossProfile());
+    dom.dispatch('keydown', keyEvent('Space'));
+    dom.dispatch('keyup', keyEvent('Space'));
+    const synced = vi.fn();
+    const rejected = vi.fn();
+    const pending = debug().sync().then(synced, rejected);
+    await display();
+    const request = takeRequest('frame');
+    const packet = JSON.parse(request.body!) as { input: InputPacket };
+    expect(packet.input).toMatchObject({ held: [], pressed: ['Jump'], released: ['Jump'] });
+    await answer(request, {
+      ...response(1, 0, [{ type: 'failed', tick: 0, sequence: 0 }]),
+      inputStatus: {
+        accepted: true,
+        reason: 'accepted',
+        role: 'controlling',
+        lastSeq: packet.input.seq,
+      },
+    });
+    expect(debug().presentation()).toMatchObject({
+      ending: { active: true },
+      input: { capture: { gameplayBlocked: true } },
+    });
+    expect(rejected).not.toHaveBeenCalled();
+    expect(synced).not.toHaveBeenCalled();
+    await display();
+    await pending;
+    expect(synced).toHaveBeenCalledOnce();
+    expect(debug().timings().exchangeErrors).toBe(0);
+    await answer(takeRequest('frame'), response(1, 0));
+    dom.dispatch('keyup', keyEvent('Space'));
+    dom.dispatch('keydown', keyEvent('KeyR'));
+    await answer(takeRequest('control'), response(0, 1));
+    await display();
+    await answer(takeRequest('frame'), response(0, 1));
+    await display();
+    await answer(takeRequest('frame'), response(0, 1));
+    expect(debug().presentation()).toMatchObject({ ending: { active: false } });
+    dom.dispatch('keydown', keyEvent('Space'));
+    const nextRejected = vi.fn();
+    const next = debug().sync().then(vi.fn(), nextRejected);
+    dom.dispatch('blur', {});
+    await next;
+    expect(nextRejected).toHaveBeenCalledOnce();
+  });
+
+  it.each(['cold-dead', 'shared-dead'] as const)(
+    'does not resolve a %s restart observer before the real deferred ending reset is presented',
+    async (initial) => {
+      const profile = lossProfile();
+      const oldGeneration = initial === 'cold-dead' ? 4 : 0;
+      if (initial === 'cold-dead') {
+        await start(
+          true,
+          response(5, oldGeneration, [], true, [{ type: 'failed', tick: 3, sequence: 0 }]),
+          profile,
+        );
+        await display();
+        await answer(takeRequest('frame'), response(5, oldGeneration, [], true));
+      } else {
+        await start(true, response(0, oldGeneration, [], true), profile);
+        await display();
+        await answer(
+          takeRequest('frame'),
+          response(1, oldGeneration, [{ type: 'failed', tick: 0, sequence: 0 }], true),
+        );
+      }
+      expect(debug().presentation()).toMatchObject({
+        ending: { active: true },
+        input: { capture: { gameplayBlocked: true } },
+      });
+      dom.dispatch('keydown', keyEvent('KeyR'));
+      await answer(takeRequest('control'), response(0, oldGeneration + 1, [], true));
+      const synced = vi.fn();
+      const rejected = vi.fn();
+      const pending = debug().sync().then(synced, rejected);
+      await display();
+      await answer(takeRequest('frame'), response(0, oldGeneration + 1, [], true));
+      expect(debug().tick()).toBe(0);
+      expect(debug().presentation()).toMatchObject({ ending: { active: true } });
+      expect(synced).not.toHaveBeenCalled();
+      await display();
+      await pending;
+      expect(rejected).not.toHaveBeenCalled();
+      expect(synced).toHaveBeenCalledOnce();
+      expect(debug().presentation()).toMatchObject({
+        ending: { active: false },
+        input: { capture: { gameplayBlocked: false } },
+      });
+      expect(debug().timings().exchangeErrors).toBe(0);
+    },
+  );
+
+  it('rejects an accepted action superseded by restart before presentation instead of confirming it in a new generation', async () => {
+    await start();
+    dom.dispatch('keydown', keyEvent('Space'));
+    dom.dispatch('keyup', keyEvent('Space'));
+    const synced = vi.fn();
+    const rejected = vi.fn();
+    const pending = debug().sync().then(synced, rejected);
+    await display();
+    const request = takeRequest('frame');
+    const { input } = JSON.parse(request.body!) as { input: InputPacket };
+    expect(input).toMatchObject({ held: [], pressed: ['Jump'], released: ['Jump'] });
+    await answer(request, {
+      ...response(0, 0),
+      inputStatus: { accepted: true, role: 'controlling', reason: 'accepted', lastSeq: input.seq },
+    });
+    expect(synced).not.toHaveBeenCalled();
+    dom.dispatch('keydown', keyEvent('KeyR'));
+    await answer(takeRequest('control'), response(0, 1));
+    await pending;
+    expect(rejected).toHaveBeenCalledOnce();
+    expect(synced).not.toHaveBeenCalled();
+    await display();
+    await answer(takeRequest('frame'), response(0, 1));
+    await display();
+    expect(synced).not.toHaveBeenCalled();
+    expect(debug().tick()).toBe(0);
+    expect(debug().timings().exchangeErrors).toBe(0);
+  });
+});
+
 describe('dev-client controller polling', () => {
+  it.each([
+    { presentation: false, paused: true },
+    { presentation: true, paused: true },
+    { presentation: false, paused: false },
+    { presentation: true, paused: false },
+  ])(
+    'keeps View restart pause state before another display frame: %j',
+    async ({ presentation, paused }) => {
+      const pad = virtualGamepad();
+      vi.stubGlobal('navigator', { getGamepads: () => [pad] });
+      const initialGeneration = presentation ? 0 : undefined;
+      await start(presentation, response(12, initialGeneration, [], paused));
+      await display();
+      await answer(takeRequest('frame'), response(12, initialGeneration, [], paused));
+      const button = elements.get('action-pause');
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      pad.buttons[8]!.value = 1;
+      await display();
+      const oldFrame = takeRequest('frame');
+      const restart = takeRequest('control');
+      expect(JSON.parse(restart.body!)).toEqual({ command: 'restart' });
+      await answer(restart, response(0, presentation ? 1 : undefined, [], paused));
+      // No display() here: restart publishes tick 0 before the next animation frame.
+      expect(debug().tick()).toBe(0);
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      expect(button?.textContent).toBe(paused ? 'Resume' : 'Pause');
+      pad.buttons[8]!.value = 0;
+      await answer(oldFrame, response(13, initialGeneration, [], paused));
+      expect(debug().tick()).toBe(0);
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+      await display();
+      expect(button?.getAttribute('aria-pressed')).toBe(String(paused));
+    },
+  );
+
+  it('draws a cold cinematic generation before arming another HTTP deadline', async () => {
+    await start(true, response(0, 0), {
+      ...manifest,
+      quality: 'high',
+      pipeline: { toneMapping: 'aces' },
+    });
+    cinematic.render.mockImplementation(() => expect(requests).toHaveLength(0));
+    await display();
+    expect(cinematic.render).toHaveBeenCalledOnce();
+    cinematic.render.mockImplementation(() => undefined);
+    await display();
+    expect(requests).toHaveLength(1);
+    await answer(takeRequest('frame'), response(0, 1));
+    cinematic.render.mockImplementation(() => expect(requests).toHaveLength(0));
+    await display();
+    cinematic.render.mockImplementation(() => undefined);
+    await display();
+    expect(requests).toHaveLength(1);
+  });
+
   it('captures a press/release between exchanges while the preceding HTTP frame is in flight', async () => {
     const pad = virtualGamepad();
     vi.stubGlobal('navigator', { getGamepads: () => [pad] });
@@ -244,6 +519,64 @@ describe('dev-client controller polling', () => {
 });
 
 describe('dev-client synchronization', () => {
+  it('distinguishes body-read cancellation after HTTP 200 from request and validation errors', async () => {
+    await start();
+    await display();
+    const reply = new Response('{}', { status: 200 });
+    vi.spyOn(reply, 'text').mockRejectedValue(
+      new DOMException('The user aborted a request.', 'AbortError'),
+    );
+    takeRequest('frame').resolve(reply);
+    await settle();
+    expect(debug().timings()).toMatchObject({
+      exchangeErrors: 1,
+      firstExchangeFailure: {
+        stage: 'body',
+        responseStatus: 200,
+        name: 'AbortError',
+        message: 'The user aborted a request.',
+      },
+    });
+  });
+
+  it('keeps genuine request failures counted and retains their first cause through recovery', async () => {
+    await start();
+    await display();
+    const failed = takeRequest('frame');
+    const seq = (JSON.parse(failed.body!) as { input: InputPacket }).input.seq;
+    failed.reject(new DOMException('Timed out at the unchanged deadline', 'TimeoutError'));
+    await settle();
+    expect(debug().timings()).toMatchObject({
+      exchangeErrors: 1,
+      firstExchangeFailure: {
+        stage: 'request',
+        message: 'Timed out at the unchanged deadline',
+        name: 'TimeoutError',
+        requestSequence: seq,
+        requestGeneration: 0,
+        generation: 0,
+      },
+    });
+    const first = debug().timings().firstExchangeFailure!;
+    first.message = 'caller mutation';
+    expect(debug().timings().firstExchangeFailure?.message).not.toBe('caller mutation');
+    await display();
+    await answer(takeRequest('frame'), response(1, 0));
+    expect(debug().timings().exchangeErrors).toBe(1);
+    expect(debug().timings().firstExchangeFailure?.message).toBe(
+      'Timed out at the unchanged deadline',
+    );
+    await display();
+    const refused = takeRequest('frame');
+    refused.resolve(new Response('bad input is still an error', { status: 400 }));
+    await settle();
+    expect(debug().timings().exchangeErrors).toBe(2);
+    expect(elements.get('loading-message')?.textContent).toContain('responded 400');
+    expect(debug().timings().firstExchangeFailure?.message).toBe(
+      'Timed out at the unchanged deadline',
+    );
+  });
+
   it('cannot execute paused key taps while the resume acknowledgement is delayed', async () => {
     await start(true, response(0, 0, [], true));
     const session = createLiveSession({ scene: PLATFORMER_SCENE, plugin: platformerPlugin });
@@ -393,6 +726,12 @@ describe('dev-client synchronization', () => {
         expect(ready).not.toHaveBeenCalled();
         expect(debug().tick()).toBe(-1);
         expect(debug().timings().exchangeErrors).toBe(index + 1);
+        expect(debug().timings().firstExchangeFailure).toMatchObject({
+          stage: 'response',
+          name: 'Error',
+          requestGeneration: 0,
+          tick: -1,
+        });
         expect(elements.get('loading-message')?.textContent).toMatch(/history.*retry/i);
       }
       await display();
@@ -452,6 +791,8 @@ describe('dev-client synchronization', () => {
     expect(synced).not.toHaveBeenCalled();
     await display();
     await answer(takeRequest('frame'), response(1, 1, [{ type: 'opened', tick: 0, sequence: 0 }]));
+    expect(synced).not.toHaveBeenCalled();
+    await display();
     expect(synced).toHaveBeenCalledTimes(1);
     expect(elements.get('hud-progress')?.textContent).toBe('1 / 1 complete');
   });

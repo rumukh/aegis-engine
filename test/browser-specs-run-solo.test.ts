@@ -35,6 +35,8 @@ import {
   soloEnabled,
   specFiles,
   testPhases,
+  timingSpecs,
+  usesPerformanceClock,
 } from '../scripts/test-phases.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -178,7 +180,9 @@ describe('every spec that launches a browser runs in the solo phase', () => {
       expect(shared.args).toContain(spec);
       expect(shared.args[shared.args.indexOf(spec) - 1]).toBe('--exclude');
     }
-    expect(shared.args.filter((a: string) => a === '--exclude')).toHaveLength(browsers.length);
+    expect(shared.args.filter((a: string) => a === '--exclude')).toHaveLength(
+      browsers.length + timingSpecs(root, read).length,
+    );
   });
 
   it('turns file parallelism off in the solo phase — that is the whole mechanism', () => {
@@ -192,6 +196,7 @@ describe('every spec that launches a browser runs in the solo phase', () => {
     // Running these last buys that warm-up for free.
     expect(testPhases(root, read, 'linux', true).map((p: { name: string }) => p.name)).toEqual([
       'shared',
+      'timing',
       'solo',
     ]);
   });
@@ -265,6 +270,59 @@ describe('every spec that launches a browser runs in the solo phase', () => {
   });
 });
 
+describe('native timing measurements do not compete with the shared worker pool', () => {
+  it.each([
+    'const start = performance.now();',
+    'const read = performance.now;',
+    "const start = performance['now']();",
+    'const start = globalThis.performance.now();',
+    "import { performance as clock } from 'node:perf_hooks'; clock.now();",
+    "import * as timing from 'node:perf_hooks'; timing.performance.now();",
+  ])('recognizes a real high-resolution clock reference: %s', (source) => {
+    expect(usesPerformanceClock('arbitrary.test.ts', source)).toBe(true);
+  });
+
+  it.each([
+    '// performance.now() is discussed here\nconst n = 1;',
+    '/* performance.now() */ const n = 1;',
+    "const program = 'performance.now()';",
+    'const program = `performance.now()`;',
+    'const unrelated = clock.now();',
+  ])('does not classify inert text or an unrelated clock: %s', (source) => {
+    expect(usesPerformanceClock('timing-in-name.test.ts', source)).toBe(false);
+  });
+
+  it('keeps browser timing in the browser phase and derives Node timing from code, not names', () => {
+    const sources: Record<string, string> = {
+      'ordinary.test.ts': 'performance.now();',
+      'timing-in-name.test.ts': 'const n = 1;',
+      'browser.test.ts': `import { ${NAME} } from './browser.js'; performance.now();`,
+    };
+    expect(timingSpecs(root, (path) => sources[path] ?? '', Object.keys(sources))).toEqual([
+      'ordinary.test.ts',
+    ]);
+  });
+
+  it('runs the existing FPS budget with unchanged assertions on every host, including Windows CI', () => {
+    const budget = 'packages/render-three/src/frame-pacing.test.ts';
+    expect(timingSpecs(root, read)).toContain(budget);
+    for (const [platform, hosted] of [
+      ['linux', true],
+      ['win32', true],
+      ['win32', false],
+    ] as const) {
+      const measured = phase('timing', platform, hosted);
+      expect(measured.args).toContain(budget);
+      expect(measured.args).toContain('--no-file-parallelism');
+      expect(measured.minFiles).toBeGreaterThan(0);
+      expect(measured.minTests).toBeGreaterThan(0);
+      const shared = phase('shared', platform, hosted);
+      expect(shared.args[shared.args.indexOf(budget) - 1]).toBe('--exclude');
+    }
+    expect(phase('solo').args).not.toContain(budget);
+  });
+});
+
 describe('the browser phase is omitted on a hosted windows runner, and only there', () => {
   // WHY this exclusion exists at all is ADR-0010, and it is not a small claim: it is the one
   // place in this repository where a gate deliberately covers less than it could. The arms below
@@ -285,9 +343,17 @@ describe('the browser phase is omitted on a hosted windows runner, and only ther
   it('actually drops the phase from the plan, rather than merely reporting that it could', () => {
     // The predicate could be correct and unused. This drives the real `testPhases`, which is the
     // only thing `run-tests.mjs` executes.
-    expect(testPhases(root, read, 'win32', true).map((p) => p.name)).toEqual(['shared']);
-    expect(testPhases(root, read, 'win32', false).map((p) => p.name)).toEqual(['shared', 'solo']);
-    expect(testPhases(root, read, 'linux', true).map((p) => p.name)).toEqual(['shared', 'solo']);
+    expect(testPhases(root, read, 'win32', true).map((p) => p.name)).toEqual(['shared', 'timing']);
+    expect(testPhases(root, read, 'win32', false).map((p) => p.name)).toEqual([
+      'shared',
+      'timing',
+      'solo',
+    ]);
+    expect(testPhases(root, read, 'linux', true).map((p) => p.name)).toEqual([
+      'shared',
+      'timing',
+      'solo',
+    ]);
   });
 
   it('changes nothing about the shared phase — only whether the solo phase runs', () => {

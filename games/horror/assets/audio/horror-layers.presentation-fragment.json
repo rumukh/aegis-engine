@@ -1,0 +1,98 @@
+{
+  "assets": [
+    {
+      "id": "dread-membrane",
+      "kind": "audio",
+      "src": "audio/runtime/dread-membrane.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX; approved original project gestures",
+        "license": "Generated output under existing noncommercial model authorization. See audio/source/production-policy.json and audio/source/horror-pass/approval.json. No model weights shipped.",
+        "source": "Approved audition dread-membrane; source-master SHA256:e33d0a96cf391191811aa163ff501c787c974d1ebb21190f4b4fc4d784b152a2; audio/source/horror-pass/layer-recipes.json; offline sparse placement only. Runtime SHA256:b8415bec37790323d8a9a6b2c4aab261b3f199d307a275176f773f9588fea2b0"
+      }
+    },
+    {
+      "id": "dread-chitter",
+      "kind": "audio",
+      "src": "audio/runtime/dread-chitter.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX; approved original project gestures",
+        "license": "Generated output under existing noncommercial model authorization. See audio/source/production-policy.json and audio/source/horror-pass/approval.json. No model weights shipped.",
+        "source": "Approved audition dread-chitter; source-master SHA256:144980524c27af0390dc551e15b92bac579c0ad1720a3a92754ca9aab2322cc5; audio/source/horror-pass/layer-recipes.json; offline sparse placement only. Runtime SHA256:08bbb8d75e548f7d2f40e2a3d59f8fec1c86e810f9e7f634cc7d2dca4448787c"
+      }
+    },
+    {
+      "id": "responder-breath",
+      "kind": "audio",
+      "src": "audio/runtime/responder-breath.ogg",
+      "provenance": {
+        "author": "Aegis contributors using Stable Audio 3 Small SFX; approved original project gestures",
+        "license": "Generated output under existing noncommercial model authorization. See audio/source/production-policy.json and audio/source/horror-pass/approval.json. No model weights shipped.",
+        "source": "Approved audition responder-breath; source-master SHA256:085ee2925bf8c0079ca252521dc44e1e16f1ca8d36a489fec6933cfb8b25154d; audio/source/horror-pass/layer-recipes.json; offline sparse placement only. Runtime SHA256:8c97eca4f5e6d3ecb9bfb7250350296f84658e499f3c441fa2d0a01709921da7"
+      }
+    }
+  ],
+  "audio": {
+    "layers": [
+      {
+        "id": "dread-membrane",
+        "asset": "dread-membrane",
+        "volume": 0.3,
+        "fadeSeconds": 0.2,
+        "spatial": {
+          "target": {
+            "position": [4.7, 1.4, 16]
+          },
+          "refDistance": 1.5,
+          "maxDistance": 12,
+          "rolloffFactor": 1.5
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "explore"
+        }
+      },
+      {
+        "id": "dread-chitter",
+        "asset": "dread-chitter",
+        "volume": 0.26,
+        "fadeSeconds": 0.2,
+        "spatial": {
+          "target": {
+            "position": [29.6, 2.3, 16.5]
+          },
+          "refDistance": 1.5,
+          "maxDistance": 12,
+          "rolloffFactor": 1.5
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "explore"
+        }
+      },
+      {
+        "id": "responder-breath",
+        "asset": "responder-breath",
+        "volume": 0.22,
+        "fadeSeconds": 0.2,
+        "spatial": {
+          "target": {
+            "entity": "responder"
+          },
+          "refDistance": 2,
+          "maxDistance": 16,
+          "rolloffFactor": 1.5
+        },
+        "enabledWhen": {
+          "entity": "player",
+          "component": "HorrorStatus",
+          "field": "musicPhase",
+          "equals": "explore"
+        }
+      }
+    ]
+  }
+}
