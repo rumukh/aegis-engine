@@ -129,14 +129,16 @@ export interface AegisDebugHandle {
   /** Project a world point to canvas pixels, or `null` when it is behind the camera. */
   project(x: number, y: number, z: number): { x: number; y: number } | null;
   /**
-   * Resolve after a subsequent exchange, requiring acceptance for fresh gameplay input.
+   * Resolve after a subsequent input receipt, or presentation for a passive observer.
    *
    * Automation that wants tick-exact input needs to know its key events actually landed before it
    * asks the simulation to step. Polling a counter cannot answer that — a packet already in
    * flight was collected *before* the events. So the waiter is registered here and only settled
    * by an exchange whose `collector.take()` ran strictly afterwards. Passive observers can
    * synchronize snapshots without claiming control. Rejected, cancelled or delivery-ambiguous
-   * fresh input rejects the barrier; it is never replayed under a new sequence.
+   * fresh or held input rejects the barrier; it is never replayed under a new sequence.
+   * Active held input settles at its receipt, not after drawing could expire its lease.
+   * Neutral observer/restart snapshots pass through adapter.sync and host.present, including UI resets.
    */
   sync(): Promise<void>;
 }
@@ -193,6 +195,7 @@ export function boot(config: BootConfig): void {
   if (canvas === null) throw new Error('[aegis:render-three] missing <canvas id="stage">');
 
   const mode = config.mode as GameMode;
+  let presentationInputReset = false;
   const host = new PresentationHost({
     canvas,
     mode,
@@ -200,7 +203,14 @@ export function boot(config: BootConfig): void {
     ...(config.presentation === undefined ? {} : { presentation: config.presentation }),
     ...(config.tickRate === undefined ? {} : { tickRate: config.tickRate }),
     onCommand: sendCommand,
-    onGameplayBlocked: (blocked) => collector.setGameplayBlocked(blocked),
+    onGameplayBlocked: (blocked) => {
+      presentationInputReset = true;
+      try {
+        collector.setGameplayBlocked(blocked);
+      } finally {
+        presentationInputReset = false;
+      }
+    },
   });
   const renderer = host.renderer;
   let adapter: RenderAdapter;
@@ -231,10 +241,16 @@ export function boot(config: BootConfig): void {
   let fps = 0;
   let fpsWindowStart = performance.now();
   /** Waiters registered by {@link AegisDebugHandle.sync}, settled by the next exchange. */
-  let syncWaiters: {
+  type SyncWaiter = {
     resolve(): void;
     reject(error: unknown): void;
     needsInput: boolean;
+  };
+  let syncWaiters: SyncWaiter[] = [];
+  let presentationWaiters: {
+    waiter: SyncWaiter;
+    generation: number;
+    tick: number;
   }[] = [];
   let inputEpoch = 0;
   let intentRevision = 0;
@@ -245,6 +261,9 @@ export function boot(config: BootConfig): void {
     const pending = syncWaiters;
     syncWaiters = [];
     for (const waiter of pending) waiter.reject(error);
+    const presented = presentationWaiters;
+    presentationWaiters = [];
+    for (const { waiter } of presented) waiter.reject(error);
   };
 
   /** Mutable accumulator behind {@link AegisDebugHandle.timings}. */
@@ -366,6 +385,17 @@ export function boot(config: BootConfig): void {
           waiter.reject(new Error('[aegis] Input synchronization cancelled by an input reset.'));
         else syncWaiters.push(waiter);
       }
+      if (!presentationInputReset) {
+        const accepted = presentationWaiters;
+        presentationWaiters = [];
+        for (const entry of accepted) {
+          if (entry.waiter.needsInput)
+            entry.waiter.reject(
+              new Error('[aegis] Input synchronization cancelled by an input reset.'),
+            );
+          else presentationWaiters.push(entry);
+        }
+      }
     },
     onCaptureState: (state) => host.captureInput(state),
     onGamepadPointer: gamepadCursor(canvas),
@@ -467,6 +497,7 @@ export function boot(config: BootConfig): void {
     const collectedRevision = intentRevision;
     const claim = claimInput;
     let freshInput = claim;
+    let activeLevels = false;
     claimInput = false;
     let requestSequence: number | undefined;
     let stage: 'request' | 'body' | 'parse' | 'response' = 'request';
@@ -476,6 +507,9 @@ export function boot(config: BootConfig): void {
     try {
       const packet = collector.take();
       requestSequence = packet.seq;
+      activeLevels =
+        (packet.held?.length ?? 0) > 0 ||
+        Object.values(packet.axes ?? {}).some((value) => value !== 0);
       const levels = JSON.stringify({ held: packet.held ?? [], axes: packet.axes ?? {} });
       freshInput ||=
         (packet.look?.dx ?? 0) !== 0 ||
@@ -486,7 +520,7 @@ export function boot(config: BootConfig): void {
             (packet.released?.length ?? 0) > 0 ||
             (previousLevels !== '' && levels !== previousLevels)));
       previousLevels = levels;
-      for (const waiter of settling) waiter.needsInput ||= freshInput;
+      for (const waiter of settling) waiter.needsInput ||= freshInput || activeLevels;
       const { value: response, bytes } = await postJson<FrameResponse>(
         `${config.api}/frame`,
         {
@@ -507,24 +541,20 @@ export function boot(config: BootConfig): void {
       record(exchangeSamples, timings.exchange);
       timings.exchangeBytes = bytes;
       const resetBeforeReply = requestEpoch !== inputEpoch;
+      const acceptedInput =
+        !resetBeforeReply &&
+        requestGeneration === generation &&
+        (response.generation ?? requestGeneration) === requestGeneration &&
+        response.inputStatus?.accepted === true &&
+        response.inputStatus.lastSeq === requestSequence;
       const current = acceptResponse(response, requestGeneration, 'frame');
-      if (
-        freshInput &&
-        (resetBeforeReply ||
-          (current && response.inputStatus?.accepted === true && requestEpoch !== inputEpoch))
-      ) {
+      if ((freshInput || activeLevels) && resetBeforeReply) {
         // A proven lifecycle reset cancels the barrier, not the successful HTTP exchange.
         for (const waiter of settling)
           waiter.reject(new Error('[aegis] Input synchronization cancelled by an input reset.'));
         return;
       }
-      if (
-        freshInput &&
-        (!current ||
-          requestEpoch !== inputEpoch ||
-          response.inputStatus?.accepted !== true ||
-          response.inputStatus.lastSeq !== requestSequence)
-      ) {
+      if ((freshInput || activeLevels) && (!current || !acceptedInput)) {
         throw new Error(
           `[aegis] Input packet ${requestSequence} was not accepted in its input context ` +
             `(${response.inputStatus?.reason ?? 'missing acceptance status'}). ` +
@@ -535,11 +565,13 @@ export function boot(config: BootConfig): void {
         syncWaiters.push(...settling);
         return;
       }
-      if (freshInput) acceptedRevision = Math.max(acceptedRevision, collectedRevision);
+      if (freshInput && requestEpoch === inputEpoch)
+        acceptedRevision = Math.max(acceptedRevision, collectedRevision);
       if (inputFailure !== undefined) host.connection(inputFailure);
       for (const waiter of settling) {
         if (inputFailure !== undefined) waiter.reject(inputFailure);
-        else waiter.resolve();
+        else if (activeLevels) waiter.resolve();
+        else presentationWaiters.push({ waiter, generation, tick: lastTick });
       }
     } catch (error) {
       timings.exchange = performance.now() - started;
@@ -559,9 +591,9 @@ export function boot(config: BootConfig): void {
         longestRenderWhilePendingMs: profile.longestRenderMs,
       };
       host.connection(error);
-      if (freshInput) {
+      if (freshInput || activeLevels) {
         const failure = new Error(
-          `[aegis] Fresh input synchronization failed for packet ${requestSequence}: ` +
+          `[aegis] Input synchronization failed for packet ${requestSequence}: ` +
             `${error instanceof Error ? error.message : String(error)} ` +
             'Delivery may already have occurred; the packet will not be replayed.',
           { cause: error },
@@ -667,6 +699,18 @@ export function boot(config: BootConfig): void {
     record(syncSamples, timings.sync);
     record(renderSamples, timings.render);
     record(hudSamples, timings.hud);
+    const presented = presentationWaiters;
+    presentationWaiters = [];
+    for (const entry of presented) {
+      if (entry.generation === generation && entry.tick <= lastTick) entry.waiter.resolve();
+      else if (entry.generation < generation) {
+        if (entry.waiter.needsInput)
+          entry.waiter.reject(
+            new Error('[aegis] Input synchronization cancelled by a generation reset.'),
+          );
+        else syncWaiters.push(entry.waiter);
+      } else presentationWaiters.push(entry);
+    }
     // Do not arm a new HTTP deadline before synchronous drawing blocks this thread.
     // An older outstanding exchange can still overlap a draw and must retain real error handling.
     startExchange();

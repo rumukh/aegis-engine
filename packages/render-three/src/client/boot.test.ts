@@ -212,6 +212,166 @@ async function start(
   await debug().ready;
 }
 
+function lossProfile(): PresentationManifest {
+  class Node extends HudElement {
+    dataset: Record<string, string> = {};
+    style = { setProperty: vi.fn() };
+    getBoundingClientRect = () => ({});
+    focus(): void {
+      Object.defineProperty(document, 'activeElement', { value: this, configurable: true });
+    }
+  }
+  class Dialog extends Node {
+    open = false;
+    showModal(): void {
+      this.open = true;
+    }
+    close(): void {
+      this.open = false;
+    }
+  }
+  class Button extends Node {}
+  vi.stubGlobal('HTMLDialogElement', Dialog);
+  vi.stubGlobal('HTMLButtonElement', Button);
+  elements.set('loss-ending', new Dialog());
+  elements.set('loss-restart', new Button());
+  elements.set('loss-shade', new Node());
+  elements.set('loss-error', new Node());
+  Object.assign(document, {
+    addEventListener: globalEvents.addEventListener.bind(globalEvents),
+    removeEventListener: globalEvents.removeEventListener.bind(globalEvents),
+    exitPointerLock: () =>
+      Object.defineProperty(document, 'pointerLockElement', { value: null, configurable: true }),
+  });
+  Object.assign(dom.canvas, { focus: vi.fn() });
+  return { ...manifest, ui: { lossEnding: { fadeSeconds: 0 } } };
+}
+
+describe('live receipts across real presentation lifecycle callbacks', () => {
+  it('keeps accepted action delivery valid when that reply opens the loss dialog, without leaking intent into restart', async () => {
+    await start(true, response(0, 0), lossProfile());
+    dom.dispatch('keydown', keyEvent('Space'));
+    dom.dispatch('keyup', keyEvent('Space'));
+    const synced = vi.fn();
+    const rejected = vi.fn();
+    const pending = debug().sync().then(synced, rejected);
+    await display();
+    const request = takeRequest('frame');
+    const packet = JSON.parse(request.body!) as { input: InputPacket };
+    expect(packet.input).toMatchObject({ held: [], pressed: ['Jump'], released: ['Jump'] });
+    await answer(request, {
+      ...response(1, 0, [{ type: 'failed', tick: 0, sequence: 0 }]),
+      inputStatus: {
+        accepted: true,
+        reason: 'accepted',
+        role: 'controlling',
+        lastSeq: packet.input.seq,
+      },
+    });
+    expect(debug().presentation()).toMatchObject({
+      ending: { active: true },
+      input: { capture: { gameplayBlocked: true } },
+    });
+    expect(rejected).not.toHaveBeenCalled();
+    expect(synced).not.toHaveBeenCalled();
+    await display();
+    await pending;
+    expect(synced).toHaveBeenCalledOnce();
+    expect(debug().timings().exchangeErrors).toBe(0);
+    await answer(takeRequest('frame'), response(1, 0));
+    dom.dispatch('keyup', keyEvent('Space'));
+    dom.dispatch('keydown', keyEvent('KeyR'));
+    await answer(takeRequest('control'), response(0, 1));
+    await display();
+    await answer(takeRequest('frame'), response(0, 1));
+    await display();
+    await answer(takeRequest('frame'), response(0, 1));
+    expect(debug().presentation()).toMatchObject({ ending: { active: false } });
+    dom.dispatch('keydown', keyEvent('Space'));
+    const nextRejected = vi.fn();
+    const next = debug().sync().then(vi.fn(), nextRejected);
+    dom.dispatch('blur', {});
+    await next;
+    expect(nextRejected).toHaveBeenCalledOnce();
+  });
+
+  it.each(['cold-dead', 'shared-dead'] as const)(
+    'does not resolve a %s restart observer before the real deferred ending reset is presented',
+    async (initial) => {
+      const profile = lossProfile();
+      const oldGeneration = initial === 'cold-dead' ? 4 : 0;
+      if (initial === 'cold-dead') {
+        await start(
+          true,
+          response(5, oldGeneration, [], true, [{ type: 'failed', tick: 3, sequence: 0 }]),
+          profile,
+        );
+        await display();
+        await answer(takeRequest('frame'), response(5, oldGeneration, [], true));
+      } else {
+        await start(true, response(0, oldGeneration, [], true), profile);
+        await display();
+        await answer(
+          takeRequest('frame'),
+          response(1, oldGeneration, [{ type: 'failed', tick: 0, sequence: 0 }], true),
+        );
+      }
+      expect(debug().presentation()).toMatchObject({
+        ending: { active: true },
+        input: { capture: { gameplayBlocked: true } },
+      });
+      dom.dispatch('keydown', keyEvent('KeyR'));
+      await answer(takeRequest('control'), response(0, oldGeneration + 1, [], true));
+      const synced = vi.fn();
+      const rejected = vi.fn();
+      const pending = debug().sync().then(synced, rejected);
+      await display();
+      await answer(takeRequest('frame'), response(0, oldGeneration + 1, [], true));
+      expect(debug().tick()).toBe(0);
+      expect(debug().presentation()).toMatchObject({ ending: { active: true } });
+      expect(synced).not.toHaveBeenCalled();
+      await display();
+      await pending;
+      expect(rejected).not.toHaveBeenCalled();
+      expect(synced).toHaveBeenCalledOnce();
+      expect(debug().presentation()).toMatchObject({
+        ending: { active: false },
+        input: { capture: { gameplayBlocked: false } },
+      });
+      expect(debug().timings().exchangeErrors).toBe(0);
+    },
+  );
+
+  it('rejects an accepted action superseded by restart before presentation instead of confirming it in a new generation', async () => {
+    await start();
+    dom.dispatch('keydown', keyEvent('Space'));
+    dom.dispatch('keyup', keyEvent('Space'));
+    const synced = vi.fn();
+    const rejected = vi.fn();
+    const pending = debug().sync().then(synced, rejected);
+    await display();
+    const request = takeRequest('frame');
+    const { input } = JSON.parse(request.body!) as { input: InputPacket };
+    expect(input).toMatchObject({ held: [], pressed: ['Jump'], released: ['Jump'] });
+    await answer(request, {
+      ...response(0, 0),
+      inputStatus: { accepted: true, role: 'controlling', reason: 'accepted', lastSeq: input.seq },
+    });
+    expect(synced).not.toHaveBeenCalled();
+    dom.dispatch('keydown', keyEvent('KeyR'));
+    await answer(takeRequest('control'), response(0, 1));
+    await pending;
+    expect(rejected).toHaveBeenCalledOnce();
+    expect(synced).not.toHaveBeenCalled();
+    await display();
+    await answer(takeRequest('frame'), response(0, 1));
+    await display();
+    expect(synced).not.toHaveBeenCalled();
+    expect(debug().tick()).toBe(0);
+    expect(debug().timings().exchangeErrors).toBe(0);
+  });
+});
+
 describe('dev-client controller polling', () => {
   it.each([
     { presentation: false, paused: true },
@@ -590,6 +750,8 @@ describe('dev-client synchronization', () => {
     expect(synced).not.toHaveBeenCalled();
     await display();
     await answer(takeRequest('frame'), response(1, 1, [{ type: 'opened', tick: 0, sequence: 0 }]));
+    expect(synced).not.toHaveBeenCalled();
+    await display();
     expect(synced).toHaveBeenCalledTimes(1);
     expect(elements.get('hud-progress')?.textContent).toBe('1 / 1 complete');
   });

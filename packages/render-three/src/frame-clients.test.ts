@@ -29,6 +29,93 @@ function rig() {
 }
 
 describe('per-page live input ownership', () => {
+  it('acknowledges a retained source release after expiry without reclaiming control or losing pending impulses', () => {
+    const { input, submit } = rig();
+    submit('driver', 1, true, {
+      held: ['Use'],
+      pressed: ['Use'],
+      axes: { Forward: 1 },
+      look: { dx: 90.02, dy: 0 },
+    });
+    expect(
+      submit(
+        'driver',
+        2,
+        false,
+        {
+          held: [],
+          pressed: [],
+          released: ['Use'],
+          axes: {},
+          look: { dx: 0, dy: 0 },
+          pointer: null,
+        },
+        0,
+        3,
+      ),
+    ).toEqual({ role: 'observing', accepted: true, reason: 'accepted', lastSeq: 2 });
+    expect(submit('driver', 3, false, { axes: { Forward: 0 } }, 0, 3.1).accepted).toBe(true);
+    expect(submit('driver', 4, false, { axes: { Forward: 1 } }, 0, 3.2)).toMatchObject({
+      role: 'observing',
+      accepted: false,
+      reason: 'observing',
+    });
+    expect(input.frameFor(0)).toMatchObject({
+      actions: { Use: true },
+      pressed: ['Use'],
+      released: ['Use'],
+      axes: {},
+      look: { dx: 90.02, dy: 0 },
+    });
+    expect(input.frameFor(1)).toMatchObject({
+      actions: {},
+      pressed: [],
+      released: [],
+      axes: {},
+      look: { dx: 0, dy: 0 },
+    });
+  });
+
+  it.each([
+    { held: ['Use'] },
+    { pressed: ['Use'] },
+    { axes: { Forward: 1 } },
+    { axes: { Forward: -1 } },
+    { axes: { Forward: NaN } },
+    { look: { dx: 1, dy: 0 } },
+    { look: { dx: 0, dy: -1 } },
+    { look: { dx: NaN, dy: 0 } },
+    { pointer: { screen: { x: 1, y: 2 }, world: null, buttons: [] } },
+  ] satisfies Partial<InputPacket>[])(
+    'does not admit an active channel through the expired release-only path: %j',
+    (extra) => {
+      const { input, submit } = rig();
+      submit('driver', 1, true, { look: { dx: 90.02, dy: 0 } });
+      expect(submit('driver', 2, false, { released: ['Use'], ...extra }, 0, 3)).toMatchObject({
+        role: 'observing',
+        accepted: false,
+        reason: 'observing',
+      });
+      expect(input.frameFor(0)).toMatchObject({
+        axes: {},
+        released: [],
+        look: { dx: 90.02, dy: 0 },
+      });
+    },
+  );
+
+  it('requires the retained source, current generation and new sequence for release acknowledgement', () => {
+    const { input, submit } = rig();
+    submit('driver', 3, true, { look: { dx: 90.02, dy: 0 } });
+    expect(submit('other', 1, false, { released: ['Use'] }, 0, 3).reason).toBe('observing');
+    expect(submit('driver', 3, false, { released: ['Use'] }, 0, 3).reason).toBe('stale');
+    expect(submit('driver', 4, false, { released: ['Use'] }, 1, 3).reason).toBe('generation');
+    expect(input.frameFor(0)).toMatchObject({ released: [], look: { dx: 90.02, dy: 0 } });
+    submit('new-owner', 1, true, { axes: { Strafe: 1 } }, 0, 3);
+    expect(submit('driver', 5, false, { released: ['Use'] }, 0, 3).reason).toBe('observing');
+    expect(input.frameFor(1)).toMatchObject({ axes: { Strafe: 1 }, released: [] });
+  });
+
   it('expires held levels at two seconds but keeps accepted turns, taps and clicks for one tick', () => {
     const { input, submit } = rig();
     const pointer = { screen: { x: 10, y: 20 }, world: { x: 3, y: 0, z: 4 }, buttons: ['primary'] };

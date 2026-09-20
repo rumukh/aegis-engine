@@ -129,6 +129,10 @@ async function display(): Promise<void> {
   next[1](now);
   await settle();
 }
+async function presentAndPoll(): Promise<void> {
+  await display();
+  await acknowledge();
+}
 async function start(
   profile: PresentationManifest | null = { aegis: 'presentation/1' },
 ): Promise<void> {
@@ -234,7 +238,88 @@ afterEach(() => {
   dom.restore();
 });
 
+describe('held input barriers', () => {
+  it('settles an unchanged held-input receipt before rendering can expire the next step batch', async () => {
+    await start();
+    turnAndWalk();
+    await display();
+    await acknowledge();
+    session.step();
+    const synced = barrier();
+    await display();
+    const held = takeRequest();
+    expect(held.body.client?.claim).toBe(false);
+    expect(held.body.input).toMatchObject({ axes: { Forward: 1 }, look: { dx: 0, dy: 0 } });
+    expect((await acknowledge(held)).inputStatus?.accepted).toBe(true);
+    expect(synced.resolved).toHaveBeenCalledOnce();
+    expect(synced.rejected).not.toHaveBeenCalled();
+    expect(session.input.frameFor(2482)).toMatchObject({
+      axes: { Forward: 1 },
+      look: { dx: 0, dy: 0 },
+    });
+    expect(yaw()).toBe(TURN);
+    expect(debug().timings().exchangeErrors).toBe(0);
+  });
+
+  it('rejects an expired nonzero held resend rather than treating it as a passive observer barrier', async () => {
+    await start();
+    turnAndWalk();
+    await display();
+    await acknowledge();
+    session.step();
+    elapse(STALL_MS);
+    const synced = barrier();
+    await display();
+    const held = takeRequest();
+    expect(held.body.client?.claim).toBe(false);
+    expect(held.body.input.axes).toEqual({ Forward: 1 });
+    expect((await acknowledge(held)).inputStatus).toMatchObject({
+      accepted: false,
+      role: 'observing',
+    });
+    expect(synced.rejected).toHaveBeenCalledOnce();
+    expect(synced.resolved).not.toHaveBeenCalled();
+    expect(session.input.frameFor(2482).axes).toEqual({});
+    expect(debug().timings().exchangeErrors).toBe(1);
+  });
+});
+
 describe('accepted live input delivery', () => {
+  it('synchronizes real W-up after expiry without a claim, ownership renewal or a fresh-input error', async () => {
+    await start();
+    turnAndWalk();
+    await display();
+    await acknowledge();
+    session.step();
+    elapse(STALL_MS);
+    dom.dispatch('keyup', keyEvent('KeyW'));
+    const synced = barrier();
+    await display();
+    const release = takeRequest();
+    expect(release.body.client?.claim).toBe(false);
+    expect(release.body.input).toMatchObject({
+      held: [],
+      axes: {},
+      pressed: [],
+      released: [],
+      look: { dx: 0, dy: 0 },
+      pointer: null,
+    });
+    expect((await acknowledge(release)).inputStatus).toMatchObject({
+      accepted: true,
+      role: 'observing',
+      reason: 'accepted',
+    });
+    expect(synced.resolved).not.toHaveBeenCalled();
+    await display();
+    await synced.done;
+    expect(synced.resolved).toHaveBeenCalledOnce();
+    expect(synced.rejected).not.toHaveBeenCalled();
+    expect(session.input.frameFor(1)).toMatchObject({ axes: {}, look: { dx: 0, dy: 0 } });
+    expect(yaw()).toBe(TURN);
+    expect(debug().timings().exchangeErrors).toBe(0);
+  });
+
   it('rejects fresh cold-bootstrap input and does not carry it into the discovered generation', async () => {
     boot({ gameId: 'proof', mode: 'fps', title: '', objective: '', api: '/api/proof' });
     turnAndWalk();
@@ -248,6 +333,7 @@ describe('accepted live input delivery', () => {
     const observer = barrier();
     await display();
     await acknowledge();
+    await presentAndPoll();
     await observer.done;
     expect(observer.resolved).toHaveBeenCalledOnce();
     expect(session.input.frameFor(0)).toMatchObject({ axes: {}, look: { dx: 0, dy: 0 } });
@@ -258,6 +344,7 @@ describe('accepted live input delivery', () => {
     const observed = barrier();
     await display();
     expect((await acknowledge()).inputStatus?.reason).toBe('observing');
+    await presentAndPoll();
     await observed.done;
     expect(observed.resolved).toHaveBeenCalledOnce();
     turnAndWalk();
@@ -266,6 +353,7 @@ describe('accepted live input delivery', () => {
     const request = takeRequest();
     expect(request.body.input).toMatchObject({ axes: { Forward: 1 }, look: { dx: TURN, dy: 0 } });
     expect((await acknowledge(request)).inputStatus?.accepted).toBe(true);
+    await presentAndPoll();
     await synced.done;
     expect(synced.resolved).toHaveBeenCalledOnce();
     session.step();
@@ -290,6 +378,7 @@ describe('accepted live input delivery', () => {
       expect(second.body.client?.claim).toBe(true);
       expect(second.body.input).toMatchObject({ axes: { Forward: 1 }, look: { dx: 0, dy: 0 } });
       expect((await acknowledge(second)).inputStatus?.accepted).toBe(true);
+      await presentAndPoll();
       await synced.done;
       expect(synced.resolved).toHaveBeenCalledOnce();
       expect(session.input.frameFor(2481)).toMatchObject({
@@ -307,6 +396,7 @@ describe('accepted live input delivery', () => {
     const synced = barrier();
     await display();
     await acknowledge();
+    await presentAndPoll();
     await synced.done;
     expect(synced.resolved).toHaveBeenCalledOnce();
     elapse(STALL_MS);
@@ -427,6 +517,7 @@ describe('accepted live input delivery', () => {
     const current = barrier();
     await display();
     await acknowledge();
+    await presentAndPoll();
     await current.done;
     expect(current.resolved).toHaveBeenCalledOnce();
     expect(session.input.frameFor(0).look.dx).toBe(0);
@@ -464,7 +555,11 @@ describe('accepted live input delivery', () => {
       const next = takeRequest();
       expect(next.body.input.look?.dx).toBe(0);
       expect(next.body.client?.claim).toBe(false);
-      await acknowledge(next);
+      expect((await acknowledge(next)).inputStatus).toMatchObject({
+        accepted: false,
+        reason: 'observing',
+      });
+      expect(debug().timings().exchangeErrors).toBe(2); // Body abort, then rejected held resend.
       session.step();
       expect(yaw()).toBe(accepted ? TURN : 0);
       session.step();
@@ -477,9 +572,10 @@ describe('accepted live input delivery', () => {
       const observer = barrier();
       await display();
       await acknowledge();
+      await presentAndPoll();
       await observer.done;
       expect(observer.resolved).toHaveBeenCalledOnce();
-      expect(debug().timings().exchangeErrors).toBe(1);
+      expect(debug().timings().exchangeErrors).toBe(2);
     },
   );
 
@@ -496,10 +592,13 @@ describe('accepted live input delivery', () => {
     elapse(STALL_MS);
     await settle();
     await display();
-    await acknowledge();
+    expect((await acknowledge()).inputStatus).toMatchObject({
+      accepted: false,
+      reason: 'observing',
+    });
     session.step();
     expect(yaw()).toBe(TURN);
-    expect(debug().timings().exchangeErrors).toBe(1);
+    expect(debug().timings().exchangeErrors).toBe(2);
   });
 
   it('lets a passive observer barrier wait for recovery from a real failed neutral exchange', async () => {
@@ -512,6 +611,7 @@ describe('accepted live input delivery', () => {
     expect(synced.rejected).not.toHaveBeenCalled();
     await display();
     expect((await acknowledge()).inputStatus?.reason).toBe('observing');
+    await presentAndPoll();
     await synced.done;
     expect(synced.resolved).toHaveBeenCalledOnce();
     expect(debug().timings().exchangeErrors).toBe(1);
@@ -527,6 +627,7 @@ describe('accepted live input delivery', () => {
     const passive = barrier();
     await display();
     await acknowledge();
+    await presentAndPoll();
     await passive.done;
     expect(passive.resolved).toHaveBeenCalledOnce();
   });
@@ -552,6 +653,23 @@ describe('accepted live input delivery', () => {
     expect(session.input.frameFor(0)).toMatchObject({ axes: {}, look: { dx: 0, dy: 0 } });
   });
 
+  it('still cancels accepted impulse-only input on external blur while its presentation barrier is pending', async () => {
+    await start();
+    dom.dispatch('mousemove', { movementX: -643, movementY: 0 });
+    const synced = barrier();
+    await display();
+    expect((await acknowledge()).inputStatus?.accepted).toBe(true);
+    expect(synced.resolved).not.toHaveBeenCalled();
+    dom.dispatch('blur', {});
+    await synced.done;
+    expect(synced.rejected).toHaveBeenCalledOnce();
+    expect(synced.resolved).not.toHaveBeenCalled();
+    expect(debug().timings().exchangeErrors).toBe(0);
+    await display();
+    await acknowledge();
+    expect(session.input.frameFor(0).look.dx).toBe(0);
+  });
+
   it('still counts a real failed request across a known lifecycle reset', async () => {
     await start();
     turnAndWalk();
@@ -570,6 +688,7 @@ describe('accepted live input delivery', () => {
     const observer = barrier();
     await display();
     await acknowledge();
+    await presentAndPoll();
     await observer.done;
     expect(observer.resolved).toHaveBeenCalledOnce();
   });

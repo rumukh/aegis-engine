@@ -60,13 +60,36 @@ movement. A reset/focus-loss packet from that source still clears pending input 
 expires. A different source taking control, a generation restart, and existing pause/context
 resets also cancel pending input. Unrelated observers cannot cancel it.
 
+An expired retained source may finish an all-neutral/release-only packet without reclaiming
+control or renewing the lease. The host acknowledges and applies its release edges while
+leaving queued turns/taps intact. This requires the current generation, a new sequence, no
+claim, no held/pressed actions, no nonzero axes/look, no pointer sample and no reset. Feedback
+is then `accepted: true` with `role: "observing"`; acceptance does not imply ownership.
+Another viewer, a previous source after handoff, or a packet with active input cannot use this
+path. In particular, key-up never implicitly claims control and held resends remain rejected.
+
 Reconnection after expiry requires fresh intent, not replayed held state. These clocks
 belong to the browser/server transport, never authoritative simulation systems.
 
 ## Synchronization and failed delivery
 
-`aegis.sync()` waits for an exchange collected after the call. With fresh gameplay input it
-requires an accepted response for that packet in the same input context. Definite rejection,
+`aegis.sync()` waits for an exchange collected after the call. Nonzero held actions/axes require
+an accepted input receipt even if unchanged since the previous packet; a rejected held resend
+is not a passive observer. That receipt settles immediately, without waiting for a draw that
+could expire its movement lease before the caller steps. It never renews control implicitly.
+
+Without active held levels, the accepted generation and snapshot also pass through the
+existing `adapter.sync` / `host.present` boundary. A mirror update alone does not settle a
+neutral observer/restart barrier: deferred end-screen resets must be applied first. No extra
+simulation step or private UI reset is introduced.
+
+With fresh gameplay input it requires an accepted response for that packet in the same input
+context. The input receipt is checked before the response invokes presentation callbacks:
+showing a terminal outcome from that very response cannot retroactively cancel its accepted
+input. This does not protect input from an external blur/reset before delivery or before its
+presentation barrier, or from a superseding restart generation. Receipt-driven resets clear
+future input intent without importing the old receipt's intent counters into the new context.
+Definite rejection,
 missing acceptance feedback, context cancellation or an ambiguous transport failure rejects
 the barrier instead of claiming success on a later neutral poll. Delivery failure remains
 visible and subsequent barriers reject until an explicit input-context reset (such as focus

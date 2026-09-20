@@ -37,6 +37,27 @@ export function validFrameClient(value: unknown): value is FrameClient {
   );
 }
 
+function releaseOnly(packet: InputPacket): boolean {
+  const empty = (values: readonly string[] | undefined): boolean =>
+    values === undefined || (Array.isArray(values) && values.length === 0);
+  return (
+    (packet.reset === undefined || packet.reset === false) &&
+    empty(packet.held) &&
+    empty(packet.pressed) &&
+    (packet.released === undefined ||
+      (Array.isArray(packet.released) &&
+        packet.released.every((value) => typeof value === 'string'))) &&
+    (packet.axes === undefined ||
+      (packet.axes !== null &&
+        typeof packet.axes === 'object' &&
+        !Array.isArray(packet.axes) &&
+        Object.values(packet.axes).every((value) => value === 0))) &&
+    (packet.look === undefined ||
+      (packet.look !== null && packet.look.dx === 0 && packet.look.dy === 0)) &&
+    (packet.pointer === undefined || packet.pointer === null)
+  );
+}
+
 /** Host-only stream arbitration. Page sequence numbers and ownership never enter world state. */
 export class FrameClients {
   readonly #clients = new Map<string, FrameClientState>();
@@ -93,7 +114,24 @@ export class FrameClients {
       this.#owner = metadata.id;
       this.#inputOwner = metadata.id;
     }
-    if (this.#owner !== metadata.id) return result(false, 'observing');
+    if (this.#owner !== metadata.id) {
+      if (
+        this.#owner === undefined &&
+        this.#inputOwner === metadata.id &&
+        !metadata.claim &&
+        releaseOnly(packet)
+      ) {
+        // A release can finish after its lease without restoring levels or acquiring control.
+        input.submit({
+          seq: input.lastSeq + 1,
+          held: [],
+          axes: {},
+          ...(packet.released === undefined ? {} : { released: packet.released }),
+        });
+        return result(true, 'accepted');
+      }
+      return result(false, 'observing');
+    }
     this.#ownerSeen = now;
     // Each stream is ordered independently; the existing LiveInput receives one host-owned stream.
     input.submit({ ...packet, seq: input.lastSeq + 1 });
