@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { createReadStream, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  createReadStream,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { cpus, tmpdir, totalmem } from 'node:os';
@@ -27,6 +34,8 @@ import {
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
 import type { PresentationManifest } from '../packages/render-three/src/presentation/schema.js';
+import type { AudioState } from '../packages/render-three/src/client/audio.js';
+import type { WinEndingState } from '../packages/render-three/src/client/win-ending.js';
 
 const artifacts = process.env['AEGIS_ENDING_ARTIFACTS'];
 const traceDirectory = process.env['AEGIS_ENDING_TRACE'];
@@ -62,6 +71,82 @@ const manifest: PresentationManifest = {
 };
 let directory: string, dev: DevServer, files: Server, staticUrl: string;
 let browser: LaunchedBrowser | undefined;
+
+// The public ending clock is explicit; real WebAudio need not depend on CI rendering within 250ms.
+function speechBoundaryModule(assetFiles: readonly string[]): string {
+  return `
+    import {loadPresentationAssets} from '../../vendor/@aegis/render-three/dist/presentation/assets.js';
+    import {EndingScene} from '../../vendor/@aegis/render-three/dist/presentation/ending-scene.js';
+    import {createWinEnding} from '../../vendor/@aegis/render-three/dist/client/win-ending.js';
+    import {createAudio} from '../../vendor/@aegis/render-three/dist/client/audio.js';
+    const result=window.__speechBoundary={status:'loading',cases:[]};
+    const manifest=${JSON.stringify(manifest)};
+    let assets,ending,audio;
+    try {
+      assets=await loadPresentationAssets({
+        manifest,baseUrl:'../../assets/ending/',files:${JSON.stringify(assetFiles)}
+      });
+      const starts=[],cues=[];
+      const start=AudioBufferSourceNode.prototype.start;
+      AudioBufferSourceNode.prototype.start=function(...args){
+        const value=start.apply(this,args);
+        starts.push({duration:this.buffer.duration,contextState:this.context.state});
+        return value;
+      };
+      let generation=0;
+      audio=createAudio({spec:manifest.audio,readBuffer:id=>assets.audio(id)});
+      ending=createWinEnding({
+        spec:manifest.ui.winEnding,view:new EndingScene(assets,manifest.ui.winEnding),
+        canvas:document.querySelector('canvas'),onGameplayBlocked:()=>{},
+        onRestart:()=>{},onMute:()=>{},
+        onCue:event=>{
+          cues.push(event);
+          const tick=Math.round(ending.state().seconds*60);
+          audio.consume([{type:event,tick}],generation,tick);
+        }
+      });
+      const button=document.createElement('button');
+      button.id='speech-start';button.textContent='Check separation speech';
+      button.style.cssText='position:fixed;top:0;left:0;z-index:10000';
+      document.body.append(button);
+      button.addEventListener('click',event=>{
+        result.trusted=event.isTrusted;
+        void (async()=>{
+          try {
+            await audio.unlock();
+            result.ready=audio.state();
+            for(const [beforeMs,afterMs] of [
+              [3999,4000],[3999,4250],[3999,4251],[3688.6,4355.6],[3906.1,4377.4]
+            ]){
+              ending.outcome(undefined);audio.reset(++generation);
+              const sourceOffset=starts.length,cueOffset=cues.length;
+              ending.outcome('win');ending.advance(0,false);ending.advance(beforeMs,false);
+              const before=ending.state();
+              const sourcesBeforeCrossing=starts.length-sourceOffset;
+              ending.advance(afterMs,false);
+              const crossing=ending.state();
+              ending.advance(6000,false);ending.advance(18000,false);
+              result.cases.push({
+                beforeMs,afterMs,before,crossing,sourcesBeforeCrossing,
+                starts:starts.slice(sourceOffset),cues:cues.slice(cueOffset),
+                audio:audio.state(),final:ending.state()
+              });
+            }
+            result.status='done';
+          } catch(error) {
+            result.status='error';result.error=String(error.stack??error);
+          } finally {
+            ending.dispose();audio.dispose();assets.dispose();
+          }
+        })();
+      },{once:true});
+      result.status='ready';
+    } catch(error) {
+      result.status='error';result.error=String(error.stack??error);
+      ending?.dispose();audio?.dispose();assets?.dispose();
+    }
+  `;
+}
 
 beforeAll(async () => {
   directory = mkdtempSync(join(tmpdir(), 'aegis-win-ending-'));
@@ -110,6 +195,23 @@ beforeAll(async () => {
   const table = new Map(
     site.files.map((file) => [`/${file.replaceAll('\\', '/')}`, join(site.outDir, file)]),
   );
+  const boundaryFile = join(site.outDir, 'play', 'ending', 'speech.html');
+  const html = readFileSync(join(site.outDir, 'play', 'ending', 'index.html'), 'utf8');
+  const boot = '<script type="module" src="./boot.js"></script>';
+  assert.equal(html.split(boot).length, 2);
+  writeFileSync(
+    boundaryFile,
+    html.replace(
+      boot,
+      `<script type="module">${speechBoundaryModule(
+        site.files
+          .map((file) => file.replaceAll('\\', '/'))
+          .filter((file) => file.startsWith('assets/ending/'))
+          .map((file) => file.slice('assets/ending/'.length)),
+      )}</script>`,
+    ),
+  );
+  table.set('/play/ending/speech.html', boundaryFile);
   const mime: Record<string, string> = {
     '.html': 'text/html',
     '.js': 'text/javascript',
@@ -178,8 +280,28 @@ function failureDetails(error: unknown): object {
     : { value: String(error) };
 }
 interface ProbeDocument {
-  boundary: 'before-reload' | 'before-cleanup';
+  boundary: 'speech-boundary' | 'before-reload' | 'before-cleanup';
   trace: unknown;
+}
+interface SpeechBoundaryResult {
+  status: string;
+  trusted: boolean;
+  ready: AudioState;
+  cases: {
+    beforeMs: number;
+    afterMs: number;
+    before: WinEndingState;
+    crossing: WinEndingState;
+    sourcesBeforeCrossing: number;
+    starts: { duration: number; contextState: string }[];
+    cues: string[];
+    audio: AudioState;
+    final: WinEndingState;
+  }[];
+}
+interface CueCrossing {
+  before: { ending: WinEndingState; audio: AudioState };
+  after: { ending: WinEndingState; audio: AudioState };
 }
 async function captureProbeDocument(
   documents: ProbeDocument[],
@@ -195,7 +317,7 @@ function readProbe(page: CdpSession): Promise<unknown> {
     `window.__endingProbe?{
       ...JSON.parse(JSON.stringify(window.__endingProbe)),
       final:window.__endingProbe.snapshot(),sourceDurations:window.__voices
-    }:{installed:false,url:location.href,presentation:globalThis.aegis?.presentation()}`,
+    }:window.__speechBoundary??{installed:false,url:location.href,presentation:globalThis.aegis?.presentation()}`,
   );
 }
 describe('authored win cutscene in live and static clients', () => {
@@ -221,6 +343,40 @@ describe('authored win cutscene in live and static clients', () => {
       let pageDiagnostics: readonly string[] = [];
       let pageWarnings: readonly string[] = [];
       try {
+        await navigateAndWait(page, () =>
+          page.send('Page.navigate', { url: `${staticUrl}/play/ending/speech.html` }),
+        );
+        await until(
+          page,
+          'window.__speechBoundary?.status',
+          (status) => status === 'ready' || status === 'error',
+        );
+        expect(await evaluate(page, 'window.__speechBoundary.status')).toBe('ready');
+        await button(page, 'speech-start');
+        await until(
+          page,
+          'window.__speechBoundary.status',
+          (status) => status === 'done' || status === 'error',
+        );
+        const boundary = await evaluate<SpeechBoundaryResult>(page, 'window.__speechBoundary');
+        documents.push({ boundary: 'speech-boundary', trace: boundary });
+        expect(boundary.status).toBe('done');
+        expect(boundary.trusted).toBe(true);
+        expect(boundary.ready).toMatchObject({ status: 'ready', muted: false, dropped: 0 });
+        expect(boundary.cases.map((sample) => sample.afterMs)).toEqual([
+          4000, 4250, 4251, 4355.6, 4377.4,
+        ]);
+        for (const [index, sample] of boundary.cases.entries()) {
+          expect(sample.before.seconds).toBeLessThan(4);
+          expect(sample.crossing.seconds).toBeCloseTo(sample.afterMs / 1000, 10);
+          expect(sample.sourcesBeforeCrossing).toBe(0);
+          expect(sample.audio).toMatchObject({ status: 'ready', muted: false, dropped: 0 });
+          expect(sample.final.phase).toBe('shown');
+          expect(sample.cues).toEqual(index < 2 ? ['presentation.evacuation.separated'] : []);
+          expect(sample.starts).toEqual(
+            index < 2 ? [{ duration: expect.closeTo(4.138, 1), contextState: 'running' }] : [],
+          );
+        }
         await navigateAndWait(page, () =>
           page.send('Page.navigate', {
             url: `${transport === 'live' ? dev.url : staticUrl}/play/ending/`,
@@ -397,9 +553,24 @@ describe('authored win cutscene in live and static clients', () => {
           (seconds: number) => seconds >= 6,
         );
         if (artifacts) await screenshot(page, join(artifacts, `${transport}-02-separation.png`));
-        expect(await evaluate<number[]>(page, 'window.__voices')).toEqual([
-          expect.closeTo(4.138, 1),
-        ]);
+        const crossing = await evaluate<CueCrossing>(
+          page,
+          'window.__endingProbe.crossings.find(c=>c.generation===aegis.presentation().generation)',
+        );
+        expect(crossing.before.ending.seconds).toBeLessThan(4);
+        expect(crossing.after.ending.seconds).toBeGreaterThanOrEqual(4);
+        for (const sample of [crossing.before, crossing.after]) {
+          expect(sample.ending.paused).toBe(false);
+          expect(sample.audio).toMatchObject({ status: 'ready', muted: false, dropped: 0 });
+        }
+        const timely = crossing.after.ending.seconds <= 4.25;
+        const nativeStarts = timely ? 1 : 0;
+        const voices = await evaluate<number[]>(page, 'window.__voices');
+        if (timely)
+          expect(voices, 'a timely native-clock separation must start exactly once').toEqual([
+            expect.closeTo(4.138, 1),
+          ]);
+        else expect(voices, 'a late native-clock separation must be discarded').toEqual([]);
         await until(
           page,
           'aegis.presentation().winEnding.seconds',
@@ -433,14 +604,14 @@ describe('authored win cutscene in live and static clients', () => {
           'aegis.presentation().winEnding.seconds',
           (seconds: number) => seconds >= 5,
         );
-        expect(await evaluate(page, 'window.__voices.length')).toBe(1);
+        expect(await evaluate(page, 'window.__voices.length')).toBe(nativeStarts);
         await button(page, 'win-mute');
         await frames(page);
-        expect(await evaluate(page, 'window.__voices.length')).toBe(1);
+        expect(await evaluate(page, 'window.__voices.length')).toBe(nativeStarts);
         await button(page, 'win-skip');
         await frames(page);
         expect(await evaluate(page, 'aegis.presentation().winEnding.phase')).toBe('shown');
-        expect(await evaluate(page, 'window.__voices.length')).toBe(1);
+        expect(await evaluate(page, 'window.__voices.length')).toBe(nativeStarts);
         await button(page, 'win-restart');
         await until(page, 'aegis.presentation().winEnding.phase', (phase) => phase === 'hidden');
         await page.send('Emulation.setEmulatedMedia', {
@@ -453,7 +624,7 @@ describe('authored win cutscene in live and static clients', () => {
           reducedMotion: true,
           seconds: 0,
         });
-        expect(await evaluate(page, 'window.__voices.length')).toBe(1);
+        expect(await evaluate(page, 'window.__voices.length')).toBe(nativeStarts);
         if (transport === 'live') {
           await page.send('Emulation.setEmulatedMedia', {
             features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],

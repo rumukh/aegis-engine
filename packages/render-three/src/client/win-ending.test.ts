@@ -184,6 +184,31 @@ describe('win cutscene playback lifecycle', () => {
     ending.advance(123000, false);
     expect(cue).toHaveBeenCalledOnce();
   });
+  it.each([
+    { name: 'exactly four seconds', before: 3999, after: 4000, calls: 1 },
+    { name: 'inclusive 250ms grace', before: 3999, after: 4250, calls: 1 },
+    { name: '251ms is too late', before: 3999, after: 4251, calls: 0 },
+    { name: 'Ubuntu live crossing', before: 3688.6, after: 4355.6, calls: 0 },
+    { name: 'Ubuntu static crossing', before: 3906.1, after: 4377.4, calls: 0 },
+  ])('consumes the cue once without replaying missed speech: $name', ({ before, after, calls }) => {
+    const { ending, cue, nodes } = setup();
+    ending.outcome('win');
+    ending.advance(0, false);
+    ending.advance(before, false);
+    expect(cue).not.toHaveBeenCalled();
+    ending.advance(after, false);
+    expect(cue).toHaveBeenCalledTimes(calls);
+    expect(nodes['win-caption']!.textContent).toBe('Separated');
+    ending.advance(6000, false);
+    ending.advance(10000, false);
+    expect(cue).toHaveBeenCalledTimes(calls);
+    expect(ending.state().phase).toBe('shown');
+    ending.outcome(undefined);
+    ending.outcome('win');
+    ending.advance(0, false);
+    ending.advance(4000, false);
+    expect(cue).toHaveBeenCalledTimes(calls + 1);
+  });
   it('skip, reduced motion and large display gaps never burst missed cues', () => {
     const { ending, nodes, cue } = setup();
     ending.outcome('win');

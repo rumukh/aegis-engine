@@ -436,9 +436,11 @@ describe('NULL MERIDIAN real browser mission', () => {
       });
       let failed = false;
       try {
-        await page.send('Page.navigate', {
-          url: `${transport === 'live' ? dev.url : staticUrl}/play/horror/`,
-        });
+        await navigateAndWait(page, () =>
+          page.send('Page.navigate', {
+            url: `${transport === 'live' ? dev.url : staticUrl}/play/horror/`,
+          }),
+        );
         await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'ready');
         await control(page, transport, 'pause');
         await control(page, transport, 'restart');

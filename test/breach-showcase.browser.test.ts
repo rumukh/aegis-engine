@@ -39,6 +39,7 @@ import {
   waitForPaint,
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
+import { navigateAndWait } from '../packages/render-three/src/browser-navigation.js';
 import type { EventLine } from '../packages/render-three/src/protocol.js';
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
 
@@ -318,7 +319,11 @@ async function button(cdp: CdpSession, id: string): Promise<void> {
     return {x:r.x+r.width/2, y:r.y+r.height/2};
   })()`,
   );
-  await click(cdp, center.x, center.y);
+  if (id === 'action-retry') {
+    await navigateAndWait(cdp, () => click(cdp, center.x, center.y));
+  } else {
+    await click(cdp, center.x, center.y);
+  }
   await evaluate(cdp, FRAME);
 }
 
@@ -327,7 +332,7 @@ async function open(transport: Transport): Promise<CdpSession> {
   const url = transport === 'dev' ? `${dev.url}/play/fps/` : `${staticUrl}play/fps/`;
   const cdp = await openPage(browser.port, 'about:blank', VIEWPORT);
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: AUDIO_OBSERVER });
-  await cdp.send('Page.navigate', { url });
+  await navigateAndWait(cdp, () => cdp.send('Page.navigate', { url }));
   await until(cdp, READY, (value) => value === true);
   await evaluate(
     cdp,
@@ -632,7 +637,7 @@ describe('Sector Breach complete browser showcase', () => {
       const result = await replay(cdp, 'dev', win);
       expect(result.progress).toBe('3 / 3 complete');
       const origin = await evaluate<number>(cdp, 'performance.timeOrigin');
-      await cdp.send('Page.reload', { ignoreCache: true });
+      await navigateAndWait(cdp, () => cdp.send('Page.reload', { ignoreCache: true }));
       await until(
         cdp,
         `performance.timeOrigin !== ${origin} && ${READY}`,
