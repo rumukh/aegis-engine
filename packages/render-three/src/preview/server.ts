@@ -367,7 +367,7 @@ export async function startAssetPreviewServer(
       if (request.method === 'GET' && path.startsWith('/vendor/')) {
         // Share the production resolver, but expose only runtime JS needed by this asset-only page.
         const permitted =
-          /^\/vendor\/(?:three\/(?:build|examples\/jsm)\/|@aegis\/(?:core|render-three)\/dist\/)/.test(
+          /^\/vendor\/(?:three\/(?:build|examples\/jsm)\/|@aegis\/(?:core|render-three)\/dist\/|@aegis\/browser\/dist\/audio\/nodes\.js$)/.test(
             path,
           ) && extname(path) === '.js';
         const file = permitted ? resolveVendorPath(repoRoot, path) : undefined;

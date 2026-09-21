@@ -1,4 +1,5 @@
 import type { EventLine } from '../protocol.js';
+import { cleanupAudioActions, rampAudioGain, releaseAudioVoice } from '@aegis/browser/audio/nodes';
 import { QUALITY } from '../presentation/schema.js';
 import type {
   AudioCue,
@@ -156,31 +157,10 @@ export function createAudio(options: AudioOptions): AudioController {
     options.onState?.({ ...next });
   };
 
-  const cleanup = (actions: readonly (() => void)[]): unknown[] => {
-    const errors: unknown[] = [];
-    for (const action of actions) {
-      try {
-        action();
-      } catch (cause) {
-        errors.push(cause);
-      }
-    }
-    return errors;
-  };
+  const cleanup = cleanupAudioActions;
   const release = (voice: Voice, stop = true): unknown[] => {
     voices.delete(voice);
-    voice.source.onended = null;
-    return cleanup([
-      () => {
-        if (stop && voice.started) voice.source.stop();
-      },
-      () => voice.source.disconnect(),
-      () => voice.gain?.disconnect(),
-      () => voice.panner?.disconnect(),
-      () => {
-        voice.source.buffer = null;
-      },
-    ]);
+    return releaseAudioVoice(voice, stop);
   };
   const stopAll = (): unknown[] => [...voices].flatMap((voice) => release(voice));
   const checkCleanup = (errors: readonly unknown[]): void => {
@@ -234,18 +214,7 @@ export function createAudio(options: AudioOptions): AudioController {
   const ramp = (voice: Voice, volume: number, seconds: number): void => {
     if (context === undefined || voice.gain === undefined) return;
     const now = context.currentTime;
-    const previous = voice.ramp;
-    const from =
-      previous === undefined
-        ? voice.gain.gain.value
-        : previous.from +
-          (previous.to - previous.from) *
-            Math.min(1, Math.max(0, (now - previous.start) / (previous.end - previous.start)));
-    const gain = voice.gain.gain;
-    gain.cancelScheduledValues(now);
-    gain.setValueAtTime(from, now);
-    gain.linearRampToValueAtTime(volume, now + seconds);
-    voice.ramp = { from, to: volume, start: now, end: now + seconds };
+    voice.ramp = rampAudioGain(voice.gain.gain, voice.ramp, now, volume, seconds);
   };
   const evict = (): void => {
     const oldest = [...voices].find((voice) => !voice.ambient) ?? voices.values().next().value;

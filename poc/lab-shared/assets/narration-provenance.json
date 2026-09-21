@@ -1,0 +1,58 @@
+{
+  "schema": "aegis-reference-narration/1",
+  "scope": "Three prerecorded original Russian toolkit sample lines, not complete consumer-game narration.",
+  "authorship": "Original scripts authored for the Aegis reference fixtures.",
+  "license": "MIT",
+  "production": {
+    "provider": "Azure Speech",
+    "voice": "ru-RU-DmitryNeural",
+    "locale": "ru-RU",
+    "voiceType": "Standard synthetic neural voice; not a cloned or impersonated person.",
+    "date": "2026-09-20",
+    "runtimeServiceRequired": false,
+    "maximumTimingFactor": 1,
+    "pronunciationControl": "Plain, unambiguous Russian sample phrases; no custom phonemes required or claimed."
+  },
+  "review": {
+    "voiceAudition": "The user listened to lab.welcome and selected: Approve this voice for the reference samples.",
+    "voiceAuditionSha256": "1cb49c0785f6eea0f42f3e0afd7993389e9bb02a48dacde638b87bde015b8298",
+    "automatedSpeechChecks": "PASS for all three files: complete, nonempty, unclipped, no timing compression.",
+    "individualFinalLineReview": "lab.welcome audition approved; lab.clue and lab.complete require final editorial listening.",
+    "acousticScoreLimit": "NISQA is a model estimate, not proof of words, stress, acting or suitability. Raw model scores may exceed the nominal MOS range."
+  },
+  "lines": [
+    {
+      "id": "lab.welcome",
+      "file": "lab.welcome.wav",
+      "text": "Добро пожаловать. Здесь можно спокойно попробовать разные задания.",
+      "sha256": "1cb49c0785f6eea0f42f3e0afd7993389e9bb02a48dacde638b87bde015b8298",
+      "durationSeconds": 5.064917,
+      "accuracy": 100,
+      "fluency": 83,
+      "completeness": 100,
+      "nisqaRawMos": 5.0367
+    },
+    {
+      "id": "lab.clue",
+      "file": "lab.clue.wav",
+      "text": "Посмотри на подсказку. Она поможет найти следующий шаг.",
+      "sha256": "6b539d4e7398524ed0884e55b6434051b33d94eccd180706747fb9cc959dac93",
+      "durationSeconds": 4.427875,
+      "accuracy": 98,
+      "fluency": 80,
+      "completeness": 100,
+      "nisqaRawMos": 5.0879
+    },
+    {
+      "id": "lab.complete",
+      "file": "lab.complete.wav",
+      "text": "Отлично! Все задания готовы. Ты можешь попробовать снова.",
+      "sha256": "be0521915a23a3cb4356886849c666623a520393b9f2403d95a277df244fe42e",
+      "durationSeconds": 5.702667,
+      "accuracy": 100,
+      "fluency": 71,
+      "completeness": 100,
+      "nisqaRawMos": 5.0244
+    }
+  ]
+}

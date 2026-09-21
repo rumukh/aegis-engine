@@ -30,3 +30,6 @@
 */bin/*.js eol=lf
 */bin/*.cjs eol=lf
 packages/*/bin/* eol=lf
+
+# Preserve the pinned upstream font license bytes, including its trailing whitespace.
+poc/lab-shared/assets/OFL.txt text eol=lf whitespace=-blank-at-eol

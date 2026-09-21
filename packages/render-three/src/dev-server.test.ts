@@ -121,6 +121,7 @@ describe('dev server', () => {
       '@aegis/core',
       '@aegis/core/math',
       '@aegis/content',
+      '@aegis/browser/audio/nodes',
       '@aegis/mode-platformer',
       '@aegis/mode-iso',
       '@aegis/mode-fps',
@@ -137,6 +138,26 @@ describe('dev server', () => {
 
     const three = await fetch(`${server.url}/vendor/three/build/three.module.js`);
     expect(three.status).toBe(200);
+  });
+  it('serves the shared audio primitive entry beneath a nested deployment prefix', async () => {
+    const nested = await startDevServer({
+      games: GAMES,
+      port: 0,
+      repoRoot,
+      basePath: '/nested/engine',
+      clock: () => now,
+    });
+    try {
+      const html = await (await fetch(`${nested.url}/play/platformer/`)).text();
+      expect(html).toContain(
+        '"@aegis/browser/audio/nodes":"../../vendor/@aegis/browser/dist/audio/nodes.js"',
+      );
+      const response = await fetch(`${nested.url}/vendor/@aegis/browser/dist/audio/nodes.js`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('releaseAudioVoice');
+    } finally {
+      await nested.close();
+    }
   });
 
   it('refuses to serve anything outside the vendor roots', async () => {

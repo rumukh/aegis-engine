@@ -1,0 +1,27 @@
+{
+  "name": "@aegis/narrative",
+  "version": "0.0.0",
+  "description": "Pure deterministic narrative, finite deduction, minigame and shared-device play toolkit.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run packages/narrative"
+  },
+  "dependencies": {
+    "@aegis/core": "0.0.0"
+  }
+}

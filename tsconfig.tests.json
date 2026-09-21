@@ -52,7 +52,10 @@
     "games/*/src/**/*.test.ts",
     "games/*/src/**/*.spec.ts",
     "games/*/test/**/*.ts",
-    "test/**/*.ts"
+    "test/**/*.ts",
+    "poc/storybook-lab/**/*.ts",
+    "poc/turn-kitchen-lab/**/*.ts",
+    "poc/lab-shared/**/*.ts"
   ],
   "exclude": ["**/dist/**", "**/node_modules/**"]
 }

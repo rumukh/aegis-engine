@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "images": {
+    "files": ["room.svg", "avatar.svg", "scarf.svg"],
+    "origin": "Original simple reference-fixture vector drawings",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Aegis contributors"
+  },
+  "font": {
+    "file": "NotoSans.ttf",
+    "licenseFile": "OFL.txt",
+    "license": "SIL Open Font License 1.1",
+    "upstream": "https://github.com/google/fonts/blob/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf",
+    "sha256": "bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d",
+    "coverage": "Cyrillic and Latin; local readability option, not a medical treatment"
+  },
+  "voice": {
+    "status": "three-approved-voice-samples",
+    "origin": "Original reference text, synthesized with the configured Azure Speech DmitryNeural voice; not a runtime service.",
+    "approval": "User approved the welcome voice audition for this tiny reference sample set. Additional clue/completion lines passed automated production checks; no human review of those two lines is claimed.",
+    "files": [
+      {
+        "id": "lab.welcome",
+        "file": "lab.welcome.wav",
+        "sha256": "1cb49c0785f6eea0f42f3e0afd7993389e9bb02a48dacde638b87bde015b8298"
+      },
+      {
+        "id": "lab.clue",
+        "file": "lab.clue.wav",
+        "sha256": "6b539d4e7398524ed0884e55b6434051b33d94eccd180706747fb9cc959dac93"
+      },
+      {
+        "id": "lab.complete",
+        "file": "lab.complete.wav",
+        "sha256": "be0521915a23a3cb4356886849c666623a520393b9f2403d95a277df244fe42e"
+      }
+    ],
+    "note": "Sample speech only: the remaining UI/story lines are caption/text routes, not claimed complete narration."
+  }
+}

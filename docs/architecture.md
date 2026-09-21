@@ -17,7 +17,7 @@ measurement and behavioral equivalence, not speculative replacements for working
 
 ## 1. Package graph
 
-Eight packages in an npm-workspaces monorepo, wired with TypeScript project references. The
+The packages live in an npm-workspaces monorepo, wired with TypeScript project references. The
 dependency graph is a strict DAG — enforced mechanically by
 [`scripts/check-deps.mjs`](../scripts/check-deps.mjs) (at both the `package.json` and the
 `import`-statement level) and by determinism lint rules in
@@ -27,6 +27,9 @@ dependency graph is a strict DAG — enforced mechanically by
 graph TD
   core["@aegis/core<br/>ECS · scheduler · PRNG · hash · serialise<br/>ZERO runtime deps · no DOM"]
   content["@aegis/content<br/>scene/prefab/tilemap · schema · diagnostics"]
+  runtime["@aegis/runtime<br/>action commits · logical turns · durable checkpoints"]
+  narrative["@aegis/narrative<br/>graphs · deduction · minigames · family projections"]
+  browser["@aegis/browser<br/>storage · narration · accessible DOM · offline packs"]
   harness["@aegis/harness<br/>runScene · assertions · replay · semantic frame · ASCII"]
   platformer["@aegis/mode-platformer"]
   iso["@aegis/mode-iso"]
@@ -35,6 +38,10 @@ graph TD
   cli["@aegis/cli<br/>run · test · inspect · validate · record · replay · scaffold"]
 
   content --> core
+  runtime --> core
+  narrative --> core
+  browser --> core
+  browser --> runtime
   harness --> core
   harness --> content
   platformer --> core
@@ -52,6 +59,7 @@ graph TD
   render --> platformer
   render --> iso
   render --> fps
+  render --> browser
   cli --> render
   cli --> platformer
   cli --> iso
@@ -61,16 +69,19 @@ graph TD
   cli --> core
 ```
 
-| Package                  | Depends on                               | Responsibility                                                                                            |
-| ------------------------ | ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `@aegis/core`            | **nothing**                              | Deterministic ECS, fixed-timestep scheduler, seeded PRNG, event bus, world serialisation, query, hashing. |
-| `@aegis/content`         | core                                     | Declarative scene/prefab/tilemap format, schema validation, structured diagnostics with stable codes.     |
-| `@aegis/harness`         | core, content                            | Run a scene N ticks under an input script; gameplay assertions; replay; semantic frame + ASCII view.      |
-| `@aegis/mode-platformer` | core, content, harness                   | 2D side-scroller: gravity, tile collision, coyote time, jump buffer, follow camera.                       |
-| `@aegis/mode-iso`        | core, content, harness                   | Isometric grid world: pathfinding, click-to-move, turn/real-time movement.                                |
-| `@aegis/mode-fps`        | core, content, harness                   | First-person 3D: capsule movement, mouse-look, hitscan.                                                   |
-| `@aegis/render-three`    | core, content, harness, mode-\*, `three` | three.js render adapters for all modes; browser dev server. **Read-only consumer of the world.**          |
-| `@aegis/cli`             | everything                               | The single command-line surface. No GUI is ever required.                                                 |
+| Package                  | Depends on                                        | Responsibility                                                                                                    |
+| ------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `@aegis/core`            | **nothing**                                       | Deterministic ECS, fixed-timestep scheduler, seeded PRNG, event bus, world serialisation, query, hashing.         |
+| `@aegis/runtime`         | core                                              | Command-driven host, logical turns, serializable delayed work, checkpoint barriers and validated data activation. |
+| `@aegis/narrative`       | core                                              | Deterministic graph, deduction, notebook, minigame, family and finite-generation helpers.                         |
+| `@aegis/browser`         | core, runtime                                     | Browser storage, narration, accessible interaction and offline asset adapters; no three.js or Node dependencies.  |
+| `@aegis/content`         | core                                              | Declarative scene/prefab/tilemap format, schema validation, structured diagnostics with stable codes.             |
+| `@aegis/harness`         | core, content                                     | Run a scene N ticks under an input script; gameplay assertions; replay; semantic frame + ASCII view.              |
+| `@aegis/mode-platformer` | core, content, harness                            | 2D side-scroller: gravity, tile collision, coyote time, jump buffer, follow camera.                               |
+| `@aegis/mode-iso`        | core, content, harness                            | Isometric grid world: pathfinding, click-to-move, turn/real-time movement.                                        |
+| `@aegis/mode-fps`        | core, content, harness                            | First-person 3D: capsule movement, mouse-look, hitscan.                                                           |
+| `@aegis/render-three`    | core, content, harness, mode-\*, browser, `three` | three.js render adapters for all modes; browser dev server. **Read-only consumer of the world.**                  |
+| `@aegis/cli`             | everything                                        | The single command-line surface. No GUI is ever required.                                                         |
 
 ### The three load-bearing rules
 
@@ -82,6 +93,21 @@ graph TD
 3. **Modes never depend on each other, and the harness never depends on a concrete mode.** Modes
    plug into the harness through the `ModePlugin` interface (ADR-0006), which keeps the graph
    acyclic and lets the five implementation sessions work in parallel without colliding.
+
+### Action-driven standalone consumers
+
+The additive narrative path does not extend `GameMode` or attach physics systems.
+`runtime` and `narrative` are deterministic, browser-neutral consumers of core.
+`browser` owns asynchronous presentation and persistence around committed state,
+not authoritative rule timing. The only reverse reuse by the renderer is the
+public browser audio helper surface; the browser package never imports the renderer.
+Existing mode schedules and renderer controls are unchanged.
+
+`poc/storybook-lab` and `poc/turn-kitchen-lab` are small composition roots, not
+workspace packages or implementations of the motivating full games. Their supported
+distribution boundary is the declared exports of packed packages, independently
+checked outside the workspace. See [standalone consumers](./api/standalone-consumers.md)
+and [ADR-0012](./adr/0012-action-consumer-distribution.md).
 
 ## 2. Anatomy of one tick
 

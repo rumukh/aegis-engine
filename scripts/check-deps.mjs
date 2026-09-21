@@ -53,12 +53,16 @@ const SCANNED_EXT = ['.ts', '.mts', '.cts', '.tsx', '.js', '.mjs', '.cjs'];
  */
 const ALLOWED = {
   '@aegis/core': [],
+  '@aegis/runtime': ['@aegis/core'],
+  '@aegis/narrative': ['@aegis/core'],
+  '@aegis/browser': ['@aegis/core', '@aegis/runtime'],
   '@aegis/content': ['@aegis/core'],
   '@aegis/harness': ['@aegis/core', '@aegis/content'],
   '@aegis/mode-platformer': ['@aegis/core', '@aegis/content', '@aegis/harness'],
   '@aegis/mode-iso': ['@aegis/core', '@aegis/content', '@aegis/harness'],
   '@aegis/mode-fps': ['@aegis/core', '@aegis/content', '@aegis/harness'],
   '@aegis/render-three': [
+    '@aegis/browser',
     '@aegis/core',
     '@aegis/content',
     '@aegis/harness',
@@ -127,8 +131,8 @@ function isInside(dir, target) {
   return r !== '' && !r.startsWith('..' + sep) && r !== '..' && !isAbsolute(r);
 }
 
-const importRe = /(?:import|export)[\s\S]*?from\s*['"](@aegis\/[a-z-]+)['"]/g;
-const requireRe = /require\(\s*['"](@aegis\/[a-z-]+)['"]\s*\)/g;
+const importRe = /(?:import|export)[\s\S]*?from\s*['"](@aegis\/[a-z-]+)(?:\/[^'"]*)?['"]/g;
+const requireRe = /(?:require|import)\(\s*['"](@aegis\/[a-z-]+)(?:\/[^'"]*)?['"]\s*\)/g;
 
 /** Relative specifiers, however they are written. */
 const relativeSpecifierRes = [

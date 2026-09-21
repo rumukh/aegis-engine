@@ -32,8 +32,12 @@ probe is worth reproducing, its source is inline in the surrounding section.
 is covered in [§5.7](#57-rendering-an-asset-without-a-game). Authoring scenes through the typed
 `createSceneBuilder` API rather than JSON. Writing a new **mode** (as opposed to a game on top of
 an existing one) — see [ADR-0006](./docs/adr/0006-mode-module-boundary.md). Multiplayer,
-networking and save games, which the engine does not have. If you need one of these, read the
-package source; it is short and heavily commented.
+networked game sessions and mode-specific save-game UX are not covered here.
+
+Action-driven narrative and turn-based consumers use the separate
+[`@aegis/runtime`, `@aegis/narrative` and `@aegis/browser` APIs](./docs/api/standalone-consumers.md),
+including durable checkpoints, browser saves and offline static distribution. They do not
+need a mode plugin or the renderer. The scene/CLI workflow below is for mode-based games.
 
 ---
 
@@ -95,17 +99,19 @@ Be honest with yourself about this table before planning any work.
 
 ### 1.3 The package graph
 
-Eight packages, a strict DAG, enforced mechanically by
+Eleven engine packages, a strict DAG, enforced mechanically by
 [`scripts/check-deps.mjs`](./scripts/check-deps.mjs) at both the `package.json` and the
 `import`-statement level.
 
 ```
 core ──▶ (nothing)
+runtime | narrative ──▶ core
+browser ──▶ core, runtime
 content ──▶ core
 harness ──▶ core, content
 mode-platformer | mode-iso | mode-fps ──▶ core, content, harness
-render-three ──▶ core, content, harness, mode-*
-cli ──▶ everything
+render-three ──▶ browser, core, content, harness, mode-*
+cli ──▶ core, content, harness, mode-*, render-three
 ```
 
 Three rules explain the shape, and you will hit all three:
@@ -115,7 +121,7 @@ Three rules explain the shape, and you will hit all three:
 2. **Rendering points inward.** `render-three` reads the world; the world never imports
    rendering. You never need the renderer to finish a game.
 3. **Modes never depend on each other, and the harness never depends on a concrete mode.** A
-   mode plugs into the harness through the `ModePlugin` interface. This is why _your game_
+   mode plugs into the harness through the `ModePlugin` interface. This is why _your mode-based game_
    must also be a `ModePlugin` — there is no second injection path ([§3](#3-the-composed-plugin-pattern)).
 
 Package ownership is real and enforced socially: see

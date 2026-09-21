@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -26,6 +26,7 @@ const viewport = { width: 640, height: 360 };
 let server: DevServer;
 let root: string;
 const owned: LaunchedBrowser[] = [];
+const created: LaunchedBrowser[] = [];
 const pages: CdpSession[] = [];
 const read = `(()=>{
   const a=aegis,p=a.world.snapshot().entities.find(e=>e.name==='player').components;
@@ -74,27 +75,54 @@ beforeAll(async () => {
   });
 });
 afterEach(async () => {
-  await sessionCommand('resume');
+  await clean([closeClients, () => sessionCommand('resume')]);
 });
 afterAll(async () => {
-  for (const page of pages) {
-    try {
-      await page.send('Page.navigate', { url: 'about:blank' });
-    } finally {
-      page.close();
-    }
-  }
-  try {
-    for (const browser of owned) {
-      await closeOwnedBrowser(browser);
-      rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-    }
-  } finally {
-    await server?.close();
-    stopExternalLagWitness();
-    if (root !== undefined) rmSync(root, { recursive: true, force: true });
-  }
+  await clean([
+    closeClients,
+    () => server?.close(),
+    stopExternalLagWitness,
+    () => {
+      if (root !== undefined) rmSync(root, { recursive: true, force: true });
+    },
+  ]);
 });
+
+async function clean(actions: readonly (() => void | Promise<void>)[]): Promise<void> {
+  const failures: unknown[] = [];
+  for (const action of actions) {
+    try {
+      await action();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0)
+    throw new AggregateError(failures, 'Client-stream test resource cleanup failed.');
+}
+
+async function closeClients(): Promise<void> {
+  const actions: (() => void | Promise<void>)[] = [];
+  for (const page of pages.splice(0)) {
+    actions.push(async () => {
+      try {
+        await navigateAndWait(page, () => page.send('Page.navigate', { url: 'about:blank' }), {
+          timeoutMs: 10_000,
+        });
+      } finally {
+        page.close();
+      }
+    });
+  }
+  for (const browser of owned.splice(0)) {
+    actions.push(
+      () => closeOwnedBrowser(browser, { inspectProcesses: true }),
+      () =>
+        rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
+    );
+  }
+  await clean(actions);
+}
 
 async function sessionCommand(command: 'pause' | 'resume' | 'restart'): Promise<void> {
   const response = await fetch(`${server.url}/api/streams/control`, {
@@ -109,6 +137,7 @@ async function sessionCommand(command: 'pause' | 'resume' | 'restart'): Promise<
 async function open(): Promise<CdpSession> {
   const browser = await launchBrowser({ viewport });
   owned.push(browser);
+  created.push(browser);
   const page = await openPage(browser.port, 'about:blank', viewport);
   pages.push(page);
   await page.send('Page.addScriptToEvaluateOnNewDocument', {
@@ -262,7 +291,9 @@ describe('independent browser streams on one live session', () => {
         }
       } finally {
         unobserve();
-        await page.send('Page.navigate', { url: 'about:blank' });
+        await navigateAndWait(page, () => page.send('Page.navigate', { url: 'about:blank' }), {
+          timeoutMs: 10_000,
+        });
       }
     },
     60_000,
@@ -365,4 +396,14 @@ describe('independent browser streams on one live session', () => {
     expect((await evaluate<Seen>(page, read)).position).toEqual(state.position);
     expect(page.diagnostics).toEqual([]);
   }, 120_000);
+
+  it('releases completed cases before the next case instead of accumulating live browser processes', () => {
+    expect(created).toHaveLength(5);
+    expect(owned).toHaveLength(0);
+    expect(pages).toHaveLength(0);
+    for (const browser of created) {
+      expect(browser.process.exitCode).toBe(0);
+      expect(existsSync(browser.profile)).toBe(false);
+    }
+  });
 });

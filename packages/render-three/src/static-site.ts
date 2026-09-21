@@ -148,6 +148,12 @@ const ENGINE_MODULE_PATHS: readonly {
     entry: 'packages/harness/dist/index.js',
   },
   {
+    specifier: '@aegis/browser/audio/nodes',
+    name: '@aegis/browser',
+    root: 'packages/browser',
+    entry: 'packages/browser/dist/audio/nodes.js',
+  },
+  {
     specifier: '@aegis/mode-platformer',
     name: '@aegis/mode-platformer',
     root: 'packages/mode-platformer',

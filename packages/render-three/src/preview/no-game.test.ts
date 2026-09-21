@@ -312,7 +312,15 @@ describe('no-game proof for both standalone preview entry points', () => {
     expect(prepareAssetPreview({ source }).document.source.format).toBe('direct');
     const server = await startAssetPreviewServer({ source });
     try {
-      expect((await fetch(server.url)).status).toBe(200);
+      const page = await fetch(server.url);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain(
+        '"@aegis/browser/audio/nodes":"./vendor/@aegis/browser/dist/audio/nodes.js"',
+      );
+      const primitives = await fetch(`${server.url}vendor/@aegis/browser/dist/audio/nodes.js`);
+      expect(primitives.status).toBe(200);
+      expect(await primitives.text()).toContain('releaseAudioVoice');
+      expect((await fetch(`${server.url}vendor/@aegis/browser/dist/index.js`)).status).toBe(404);
       expect((await fetch(`${server.url}api/state`)).status).toBe(200);
       expect(server.reload().status).toBe('prepared');
     } finally {

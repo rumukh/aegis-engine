@@ -1,0 +1,207 @@
+@font-face {
+  font-family: 'Lab Sans';
+  src: url('./assets/NotoSans.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  color-scheme: light;
+  font-family: 'Lab Sans', sans-serif;
+  font-size: calc(24px * var(--aegis-text-scale, 1));
+  color: #18352f;
+  background: #f5f2e9;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main,
+header,
+footer {
+  max-width: 66rem;
+  margin: auto;
+  padding: 1rem;
+}
+h1 {
+  font-size: 1.6rem;
+}
+h2 {
+  font-size: 1.25rem;
+}
+h1,
+h2,
+p,
+label,
+button,
+a {
+  overflow-wrap: anywhere;
+}
+dialog {
+  max-width: calc(100% - 1rem);
+  max-height: 85vh;
+  overflow: auto;
+}
+button,
+input,
+select,
+a {
+  font: inherit;
+  min-height: 48px;
+  min-width: 48px;
+}
+button,
+input,
+select {
+  color: #18352f;
+  background: #fffdf8;
+  border: 2px solid #41685b;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  max-width: 100%;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+button[aria-pressed='true'],
+button[aria-selected='true'] {
+  border: 4px solid #18352f;
+}
+a {
+  color: #145147;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem;
+}
+:focus-visible {
+  outline: 4px solid #735000;
+  outline-offset: 4px;
+}
+nav,
+.controls,
+.choices,
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-block: 0.7rem;
+}
+.panel {
+  background: #fffdf8;
+  padding: 1rem;
+  margin-block: 1rem;
+  border: 2px solid #41685b;
+  border-radius: 0.7rem;
+}
+.scene {
+  position: relative;
+  max-width: 800px;
+}
+.scene > img {
+  display: block;
+  width: 100%;
+}
+.avatar {
+  width: 100px;
+  position: absolute;
+  bottom: 0;
+  left: 43%;
+}
+.avatar img {
+  display: block;
+  width: 100%;
+}
+.avatar img + img {
+  position: absolute;
+  inset: 0;
+}
+.caption,
+[role='status'] {
+  min-height: 1.5em;
+  overflow-wrap: anywhere;
+}
+.ambient-mark {
+  display: inline-block;
+  animation: lab-idle 4s ease-in-out infinite alternate;
+}
+@keyframes lab-idle {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(4px);
+  }
+}
+body[data-game-paused='true'] .ambient-mark {
+  animation-play-state: paused;
+}
+.slots > button {
+  flex: 1 1 10rem;
+  min-height: 4rem;
+}
+label {
+  display: block;
+  margin-block: 0.7rem;
+}
+label > input,
+label > select {
+  margin-inline-start: 0.4rem;
+  max-width: calc(100% - 0.4rem);
+}
+.controls > label {
+  min-width: 0;
+  flex: 1 1 100%;
+}
+input[type='checkbox'] {
+  vertical-align: middle;
+}
+.comfort {
+  background: #fffef7;
+}
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (max-width: 600px) {
+  main,
+  header,
+  footer {
+    padding: 0.6rem;
+  }
+  .controls > button {
+    flex: 1 1 8rem;
+  }
+}
+@media print {
+  header,
+  footer,
+  nav,
+  .controls,
+  button {
+    display: none;
+  }
+  main {
+    padding: 0;
+  }
+  .panel {
+    break-inside: avoid;
+  }
+  @page {
+    margin: 15mm;
+  }
+}

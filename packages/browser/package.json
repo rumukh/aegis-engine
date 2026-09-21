@@ -1,0 +1,57 @@
+{
+  "name": "@aegis/browser",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-neutral persistence, audio, accessible interaction and offline adapters.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./save": {
+      "types": "./dist/save/index.d.ts",
+      "import": "./dist/save/index.js"
+    },
+    "./indexeddb": {
+      "types": "./dist/save/indexeddb.d.ts",
+      "import": "./dist/save/indexeddb.js"
+    },
+    "./checkpoint": {
+      "types": "./dist/save/checkpoint.d.ts",
+      "import": "./dist/save/checkpoint.js"
+    },
+    "./audio": {
+      "types": "./dist/audio/index.d.ts",
+      "import": "./dist/audio/index.js"
+    },
+    "./audio/nodes": {
+      "types": "./dist/audio/nodes.d.ts",
+      "import": "./dist/audio/nodes.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js"
+    },
+    "./offline": {
+      "types": "./dist/offline/index.d.ts",
+      "import": "./dist/offline/index.js"
+    },
+    "./offline/worker": {
+      "types": "./dist/offline/worker.d.ts",
+      "import": "./dist/offline/worker.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aegis/runtime": "0.0.0"
+  }
+}

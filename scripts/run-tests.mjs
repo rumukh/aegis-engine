@@ -31,6 +31,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { main as audit, MIN_TEST_FILES, MIN_TESTS } from './audit-test-report.mjs';
+import { createTestTemp, installTestTempCleanup } from './test-temp.mjs';
 import {
   browserSpecs,
   isHostedCi,
@@ -83,6 +84,9 @@ if (!isSubset && !soloEnabled(process.platform, isHostedCi())) {
 }
 
 const vitest = join(root, 'node_modules', 'vitest', 'vitest.mjs');
+const temporary = createTestTemp(root);
+installTestTempCleanup(temporary);
+process.stdout.write(`[test-run] temporary files: ${temporary.directory} (${temporary.source})\n`);
 let failed = false;
 let totalFiles = 0;
 let totalTests = 0;
@@ -109,7 +113,7 @@ for (const phase of phases) {
       `--outputFile.json=${reportPath}`,
       ...phase.args,
     ],
-    { stdio: 'inherit', cwd: root },
+    { stdio: 'inherit', cwd: root, env: temporary.environment },
   );
 
   if (result.error !== undefined) {

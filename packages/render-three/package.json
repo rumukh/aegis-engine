@@ -64,6 +64,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@aegis/browser": "0.0.0",
     "@aegis/core": "*",
     "@aegis/content": "*",
     "@aegis/harness": "*",

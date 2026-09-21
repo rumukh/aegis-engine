@@ -1,0 +1,48 @@
+{
+  "id": "turn-kitchen-lab",
+  "revision": "lab-1",
+  "schemaVersion": 1,
+  "data": {
+    "costs": {
+      "begin": 0,
+      "move": 0,
+      "start": 0,
+      "listen": 1,
+      "wait": 2,
+      "hint": 0,
+      "purchase": 0,
+      "budget": 0,
+      "next": 0,
+      "finish": 0
+    },
+    "phaseBudget": 6,
+    "restBudget": 4,
+    "capacity": 6,
+    "capacityVariants": [6, 8],
+    "jobDelay": 2,
+    "noticeDelay": 1,
+    "arrivalDelay": 2,
+    "expirationDelay": 2,
+    "jobYield": 1,
+    "listenYield": 1,
+    "startingCredit": 2,
+    "purchasePrice": 1,
+    "hintLimit": 1,
+    "completionThreshold": 2,
+    "phaseAgeIncrease": 1,
+    "initialStoryTokens": 1,
+    "terminalReward": 1,
+    "actors": ["reader", "maker", "visitor"],
+    "items": ["sun", "leaf", "drop"],
+    "recipes": ["batch-a", "batch-b"],
+    "neighbors": [
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+      [5, 6],
+      [6, 7]
+    ]
+  }
+}

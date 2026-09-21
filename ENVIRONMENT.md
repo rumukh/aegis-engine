@@ -59,3 +59,24 @@ across the whole toolchain.
 Windows. Paths use backslashes. Scripts in `package.json` must be cross-platform — no `rm -rf`,
 no `&&`-dependent POSIX-only shell tricks, no `cp`. Use Node-based tooling (e.g. `rimraf`, or a
 small Node script) for filesystem work in scripts. Tests and builds must pass on Windows.
+
+### Test temporary storage
+
+`scripts/run-tests.mjs` gives each run a unique temporary directory outside the checkout.
+On Windows its base is `%LOCALAPPDATA%\Aegis\test-tmp`, rather than a redirected general
+`TEMP`/`TMP` location. Other platforms retain their system temporary-directory base.
+The selected path is printed. Only test subprocesses receive `TEMP`, `TMP` and `TMPDIR`
+overrides; the user's environment is not changed. Cleanup removes only that run's directory,
+and a cleanup failure makes the runner fail.
+
+This is a measured storage constraint, not a relaxed browser deadline. Identical fresh Chrome
+shutdown controls took 3,445–3,996 ms on this machine's `F:\temp`, versus 344–434 ms on C:.
+Under the earlier complete run, browser shutdown repeatedly exceeded the unchanged 10-second
+deadline. Moving temporary storage made all 14 Coyote browser cases pass, including navigation
+and live input, without changing their assertions or timing limits.
+
+Set `AEGIS_TEST_TMPDIR` to an absolute directory to choose another base. Its resolved path
+(including directory aliases) must be outside the checkout so an independently installed
+consumer cannot inherit workspace dependencies.
+Invalid settings and filesystem errors are reported, not silently bypassed. Standalone tools
+run outside the test wrapper continue to use their normal temporary-directory settings.

@@ -48,6 +48,7 @@ export function importMap(base = '../../'): string {
       '@aegis/core': `${base}vendor/@aegis/core/dist/index.js`,
       '@aegis/core/math': `${base}vendor/@aegis/core/dist/math/index.js`,
       '@aegis/content': `${base}vendor/@aegis/content/dist/index.js`,
+      '@aegis/browser/audio/nodes': `${base}vendor/@aegis/browser/dist/audio/nodes.js`,
       '@aegis/harness': `${base}vendor/@aegis/harness/dist/index.js`,
       '@aegis/mode-platformer': `${base}vendor/@aegis/mode-platformer/dist/index.js`,
       '@aegis/mode-iso': `${base}vendor/@aegis/mode-iso/dist/index.js`,

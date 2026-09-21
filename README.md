@@ -9,6 +9,7 @@
 [Quick start](#quick-start) ·
 [Agent workflow](#the-agent-workflow) ·
 [Asset studio](#iterate-on-assets-without-running-a-game) ·
+[Standalone consumers](#standalone-action-driven-consumers) ·
 [Architecture](#architecture) ·
 [Roadmap](#status-and-roadmap)
 
@@ -367,14 +368,31 @@ Use `npx aegis <command> --help` for exact options. Most commands support `--jso
 The [agent workbench reference](docs/api/agent-workbench.md) explains selection precedence,
 diagnostics, discovery limits and bounded inspection.
 
+## Standalone action-driven consumers
+
+Narrative and turn-based applications can use the command runtime without a mode plugin
+or three.js. `@aegis/runtime` supplies atomic actions, logical turns and resumable
+checkpoints; `@aegis/narrative` supplies story, deduction, puzzle and family-play helpers;
+`@aegis/browser` supplies persistence, narration, accessible DOM input and revision-pinned
+offline installation.
+
+The [standalone consumer guide](docs/api/standalone-consumers.md) covers reproducible local
+SDK artifacts, independent installation and nested-path static hosting. The small
+`storybook-lab` and `turn-kitchen-lab` references exercise those APIs; they are not full
+consumer games. See the [acceptance report](docs/extension-acceptance.md) for measured
+coverage and remaining platform/editorial limits.
+
 ## Architecture
 
-The repository contains **eight engine packages and four game workspaces**, with TypeScript
+The repository contains **eleven engine packages and four game workspaces**, with TypeScript
 project references and mechanically enforced dependency boundaries.
 
 | Package                                                  | Responsibility                                                                                                  |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | [`@aegis/core`](packages/core/src)                       | ECS, scheduler, input types, PRNG, math, events, queries, serialization and hashing; zero runtime dependencies. |
+| [`@aegis/runtime`](packages/runtime/src)                 | Action-only hosts, logical turns/jobs, durable checkpoints and validated content activation.                    |
+| [`@aegis/narrative`](packages/narrative/src)             | Narrative graphs, deduction, minigames, family projections, bounded generation and print data.                  |
+| [`@aegis/browser`](packages/browser/src)                 | Save adapters, audio, accessible DOM input, localization/preferences and optional offline packs.                |
 | [`@aegis/content`](packages/content)                     | Content documents, component/resource registries, prefab expansion and validation.                              |
 | [`@aegis/harness`](packages/harness/src)                 | Shared scene initialization, headless execution, scripted input, observations, assertions and replay.           |
 | [`@aegis/mode-platformer`](packages/mode-platformer/src) | Side-scrolling movement, collision and views.                                                                   |
@@ -384,7 +402,7 @@ project references and mechanically enforced dependency boundaries.
 | [`@aegis/cli`](packages/cli/src)                         | The common command-line surface.                                                                                |
 
 **Core does not depend on rendering. Modes do not depend on each other. The harness does
-not import a concrete mode.** A game's `ModePlugin` composes registered components,
+not import a concrete mode.** A mode-based game's `ModePlugin` composes registered components,
 resource/prefab declarations, initialization, systems and observation providers.
 
 `poc/platformer.mjs`, `poc/iso.mjs`, `poc/fps.mjs` and `poc/horror.mjs` connect each game to its presentation.

@@ -1,0 +1,191 @@
+{
+  "id": "storybook-lab",
+  "revision": "lab-1",
+  "schemaVersion": 1,
+  "data": {
+    "graph": {
+      "schema": 1,
+      "id": "quiet-room",
+      "revision": "lab-1",
+      "start": "welcome",
+      "catalogs": {
+        "clue": ["place", "shape", "time"],
+        "fact": [],
+        "glossary": [],
+        "reward": ["scarf"],
+        "completion": ["room-finished"],
+        "scene": ["room", "map"],
+        "text": ["welcome", "look", "talk", "tip", "back", "room", "finish", "complete"],
+        "asset": []
+      },
+      "flags": ["ready"],
+      "items": [],
+      "data": [],
+      "effects": [
+        { "id": "claim-scarf", "kind": "claim", "catalog": "reward", "ref": "scarf" },
+        { "id": "finish-room", "kind": "claim", "catalog": "completion", "ref": "room-finished" }
+      ],
+      "nodes": [
+        {
+          "id": "welcome",
+          "scene": "room",
+          "text": "welcome",
+          "narration": null,
+          "revisit": "allow",
+          "entryEffects": [],
+          "automatic": [],
+          "resolveEnding": false,
+          "choices": [
+            { "id": "look", "text": "look", "to": "room", "guard": null, "effects": [] },
+            { "id": "talk", "text": "talk", "to": "tip", "guard": null, "effects": [] }
+          ]
+        },
+        {
+          "id": "tip",
+          "scene": "room",
+          "text": "tip",
+          "narration": null,
+          "revisit": "allow",
+          "entryEffects": [],
+          "automatic": [],
+          "resolveEnding": false,
+          "choices": [{ "id": "back", "text": "back", "to": "room", "guard": null, "effects": [] }]
+        },
+        {
+          "id": "room",
+          "scene": "room",
+          "text": "room",
+          "narration": null,
+          "revisit": "allow",
+          "entryEffects": [],
+          "automatic": [],
+          "resolveEnding": false,
+          "choices": [
+            { "id": "talk", "text": "talk", "to": "tip", "guard": null, "effects": [] },
+            {
+              "id": "finish",
+              "text": "finish",
+              "to": "complete",
+              "guard": { "kind": "flag", "id": "ready", "value": true },
+              "effects": []
+            }
+          ]
+        },
+        {
+          "id": "complete",
+          "scene": "room",
+          "text": "complete",
+          "narration": null,
+          "revisit": "allow",
+          "entryEffects": ["claim-scarf", "finish-room"],
+          "automatic": [],
+          "resolveEnding": false,
+          "choices": [{ "id": "back", "text": "back", "to": "room", "guard": null, "effects": [] }]
+        }
+      ],
+      "endings": [],
+      "maxAutomaticSteps": 12
+    },
+    "deduction": {
+      "schema": 1,
+      "id": "room-note",
+      "axes": [
+        { "id": "shape", "values": ["sun", "leaf"] },
+        { "id": "place", "values": ["table", "shelf"] },
+        { "id": "time", "values": ["morning", "evening"] }
+      ],
+      "compatibility": null,
+      "intended": { "shape": "sun", "place": "table", "time": "morning" },
+      "clues": [
+        {
+          "id": "place",
+          "predicate": { "op": "eq", "axis": "place", "value": "table" },
+          "requires": [],
+          "requiresAnswer": false,
+          "explanationKey": "clue.place"
+        },
+        {
+          "id": "shape",
+          "predicate": { "op": "eq", "axis": "shape", "value": "sun" },
+          "requires": [],
+          "requiresAnswer": false,
+          "explanationKey": "clue.shape"
+        },
+        {
+          "id": "time",
+          "predicate": { "op": "eq", "axis": "time", "value": "morning" },
+          "requires": [],
+          "requiresAnswer": false,
+          "explanationKey": "clue.time"
+        }
+      ],
+      "redHerrings": [{ "id": "blue-drop", "explanationKey": "drop.explanation" }],
+      "maxCandidates": 8
+    },
+    "minigames": [
+      {
+        "schema": 1,
+        "id": "scene",
+        "revision": "lab-1",
+        "kind": "scene-selection",
+        "adapterSchema": 1,
+        "config": {
+          "targets": [
+            { "id": "note", "labelKey": "note", "required": true },
+            { "id": "window", "labelKey": "window", "required": false },
+            { "id": "drop", "labelKey": "drop", "required": false }
+          ]
+        },
+        "outputs": [{ "kind": "clue", "id": "place" }]
+      },
+      {
+        "schema": 1,
+        "id": "matching",
+        "revision": "lab-1",
+        "kind": "matching",
+        "adapterSchema": 1,
+        "config": {
+          "cards": [
+            { "id": "round", "pair": "sun", "labelKey": "round", "backLabelKey": "card" },
+            { "id": "sun", "pair": "sun", "labelKey": "sun", "backLabelKey": "card" }
+          ]
+        },
+        "outputs": [{ "kind": "clue", "id": "shape" }]
+      },
+      {
+        "schema": 1,
+        "id": "ordering",
+        "revision": "lab-1",
+        "kind": "ordering",
+        "adapterSchema": 1,
+        "config": {
+          "items": [
+            { "id": "evening", "labelKey": "evening" },
+            { "id": "day", "labelKey": "day" },
+            { "id": "morning", "labelKey": "morning" }
+          ],
+          "solution": ["morning", "day", "evening"]
+        },
+        "outputs": [{ "kind": "clue", "id": "time" }]
+      }
+    ],
+    "family": {
+      "schema": 1,
+      "id": "room-partners",
+      "revision": "lab-1",
+      "players": [
+        { "id": "first", "labelKey": "player.first", "abilities": ["help"], "role": "player" },
+        { "id": "second", "labelKey": "player.second", "abilities": ["help"], "role": "hint-giver" }
+      ],
+      "cards": [
+        { "id": "private-window", "content": "private.first" },
+        { "id": "private-garden", "content": "private.second" }
+      ],
+      "distribution": [
+        { "player": "first", "count": 1, "capacity": 1 },
+        { "player": "second", "count": 1, "capacity": 1 }
+      ],
+      "remainder": "reject"
+    }
+  }
+}

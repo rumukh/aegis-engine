@@ -2,6 +2,9 @@
   "files": [],
   "references": [
     { "path": "./packages/core" },
+    { "path": "./packages/runtime" },
+    { "path": "./packages/narrative" },
+    { "path": "./packages/browser" },
     { "path": "./packages/content" },
     { "path": "./packages/harness" },
     { "path": "./packages/mode-platformer" },

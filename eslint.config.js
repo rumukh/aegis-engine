@@ -105,6 +105,7 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       'dist-site/**',
+      'out/**',
       '**/node_modules/**',
       '**/*.tsbuildinfo',
       'coverage/**',
@@ -143,6 +144,12 @@ export default tseslint.config(
     files: [
       'packages/core/src/**/*.ts',
       'packages/core/test/**/*.ts',
+      'packages/runtime/src/**/*.ts',
+      'packages/runtime/test/**/*.ts',
+      'packages/narrative/src/**/*.ts',
+      'packages/narrative/test/**/*.ts',
+      'poc/*-lab/model.ts',
+      'poc/*-lab/extras.ts',
       'packages/content/src/**/*.ts',
       'packages/content/test/**/*.ts',
       'packages/harness/src/**/*.ts',
