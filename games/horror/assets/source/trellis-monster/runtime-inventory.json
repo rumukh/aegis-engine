@@ -1,0 +1,414 @@
+{
+  "schema": "character-integration-inventory/1",
+  "assetId": "responder",
+  "replacedOnly": "source/provenance of the existing responder declaration",
+  "modelSha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7",
+  "files": [
+    {
+      "path": "audio/runtime/airlock-seal.ogg",
+      "bytes": 127852,
+      "sha256": "61adbcbedb4b7f64032eaf3c424833bb474e975bc433fb3cce858a2442b5416c"
+    },
+    {
+      "path": "audio/runtime/amb-hull.ogg",
+      "bytes": 117678,
+      "sha256": "3ffaa9d2496f415bf8fa9481a56e0e914e8c56b273b45b26057649d9060732b0"
+    },
+    {
+      "path": "audio/runtime/amb-room.ogg",
+      "bytes": 232504,
+      "sha256": "3f7928dca75d7b26cd8ab232a4dd48be3e9521e6119234f683ccc3a58c9b8b77"
+    },
+    {
+      "path": "audio/runtime/amb-vent.ogg",
+      "bytes": 99937,
+      "sha256": "66f7c1c037fd27ac1adf1ad3d81829ae684afd9dcfc8d4737b087cc1ff415b26"
+    },
+    {
+      "path": "audio/runtime/boots-metal-01.ogg",
+      "bytes": 5360,
+      "sha256": "c44c9e8db6a9232ea2d8efe4b4c60d9750322ba68807b0ef3362169d17555271"
+    },
+    {
+      "path": "audio/runtime/boots-metal-02.ogg",
+      "bytes": 5856,
+      "sha256": "4510b88253ef7e7226fd6e2ae50a45f301238b7cdbbf2e4547623539b786cf98"
+    },
+    {
+      "path": "audio/runtime/boots-metal-03.ogg",
+      "bytes": 6342,
+      "sha256": "e6cbcb6f557e55cfdfc69e5e30f55007cf1945fadb134ac46670301afbb4cc98"
+    },
+    {
+      "path": "audio/runtime/boots-metal-04.ogg",
+      "bytes": 6098,
+      "sha256": "88deefc9fdcb9c74ac1cdd5c8c18821d66af282112df8aba26a378bc5e4ab0cf"
+    },
+    {
+      "path": "audio/runtime/coolant-release.ogg",
+      "bytes": 39248,
+      "sha256": "9bf915466320820b5f686156181c31dc2bfd3f69880075c9a54c699282de6528"
+    },
+    {
+      "path": "audio/runtime/door-open.ogg",
+      "bytes": 87586,
+      "sha256": "a60943934e64491303d416cd15e67ce424f7d8be68fd2b4f71ed54a40b21a1d5"
+    },
+    {
+      "path": "audio/runtime/dread-chitter.ogg",
+      "bytes": 54404,
+      "sha256": "08bbb8d75e548f7d2f40e2a3d59f8fec1c86e810f9e7f634cc7d2dca4448787c"
+    },
+    {
+      "path": "audio/runtime/dread-membrane.ogg",
+      "bytes": 61253,
+      "sha256": "b8415bec37790323d8a9a6b2c4aab261b3f199d307a275176f773f9588fea2b0"
+    },
+    {
+      "path": "audio/runtime/interact-click.ogg",
+      "bytes": 6226,
+      "sha256": "5a67580f0200c4ccd2834c96fb2ce6cd86c51edb074885db991a0d4c8a680f98"
+    },
+    {
+      "path": "audio/runtime/power-rise.ogg",
+      "bytes": 132865,
+      "sha256": "ca4edefffcb86146c962e6b27c2f04d4e28a5f1b1ad0a359b476dfa4a84654e2"
+    },
+    {
+      "path": "audio/runtime/recorder-handle.ogg",
+      "bytes": 11014,
+      "sha256": "422416e38a93bfdad5b3d9bc95dbeac46c4ce680b988884c447c3b655ec2f0a6"
+    },
+    {
+      "path": "audio/runtime/responder-breath.ogg",
+      "bytes": 64846,
+      "sha256": "8c97eca4f5e6d3ecb9bfb7250350296f84658e499f3c441fa2d0a01709921da7"
+    },
+    {
+      "path": "audio/runtime/responder-stop.ogg",
+      "bytes": 8968,
+      "sha256": "c76a79522efb2dc9b87d5be7c11bc3305c2dbfee6ff6bbffa6110c27ca766ee4"
+    },
+    {
+      "path": "audio/runtime/threat-alert.ogg",
+      "bytes": 30839,
+      "sha256": "a0589788f63021a08e9ace4e593f45a7e2f9bf0349ee462d047b4bbfb62aff2a"
+    },
+    {
+      "path": "audio/runtime/threat-search.ogg",
+      "bytes": 39296,
+      "sha256": "3b8be7af34f1ddb19496f2af6365d3bb72e1ee15e7312d6f6f5a56b311d1ac15"
+    },
+    {
+      "path": "audio/runtime/threat-step-01.ogg",
+      "bytes": 9297,
+      "sha256": "d6a4ead5cc239387e268d419be99955b9db771580c003cfefdb9a2c6af1b68a8"
+    },
+    {
+      "path": "audio/runtime/threat-step-02.ogg",
+      "bytes": 9550,
+      "sha256": "d6292aa51c28e994d83e12453ca1beb4744c32371e82d672efcb7b21a1f4bb2b"
+    },
+    {
+      "path": "audio/runtime/threat-step-03.ogg",
+      "bytes": 9004,
+      "sha256": "daa36e291b24bb8b79c5646ce5dc11b0e9d167ced749ebf1f7379daccd532956"
+    },
+    {
+      "path": "audio/runtime/vo-arrival.ogg",
+      "bytes": 37344,
+      "sha256": "cab6cc911f7a86319152febab48232f8eccf818a2ff462e7a364a2fcd9c33fc8"
+    },
+    {
+      "path": "audio/runtime/vo-bus.ogg",
+      "bytes": 42155,
+      "sha256": "f3dd3bd0167175a1312771c793144f06d7621ed380f80ba283166a7f6f70def5"
+    },
+    {
+      "path": "audio/runtime/vo-coolant.ogg",
+      "bytes": 38913,
+      "sha256": "b3745f395c375b679cbfce1c3f4d17a5d14e250804cb4a5ab559c7ddf52622d8"
+    },
+    {
+      "path": "audio/runtime/vo-exit.ogg",
+      "bytes": 30969,
+      "sha256": "e686f6056685fc491d020d6953d04d34eb7c2da2dea0f29d72f7b3b794f0078c"
+    },
+    {
+      "path": "audio/runtime/vo-power.ogg",
+      "bytes": 42926,
+      "sha256": "dab51b9f854417f9ecf631a4e4bde92d7b999ae3cff32c78484ce70934e47a63"
+    },
+    {
+      "path": "audio/runtime/vo-recorder.ogg",
+      "bytes": 63954,
+      "sha256": "06bf98d526773afb057ff338e8ef43b7b5cb0a1557995f21389ce0b59391b5f5"
+    },
+    {
+      "path": "audio/runtime/vo-triage.ogg",
+      "bytes": 49156,
+      "sha256": "c0c70db0313bb1d6efff9480c3615906490a10cab36617530f131eef428abfef"
+    },
+    {
+      "path": "audio/runtime/vo-uplink.ogg",
+      "bytes": 34347,
+      "sha256": "52992477b2618c06d5b27a7351a0e3eb1b2fe67ff511049c300a565b1488110a"
+    },
+    {
+      "path": "generated/aftermath-decals.png",
+      "bytes": 181187,
+      "sha256": "ae567bbb5a20eab722e507e34eebfeff5da50ce019e60c69a569bb2858d2d62c"
+    },
+    {
+      "path": "generated/aftermath-sites.glb",
+      "bytes": 115032,
+      "sha256": "35279a2e26d0a9ed102e1688b80fadba35c590c3a74b8ad86cb5183fca0e5c04"
+    },
+    {
+      "path": "generated/archive-recorder.glb",
+      "bytes": 51868,
+      "sha256": "38cea1424faa3e275010a9c703c2152ea9e08a2fb1a3b16a9a342fe4f153f0d1"
+    },
+    {
+      "path": "generated/arrival-terminal.glb",
+      "bytes": 50488,
+      "sha256": "39566978f71d199ecaec53f9f5183b52a2d9739e5a034eca4d25fee9f56256e9"
+    },
+    {
+      "path": "generated/bus-isolator.glb",
+      "bytes": 45224,
+      "sha256": "44af2791a1284b7a40ee11620e8c816eda94430460d083b5297fdc4146c25ab6"
+    },
+    {
+      "path": "generated/ceramic-basecolor.png",
+      "bytes": 4664567,
+      "sha256": "5652eca06efd234fa84ee75f7462725fc51d1bf4c56004ff7ef2a0fcbb3667e6"
+    },
+    {
+      "path": "generated/ceramic-normal.png",
+      "bytes": 1156152,
+      "sha256": "d61f8f0e13086823792025ff97f0a07e85035038454953c39355ed048ad105ad"
+    },
+    {
+      "path": "generated/ceramic-orm.png",
+      "bytes": 698212,
+      "sha256": "de985599cd66361326cfcead39d00c56bcc08e8bda2208e43ce86a35db4ee9cd"
+    },
+    {
+      "path": "generated/colony-shell-normal.png",
+      "bytes": 897951,
+      "sha256": "139c0af6d12b1dbbd16a278f7545d86fc6f06b9c354eb404398f28443d8dc606"
+    },
+    {
+      "path": "generated/coolant-valve.glb",
+      "bytes": 80040,
+      "sha256": "b3ecc0f610984ba06e9ec6e1e9b05e0801906ddd8638c26a71daa37c8964041a"
+    },
+    {
+      "path": "generated/crt-panels.png",
+      "bytes": 25953,
+      "sha256": "3ed4e403cb3c28418c8919cbae3e92043cbffcd8387a0b950941218a884039bf"
+    },
+    {
+      "path": "generated/deck-basecolor.png",
+      "bytes": 1225362,
+      "sha256": "f99d5d58bb071f9cc3810b1fe2c1523d3e1eda4a560e9578f88b86ff486ed5aa"
+    },
+    {
+      "path": "generated/deck-normal.png",
+      "bytes": 987440,
+      "sha256": "fc6c5955c30a79a3027fa721b83afd0422b35ed9d4e846174f87baa144eeda23"
+    },
+    {
+      "path": "generated/deck-orm.png",
+      "bytes": 838342,
+      "sha256": "19b607efa1e020374e558812bafba1fa02500a34ab1acc5da1075004cad03f0f"
+    },
+    {
+      "path": "generated/evac-control.glb",
+      "bytes": 67684,
+      "sha256": "35eaaa21fe40f73e370b48d3745ce2f73273b1fdd4f6e874300a655ebbb7157d"
+    },
+    {
+      "path": "generated/evacuation-ending.glb",
+      "bytes": 1988768,
+      "sha256": "55d8a739532ba47b16efe3bb9ce40c2a8a894dd53adb6e6f8dd05763c4c4ee0b"
+    },
+    {
+      "path": "generated/facility.glb",
+      "bytes": 14572712,
+      "sha256": "d3ddd97286e9036bb23ff4f8545c680a3603b871173d58af2047641a14a57473"
+    },
+    {
+      "path": "generated/fuse-locker.glb",
+      "bytes": 95624,
+      "sha256": "a6dcc857cd04c7ed214ef143a87268b2d0be70065f9662424e241144dd30495b"
+    },
+    {
+      "path": "generated/graphite-basecolor.png",
+      "bytes": 1706898,
+      "sha256": "9a497dc2a621be5a3c9f4267519b40f02faf5cfd5ee0e2be131a7d05da0e11bb"
+    },
+    {
+      "path": "generated/graphite-normal.png",
+      "bytes": 881572,
+      "sha256": "e7c2603c41773ad7e8cc647f1f92f69317679fe06547b7a6dae3d64448f211a5"
+    },
+    {
+      "path": "generated/graphite-orm.png",
+      "bytes": 697246,
+      "sha256": "0a3bfb62ec293a231339eba103e0e0583f831e762d52b76b0fe00da1968122ee"
+    },
+    {
+      "path": "generated/labels.png",
+      "bytes": 1944896,
+      "sha256": "0df5e8fd17adeb35f4689f0352a38c0379482ec325d9558364c3a883eea8db95"
+    },
+    {
+      "path": "generated/maintenance-note.glb",
+      "bytes": 45464,
+      "sha256": "afe88124cd6c1527c5f8062fe049410f3d144367d10b681787d32d270d394c6e"
+    },
+    {
+      "path": "generated/orbital-exterior.glb",
+      "bytes": 495620,
+      "sha256": "c39e043aa25548dd9bc69db434291e7d4e78bb645628076a4f93604e0b6d8f5e"
+    },
+    {
+      "path": "generated/planet-bands.png",
+      "bytes": 1560085,
+      "sha256": "ece29667fee998e30471e8eb40b19d8852dcfc2b0d2a4291ff984175f1976e5c"
+    },
+    {
+      "path": "generated/power-console.glb",
+      "bytes": 67536,
+      "sha256": "00b177643ca31fb367db5d601529ae2dc98ac702cb306abd9383eb54d0e7898b"
+    },
+    {
+      "path": "generated/pressure-door.glb",
+      "bytes": 90228,
+      "sha256": "d73931ff92ee818e95e59348f9b2defb2fa6875571a540037968414d21afb7fc"
+    },
+    {
+      "path": "generated/ring-density.png",
+      "bytes": 270,
+      "sha256": "3c699294d7c94b5df847a46e794208aa9fc401f04dfc05f5fafaa0e9bf839434"
+    },
+    {
+      "path": "generated/service-wheel.glb",
+      "bytes": 80028,
+      "sha256": "1fbc016db04973dab6b6ada95a5fefeceeb7b958e36cc036e4c400087e57119f"
+    },
+    {
+      "path": "generated/station-reflection.png",
+      "bytes": 26611,
+      "sha256": "194be97ad20022a0d4ce167298d1d027b3f70c93c6b55d3bd63b167d60efd741"
+    },
+    {
+      "path": "generated/struggle.glb",
+      "bytes": 64572,
+      "sha256": "32ffab85f83cc2c33d81cbd67175a292bee36153d49347e83b1c48e536ed12f0"
+    },
+    {
+      "path": "generated/suit-textile-normal.png",
+      "bytes": 48597,
+      "sha256": "682264c2ea1894a8ddb15af56109bb1a12bc29c793549499a2a119c388962e0a"
+    },
+    {
+      "path": "generated/triage-recorder.glb",
+      "bytes": 75024,
+      "sha256": "d1b2bb202d6e25910f28de1c5bb270a98f484179095e7fa095bdd9e58bc05c9d"
+    },
+    {
+      "path": "generated/uplink-console.glb",
+      "bytes": 66268,
+      "sha256": "8145b878b7a14aae8362afd4387c1c789846c0afd17b9ddfa3bfe95abcc81d1f"
+    },
+    {
+      "path": "imported/responder-trellis/model/responder.glb",
+      "bytes": 5334140,
+      "sha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7"
+    }
+  ],
+  "totalFiles": 65,
+  "totalBytes": 42433448,
+  "visualBytes": 40927661,
+  "audioBytes": 1505787,
+  "removedFromRuntimeButRetainedOnDisk": [
+    {
+      "path": "generated/insert-basecolor.jpg",
+      "bytes": 447654,
+      "sha256": "808d8772d44c16b9026327b8120f1633166c801d6f4fd74892cc9d8011757a10"
+    },
+    {
+      "path": "generated/insert-normal.png",
+      "bytes": 4543339,
+      "sha256": "0cd409d27ec6def94b55620f5c89a27ec32de3570f01f31b81849eab1ee71bb4"
+    },
+    {
+      "path": "generated/insert-orm.png",
+      "bytes": 2879908,
+      "sha256": "d8795c7697dd4a5123602b5ac981082a88cfcb22952b6e8a61bb1d01b45c3c2f"
+    },
+    {
+      "path": "generated/rescue-badges.png",
+      "bytes": 230801,
+      "sha256": "88cbe27a3eeac1ac6fec8214e961f745e747fc3fba4f7f33e8f1d4f0d779e12c"
+    },
+    {
+      "path": "generated/responder-contact-stains-orm.png",
+      "bytes": 64609,
+      "sha256": "060e170e88eff64798e12d885902b84096f06f89997634351b73d78605413d71"
+    },
+    {
+      "path": "generated/responder-contact-stains.png",
+      "bytes": 252310,
+      "sha256": "e6896f8f2faedc85459ecca551325b724594d787f082700a9619c2a72240a07b"
+    },
+    {
+      "path": "generated/responder.glb",
+      "bytes": 3451024,
+      "sha256": "e26edcaa4cf3703a65190b0a93432c54cedea7525a18ce45cf77a81991c1e682"
+    },
+    {
+      "path": "generated/suit-shell-basecolor.png",
+      "bytes": 1709038,
+      "sha256": "8bb5e5acb962960b55415652a504c42893f1fc0211a67a588f17c3a86b894fe1"
+    },
+    {
+      "path": "generated/suit-shell-normal.png",
+      "bytes": 583546,
+      "sha256": "54ee2ecfe71501160aa43925952cadefa35fe32ec952a063938d12facd871ad9"
+    },
+    {
+      "path": "generated/suit-shell-orm.png",
+      "bytes": 710474,
+      "sha256": "4bb79632f0c387bbb584beb9dfcd2f0be0fe028ccd2e4be1f473e49df71a273e"
+    },
+    {
+      "path": "generated/suit-textile-basecolor.png",
+      "bytes": 928992,
+      "sha256": "24a495490ed0e3df8cf2a920714a2cc9afdb09928a2497f7a23a1a60af733978"
+    },
+    {
+      "path": "generated/suit-textile-orm.png",
+      "bytes": 561143,
+      "sha256": "3a7769d10bcdb445e4e6a5201f2bf558b8e9d7076ee1d530e78085362bf1545b"
+    }
+  ],
+  "addedToRuntime": [
+    {
+      "path": "imported/responder-trellis/model/responder.glb",
+      "bytes": 5334140,
+      "sha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7"
+    }
+  ],
+  "allOtherRuntimeBytesUnchanged": true,
+  "budgets": {
+    "perFileBytes": 33554432,
+    "totalBytes": 67108864,
+    "files": 256,
+    "visualBytes": 52428800,
+    "audioBytes": 14680064
+  }
+}

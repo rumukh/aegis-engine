@@ -1,0 +1,29 @@
+{
+  "aegis": "asset-import/1",
+  "id": "responder",
+  "source": {
+    "file": "responder.glb",
+    "bytes": 5334140,
+    "sha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7"
+  },
+  "provenance": {
+    "author": "Aegis contributors using local Microsoft TRELLIS and asset-specific Blender character production",
+    "license": "Research/evaluation use; TRELLIS Gaussian export dependencies have restricted terms. No whole-toolchain MIT or commercial output clearance is claimed.",
+    "source": "games/horror/assets/source/trellis-monster/recipe.json"
+  },
+  "descriptor": {
+    "path": "asset.presentation.json",
+    "bytes": 542,
+    "sha256": "33adc0c1017cd6d9087a6476f7aec0d86f1b70d7c04e2b2174f3c124d0931328"
+  },
+  "files": [
+    {
+      "source": "responder.glb",
+      "path": "model/responder.glb",
+      "bytes": 5334140,
+      "sha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7"
+    }
+  ],
+  "totalAssetBytes": 5334140,
+  "review": "required; import is not visual approval"
+}

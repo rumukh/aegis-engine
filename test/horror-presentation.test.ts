@@ -22,6 +22,21 @@ const inventory = JSON.parse(
 const parsed = parseScene(readFileSync(horror.scene, 'utf8'));
 assert.ok(parsed.ok && parsed.value);
 const scene = parsed.value;
+const retiredResponderFiles = [
+  'insert-basecolor.jpg',
+  'insert-normal.png',
+  'insert-orm.png',
+  'rescue-badges.png',
+  'responder-contact-stains-orm.png',
+  'responder-contact-stains.png',
+  'responder.glb',
+  'suit-shell-basecolor.png',
+  'suit-shell-normal.png',
+  'suit-shell-orm.png',
+  'suit-textile-basecolor.png',
+  'suit-textile-orm.png',
+];
+const responderModel = 'imported/responder-trellis/model/responder.glb';
 
 describe('NULL MERIDIAN integrated asset and controller contract', () => {
   it('retains nine immutable authoring and provenance JSONs with independent fingerprints', () => {
@@ -120,7 +135,10 @@ describe('NULL MERIDIAN integrated asset and controller contract', () => {
     const prepared = preparePresentation(horror.presentation, scene);
     expect(prepared.files.map((file) => file.path).sort()).toEqual(
       [
-        ...inventory.files.map((file) => `generated/${file.file}`),
+        ...inventory.files
+          .filter((file) => !retiredResponderFiles.includes(file.file))
+          .map((file) => `generated/${file.file}`),
+        responderModel,
         'generated/evacuation-ending.glb',
         ...cues.map((cue) => `audio/${cue.url}`),
       ].sort(),
@@ -153,8 +171,8 @@ describe('NULL MERIDIAN integrated asset and controller contract', () => {
     const { world } = bootstrapScene(scene, { plugin: horror.plugin });
     expect(validatePresentationWorld(manifest, world).diagnostics).toEqual([]);
     const prepared = preparePresentation(horror.presentation, scene);
-    expect(prepared.files).toHaveLength(76);
-    expect(prepared.totalBytes).toBe(53_462_146);
+    expect(prepared.files).toHaveLength(65);
+    expect(prepared.totalBytes).toBe(42_433_448);
     expect(prepared.totalBytes).toBeLessThan(64 * 1024 * 1024);
     const visualBytes = prepared.files
       .filter((file) => !file.path.startsWith('audio/'))
@@ -165,14 +183,13 @@ describe('NULL MERIDIAN integrated asset and controller contract', () => {
     const files = prepared.files.map((file) => file.path);
     expect(files).toContain('generated/facility.glb');
     expect(files).toContain('generated/orbital-exterior.glb');
-    expect(files).toContain('generated/responder.glb');
+    expect(files).toContain(responderModel);
+    for (const file of retiredResponderFiles) expect(files).not.toContain(`generated/${file}`);
     expect(files).toContain('generated/struggle.glb');
     expect(files).toContain('generated/aftermath-sites.glb');
-    expect(files).toContain('generated/insert-basecolor.jpg');
-    expect(files).toContain('generated/insert-normal.png');
-    expect(files).toContain('generated/insert-orm.png');
-    expect(files).toContain('generated/responder-contact-stains.png');
-    expect(files).toContain('generated/responder-contact-stains-orm.png');
+    expect(files).toContain('generated/suit-textile-normal.png');
+    expect(files).not.toContain('source/trellis-monster/approved-concept.png');
+    expect(files).not.toContain('imported/responder-trellis/import.json');
     expect(files).toContain('generated/colony-shell-normal.png');
     expect(files).not.toContain('generated/colony-shell-basecolor.png');
     expect(files).not.toContain('generated/colony-shell-orm.png');
@@ -184,7 +201,7 @@ describe('NULL MERIDIAN integrated asset and controller contract', () => {
     expect(files).not.toContain('source/observation-concept.png');
     expect(manifest.legacy).toEqual({ level: false, triggers: false });
     expect(manifest.assets?.find((asset) => asset.id === 'responder')?.provenance.source).toBe(
-      'games/horror/assets/source/suit-damage.recipe.json',
+      'games/horror/assets/source/trellis-monster/recipe.json',
     );
   });
 

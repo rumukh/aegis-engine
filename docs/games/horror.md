@@ -6,6 +6,14 @@ victories**. The threat is a damaged industrial rescue responder, not a recogniz
 film/game creature. It follows visible light and audible movement, investigates last-known
 positions, and can be evaded through the station's interconnected rooms.
 
+This review revision uses the **Cable Warden** character described below. The
+user selected concept B and explicitly approved its exact raw TRELLIS mesh for
+cleanup and rigging, then approved the final actual-game result on 2026-09-25:
+**"Amazing! Get it in!"** The character approval record pins cook-v4's bytes.
+The old responder and all historical recipes remain on disk for rollback, but
+the active manifest loads only the new responder package. No gameplay, AI,
+collision, routes, audio, station or ending content changes accompany it.
+
 ## Play and controls
 
 Build from the repository root with `npm run build`, then `npm run play`; choose **NULL MERIDIAN**.
@@ -254,7 +262,7 @@ described the atmosphere positively after a real catch. The request for a more o
 ending prompted the opt-in loss dialog above; it is not blanket visual, audio-mix, gait or
 8-12 minute pacing approval.
 
-### Infestation pass: sculpted in-game review candidate
+### Historical infestation pass: sculpted responder
 
 This isolated candidate adds an original alien infestation to the responder's damaged chest,
 right shoulder and lower helmet seal: torn suit layers, rooted calcified growth, selective wounds
@@ -313,3 +321,66 @@ recipes and provenance retain their original production-stage wording and hash-p
 Their old pending-review fields are not the current approval status. Final release readiness
 is established separately by the integrated verification and handoff record. Existing immutable
 human review builds are preserved.
+
+### Cable Warden: human-approved skinned character
+
+`assets/source/trellis-monster/recipe.json` is the separate production record.
+The original Microsoft TRELLIS image-large output came from the user-selected
+local Qwen concept, with recorded input rights and alpha-only preparation.
+The raw mesh was approved for cleanup/rigging on 2026-09-25. Its full default
+generation and textured export ran offline; Python, CUDA and model checkpoints
+are not engine, CI or player dependencies.
+
+Blender **5.2.2 LTS**, build `d13f752e3b9c`, cooked the approved surface with one
+subdivision level, bounded digit/forefoot cleanup, smooth normals and an
+asset-specific 24-joint skin. Three baked maps provide base color, normal
+relief and varying roughness; the organic material is non-metallic. The maps
+are authored approximations based on the generated appearance, not physical
+scans or a claim of recovered physically accurate PBR.
+
+The imported GLB is **5,334,140 bytes, 33,273 triangles and one primitive**,
+with a 2048-square base-color map and 1024-square normal/roughness maps. The
+stable `responder` binding, Idle 3.4 s, Stalk 2.2 s, Search 4.4 s, Lunge 0.8 s,
+state conditions, 48-tick warning, spatial audio and playback rates are
+unchanged. The Stalk cycle advances 1.6 m per 2.2 s, with a 75 mm swing lift;
+world locomotion is still authoritative and the rig has no locomotion root motion.
+
+Actual production-loader verification samples **652 animation frames**. It
+checks decoded PBR textures, normalized skin weights, vertex deformation,
+sole contact/lift, planted stride, loop closure and historical clearance.
+The first skin was rejected after visual review revealed arm/hip membranes;
+the added edge-strain oracle rejects that revision too. The selected cook has
+zero over-limit edge samples, sole error below 0.002 mm and zero root motion
+in that isolated clip proof. This is not an assertion about arbitrary terrain
+or a substitute for the final in-game review.
+
+The unchanged path-based state binding has an inherited limitation: during
+the AI's short direct-target finish with `path.length === 0`, Search may play
+while the entity still translates. The same behavior existed with the old
+model. This presentation-only revision does not alter AI, bindings or gameplay
+hashes to hide it; stationary Search and the normal patrol/chase Stalk states
+are reviewed separately.
+
+The complete game now closes over **65 runtime files / 42,433,448 bytes**:
+**40,927,661 visual bytes** and the unchanged **1,505,787 audio bytes**.
+Twelve old responder-exclusive runtime files are no longer loaded; all other
+64 runtime files retain identical bytes. The old files, old 45-file authored
+inventory and all historical verification recipes are preserved. The 32 MiB
+per-file, 64 MiB total, 256-file and 50 MiB visual / 14 MiB audio limits are
+unchanged. `runtime-inventory.json` records the exact replacement closure.
+
+Matched RTX 4070 Ti SUPER observations retain 2560 by 1440, the high preset,
+the same lighting and the same tick-3140 world/camera. Draw calls fall from
+215 to 120 and submitted triangles from 286,011 to 253,902 at that fixed view.
+Both four-second active-pursuit windows recorded 240 frames with approximately
+16.8 ms p95 display gaps and 240 simulated ticks. The real-input start positions
+differed by one sprint tick (about 63 mm), so this is bounded comparison evidence,
+not a sustained 1440p60 guarantee. `render-comparison.json` retains those limits.
+
+Live and static browser route acceptance verifies the actual skinned character,
+unchanged win/catch behavior, normal controls and audio. The source recipe also
+contains a pixel-identical, metadata-stripped approved concept reference and
+mutation checks for missing textures/clips/skin, static animation and stale
+receipts. The main model/code MIT license does not clear the restricted Gaussian
+export dependencies: this integration remains **research/evaluation use**, with
+no commercial-output clearance claim.
