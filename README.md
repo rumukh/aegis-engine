@@ -348,21 +348,29 @@ and sidecar publication. Cold browser startup is separate and slower; this is a 
 example, not a cross-machine performance guarantee.
 
 [Asset studio reference](docs/api/asset-preview.md) ·
+[Portable model import](docs/api/asset-import.md) ·
 [Ready-made asset studies](poc/previews/asset-studies.presentation.json)
+
+`aegis import` packages a local GLB/glTF and its exact checked dependencies into
+a fresh directory with a portable presentation descriptor, explicit provenance
+and fingerprinted receipt. It supports read-only dry runs, never overwrites
+existing packages, and does not change geometry or game code. External generation
+and character cooking remain outside the Node-only engine and player runtime.
 
 ## CLI at a glance
 
-| Command          | Purpose                                                                     |
-| ---------------- | --------------------------------------------------------------------------- |
-| `aegis describe` | Discover a selected plugin's vocabulary, schedule and supported operations. |
-| `aegis scaffold` | Generate a game, scene, tilemap, prefab or game-test starter.               |
-| `aegis validate` | Validate scene, prefab, tilemap or presentation documents.                  |
-| `aegis run`      | Execute a headless simulation from a scene and optional input script.       |
-| `aegis inspect`  | Inspect world state, a semantic frame or an ASCII view at a tick.           |
-| `aegis test`     | Discover and execute compiled gameplay specifications.                      |
-| `aegis record`   | Save a replay recording with input, seed, rate and state hashes.            |
-| `aegis replay`   | Re-execute a recording and report mismatches.                               |
-| `aegis preview`  | Render and iterate on individual assets without a game.                     |
+| Command          | Purpose                                                                       |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `aegis describe` | Discover a selected plugin's vocabulary, schedule and supported operations.   |
+| `aegis scaffold` | Generate a game, scene, tilemap, prefab or game-test starter.                 |
+| `aegis validate` | Validate scene, prefab, tilemap or presentation documents.                    |
+| `aegis run`      | Execute a headless simulation from a scene and optional input script.         |
+| `aegis inspect`  | Inspect world state, a semantic frame or an ASCII view at a tick.             |
+| `aegis test`     | Discover and execute compiled gameplay specifications.                        |
+| `aegis record`   | Save a replay recording with input, seed, rate and state hashes.              |
+| `aegis replay`   | Re-execute a recording and report mismatches.                                 |
+| `aegis preview`  | Render and iterate on individual assets without a game.                       |
+| `aegis import`   | Package a local GLB/glTF dependency closure with provenance and fingerprints. |
 
 Use `npx aegis <command> --help` for exact options. Most commands support `--json`.
 The [agent workbench reference](docs/api/agent-workbench.md) explains selection precedence,
@@ -465,6 +473,8 @@ supported local asset formats and a valid dependency closure.
   bounded observations.
 - [**Asset preview**](docs/api/asset-preview.md): studio controls, automation, reload behavior,
   capture recipes and timing semantics.
+- [**Asset import**](docs/api/asset-import.md): portable checked model packages, provenance,
+  dry runs and intentional game binding.
 - [**Presentation package**](packages/render-three/README.md): assets, animation, effects,
   audio, browser hosting and static delivery.
 - [**Environment**](ENVIRONMENT.md) and [**working agreement**](docs/working-agreement.md):

@@ -23,6 +23,12 @@ Use `@aegis/render-three/preview` for the warm Node API. See the
 [asset preview reference](../../docs/api/asset-preview.md) for selection, lifecycle, safe local
 automation, supported formats, freshness, and timing semantics.
 
+For checked portable model packages, use `aegis import` or the Node-only
+`@aegis/render-three/asset-import` API. It reuses production preflight, copies the
+exact GLB/glTF dependency closure into a new directory, and writes a standard
+descriptor and fingerprinted receipt without running a generator or changing a
+game. See [asset import](../../docs/api/asset-import.md).
+
 ## Play the three PoC games
 
 ```

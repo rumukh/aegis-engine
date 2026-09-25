@@ -12,6 +12,10 @@ The workflow uses the same `preparePresentation`, checked local file closure,
 `loadPresentationAssets`, model instances, texture sampling, and materials as production
 presentation. It has its own asset-only browser entry, not the game client at tick zero.
 
+Use [`aegis import`](./asset-import.md) to package a reviewed local GLB/glTF and
+its exact dependencies with explicit provenance. Preview the resulting
+`asset.presentation.json`; import does not replace visual or animation review.
+
 ## One-shot captures
 
 Build the workspace once. Subsequent asset edits need no workspace rebuild.

@@ -47,8 +47,32 @@ Omitting `--write` reports and exits non-zero, which is the form the gate uses.
 | Python | not installed | Do not depend on it |
 | Go | not installed | Do not depend on it |
 
-Node and TypeScript only. Do not introduce a toolchain that needs Python or Go, and do not
-add native-compilation dependencies (`node-gyp`) — there is no guaranteed build toolchain.
+The **engine build, CI and player runtime** are Node and TypeScript only. Do not introduce
+Python/Go or native-compilation dependencies (`node-gyp`) on those paths; there is no
+guaranteed external authoring toolchain for an engine consumer.
+
+Optional asset authoring is separate. This workstation's dedicated `Aegis-Trellis`
+Ubuntu 22.04 WSL2 distro stores its VHDX under `C:\AI\TRELLIS\wsl`; `C:\AI` is an
+existing junction to `D:\AI` and must be preserved. TRELLIS source, Python/CUDA
+environment and model caches live inside that distro. Inputs, outputs and logs
+remain local interchange files. Do not install Linux NVIDIA drivers, enable WSL1,
+reboot Windows, or modify other AI environments as part of engine commands.
+
+The user-level `trellis-3d` skill is optional and is not installed by npm. Original
+TRELLIS image-large textured export was exercised locally with Python 3.10,
+Torch 2.4.0/cu121 and the 16 GB RTX 4070 Ti SUPER; fresh network-isolated inference
+also passed. Exact local evidence is in `C:\AI\TRELLIS\runtime.json`. This is
+research/evaluation tooling with restricted export dependencies, not a claim of
+whole-toolchain MIT licensing or commercial output clearance.
+
+Raw TRELLIS export requires no Blender. Optional character cooking explicitly
+selects Blender **5.2.2 LTS** at
+`C:\Program Files\Blender Foundation\Blender 5.2\blender.exe`, or an explicitly
+configured executable whose actual version/build must be recorded. The measured
+5.2.2 build is `d13f752e3b9c`; isolated bake/skinned-animation/GLB round-trip
+compatibility was exercised. Existing historical recipes are not implicitly
+migrated. Only reviewed cooked model bytes and portable provenance enter a game
+through the Node-only [`aegis import`](docs/api/asset-import.md) workflow.
 
 `npm view typescript version` currently reports `7.x` (the native port). Pin TypeScript to
 `^5` for predictable behaviour with the rest of the ecosystem unless you have verified 7 works
