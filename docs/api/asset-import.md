@@ -47,6 +47,13 @@ the source directory, checkpoints, source projects and generation logs are not
 copied. Descriptors and receipts use portable relative references, not absolute
 host paths.
 
+Keep a committed package byte-identical too: text checkout conversion or a
+formatter can invalidate its recorded JSON/glTF fingerprints without changing
+how the model looks. Aegis preserves bytes under `games/*/assets/imported/**`
+with Git's `-text` attribute. For another destination/repository, configure the
+equivalent scoped attribute before committing. Deliberate content edits require
+a fresh import/receipt, not a silently rewritten package.
+
 `import.json` has discriminator `asset-import/1`. It records the stable asset
 ID, declared provenance, source-model SHA-256/byte count, descriptor fingerprint,
 the exact source/output relative inventory with per-file sizes/hashes, and
