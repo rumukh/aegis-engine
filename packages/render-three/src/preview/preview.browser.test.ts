@@ -28,7 +28,11 @@ import {
   waitForPaint,
 } from '../browser.js';
 import type { CdpSession, LaunchedBrowser } from '../browser.js';
-import { fixturePng, writePresentationFixture } from '../testing/presentation-fixture.js';
+import {
+  fixtureGltf,
+  fixturePng,
+  writePresentationFixture,
+} from '../testing/presentation-fixture.js';
 import type { PresentationManifest } from '../presentation/schema.js';
 import { startAssetPreview, readPreviewCapture } from './capture.js';
 import type { AssetPreview, AssetPreviewOptions } from './capture.js';
@@ -103,7 +107,10 @@ async function waitFailed(preview: AssetPreview, after: number): Promise<Preview
 }
 
 /** Inspect persisted PNG pixels independently of the renderer's readiness and statistics. */
-function pixels(report: PreviewCaptureReport): { foreground: number; colors: number } {
+function pixels(
+  report: PreviewCaptureReport,
+  minimumColors = 32,
+): { foreground: number; colors: number; litForeground: number } {
   const png = readFileSync(report.output.path);
   expect(png.readUInt32BE(16)).toBe(report.output.width);
   expect(png.readUInt32BE(20)).toBe(report.output.height);
@@ -154,6 +161,7 @@ function pixels(report: PreviewCaptureReport): { foreground: number; colors: num
     Number.parseInt(report.recipe.background.slice(at, at + 2), 16),
   );
   let foreground = 0;
+  let litForeground = 0;
   const colors = new Set<number>();
   for (let at = 0; at < rows.length; at += channels) {
     const r = rows[at]!,
@@ -162,13 +170,15 @@ function pixels(report: PreviewCaptureReport): { foreground: number; colors: num
     if (
       Math.abs(r - background[0]!) + Math.abs(g - background[1]!) + Math.abs(b - background[2]!) >
       12
-    )
+    ) {
       foreground++;
+      if (Math.max(r, g, b) > 80) litForeground++;
+    }
     colors.add((r << 16) | (g << 8) | b);
   }
   expect(foreground).toBeGreaterThan(report.output.width * report.output.height * 0.01);
-  expect(colors.size).toBeGreaterThan(32);
-  return { foreground, colors: colors.size };
+  expect(colors.size).toBeGreaterThan(minimumColors);
+  return { foreground, colors: colors.size, litForeground };
 }
 
 async function stopBrowser(): Promise<void> {
@@ -240,6 +250,48 @@ afterAll(async () => {
 }, 120_000);
 
 describe('standalone asset preview: actual browser acceptance', () => {
+  it('lights declared model material overrides with and without authored normals', async () => {
+    const directory = join(temporary, 'override-normals');
+    mkdirSync(directory);
+    writeFileSync(join(directory, 'missing.gltf'), fixtureGltf(false));
+    writeFileSync(join(directory, 'authored.gltf'), fixtureGltf(false, true));
+    const manifest: PresentationManifest = {
+      aegis: 'presentation/1',
+      assets: ['missing', 'authored'].map((id) => ({
+        id,
+        kind: 'gltf',
+        src: `${id}.gltf`,
+        provenance: {
+          author: 'Aegis contributors',
+          license: 'MIT',
+          source: 'Original independent lighting fixture',
+        },
+      })),
+      materials: [
+        { id: 'clay', shading: 'standard', color: '#c9cdd4', roughness: 0.85, metalness: 0 },
+      ],
+    };
+    const descriptor = join(directory, 'asset.presentation.json');
+    writeFileSync(descriptor, JSON.stringify(manifest));
+    const preview = await start({
+      source: descriptor,
+      selection: { kind: 'model', id: 'missing', material: 'clay' },
+      settings: { view: 'front', lighting: 'neutral', background: '#18212f' },
+    });
+    for (const id of ['missing', 'authored']) {
+      if (id !== 'missing') await preview.reload({ kind: 'model', id, material: 'clay' });
+      const capture = await preview.capture({
+        filename: `override-${id}-normals.png`,
+        width: 320,
+        height: 320,
+      });
+      expect(
+        pixels(capture, 3).litForeground,
+        `${id} normals must not produce a black silhouette`,
+      ).toBeGreaterThan(1000);
+    }
+  });
+
   it('captures the real animated operative, without a scene or game, at two independently different poses', async () => {
     const source = copyAsset(ISO, join(temporary, 'operative'));
     const preview = await start({ source, settings: { clip: 'walk', time: 0 } });

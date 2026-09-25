@@ -56,6 +56,11 @@ settings are not instantiated.
 Ambiguous descriptors require an explicit selection; missing IDs and frame names report
 the available choices. The persistent page lets an operator select those same declarations.
 
+Declared standard-material overrides preserve glTF's flat shading when a mesh has no
+`NORMAL` attribute, in both the studio and game presentation. A cached library-owned
+material variant is used; geometry is not modified and normals are not synthesized.
+Normal-bearing meshes retain their authored normals and the original declared material.
+
 Descriptor asset paths are relative to its directory by default. Set `--asset-root <dir>`
 when the descriptor uses another local root. The Node API takes an absolute `assetRoot`.
 Direct file inputs instead use their own directory; they do not accept `assetRoot`.

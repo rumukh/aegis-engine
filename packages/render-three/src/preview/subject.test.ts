@@ -1,10 +1,11 @@
-import { DataTexture } from 'three';
+import { DataTexture, Mesh, MeshStandardMaterial } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { loadPresentationAssets } from '../presentation/assets.js';
 import { fixtureGlb } from '../testing/presentation-fixture.js';
 import { assetBounds, meshStats, PreviewSubject } from './subject.js';
 import type { PresentationManifest } from '../presentation/schema.js';
+import { VisualFactory } from '../presentation/runtime-visuals.js';
 
 const PROVENANCE = {
   author: 'Aegis contributors',
@@ -13,6 +14,76 @@ const PROVENANCE = {
 };
 
 describe('asset-only specimen geometry and ownership (CPU)', () => {
+  it.each([false, true])(
+    'shares correct declared-material shading with game visuals (authored normals: %s)',
+    async (withNormals) => {
+      const manifest: PresentationManifest = {
+        aegis: 'presentation/1',
+        assets: [{ id: 'rig', kind: 'gltf', src: 'rig.glb', provenance: PROVENANCE }],
+        materials: [
+          { id: 'clay', shading: 'standard', color: '#aabbcc', roughness: 0.8, metalness: 0 },
+          { id: 'unlit', shading: 'unlit', color: '#ffffff' },
+        ],
+      };
+      const assets = await loadPresentationAssets(
+        { manifest, baseUrl: './assets/' },
+        {
+          loaders: {
+            model: (_url, manager) =>
+              new GLTFLoader(manager).parseAsync(fixtureGlb(false, withNormals), ''),
+            texture: async () => {
+              throw new Error('No fixture texture');
+            },
+            audio: async () => {
+              throw new Error('No fixture audio');
+            },
+          },
+        },
+      );
+      const factory = new VisualFactory(assets);
+      const specimen = new PreviewSubject(assets, manifest, {
+        kind: 'model',
+        id: 'rig',
+        material: 'clay',
+      });
+      const visual = factory.create(
+        { kind: 'model', mesh: 'rig', material: 'clay' },
+        'neutral',
+        'test',
+      );
+      const previewMesh = specimen.root.getObjectByName('body');
+      const gameMesh = visual.object.getObjectByName('body');
+      if (!(previewMesh instanceof Mesh) || !(gameMesh instanceof Mesh))
+        throw new Error('Real GLB mesh missing');
+      const material = previewMesh.material;
+      const base = assets.material('clay');
+      if (!(material instanceof MeshStandardMaterial) || !(base instanceof MeshStandardMaterial))
+        throw new Error('Expected standard materials');
+      expect(material.flatShading).toBe(!withNormals);
+      expect(gameMesh.material).toBe(material);
+      expect(assets.material('clay', previewMesh.geometry)).toBe(material);
+      expect(base.flatShading).toBe(false);
+      expect(material === base).toBe(withNormals);
+      expect(previewMesh.geometry).toBe(gameMesh.geometry);
+      expect(previewMesh.geometry.hasAttribute('normal')).toBe(withNormals);
+      if (withNormals)
+        expect(Array.from(previewMesh.geometry.getAttribute('normal').array)).toEqual(
+          Array.from({ length: 12 }, () => [0, 1, 0]).flat(),
+        );
+      expect(assets.material('unlit', previewMesh.geometry)).toBe(assets.material('unlit'));
+      const disposed = vi.fn();
+      material.addEventListener('dispose', disposed);
+      specimen.dispose();
+      visual.dispose();
+      factory.dispose();
+      expect(disposed).not.toHaveBeenCalled();
+      expect(previewMesh.geometry.hasAttribute('normal')).toBe(withNormals);
+      assets.dispose();
+      assets.dispose();
+      expect(disposed).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('uses a production-loaded model instance and samples real animated geometry', async () => {
     const manifest: PresentationManifest = {
       aegis: 'presentation/1',
