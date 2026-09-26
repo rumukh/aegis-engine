@@ -130,11 +130,13 @@ The optional `AEGIS_HORROR_INPUT_TRACE` directory enables bounded diagnostics in
 `test/horror-showcase.browser.test.ts`, independently of screenshot capture. Each case emits
 its trace before page cleanup and saves JSON: actual broker packets and acknowledgements,
 control-call timing, Node event-loop/CPU windows, browser input events, and rendering/sync/task
-timings. Live-only timing APIs are explicitly unavailable in static clients rather than
+timings. Bounded render records include program counts/keys created by a frame and actual
+responder draw/shadow flags; they do not infer compilation from a display gap alone.
+Live-only timing APIs are explicitly unavailable in static clients rather than
 reported as zero.
 
 Render-call wall time is not GPU elapsed time, and a display gap alone does not identify which
 process blocked. Correlate the recorded clocks and packet sequences before assigning a cause.
-The **Horror input diagnostic** workflow runs all four cases on Ubuntu for relevant input
+The **Horror input diagnostic** workflow runs all five cases on Ubuntu for relevant input
 changes, or on manual dispatch, and retains the JSON artifact even on failure. It supplements
 the full CI gate; it does not replace it or relax any route, deadline or assertion.

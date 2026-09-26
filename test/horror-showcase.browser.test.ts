@@ -492,6 +492,10 @@ async function keyboardCrouchProof(page: CdpSession): Promise<void> {
 describe('NULL MERIDIAN real browser mission', () => {
   it('static: a missing character dependency cannot become a ready primitive fallback', async () => {
     assert.ok(browser);
+    const isolationTrace =
+      inputTrace ?? startHorrorInputTrace(() => dev.session('horror')?.tick ?? null);
+    const ownsTrace = inputTrace === undefined;
+    const liveBefore = dev.session('horror')?.snapshot();
     const file = join(
       temporary,
       'site',
@@ -507,7 +511,9 @@ describe('NULL MERIDIAN real browser mission', () => {
       await page.send('Network.enable');
       await page.send('Network.setCacheDisabled', { cacheDisabled: true });
       rmSync(file);
-      await page.send('Page.navigate', { url: `${staticUrl}/play/horror/` });
+      await navigateAndWait(page, () =>
+        page.send('Page.navigate', { url: `${staticUrl}/play/horror/` }),
+      );
       await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'error');
       expect(await evaluate(page, 'globalThis.aegis.tick()')).toBe(-1);
       const failure = await evaluate<string>(
@@ -517,14 +523,33 @@ describe('NULL MERIDIAN real browser mission', () => {
       expect(failure).toContain('AEG-RENDER-0004');
       expect(failure).toContain('responder.glb');
       writeFileSync(file, original);
-      await page.send('Page.reload');
+      await navigateAndWait(page, () => page.send('Page.reload'));
       await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'ready');
       expect(
         await evaluate<number>(page, 'globalThis.aegis.presentation().assets.loadedFiles'),
       ).toBe(LEGACY_RESPONDER ? 76 : 65);
+      await navigateAndWait(page, () => page.send('Page.navigate', { url: 'about:blank' }));
+      expect(isolationTrace.snapshot().packets.total).toBe(0);
+      expect(dev.session('horror')?.snapshot()).toEqual(liveBefore);
+      if (INPUT_TRACE !== undefined) {
+        mkdirSync(INPUT_TRACE, { recursive: true });
+        writeFileSync(
+          join(INPUT_TRACE, 'static-missing-character-isolation.json'),
+          JSON.stringify(
+            {
+              liveBrokerPackets: isolationTrace.snapshot().packets,
+              liveWorldUnchanged: true,
+              staticPageUnloaded: true,
+            },
+            null,
+            2,
+          ),
+        );
+      }
     } finally {
       if (!existsSync(file)) writeFileSync(file, original);
       page.close();
+      if (ownsTrace) isolationTrace.stop();
     }
   });
 

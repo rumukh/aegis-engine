@@ -136,10 +136,13 @@ describe('bounded Horror diagnostic instrumentation', () => {
           return value;
         }),
       };
+      const programs: { id: number; name: string; cacheKey: string }[] = [];
       const renderer = {
+        renderer: { info: { programs } },
         render: vi.fn(function (this: unknown) {
           expect(this).toBe(renderer);
           clock += 11;
+          programs.push({ id: 7, name: 'measured-material', cacheKey: 'measured-program-key' });
         }),
       };
       const fetchResult = Promise.resolve({ status: 200 });
@@ -208,11 +211,18 @@ describe('bounded Horror diagnostic instrumentation', () => {
         requests: { total: live ? 2 : 0 },
         syncs: { total: 1 },
         renders: { total: 1 },
+        programs: { total: 1 },
         frames: { total: 1 },
         mainLoop: { total: 1 },
         finalTimings: live
           ? { available: true, value: { frames: 1 } }
           : { available: false, value: null },
+      });
+      expect(report.renders.last[0]).toMatchObject({
+        programsBefore: 0,
+        programsAfter: 1,
+        addedPrograms: [{ id: 7, name: 'measured-material', cacheKey: 'measured-program-key' }],
+        responder: { visible: null, meshes: [], meshCount: 0, drawn: [] },
       });
       if (!live)
         expect(report.frames.last[0]).toMatchObject({
