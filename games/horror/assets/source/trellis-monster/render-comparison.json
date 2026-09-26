@@ -1,0 +1,101 @@
+{
+  "schema": "character-render-comparison/1",
+  "fixedSnapshot": {
+    "worldSha256": "ccef2fad0ba80b438ab8c408171ab19c5cde484f336a24ffc9875cb623f2b980",
+    "worldIdentical": true,
+    "before": {
+      "tick": 3140,
+      "canvas": [2560, 1440],
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "quality": "high",
+      "drawCalls": 215,
+      "triangles": 286011,
+      "assets": {
+        "textures": 140,
+        "materials": 164,
+        "geometries": 366,
+        "modelInstances": 23,
+        "audioBytes": 1505787,
+        "loadedFiles": 76
+      },
+      "instantaneousRenderMs": 3
+    },
+    "after": {
+      "tick": 3140,
+      "canvas": [2560, 1440],
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "quality": "high",
+      "drawCalls": 120,
+      "triangles": 253902,
+      "assets": {
+        "textures": 125,
+        "materials": 146,
+        "geometries": 271,
+        "modelInstances": 23,
+        "audioBytes": 1505787,
+        "loadedFiles": 65
+      },
+      "instantaneousRenderMs": 3.0999999940395355
+    }
+  },
+  "activePursuit": {
+    "before": {
+      "frames": 240,
+      "elapsedMs": 4002.2000000029802,
+      "meanGapMs": 16.638750000037255,
+      "p95GapMs": 16.799999999999272,
+      "p99GapMs": 16.80000000000291,
+      "startTick": 3143,
+      "endTick": 3383,
+      "startPosition": {
+        "x": 16.763018575724725,
+        "y": 0,
+        "z": 21.981233166544936
+      },
+      "endPosition": {
+        "x": 1.563019501761716,
+        "y": 0,
+        "z": 21.986538967362943
+      },
+      "health": 100,
+      "canvas": [2560, 1440],
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "quality": "high",
+      "drawCalls": 390,
+      "triangles": 492159,
+      "exchangeErrors": 0
+    },
+    "after": {
+      "frames": 240,
+      "elapsedMs": 4001.7000000029802,
+      "meanGapMs": 16.642083333345756,
+      "p95GapMs": 16.799999999999272,
+      "p99GapMs": 16.80000000000109,
+      "startTick": 3143,
+      "endTick": 3383,
+      "startPosition": {
+        "x": 16.699685246249878,
+        "y": 0,
+        "z": 21.981255274048344
+      },
+      "endPosition": {
+        "x": 1.4996861722868697,
+        "y": 0,
+        "z": 21.98656107486635
+      },
+      "health": 100,
+      "canvas": [2560, 1440],
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "quality": "high",
+      "drawCalls": 297,
+      "triangles": 460266,
+      "exchangeErrors": 0
+    }
+  },
+  "limitations": [
+    "Four-second active windows, not sustained 60fps evidence or a whole-game performance guarantee.",
+    "Active start positions differ by one sprint tick (about 63mm) because real input arrives asynchronously; relative movement, 240 simulated ticks, viewport and quality match.",
+    "The paused tick3140 snapshots and camera are identical, so their draw-call/triangle comparison is exact.",
+    "Instantaneous renderer CPU timings are individual samples, not averaged GPU time measurements."
+  ]
+}

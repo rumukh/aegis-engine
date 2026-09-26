@@ -114,8 +114,32 @@ describe('bounded Horror diagnostic instrumentation', () => {
       expect(trace.snapshot().packets.last[0]).toMatchObject({
         input: { axes: null, reset: null, held: null, look: null },
       });
+
       expect(trace.snapshot().packets.last[1]).toMatchObject({
         input: { axes: {}, reset: false },
+      });
+    } finally {
+      trace.stop();
+    }
+  });
+
+  it('records control header timing and unconsumed response bodies without retaining them strongly', async () => {
+    const trace = startHorrorInputTrace(() => 0);
+    const response = new Response('bounded control response');
+    try {
+      const at = performance.now();
+      trace.control('headers-only', 1, at, undefined, response, at);
+      expect(trace.snapshot().controls.last[0]).toMatchObject({
+        responseBodyUsed: false,
+        unconsumedLiveResponses: 1,
+        responseCount: 1,
+      });
+      await response.arrayBuffer();
+      trace.control('drained', 1, at, undefined, response, performance.now());
+      expect(trace.snapshot().controls.last[1]).toMatchObject({
+        responseBodyUsed: true,
+        unconsumedLiveResponses: 0,
+        responseCount: 2,
       });
     } finally {
       trace.stop();
@@ -136,10 +160,13 @@ describe('bounded Horror diagnostic instrumentation', () => {
           return value;
         }),
       };
+      const programs: { id: number; name: string; cacheKey: string }[] = [];
       const renderer = {
+        renderer: { info: { programs } },
         render: vi.fn(function (this: unknown) {
           expect(this).toBe(renderer);
           clock += 11;
+          programs.push({ id: 7, name: 'measured-material', cacheKey: 'measured-program-key' });
         }),
       };
       const fetchResult = Promise.resolve({ status: 200 });
@@ -208,11 +235,18 @@ describe('bounded Horror diagnostic instrumentation', () => {
         requests: { total: live ? 2 : 0 },
         syncs: { total: 1 },
         renders: { total: 1 },
+        programs: { total: 1 },
         frames: { total: 1 },
         mainLoop: { total: 1 },
         finalTimings: live
           ? { available: true, value: { frames: 1 } }
           : { available: false, value: null },
+      });
+      expect(report.renders.last[0]).toMatchObject({
+        programsBefore: 0,
+        programsAfter: 1,
+        addedPrograms: [{ id: 7, name: 'measured-material', cacheKey: 'measured-program-key' }],
+        responder: { visible: null, meshes: [], meshCount: 0, drawn: [] },
       });
       if (!live)
         expect(report.frames.last[0]).toMatchObject({

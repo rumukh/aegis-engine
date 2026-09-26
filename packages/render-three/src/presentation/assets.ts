@@ -42,7 +42,8 @@ export interface ModelInstance {
 }
 export interface PresentationAssets {
   texture(id: string, frame?: string): Texture;
-  material(id: string): Material;
+  /** Geometry-specific shading preserves glTF's flat rendering when NORMAL is absent. */
+  material(id: string, geometry?: BufferGeometry): Material;
   instantiateModel(id: string): ModelInstance;
   audio(id: string): ArrayBuffer;
   stats(): PresentationAssetStats;
@@ -150,6 +151,7 @@ class AssetLibrary implements PresentationAssets {
   readonly #models = new Map<string, GLTF>();
   readonly #audio = new Map<string, ArrayBuffer>();
   readonly #materials = new Map<string, Material>();
+  readonly #flatMaterials = new Map<string, MeshStandardMaterial>();
   readonly #samplers = new Map<string, Texture>();
   readonly #ownedTextures = new Set<Texture>();
   readonly #textureOwners = new Map<Texture, string>();
@@ -340,7 +342,7 @@ class AssetLibrary implements PresentationAssets {
     return this.#sampler(id, frame);
   }
 
-  material(id: string): Material {
+  material(id: string, geometry?: BufferGeometry): Material {
     this.#check();
     const material = this.#materials.get(id);
     if (material === undefined)
@@ -349,6 +351,20 @@ class AssetLibrary implements PresentationAssets {
         `Unknown material "${id}".`,
         'Declare the material before binding it to a surface.',
       );
+    if (
+      material instanceof MeshStandardMaterial &&
+      !material.flatShading &&
+      geometry !== undefined &&
+      !geometry.hasAttribute('normal')
+    ) {
+      const cached = this.#flatMaterials.get(id);
+      if (cached !== undefined) return cached;
+      const flat = material.clone();
+      flat.flatShading = true;
+      this.#flatMaterials.set(id, flat);
+      this.#ownedMaterials.add(sharedResource(flat));
+      return flat;
+    }
     return material;
   }
 
@@ -419,6 +435,7 @@ class AssetLibrary implements PresentationAssets {
     this.#models.clear();
     this.#audio.clear();
     this.#materials.clear();
+    this.#flatMaterials.clear();
     this.#samplers.clear();
     this.#sources?.clear();
     this.#loaded = 0;

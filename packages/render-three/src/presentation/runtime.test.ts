@@ -8,6 +8,7 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   PointLight,
   SkinnedMesh,
   Skeleton,
@@ -1235,7 +1236,12 @@ describe('generation-aware event feedback', () => {
     ).toBeCloseTo(2.25);
     expect((body.material as MeshBasicMaterial).color.getHexString()).toBe('ff0000');
     expect((assets.material('striped') as MeshBasicMaterial).color.getHexString()).toBe('ffffff');
-    expect(modelPart(runtime, 'critter', 'body').material).toBe(assets.material('striped'));
+    const sibling = modelPart(runtime, 'critter', 'body');
+    expect(sibling.material).toBe(assets.material('striped', sibling.geometry));
+    if (!(sibling.material instanceof MeshStandardMaterial))
+      throw new Error('Expected standard override');
+    expect(sibling.material.flatShading).toBe(true);
+    expect(sibling.material.color.getHexString()).toBe('ffffff');
     adapter.sync(world);
     expect((body.material as MeshBasicMaterial).color.getHexString()).toBe('ff0000');
     world.add(entityNamed(world, 'player'), Model, { mesh: '', material: 'red' });
@@ -1755,7 +1761,9 @@ describe('reusable visual factory', () => {
     const bodyA = a.root.getObjectByName('body') as Mesh;
     const bodyB = b.root.getObjectByName('body') as Mesh;
     expect(bodyA.geometry).toBe(bodyB.geometry);
-    expect(bodyA.material).toBe(assets.material('striped'));
+    expect(bodyA.material).toBe(assets.material('striped', bodyA.geometry));
+    expect(bodyA.material).toMatchObject({ flatShading: true });
+    expect(bodyA.geometry.hasAttribute('normal')).toBe(false);
     const parent = new Group();
     parent.position.set(2, 0, 3);
     adapter.scene.add(parent);

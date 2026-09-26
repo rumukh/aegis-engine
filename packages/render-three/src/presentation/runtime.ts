@@ -453,7 +453,7 @@ export class PresentationRuntime {
         const material = model?.material;
         object.material =
           material !== undefined && material !== ''
-            ? this.#assets.material(material)
+            ? this.#assets.material(material, object.geometry)
             : this.surface(input.state === 'dead' ? 'dead' : input.role, object.material);
       }
     }

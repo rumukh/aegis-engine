@@ -151,7 +151,7 @@ export class PreviewSubject {
         // The studio light choice must not depend on optional lights embedded in a model.
         if ('isLight' in node && node.isLight === true) node.visible = false;
         if (node instanceof Mesh && selection.material !== undefined)
-          node.material = assets.material(selection.material);
+          node.material = assets.material(selection.material, node.geometry);
       });
     } else {
       this.clips = [];

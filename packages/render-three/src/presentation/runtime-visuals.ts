@@ -458,11 +458,11 @@ export class ManagedVisual {
     return this.#sprite?.tint ?? deadTint;
   }
 
-  #baseMaterial(original: Material | Material[]): Material | Material[] {
+  #baseMaterial(original: Material | Material[], geometry?: BufferGeometry): Material | Material[] {
     const spec = this.#spec;
     const override = this.#modelData?.material || spec.material;
     return override !== undefined
-      ? this.#assets.material(override)
+      ? this.#assets.material(override, geometry)
       : spec.kind === 'primitive'
         ? this.#factory.base(spec, this.#role)
         : original;
@@ -490,7 +490,7 @@ export class ManagedVisual {
     const spec = this.#spec;
     const tint = this.#tint(state);
     for (const [mesh, original] of this.#originals) {
-      const base = this.#baseMaterial(original);
+      const base = this.#baseMaterial(original, mesh.geometry);
       const map =
         spec.kind === 'sprite' ? this.#assets.texture(spec.texture, this.#frame) : undefined;
       const material = Array.isArray(base)

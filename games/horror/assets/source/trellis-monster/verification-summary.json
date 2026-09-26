@@ -1,0 +1,540 @@
+{
+  "schema": "character-deformation-evidence/1",
+  "modelSha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7",
+  "verificationReportSha256": "3f913d17d9d920a1e28ef8f673a2f3f9f2847cc554e881850eba3dda2c256c79",
+  "verifier": "verify-character.mjs",
+  "samples": 652,
+  "loaded": {
+    "vertices": 20852,
+    "triangles": 33273,
+    "bones": [
+      "root",
+      "pelvis",
+      "hip-left",
+      "knee-left",
+      "ankle-left",
+      "hip-right",
+      "knee-right",
+      "ankle-right",
+      "thorax",
+      "helmet",
+      "shoulder-left",
+      "elbow-left",
+      "hand-left",
+      "finger-left-0",
+      "finger-left-1",
+      "finger-left-2",
+      "finger-left-3",
+      "shoulder-right",
+      "elbow-right",
+      "hand-right",
+      "finger-right-0",
+      "finger-right-1",
+      "finger-right-2",
+      "finger-right-3"
+    ],
+    "soleVertexCounts": [391, 384],
+    "maxWeightError": 4.6566128730773926e-8,
+    "textures": [
+      {
+        "property": "map",
+        "width": 2048,
+        "height": 2048,
+        "min": 0,
+        "max": 255
+      },
+      {
+        "property": "normalMap",
+        "width": 1024,
+        "height": 1024,
+        "min": 94,
+        "max": 167
+      },
+      {
+        "property": "roughnessMap",
+        "width": 1024,
+        "height": 1024,
+        "min": 0,
+        "max": 199
+      }
+    ],
+    "metalness": 0,
+    "normalsPresent": true,
+    "clips": [
+      {
+        "name": "Idle",
+        "duration": 3.4000000953674316,
+        "tracks": 72
+      },
+      {
+        "name": "Stalk",
+        "duration": 2.200000047683716,
+        "tracks": 72
+      },
+      {
+        "name": "Search",
+        "duration": 4.400000095367432,
+        "tracks": 72
+      },
+      {
+        "name": "Lunge",
+        "duration": 0.800000011920929,
+        "tracks": 72
+      }
+    ]
+  },
+  "clips": [
+    {
+      "name": "Idle",
+      "duration": 3.4000000953674316,
+      "bounds": {
+        "min": [-0.3792127931220104, 3.56458449492133e-8, -0.17229811809204332],
+        "max": [0.37855769011371687, 2.0251585166723234, 0.25938452359547765]
+      },
+      "maxDisplacement": 0.020526832746809526,
+      "maxContactError": 1.8001180712087372e-7,
+      "maxStanceSlideError": 0,
+      "maxRootMotion": 0,
+      "maxEdgeExtension": 0.0032585521099101414,
+      "maxVisibleStretchRatio": 1.3405268249371876,
+      "stretchedEdges": 0,
+      "worstEdge": {
+        "frame": 102,
+        "restLength": 0.024261109096191318,
+        "posedLength": 0.02751966120610146,
+        "a": {
+          "position": [-0.1747734695672989, 1.3753547668457031, 0.002648336812853813],
+          "influences": [
+            {
+              "bone": "thorax",
+              "weight": 0.43128252029418945
+            },
+            {
+              "bone": "pelvis",
+              "weight": 0.3014172911643982
+            },
+            {
+              "bone": "shoulder-left",
+              "weight": 0.24290485680103302
+            },
+            {
+              "bone": "helmet",
+              "weight": 0.024395355954766273
+            }
+          ]
+        },
+        "b": {
+          "position": [-0.16543422639369965, 1.3627351522445679, -0.015848292037844658],
+          "influences": [
+            {
+              "bone": "thorax",
+              "weight": 0.450107604265213
+            },
+            {
+              "bone": "pelvis",
+              "weight": 0.3558956980705261
+            },
+            {
+              "bone": "shoulder-left",
+              "weight": 0.17238306999206543
+            },
+            {
+              "bone": "hip-left",
+              "weight": 0.02161361277103424
+            }
+          ]
+        }
+      },
+      "loopError": 1.948616168423456e-8
+    },
+    {
+      "name": "Stalk",
+      "duration": 2.200000047683716,
+      "bounds": {
+        "min": [-0.3932125820072024, -6.395405222208733e-7, -0.4816765978909209],
+        "max": [0.3925575146972164, 1.956519532426274, 0.647750743856184]
+      },
+      "maxDisplacement": 0.8020984969207895,
+      "maxContactError": 0.0000011623717896911066,
+      "maxStanceSlideError": 4.6774731563524463e-7,
+      "maxRootMotion": 0,
+      "maxEdgeExtension": 0.01605527905713343,
+      "maxVisibleStretchRatio": 2.493524845698514,
+      "stretchedEdges": 0,
+      "worstEdge": {
+        "frame": 18,
+        "restLength": 0.05451800199677807,
+        "posedLength": 0.0705732810539115,
+        "a": {
+          "position": [0.14091317355632782, 0.10475105792284012, -0.18565796315670013],
+          "influences": [
+            {
+              "bone": "ankle-right",
+              "weight": 0.835619330406189
+            },
+            {
+              "bone": "knee-right",
+              "weight": 0.16198565065860748
+            },
+            {
+              "bone": "hip-right",
+              "weight": 0.0023950161412358284
+            },
+            {
+              "bone": "root",
+              "weight": 0
+            }
+          ]
+        },
+        "b": {
+          "position": [0.14015474915504456, 0.15880689024925232, -0.17861492931842804],
+          "influences": [
+            {
+              "bone": "knee-right",
+              "weight": 0.5461260080337524
+            },
+            {
+              "bone": "ankle-right",
+              "weight": 0.4400274455547333
+            },
+            {
+              "bone": "hip-right",
+              "weight": 0.01384653802961111
+            },
+            {
+              "bone": "root",
+              "weight": 0
+            }
+          ]
+        }
+      },
+      "loopError": 5.019161453123644e-8
+    },
+    {
+      "name": "Search",
+      "duration": 4.400000095367432,
+      "bounds": {
+        "min": [-0.3845452498297032, 3.56458449492133e-8, -0.1985576283446102],
+        "max": [0.3937966618807292, 2.029377463264834, 0.24775134929192938]
+      },
+      "maxDisplacement": 0.19344091885837653,
+      "maxContactError": 1.8001180712087372e-7,
+      "maxStanceSlideError": 0,
+      "maxRootMotion": 0,
+      "maxEdgeExtension": 0.01054291372435551,
+      "maxVisibleStretchRatio": 2.1662626662916225,
+      "stretchedEdges": 0,
+      "worstEdge": {
+        "frame": 216,
+        "restLength": 0.017553162201179234,
+        "posedLength": 0.028096075925534744,
+        "a": {
+          "position": [-0.1704128533601761, 1.6803396940231323, 0.012005623430013657],
+          "influences": [
+            {
+              "bone": "shoulder-left",
+              "weight": 0.5802947878837585
+            },
+            {
+              "bone": "thorax",
+              "weight": 0.2704150676727295
+            },
+            {
+              "bone": "helmet",
+              "weight": 0.1446056067943573
+            },
+            {
+              "bone": "elbow-left",
+              "weight": 0.004684528801590204
+            }
+          ]
+        },
+        "b": {
+          "position": [-0.16613726317882538, 1.6891138553619385, 0.026594897732138634],
+          "influences": [
+            {
+              "bone": "shoulder-left",
+              "weight": 0.4151606261730194
+            },
+            {
+              "bone": "thorax",
+              "weight": 0.33926650881767273
+            },
+            {
+              "bone": "helmet",
+              "weight": 0.24170351028442383
+            },
+            {
+              "bone": "elbow-left",
+              "weight": 0.003869336098432541
+            }
+          ]
+        }
+      },
+      "loopError": 4.776848300464334e-8
+    },
+    {
+      "name": "Lunge",
+      "duration": 0.800000011920929,
+      "bounds": {
+        "min": [-0.3792126837301188, 3.56458449492133e-8, -0.2041431764481537],
+        "max": [0.37855781410282374, 2.031953152965834, 0.6554215742165267]
+      },
+      "maxDisplacement": 0.6313607836311038,
+      "maxContactError": 1.8001180712087372e-7,
+      "maxStanceSlideError": 0,
+      "maxRootMotion": 0,
+      "maxEdgeExtension": 0.016090561564288244,
+      "maxVisibleStretchRatio": 2.5343110369738224,
+      "stretchedEdges": 0,
+      "worstEdge": {
+        "frame": 48,
+        "restLength": 0.018507929305657665,
+        "posedLength": 0.03459849086994591,
+        "a": {
+          "position": [0.15557526051998138, 1.3893040418624878, -0.034594591706991196],
+          "influences": [
+            {
+              "bone": "thorax",
+              "weight": 0.40322190523147583
+            },
+            {
+              "bone": "shoulder-right",
+              "weight": 0.33522045612335205
+            },
+            {
+              "bone": "pelvis",
+              "weight": 0.24331840872764587
+            },
+            {
+              "bone": "elbow-right",
+              "weight": 0.018239237368106842
+            }
+          ]
+        },
+        "b": {
+          "position": [0.1456887573003769, 1.3781380653381348, -0.04555458575487137],
+          "influences": [
+            {
+              "bone": "thorax",
+              "weight": 0.45791327953338623
+            },
+            {
+              "bone": "pelvis",
+              "weight": 0.3023269474506378
+            },
+            {
+              "bone": "shoulder-right",
+              "weight": 0.22155967354774475
+            },
+            {
+              "bone": "helmet",
+              "weight": 0.018200090155005455
+            }
+          ]
+        }
+      },
+      "loopError": null
+    }
+  ],
+  "checks": [
+    {
+      "clip": "Idle",
+      "label": "actual skinned vertex deformation",
+      "ok": true,
+      "actual": 0.020526832746809526
+    },
+    {
+      "clip": "Idle",
+      "label": "sole contact/lift within 3mm",
+      "ok": true,
+      "actual": 1.8001180712087372e-7
+    },
+    {
+      "clip": "Idle",
+      "label": "no locomotion root motion",
+      "ok": true,
+      "actual": 0
+    },
+    {
+      "clip": "Idle",
+      "label": "no visibly stretched skin membranes",
+      "ok": true,
+      "actual": {
+        "occurrences": 0,
+        "maxExtension": 0.0032585521099101414,
+        "maxRatio": 1.3405268249371876
+      }
+    },
+    {
+      "clip": "Idle",
+      "label": "no floor penetration beyond 3mm",
+      "ok": true,
+      "actual": 3.56458449492133e-8
+    },
+    {
+      "clip": "Idle",
+      "label": "matches existing clip clearance envelope within 25mm",
+      "ok": true,
+      "actual": {
+        "min": [-0.3792127931220104, 3.56458449492133e-8, -0.17229811809204332],
+        "max": [0.37855769011371687, 2.0251585166723234, 0.25938452359547765]
+      }
+    },
+    {
+      "clip": "Idle",
+      "label": "loop closes within 1mm",
+      "ok": true,
+      "actual": 1.948616168423456e-8
+    },
+    {
+      "clip": "Stalk",
+      "label": "actual skinned vertex deformation",
+      "ok": true,
+      "actual": 0.8020984969207895
+    },
+    {
+      "clip": "Stalk",
+      "label": "sole contact/lift within 3mm",
+      "ok": true,
+      "actual": 0.0000011623717896911066
+    },
+    {
+      "clip": "Stalk",
+      "label": "no locomotion root motion",
+      "ok": true,
+      "actual": 0
+    },
+    {
+      "clip": "Stalk",
+      "label": "no visibly stretched skin membranes",
+      "ok": true,
+      "actual": {
+        "occurrences": 0,
+        "maxExtension": 0.01605527905713343,
+        "maxRatio": 2.493524845698514
+      }
+    },
+    {
+      "clip": "Stalk",
+      "label": "no floor penetration beyond 3mm",
+      "ok": true,
+      "actual": -6.395405222208733e-7
+    },
+    {
+      "clip": "Stalk",
+      "label": "matches existing clip clearance envelope within 25mm",
+      "ok": true,
+      "actual": {
+        "min": [-0.3932125820072024, -6.395405222208733e-7, -0.4816765978909209],
+        "max": [0.3925575146972164, 1.956519532426274, 0.647750743856184]
+      }
+    },
+    {
+      "clip": "Stalk",
+      "label": "loop closes within 1mm",
+      "ok": true,
+      "actual": 5.019161453123644e-8
+    },
+    {
+      "clip": "Stalk",
+      "label": "planted stride matches 1.6m per cycle",
+      "ok": true,
+      "actual": 4.6774731563524463e-7
+    },
+    {
+      "clip": "Search",
+      "label": "actual skinned vertex deformation",
+      "ok": true,
+      "actual": 0.19344091885837653
+    },
+    {
+      "clip": "Search",
+      "label": "sole contact/lift within 3mm",
+      "ok": true,
+      "actual": 1.8001180712087372e-7
+    },
+    {
+      "clip": "Search",
+      "label": "no locomotion root motion",
+      "ok": true,
+      "actual": 0
+    },
+    {
+      "clip": "Search",
+      "label": "no visibly stretched skin membranes",
+      "ok": true,
+      "actual": {
+        "occurrences": 0,
+        "maxExtension": 0.01054291372435551,
+        "maxRatio": 2.1662626662916225
+      }
+    },
+    {
+      "clip": "Search",
+      "label": "no floor penetration beyond 3mm",
+      "ok": true,
+      "actual": 3.56458449492133e-8
+    },
+    {
+      "clip": "Search",
+      "label": "matches existing clip clearance envelope within 25mm",
+      "ok": true,
+      "actual": {
+        "min": [-0.3845452498297032, 3.56458449492133e-8, -0.1985576283446102],
+        "max": [0.3937966618807292, 2.029377463264834, 0.24775134929192938]
+      }
+    },
+    {
+      "clip": "Search",
+      "label": "loop closes within 1mm",
+      "ok": true,
+      "actual": 4.776848300464334e-8
+    },
+    {
+      "clip": "Lunge",
+      "label": "actual skinned vertex deformation",
+      "ok": true,
+      "actual": 0.6313607836311038
+    },
+    {
+      "clip": "Lunge",
+      "label": "sole contact/lift within 3mm",
+      "ok": true,
+      "actual": 1.8001180712087372e-7
+    },
+    {
+      "clip": "Lunge",
+      "label": "no locomotion root motion",
+      "ok": true,
+      "actual": 0
+    },
+    {
+      "clip": "Lunge",
+      "label": "no visibly stretched skin membranes",
+      "ok": true,
+      "actual": {
+        "occurrences": 0,
+        "maxExtension": 0.016090561564288244,
+        "maxRatio": 2.5343110369738224
+      }
+    },
+    {
+      "clip": "Lunge",
+      "label": "no floor penetration beyond 3mm",
+      "ok": true,
+      "actual": 3.56458449492133e-8
+    },
+    {
+      "clip": "Lunge",
+      "label": "matches existing clip clearance envelope within 25mm",
+      "ok": true,
+      "actual": {
+        "min": [-0.3792126837301188, 3.56458449492133e-8, -0.2041431764481537],
+        "max": [0.37855781410282374, 2.031953152965834, 0.6554215742165267]
+      }
+    }
+  ],
+  "staticMutationRejected": true,
+  "visualReview": "Implementation agent inspected all four clip captures after rejection of earlier skin defects. The separate final actual-game user decision is pinned in approval.json."
+}

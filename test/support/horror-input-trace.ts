@@ -65,6 +65,8 @@ export function startHorrorInputTrace(tick: () => number | null) {
   const packets = traceWindow<object>(96);
   const loop = traceWindow<object>(48);
   const controls = traceWindow<object>(48);
+  const controlResponses: WeakRef<Response>[] = [];
+  let responseCount = 0;
   const started = performance.now();
   let lastPacketAt: number | undefined;
   let lastControlReceipt: { client: string; generation: number; at: number } | undefined;
@@ -141,8 +143,23 @@ export function startHorrorInputTrace(tick: () => number | null) {
   const timer = setInterval(sample, 100);
   timer.unref();
   return {
-    control(command: string, ticks: number, atMs: number, error?: unknown): void {
+    control(
+      command: string,
+      ticks: number,
+      atMs: number,
+      error?: unknown,
+      response?: Response,
+      headersAtMs?: number,
+    ): void {
       const endMs = performance.now();
+      if (response !== undefined) {
+        responseCount++;
+        controlResponses.push(new WeakRef(response));
+        if (controlResponses.length > 64) controlResponses.shift();
+      }
+      const live = controlResponses
+        .map((ref) => ref.deref())
+        .filter((value) => value !== undefined);
       controls.add(
         {
           command,
@@ -150,6 +167,13 @@ export function startHorrorInputTrace(tick: () => number | null) {
           atMs,
           endMs,
           wallMs: endMs - atMs,
+          headersAtMs: headersAtMs ?? null,
+          headerWaitMs: headersAtMs === undefined ? null : headersAtMs - atMs,
+          afterHeadersMs: headersAtMs === undefined ? null : endMs - headersAtMs,
+          responseBodyUsed: response?.bodyUsed ?? null,
+          unconsumedLiveResponses: live.filter((value) => !value.bodyUsed).length,
+          retainedResponseRefs: controlResponses.length,
+          responseCount,
           error: error === undefined ? null : String(error).slice(0, 600),
         },
         endMs - atMs,
@@ -188,6 +212,7 @@ export function installBrowserInputTrace(
   const mainLoop = windowFactory<object>(48);
   const syncs = windowFactory<object>(48);
   const renders = windowFactory<object>(48);
+  const programs = windowFactory<object>(32);
   const hardware = windowFactory<object>(64);
   const requests = windowFactory<object>(64);
   const adapter = target.aegis.adapter;
@@ -223,14 +248,62 @@ export function installBrowserInputTrace(
       syncs.add({ atMs, durationMs, tick: target.aegis.tick() }, durationMs);
     }
   };
-  hostPrototype.render = function (...args) {
+  hostPrototype.render = function (this: PresentationHost, ...args) {
     const atMs = performance.now();
+    const before = new Set((this.renderer.info.programs ?? []).map((program) => program.id));
+    const responder = adapter.presentation?.entity('responder')?.root;
+    const drawn = new Set<string>();
+    const meshes: {
+      name: string;
+      skinned: boolean;
+      visible: boolean;
+      castShadow: boolean;
+      receiveShadow: boolean;
+    }[] = [];
+    const restore: (() => void)[] = [];
+    responder?.traverse((node) => {
+      if (!('isMesh' in node) || node.isMesh !== true) return;
+      meshes.push({
+        name: node.name,
+        skinned: 'isSkinnedMesh' in node && node.isSkinnedMesh === true,
+        visible: node.visible,
+        castShadow: node.castShadow,
+        receiveShadow: node.receiveShadow,
+      });
+      const original = node.onBeforeRender;
+      node.onBeforeRender = (...parameters) => {
+        drawn.add(node.name);
+        original.apply(node, parameters);
+      };
+      restore.push(() => {
+        node.onBeforeRender = original;
+      });
+    });
     try {
       return originalRender.apply(this, args);
     } finally {
+      for (const undo of restore) undo();
       const durationMs = performance.now() - atMs;
       maxRenderMs = Math.max(maxRenderMs, durationMs);
-      renders.add({ atMs, durationMs, tick: target.aegis.tick() }, durationMs);
+      const added = (this.renderer.info.programs ?? [])
+        .filter((program) => !before.has(program.id))
+        .map((program) => ({ id: program.id, name: program.name, cacheKey: program.cacheKey }));
+      const row = {
+        atMs,
+        durationMs,
+        tick: target.aegis.tick(),
+        programsBefore: before.size,
+        programsAfter: this.renderer.info.programs?.length ?? 0,
+        addedPrograms: added,
+        responder: {
+          visible: responder?.visible ?? null,
+          meshes: meshes.slice(0, 8),
+          meshCount: meshes.length,
+          drawn: [...drawn].slice(0, 8),
+        },
+      };
+      renders.add(row, durationMs);
+      if (added.length > 0) programs.add(row, durationMs);
     }
   };
   globalThis.fetch = function (...args) {
@@ -352,6 +425,7 @@ export function installBrowserInputTrace(
       mainLoop: mainLoop.snapshot(),
       syncs: syncs.snapshot(),
       renders: renders.snapshot(),
+      programs: programs.snapshot(),
       hardware: hardware.snapshot(),
       requests: requests.snapshot(),
       finalTimings: liveTimings(),

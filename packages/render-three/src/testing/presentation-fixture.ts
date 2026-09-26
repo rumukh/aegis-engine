@@ -86,7 +86,7 @@ export function fixtureWav(): Buffer {
 }
 
 /** A textured diamond-bodied rig with a separate rotating fin, not a renamed box primitive. */
-export function fixtureGltf(withTexture = true): string {
+export function fixtureGltf(withTexture = true, withNormals = false): string {
   const positions = new Float32Array([
     0, 1, 0, -0.6, 0, 0.3, 0.6, 0, 0.3, 0, 1, 0, 0.6, 0, 0.3, 0, 0, -0.5, 0, 1, 0, 0, 0, -0.5, -0.6,
     0, 0.3, -0.6, 0, 0.3, 0, 0, -0.5, 0.6, 0, 0.3,
@@ -99,6 +99,7 @@ export function fixtureGltf(withTexture = true): string {
   const times = new Float32Array([0, 1, 2]);
   const rotations = new Float32Array([0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1]);
   const parts = [positions, uv, times, rotations];
+  if (withNormals) parts.push(new Float32Array(Array.from({ length: 12 }, () => [0, 1, 0]).flat()));
   let offset = 0;
   const bufferViews = parts.map((part) => {
     const view = { buffer: 0, byteOffset: offset, byteLength: part.byteLength };
@@ -117,7 +118,16 @@ export function fixtureGltf(withTexture = true): string {
       { name: 'body', mesh: 0 },
       { name: 'fin', mesh: 0, translation: [0, 1.1, 0], scale: [0.7, 0.25, 0.25] },
     ],
-    meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, material: 0 }] }],
+    meshes: [
+      {
+        primitives: [
+          {
+            attributes: { POSITION: 0, TEXCOORD_0: 1, ...(withNormals ? { NORMAL: 4 } : {}) },
+            material: 0,
+          },
+        ],
+      },
+    ],
     materials: [
       {
         name: 'fixture-striped',
@@ -151,6 +161,7 @@ export function fixtureGltf(withTexture = true): string {
       { bufferView: 1, componentType: 5126, count: 12, type: 'VEC2' },
       { bufferView: 2, componentType: 5126, count: 3, type: 'SCALAR', min: [0], max: [2] },
       { bufferView: 3, componentType: 5126, count: 3, type: 'VEC4' },
+      ...(withNormals ? [{ bufferView: 4, componentType: 5126, count: 12, type: 'VEC3' }] : []),
     ],
     animations: [
       {
@@ -163,8 +174,8 @@ export function fixtureGltf(withTexture = true): string {
 }
 
 /** The same geometry in a GLB; Node can parse it without a browser's fetch progress events. */
-export function fixtureGlb(instanced = false): ArrayBuffer {
-  const source = JSON.parse(fixtureGltf(false)) as {
+export function fixtureGlb(instanced = false, withNormals = false): ArrayBuffer {
+  const source = JSON.parse(fixtureGltf(false, withNormals)) as {
     buffers: { uri?: string; byteLength: number }[];
     nodes: { extensions?: { EXT_mesh_gpu_instancing: { attributes: { TRANSLATION: number } } } }[];
     extensionsUsed?: string[];

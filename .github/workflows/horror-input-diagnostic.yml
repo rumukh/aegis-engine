@@ -31,9 +31,9 @@ jobs:
         run: npm ci
       - name: Build and check test types
         run: npm run build && npm run typecheck:tests
-      - name: Run all four Horror cases in their normal order
+      - name: Run all five Horror cases in their normal order
         run: npm run test -- test/horror-showcase.browser.test.ts
-      - name: Independently verify the four cases executed
+      - name: Independently verify the five cases executed
         if: always()
         run: |
           node --input-type=module -e "
@@ -41,8 +41,8 @@ jobs:
           import { readFileSync } from 'node:fs';
           const report = JSON.parse(readFileSync('.vitest-report.json', 'utf8'));
           assert.equal(report.success, true);
-          assert.equal(report.numTotalTests, 4);
-          assert.equal(report.numPassedTests, 4);
+          assert.equal(report.numTotalTests, 5);
+          assert.equal(report.numPassedTests, 5);
           assert.equal(report.numFailedTests, 0);
           assert.equal(report.numFailedTestSuites, 0);
           assert.equal(report.numPendingTests, 0);

@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { createReadStream, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -11,6 +19,7 @@ import { horrorBindings } from '../poc/horror.mjs';
 import { pocGames, pocStaticGames, pocStaticModules } from '../poc/poc-games.mjs';
 import { startDevServer } from '../packages/render-three/src/dev-server.js';
 import type { DevServer } from '../packages/render-three/src/dev-server.js';
+import type { PresentationManifest } from '../packages/render-three/src/presentation/schema.js';
 import { exportStaticSite } from '../packages/render-three/src/static-site.js';
 import { compileDomInput } from '../packages/render-three/src/script-input.js';
 import type { DomInputPlan } from '../packages/render-three/src/script-input.js';
@@ -44,9 +53,39 @@ import {
 // Software CI correctness uses a bounded canvas. RTX 1440p performance is measured separately.
 const HARDWARE = process.env['AEGIS_HORROR_HARDWARE'] === '1';
 const MEASURE_PURSUIT = process.env['AEGIS_HORROR_MEASURE_PURSUIT'] === '1';
+// Explicit measurement control only; the shipped composition always selects the new package.
+const LEGACY_RESPONDER = process.env['AEGIS_HORROR_LEGACY_RESPONDER'] === '1';
 const VIEWPORT = HARDWARE ? { width: 2560, height: 1440 } : { width: 960, height: 540 };
 const ARTIFACTS = process.env['AEGIS_HORROR_ARTIFACTS'];
-const INPUT_TRACE = process.env['AEGIS_HORROR_INPUT_TRACE'];
+const INPUT_TRACE =
+  process.env['AEGIS_HORROR_INPUT_TRACE'] ??
+  (process.env['GITHUB_ACTIONS'] === 'true'
+    ? join(tmpdir(), `aegis-horror-input-trace-${process.pid}`)
+    : undefined);
+function reviewManifest(manifest: PresentationManifest): PresentationManifest {
+  return {
+    ...manifest,
+    quality: HARDWARE ? 'high' : 'low',
+    ...(manifest.assets === undefined
+      ? {}
+      : {
+          assets: manifest.assets.map((asset) =>
+            LEGACY_RESPONDER && asset.id === 'responder'
+              ? {
+                  ...asset,
+                  src: 'generated/responder.glb',
+                  provenance: {
+                    author: 'Aegis contributors / historical authored responder',
+                    license:
+                      'Original project-authored historical asset; retained only for rollback and comparison',
+                    source: 'games/horror/assets/source/suit-damage.recipe.json',
+                  },
+                }
+              : asset,
+          ),
+        }),
+  };
+}
 let inputTrace: ReturnType<typeof startHorrorInputTrace> | undefined;
 const SHOTS = new Map([
   [2478, 'power'],
@@ -101,7 +140,7 @@ beforeAll(async () => {
         ...game,
         presentation: {
           ...game.presentation,
-          manifest: { ...game.presentation.manifest, quality: HARDWARE ? 'high' : 'low' },
+          manifest: reviewManifest(game.presentation.manifest),
         },
       },
     ],
@@ -112,7 +151,7 @@ beforeAll(async () => {
         ...staticGame,
         presentation: {
           ...staticGame.presentation,
-          manifest: { ...staticGame.presentation.manifest, quality: HARDWARE ? 'high' : 'low' },
+          manifest: reviewManifest(staticGame.presentation.manifest),
         },
       },
     ],
@@ -142,7 +181,7 @@ beforeAll(async () => {
     let path = new URL(request.url ?? '/', 'http://local').pathname;
     if (path.endsWith('/')) path += 'index.html';
     const file = table.get(path);
-    if (request.method !== 'GET' || file === undefined) {
+    if (request.method !== 'GET' || file === undefined || !existsSync(file)) {
       response.writeHead(404).end('Not part of the exported artifact');
       return;
     }
@@ -278,13 +317,16 @@ async function control(
   ticks = 1,
 ): Promise<void> {
   const started = performance.now();
+  let response: Response | undefined;
+  let headersAt: number | undefined;
   try {
     if (transport === 'live') {
-      const response = await fetch(`${dev.url}/api/horror/control`, {
+      response = await fetch(`${dev.url}/api/horror/control`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ command, ticks }),
       });
+      headersAt = performance.now();
       expect(response.ok).toBe(true);
     } else {
       await evaluate(
@@ -302,7 +344,7 @@ async function control(
     }
     if (command !== 'step') await sync(page);
   } finally {
-    inputTrace?.control(`${transport}:${command}`, ticks, started);
+    inputTrace?.control(`${transport}:${command}`, ticks, started, undefined, response, headersAt);
   }
 }
 
@@ -455,6 +497,69 @@ async function keyboardCrouchProof(page: CdpSession): Promise<void> {
 }
 
 describe('NULL MERIDIAN real browser mission', () => {
+  it('static: a missing character dependency cannot become a ready primitive fallback', async () => {
+    assert.ok(browser);
+    const isolationTrace =
+      inputTrace ?? startHorrorInputTrace(() => dev.session('horror')?.tick ?? null);
+    const ownsTrace = inputTrace === undefined;
+    const liveBefore = dev.session('horror')?.snapshot();
+    const file = join(
+      temporary,
+      'site',
+      'assets',
+      'horror',
+      ...(LEGACY_RESPONDER
+        ? ['generated', 'responder.glb']
+        : ['imported', 'responder-trellis', 'model', 'responder.glb']),
+    );
+    const original = readFileSync(file);
+    const page = await openPage(browser.port, 'about:blank', VIEWPORT);
+    try {
+      await page.send('Network.enable');
+      await page.send('Network.setCacheDisabled', { cacheDisabled: true });
+      rmSync(file);
+      await navigateAndWait(page, () =>
+        page.send('Page.navigate', { url: `${staticUrl}/play/horror/` }),
+      );
+      await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'error');
+      expect(await evaluate(page, 'globalThis.aegis.tick()')).toBe(-1);
+      const failure = await evaluate<string>(
+        page,
+        'globalThis.aegis.ready.then(()=>"incorrectly ready",error=>error.message)',
+      );
+      expect(failure).toContain('AEG-RENDER-0004');
+      expect(failure).toContain('responder.glb');
+      writeFileSync(file, original);
+      await navigateAndWait(page, () => page.send('Page.reload'));
+      await until(page, 'globalThis.aegis?.presentation().status', (value) => value === 'ready');
+      expect(
+        await evaluate<number>(page, 'globalThis.aegis.presentation().assets.loadedFiles'),
+      ).toBe(LEGACY_RESPONDER ? 76 : 65);
+      await navigateAndWait(page, () => page.send('Page.navigate', { url: 'about:blank' }));
+      expect(isolationTrace.snapshot().packets.total).toBe(0);
+      expect(dev.session('horror')?.snapshot()).toEqual(liveBefore);
+      if (INPUT_TRACE !== undefined) {
+        mkdirSync(INPUT_TRACE, { recursive: true });
+        writeFileSync(
+          join(INPUT_TRACE, 'static-missing-character-isolation.json'),
+          JSON.stringify(
+            {
+              liveBrokerPackets: isolationTrace.snapshot().packets,
+              liveWorldUnchanged: true,
+              staticPageUnloaded: true,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+    } finally {
+      if (!existsSync(file)) writeFileSync(file, original);
+      page.close();
+      if (ownsTrace) isolationTrace.stop();
+    }
+  });
+
   for (const transport of ['live', 'static'] as const) {
     it(`${transport}: completes the exact DOM route and plays unpaused ambience and action cues`, async () => {
       assert.ok(browser);
@@ -498,7 +603,29 @@ describe('NULL MERIDIAN real browser mission', () => {
           assets: { loadedFiles: number };
           audio: { status: string };
         }>(page, 'globalThis.aegis.presentation()');
-        expect(initial.assets.loadedFiles).toBe(76);
+        expect(initial.assets.loadedFiles).toBe(LEGACY_RESPONDER ? 76 : 65);
+        const character = await evaluate<{
+          skins: number;
+          joints: number;
+          triangles: number;
+          clips: string[];
+        }>(
+          page,
+          `(() => {
+            const visual=globalThis.aegis.adapter.presentation.entity('responder');
+            const meshes=[],skins=[];visual.root.traverse(node=>{if(node.isMesh)meshes.push(node);if(node.isSkinnedMesh)skins.push(node)});
+            const model=globalThis.aegis.adapter.presentation.assets.instantiateModel('responder');
+            try{return {skins:skins.length,joints:skins[0]?.skeleton.bones.length??0,
+              triangles:meshes.reduce((n,m)=>n+(m.geometry.index?.count??m.geometry.getAttribute('position').count)/3,0),clips:model.clips.map(clip=>clip.name).sort()}}
+            finally{model.dispose()}
+          })()`,
+        );
+        expect(character).toEqual({
+          skins: LEGACY_RESPONDER ? 0 : 1,
+          joints: LEGACY_RESPONDER ? 0 : 24,
+          triangles: LEGACY_RESPONDER ? 65382 : 33273,
+          clips: ['Idle', 'Lunge', 'Search', 'Stalk'],
+        });
         expect(initial.audio.status).not.toBe('unavailable');
         await control(page, transport, 'resume');
         await until(
@@ -780,7 +907,7 @@ describe('NULL MERIDIAN real browser mission', () => {
           setTimeout(()=>{active=false;const elapsedMs=performance.now()-started,sorted=[...gaps].sort((x,y)=>x-y),at=p=>sorted[Math.min(sorted.length-1,Math.floor(sorted.length*p))];
             const canvas=document.getElementById('stage'),gl=canvas.getContext('webgl2'),ext=gl.getExtension('WEBGL_debug_renderer_info');
             const player=a.world.snapshot().entities.find(e=>e.name==='player').components;
-            resolve({frames:gaps.length,elapsedMs,meanMs:gaps.reduce((x,y)=>x+y,0)/gaps.length,p50Ms:at(.5),p95Ms:at(.95),p99Ms:at(.99),startTick,endTick:a.tick(),health:player.Health.current,startPosition,endPosition:player.Transform.position,backing:[canvas.width,canvas.height],renderer:ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER),status:a.presentation().status,presentation:a.presentation()});
+            resolve({frames:gaps.length,elapsedMs,meanMs:gaps.reduce((x,y)=>x+y,0)/gaps.length,p50Ms:at(.5),p95Ms:at(.95),p99Ms:at(.99),startTick,endTick:a.tick(),health:player.Health.current,startPosition,endPosition:player.Transform.position,backing:[canvas.width,canvas.height],renderer:ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER),status:a.presentation().status,presentation:a.presentation(),timings:a.timings?.()});
           },4000);
         })`,
           );

@@ -81,11 +81,12 @@ const infestationProvenance = {
     'Original project-authored geometry and procedural maps; source/horror-pass.recipe.json records production provenance. Current approval context: docs/games/horror.md.',
   source: 'games/horror/assets/source/horror-pass.recipe.json',
 };
-const sculptProvenance = {
-  author: 'Aegis contributors / original scripted Blender sculpt, UVs and baked materials',
+const trellisMonsterProvenance = {
+  author:
+    'Aegis contributors using local Microsoft TRELLIS and asset-specific Blender character production',
   license:
-    'Original project-authored insert and bounded suit damage; retained body maps preserve their existing provenance. Current approval context: docs/games/horror.md.',
-  source: 'games/horror/assets/source/suit-damage.recipe.json',
+    'Research/evaluation use; TRELLIS Gaussian export dependencies have restricted terms. No whole-toolchain MIT or commercial output clearance is claimed.',
+  source: 'games/horror/assets/source/trellis-monster/recipe.json',
 };
 const aftermathProvenance = {
   author: 'Aegis contributors / original localized station aftermath',
@@ -126,10 +127,13 @@ export const horrorPresentation = {
       ...visuals.models.map((model) => ({
         id: modelId(model.file),
         kind: 'gltf',
-        src: `generated/${model.file}`,
+        src:
+          model.file === 'responder.glb'
+            ? 'imported/responder-trellis/model/responder.glb'
+            : `generated/${model.file}`,
         provenance:
           model.file === 'responder.glb'
-            ? sculptProvenance
+            ? trellisMonsterProvenance
             : model.file === 'struggle.glb'
               ? infestationProvenance
               : model.file === 'aftermath-sites.glb'

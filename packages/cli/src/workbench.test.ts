@@ -609,6 +609,7 @@ describe('aegis describe: built CLI acceptance', () => {
     const data = capabilities(['--mode', 'platformer']);
     expect(data.operations.commands.map((c) => c.name)).toEqual([
       'describe',
+      'import',
       'inspect',
       'preview',
       'record',

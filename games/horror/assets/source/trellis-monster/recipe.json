@@ -1,0 +1,131 @@
+{
+  "schema": "aegis-character-recipe/1",
+  "id": "responder",
+  "name": "Cable Warden",
+  "status": "human-approved final actual-game character; approval.json records the decision",
+  "approvals": {
+    "concept": "User selected B - Cable Warden on 2026-09-25",
+    "unrigged": "User approved exact raw unrigged001 for cleanup and rigging on 2026-09-25, with fused digits/coarse geometry/dark material disclosed",
+    "finalActualGame": "approved-user-2026-09-25"
+  },
+  "reference": {
+    "file": "approved-concept.png",
+    "sha256": "ce24c1411cde4d932774a827a5ba8bd6a8b92652a585e85c026497c309f80a8b",
+    "originalImageSha256": "9ec968df4af0b4b7d877c5aa020048cc09e51b742b015e6ab7168376653ebbaf",
+    "decodedPixelSha256": "7b3ed9833cb1adaca60adf0935a061d9ce892dc1bd05d1ea7c91015aee4825a1",
+    "preparation": "Remove private PNG metadata only; decoded approved pixels are identical",
+    "model": "Local Qwen Image Edit Plus 2511, non-distilled INT8, 50 steps, CFG 4, seed 31002",
+    "rights": "Original project-authored reference and local synthetic output; no exclusivity or commercial-clearance claim"
+  },
+  "generation": {
+    "model": "microsoft/TRELLIS-image-large",
+    "modelRevision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+    "sourceRevision": "442aa1e1afb9014e80681d3bf604e8d728a86ee7",
+    "rawGlbSha256": "a746635b2d00181390215f8728e4bb77e3218df20a3621547e89f9703abf0546",
+    "generationReceiptSha256": "4701d51fe831cd24d29b71d28ad648a9214fe5ea3af6f966e714e2f754165f62",
+    "preparedImageSha256": "549650aabf4d90a09b61db56000f9af27cb8ed924b41a01299ee8f81d47b54c4",
+    "preparation": "Lanczos resize to longest side 1024, local U2Net alpha-only mask preserving resized RGB, then upstream 518-square crop/composite",
+    "seed": 42,
+    "sparseSteps": 25,
+    "latentSteps": 25,
+    "cfg": 5,
+    "export": {
+      "simplifyRemovalFraction": 0.95,
+      "fillHoles": true,
+      "textureSize": 1024,
+      "bakeViews": 100,
+      "bakeOptimizationSteps": 2500
+    },
+    "networkIsolated": true,
+    "bitIdenticalRegenerationPromised": false,
+    "rawAndModelStorage": "Local external authoring store, not this repository or any runtime dependency"
+  },
+  "cooking": {
+    "script": "cook.py",
+    "scriptSha256": "da9167de9695af98ddbc2e11349137b8020750ada53ecbcdb05217a80846033e",
+    "executedWindowsScriptSha256": "9c191a6388d548f9ebc385243ec67b4d0ab558b5aafc45041af4b1c3515a269a",
+    "scriptFingerprintPolicy": "scriptSha256 hashes UTF-8 source with CRLF normalized to LF; executedWindowsScriptSha256 is historical provenance for the exact cook-v4 invocation, not a checkout-byte invariant",
+    "launcher": "cook.ps1",
+    "blenderVersion": "5.2.2 LTS",
+    "blenderBuild": "d13f752e3b9c",
+    "import": {
+      "disableBoneShape": true,
+      "frameStart": 0,
+      "fps": 60
+    },
+    "normalization": {
+      "uniformScale": 2.0301524682110514,
+      "up": "+Y",
+      "forward": "+Z",
+      "feetAtY": 0,
+      "targetHeightMeters": 2.03,
+      "axisPolicy": "Standard glTF-to-Blender import and export_yup round trip only; no duplicate axis conversion"
+    },
+    "geometry": [
+      "Positional seam weld preserving source corner UVs; one Catmull-Clark cleanup level",
+      "Bounded rounded finger and toe separation slots; forefoot-only 20% shortening and lowest-sole flattening",
+      "Smooth authored normals, separate runtime UV atlas; no unrelated asset regeneration"
+    ],
+    "materials": {
+      "basecolor": [2048, 2048],
+      "normal": [1024, 1024],
+      "roughness": [1024, 1024],
+      "metallic": 0,
+      "normalStrength": 0.65,
+      "roughnessRange": [0.5, 0.78],
+      "method": "Cycles CPU color-only and tangent-normal bake; source albedo reprojected with 12% linear lift, artistic luminance-derived relief/roughness and localized repair-tissue shading",
+      "limits": "Not physical scans or an inferred physically accurate material reconstruction; no new studio lighting baked into the maps"
+    },
+    "rig": {
+      "joints": 24,
+      "maxInfluences": 4,
+      "method": "Fixed Cable Warden landmarks, measured disconnected limb regions, adjacent joint-chain distance fields, 64 surface-relaxation iterations and locked soles",
+      "generalAutorigger": false
+    },
+    "motionSource": {
+      "file": "../../generated/responder.glb",
+      "sha256": "e26edcaa4cf3703a65190b0a93432c54cedea7525a18ce45cf77a81991c1e682",
+      "policy": "Read historical upper-body quaternion tracks; adapt legs with asset-specific IK while preserving cycle advance and timing. Historical GLB and recipes remain unchanged."
+    }
+  },
+  "animationContract": {
+    "durations": { "Idle": 3.4, "Stalk": 2.2, "Search": 4.4, "Lunge": 0.8 },
+    "stalkCycleAdvanceMeters": 1.6,
+    "stalkStanceSeconds": 1.1,
+    "swingLiftMeters": 0.075,
+    "playbackRates": { "patrol": 1.58125, "movingSearch": 2.0625, "chase": 3.64375 },
+    "warningTicks": 48,
+    "locomotionRootMotion": false,
+    "retargetNotes": "Stalk pelvis lowers for this anatomy; source upper-body timing retained, Lunge shoulder amplitude 0.72 to stay inside historical reach. World movement remains authoritative."
+  },
+  "output": {
+    "package": "../../imported/responder-trellis",
+    "model": "../../imported/responder-trellis/model/responder.glb",
+    "sha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7",
+    "bytes": 5334140,
+    "importReceiptBytes": 1034,
+    "importReceiptSha256": "c93af4df456ee0244faee593aed94541d338ca32338ff8a95841d122316103ab",
+    "triangles": 33273,
+    "primitives": 1,
+    "skins": 1,
+    "textures": 3,
+    "maxTriangles": 65382,
+    "maxExclusiveEncodedBytes": 16362838
+  },
+  "licensing": {
+    "approvedUse": "research/evaluation",
+    "mainCodeAndImageWeights": "MIT",
+    "restrictedDependencies": [
+      "diff-gaussian-rasterization",
+      "diffoctreerast",
+      "TRELLIS Gaussian renderer"
+    ],
+    "wholeToolchainMit": false,
+    "commercialOutputClearanceEstablished": false
+  },
+  "rejectedRevisions": [
+    "v1 coordinate-only weights: visual membrane stretching; new edge-strain oracle rejects Stalk and Lunge",
+    "v2 Blender bone heat: explicit unweighted-vertex failure, no published GLB",
+    "v3 surface-aware weights: remaining 35 over-limit Lunge edge samples; not integrated"
+  ]
+}

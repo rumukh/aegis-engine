@@ -202,6 +202,7 @@ Commands:
   describe  Discover a game plugin and its supported authoring operations.
   validate  Validate a scene/prefab/tilemap/presentation document.
   preview   Preview local assets without starting a game.
+  import    Package a local GLB/glTF and its checked dependencies.
   record    Run a scene and write a replay recording.
   replay    Replay a recording and verify determinism.
   scaffold  Generate a game, scene, tilemap, prefab or test from a template.
@@ -845,6 +846,7 @@ Action names (`Right`, `Jump`, `Fire`, `Forward`) are **logical** — never key 
 | `aegis inspect`  | Dump `world`, `frame` or `ascii` at a tick                                        | 0 ok, 2 bad content                       |
 | `aegis describe` | Discover plugin declarations and supported CLI operations without running a world | 0 described, nonzero on invalid selection |
 | `aegis preview`  | Render an individual asset, or keep an asset-only studio open for iteration       | 0 captured/closed, nonzero on failure     |
+| `aegis import`   | Package a local GLB/glTF dependency closure with explicit provenance              | 0 planned/imported, nonzero on refusal    |
 | `aegis validate` | Schema-check documents                                                            | 0 clean, 2 problems                       |
 | `aegis record`   | Run and write a `*.replay` recording                                              | 0 ok                                      |
 | `aegis replay`   | Re-run a recording and check the pinned hash                                      | 0 match, 1 mismatch                       |
@@ -1243,6 +1245,13 @@ only a config file to read can still name it.
 | `recording()`, `replay()`      | Portable recording; deterministic re-run                     |
 
 ### 5.7 Rendering an asset without a game
+
+For a new external model, [`aegis import`](./docs/api/asset-import.md) first packages
+the exact checked GLB/glTF dependency closure, explicit provenance and fingerprints
+into a fresh directory. `--dry-run` writes nothing; there is no overwrite mode.
+Review its `asset.presentation.json` with the studio below, then deliberately
+rebase the asset declaration and bind it in the game. Import neither approves
+art nor rigs/rescales geometry, creates colliders or rewrites game JavaScript.
 
 When the question is about a model, material, texture or animation, do not construct a dummy
 scene or replay a game to reach a convenient camera. `aegis preview` uses the production asset

@@ -44,6 +44,10 @@
       "types": "./dist/presentation/files.d.ts",
       "import": "./dist/presentation/files.js"
     },
+    "./asset-import": {
+      "types": "./dist/asset-import.d.ts",
+      "import": "./dist/asset-import.js"
+    },
     "./preview": {
       "types": "./dist/preview/index.d.ts",
       "import": "./dist/preview/index.js"

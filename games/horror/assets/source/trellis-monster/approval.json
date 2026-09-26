@@ -1,0 +1,19 @@
+{
+  "schema": "character-approval/1",
+  "date": "2026-09-25",
+  "concept": "B - Cable Warden",
+  "conceptSha256": "9ec968df4af0b4b7d877c5aa020048cc09e51b742b015e6ab7168376653ebbaf",
+  "rawMeshSha256": "a746635b2d00181390215f8728e4bb77e3218df20a3621547e89f9703abf0546",
+  "cookedModelSha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7",
+  "decision": "approved-final-actual-game",
+  "userQuote": "Amazing! Get it in!",
+  "scope": "Approval after final review board and actual-game review of cook-v4. Authorizes landing this presentation-only character replacement, subject to the complete verification and CI gates.",
+  "limitationsRetained": [
+    "Stylized generated anatomy and approximate digit cleanup",
+    "Strong close-flashlight highlights under unchanged lighting",
+    "Inherited brief terminal-search sliding under unchanged AI and state bindings",
+    "Research/evaluation licensing; no commercial-output clearance",
+    "Short performance samples do not establish sustained 1440p60"
+  ],
+  "gameplayChangesApproved": false
+}

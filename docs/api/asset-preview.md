@@ -12,6 +12,10 @@ The workflow uses the same `preparePresentation`, checked local file closure,
 `loadPresentationAssets`, model instances, texture sampling, and materials as production
 presentation. It has its own asset-only browser entry, not the game client at tick zero.
 
+Use [`aegis import`](./asset-import.md) to package a reviewed local GLB/glTF and
+its exact dependencies with explicit provenance. Preview the resulting
+`asset.presentation.json`; import does not replace visual or animation review.
+
 ## One-shot captures
 
 Build the workspace once. Subsequent asset edits need no workspace rebuild.
@@ -55,6 +59,11 @@ settings are not instantiated.
 `--material` refers to a descriptor material ID, not an internal glTF material name.
 Ambiguous descriptors require an explicit selection; missing IDs and frame names report
 the available choices. The persistent page lets an operator select those same declarations.
+
+Declared standard-material overrides preserve glTF's flat shading when a mesh has no
+`NORMAL` attribute, in both the studio and game presentation. A cached library-owned
+material variant is used; geometry is not modified and normals are not synthesized.
+Normal-bearing meshes retain their authored normals and the original declared material.
 
 Descriptor asset paths are relative to its directory by default. Set `--asset-root <dir>`
 when the descriptor uses another local root. The Node API takes an absolute `assetRoot`.

@@ -1,0 +1,5 @@
+{
+  "author": "Aegis contributors using local Microsoft TRELLIS and asset-specific Blender character production",
+  "license": "Research/evaluation use; TRELLIS Gaussian export dependencies have restricted terms. No whole-toolchain MIT or commercial output clearance is claimed.",
+  "source": "games/horror/assets/source/trellis-monster/recipe.json"
+}
