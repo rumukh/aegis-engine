@@ -65,6 +65,8 @@ export function startHorrorInputTrace(tick: () => number | null) {
   const packets = traceWindow<object>(96);
   const loop = traceWindow<object>(48);
   const controls = traceWindow<object>(48);
+  const controlResponses: WeakRef<Response>[] = [];
+  let responseCount = 0;
   const started = performance.now();
   let lastPacketAt: number | undefined;
   let lastControlReceipt: { client: string; generation: number; at: number } | undefined;
@@ -141,8 +143,23 @@ export function startHorrorInputTrace(tick: () => number | null) {
   const timer = setInterval(sample, 100);
   timer.unref();
   return {
-    control(command: string, ticks: number, atMs: number, error?: unknown): void {
+    control(
+      command: string,
+      ticks: number,
+      atMs: number,
+      error?: unknown,
+      response?: Response,
+      headersAtMs?: number,
+    ): void {
       const endMs = performance.now();
+      if (response !== undefined) {
+        responseCount++;
+        controlResponses.push(new WeakRef(response));
+        if (controlResponses.length > 64) controlResponses.shift();
+      }
+      const live = controlResponses
+        .map((ref) => ref.deref())
+        .filter((value) => value !== undefined);
       controls.add(
         {
           command,
@@ -150,6 +167,13 @@ export function startHorrorInputTrace(tick: () => number | null) {
           atMs,
           endMs,
           wallMs: endMs - atMs,
+          headersAtMs: headersAtMs ?? null,
+          headerWaitMs: headersAtMs === undefined ? null : headersAtMs - atMs,
+          afterHeadersMs: headersAtMs === undefined ? null : endMs - headersAtMs,
+          responseBodyUsed: response?.bodyUsed ?? null,
+          unconsumedLiveResponses: live.filter((value) => !value.bodyUsed).length,
+          retainedResponseRefs: controlResponses.length,
+          responseCount,
           error: error === undefined ? null : String(error).slice(0, 600),
         },
         endMs - atMs,

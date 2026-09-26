@@ -114,8 +114,32 @@ describe('bounded Horror diagnostic instrumentation', () => {
       expect(trace.snapshot().packets.last[0]).toMatchObject({
         input: { axes: null, reset: null, held: null, look: null },
       });
+
       expect(trace.snapshot().packets.last[1]).toMatchObject({
         input: { axes: {}, reset: false },
+      });
+    } finally {
+      trace.stop();
+    }
+  });
+
+  it('records control header timing and unconsumed response bodies without retaining them strongly', async () => {
+    const trace = startHorrorInputTrace(() => 0);
+    const response = new Response('bounded control response');
+    try {
+      const at = performance.now();
+      trace.control('headers-only', 1, at, undefined, response, at);
+      expect(trace.snapshot().controls.last[0]).toMatchObject({
+        responseBodyUsed: false,
+        unconsumedLiveResponses: 1,
+        responseCount: 1,
+      });
+      await response.arrayBuffer();
+      trace.control('drained', 1, at, undefined, response, performance.now());
+      expect(trace.snapshot().controls.last[1]).toMatchObject({
+        responseBodyUsed: true,
+        unconsumedLiveResponses: 0,
+        responseCount: 2,
       });
     } finally {
       trace.stop();

@@ -134,6 +134,9 @@ timings. Bounded render records include program counts/keys created by a frame a
 responder draw/shadow flags; they do not infer compilation from a display gap alone.
 Live-only timing APIs are explicitly unavailable in static clients rather than
 reported as zero.
+GitHub Actions enables the same bounded recorder automatically in the test's temporary
+directory when no explicit output directory is supplied; the trace is also emitted to the
+job log. This is test-only instrumentation, not a production timing or ownership change.
 
 Render-call wall time is not GPU elapsed time, and a display gap alone does not identify which
 process blocked. Correlate the recorded clocks and packet sequences before assigning a cause.

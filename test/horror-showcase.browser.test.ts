@@ -57,7 +57,11 @@ const MEASURE_PURSUIT = process.env['AEGIS_HORROR_MEASURE_PURSUIT'] === '1';
 const LEGACY_RESPONDER = process.env['AEGIS_HORROR_LEGACY_RESPONDER'] === '1';
 const VIEWPORT = HARDWARE ? { width: 2560, height: 1440 } : { width: 960, height: 540 };
 const ARTIFACTS = process.env['AEGIS_HORROR_ARTIFACTS'];
-const INPUT_TRACE = process.env['AEGIS_HORROR_INPUT_TRACE'];
+const INPUT_TRACE =
+  process.env['AEGIS_HORROR_INPUT_TRACE'] ??
+  (process.env['GITHUB_ACTIONS'] === 'true'
+    ? join(tmpdir(), `aegis-horror-input-trace-${process.pid}`)
+    : undefined);
 function reviewManifest(manifest: PresentationManifest): PresentationManifest {
   return {
     ...manifest,
@@ -313,13 +317,16 @@ async function control(
   ticks = 1,
 ): Promise<void> {
   const started = performance.now();
+  let response: Response | undefined;
+  let headersAt: number | undefined;
   try {
     if (transport === 'live') {
-      const response = await fetch(`${dev.url}/api/horror/control`, {
+      response = await fetch(`${dev.url}/api/horror/control`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ command, ticks }),
       });
+      headersAt = performance.now();
       expect(response.ok).toBe(true);
     } else {
       await evaluate(
@@ -337,7 +344,7 @@ async function control(
     }
     if (command !== 'step') await sync(page);
   } finally {
-    inputTrace?.control(`${transport}:${command}`, ticks, started);
+    inputTrace?.control(`${transport}:${command}`, ticks, started, undefined, response, headersAt);
   }
 }
 
