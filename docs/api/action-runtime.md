@@ -129,9 +129,22 @@ All authoritative data is stored in the registered
 `world.resources["aegis.runtime.state"]` resource plus the explicit runtime
 envelope. `world.tick` stays zero: it is not the logical clock. Consumers mutate
 only `context.state` in staged transitions and may replace it wholesale. The live
-world is never handed to a renderer or callback. Read contexts, content and
-projection inputs are deep-frozen copies; returned views/snapshots and individual
-listener arguments are isolated copies.
+world is never handed to a renderer or callback. State, phase, pending-action and
+job data in read contexts and projection inputs are deep-frozen copies; returned
+views/snapshots and individual listener arguments are isolated copies.
+
+Content is the exception, because it never changes after validation. Each pack
+is deep-frozen and hashed **once**: when the host is created, and when a pack is
+staged or activated. `initialize`, `resolve`, `validate`, `view`, command and job
+rules, `canActivateContent`, `activateContent`, `prepareRestore` and `inspect()`
+all receive that same frozen object for the pack in use, across reads and
+commits, so reading content costs nothing per call and an index derived from a
+pack (records by ID, say) can be cached in a `WeakMap` keyed by it. It cannot be
+modified: in strict-mode code (every ES module) a write throws a `TypeError`,
+which fails the operation atomically like any other rule error. Snapshots reuse
+the pack's cached hash instead of rehashing it on every commit. Packs you pass in
+are never frozen or retained: the host validates its own copy, and
+`stageContent` returns a separate mutable copy.
 
 `resolve(action, read)` validates legality and resolves an `ActionPlan`:
 `{ rule, payload, turns }`. It may draw from `read.random()` or
@@ -383,10 +396,12 @@ atomically; restart intentionally creates a new game with the saved seed while
 keeping state revision monotonic. Activation itself is a strict checkpoint.
 
 Snapshots pin content ID, revision, schema version and a deterministic hash of
-the complete effective pack. Staged installed packs are retained by this host,
-so an old save can select its exact revision; a new process must reinstall that
-pack or report incompatibility. Never recompute resolved jobs/choices/rewards
-under edited rules. The offline adapter owns retaining pack assets across launches.
+the complete effective pack, computed once per installed pack. Staged installed
+packs are retained by this host, so an old save can select its exact revision;
+restore requires the save's recorded hash to match that pack. A new process must
+reinstall that pack or report incompatibility. Never recompute resolved
+jobs/choices/rewards under edited rules. The offline adapter owns retaining pack
+assets across launches.
 
 `stateVersion` is the consumer's state/rule compatibility contract; update it
 when changed rule semantics cannot continue old snapshots. The runtime format and
@@ -406,6 +421,12 @@ npx tsc -p packages\runtime\tsconfig.tests.json
 npx vitest run packages\runtime\test --reporter=dot
 npx eslint packages\runtime
 ```
+
+`node scripts/bench-runtime-content.mjs` measures the time per commit of a
+synthetic game against a ~130 KB content pack, using the built runtime (run
+`npm run build` first). It reads a wall clock, so it is a measurement for
+comparing builds on one machine, not part of the gate; it also prints the run's
+final state hash, which a change that only removes redundant work must not move.
 
 `runCommandTrace(host, steps)` collects commit hashes, turns and event types.
 Each step names relevant `ruleIds` and may pin literal turn/revision/hash
