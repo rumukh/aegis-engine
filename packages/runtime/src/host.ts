@@ -8,7 +8,7 @@ import {
   identifierSchema,
   validateContent,
 } from './data.js';
-import type { ContentPack, Schema } from './data.js';
+import type { ContentPack, DeepReadonly, Schema } from './data.js';
 import { caughtFailure, failure, fault, requireValue, success } from './outcome.js';
 import type { Outcome, RuntimeError } from './outcome.js';
 import { runtimeSnapshotSchema } from './snapshot.js';
@@ -39,9 +39,24 @@ import type {
 
 const STATE = 'aegis.runtime.state';
 
+/**
+ * A validated pack the host owns, deep-frozen and hashed exactly once. Content never changes
+ * after validation, so every read, rule context and snapshot shares this object and digest
+ * instead of copying, refreezing and rehashing the whole pack on each use.
+ */
+interface SealedContent<C> {
+  readonly pack: DeepReadonly<ContentPack<C>>;
+  readonly hash: string;
+}
+
+/** `pack` must be host-owned (a fresh `validateContent` result): it is frozen in place. */
+function seal<C>(pack: ContentPack<C>, hash = dataHash(pack)): SealedContent<C> {
+  return { pack: freezeData(pack), hash };
+}
+
 interface Draft<S, C> {
   state: S;
-  content: ContentPack<C>;
+  content: SealedContent<C>;
   world: World;
   streams: Map<string, Prng>;
   revision: number;
@@ -133,11 +148,11 @@ export function createRuntimeHost<S, A, V, C>(
   const stateResource = defineResource<S>(STATE, () =>
     fault('missing-state', 'State must be initialized explicitly.'),
   );
-  const installed = new Map<string, ContentPack<C>>();
+  const installed = new Map<string, SealedContent<C>>();
   const contentKey = (pack: { id: string; revision: string }): string =>
     `${pack.id}#${pack.revision}`;
-  let active = requireValue(validateContent(options.content, adapter.content));
-  installed.set(contentKey(active), cloneData(active));
+  let active = seal(requireValue(validateContent(options.content, adapter.content)));
+  installed.set(contentKey(active.pack), active);
   const pauses = new Set<string>();
   const views = new Set<(view: V, reason: 'commit' | 'restore') => void>();
   const commits = new Set<(commit: RuntimeCommit<V>) => void>();
@@ -162,7 +177,7 @@ export function createRuntimeHost<S, A, V, C>(
   function read(draft: Draft<S, C>): RuntimeRead<S, C> {
     return {
       state: freezeData(cloneData(draft.state)),
-      content: freezeData(cloneData(draft.content)),
+      content: draft.content.pack,
       revision: draft.revision,
       turn: draft.turn,
       phase: freezeData(cloneData(draft.phase)),
@@ -172,7 +187,7 @@ export function createRuntimeHost<S, A, V, C>(
     };
   }
 
-  function fresh(content: ContentPack<C>, seed: string | number = options.seed): Draft<S, C> {
+  function fresh(content: SealedContent<C>, seed: string | number = options.seed): Draft<S, C> {
     const world = createWorld({ seed });
     const streams = new Map(streamIds.map((id) => [id, world.random.fork(id)]));
     const initialRandom = (name = 'main'): RandomStream => {
@@ -183,7 +198,7 @@ export function createRuntimeHost<S, A, V, C>(
     };
     const state = cloneData(
       adapter.initialize({
-        content: freezeData(cloneData(content)),
+        content: content.pack,
         random: initialRandom,
       }),
     );
@@ -332,10 +347,10 @@ export function createRuntimeHost<S, A, V, C>(
       adapter: adapter.id,
       stateVersion: adapter.stateVersion,
       content: {
-        id: draft.content.id,
-        revision: draft.content.revision,
-        schemaVersion: draft.content.schemaVersion,
-        hash: dataHash(draft.content),
+        id: draft.content.pack.id,
+        revision: draft.content.pack.revision,
+        schemaVersion: draft.content.pack.schemaVersion,
+        hash: draft.content.hash,
       },
       seed,
       revision: draft.revision,
@@ -354,7 +369,7 @@ export function createRuntimeHost<S, A, V, C>(
     return cloneData(requireValue(runtimeSnapshotSchema.parse(cloneData(snapshot))));
   }
 
-  function stage(snapshot: RuntimeSnapshot, content: ContentPack<C>): Draft<S, C> {
+  function stage(snapshot: RuntimeSnapshot, content: SealedContent<C>): Draft<S, C> {
     const world = createWorld({ seed: snapshot.seed });
     world.restore(snapshot.world);
     const state = world.getResource(stateResource);
@@ -470,7 +485,7 @@ export function createRuntimeHost<S, A, V, C>(
       set state(value: S) {
         draft.state = value;
       },
-      content: freezeData(cloneData(draft.content)),
+      content: draft.content.pack,
       get turn() {
         return draft.turn;
       },
@@ -622,7 +637,7 @@ export function createRuntimeHost<S, A, V, C>(
     const projected = cloneData(adapter.view(read(draft)));
     // All fallible rule/schema/projection work precedes this replacement.
     current = snapshot;
-    active = cloneData(draft.content);
+    active = draft.content;
     currentView = projected;
     const hash = dataHash(current);
     if (options.checkpoint) {
@@ -902,8 +917,8 @@ export function createRuntimeHost<S, A, V, C>(
         const content = installed.get(contentKey(snapshot.content));
         if (
           content === undefined ||
-          dataHash(content) !== snapshot.content.hash ||
-          content.schemaVersion !== snapshot.content.schemaVersion
+          content.hash !== snapshot.content.hash ||
+          content.pack.schemaVersion !== snapshot.content.schemaVersion
         ) {
           return failure('incompatible-save', 'The exact saved content revision is not installed.');
         }
@@ -922,14 +937,12 @@ export function createRuntimeHost<S, A, V, C>(
           restoreOptions.pauseReasons === undefined ? undefined : [...restoreOptions.pauseReasons];
         if (nextPauses !== undefined) unique(nextPauses, 'Pause reason');
         if (options.prepareRestore) {
-          requireValue(
-            await options.prepareRestore(cloneData(snapshot), freezeData(cloneData(content))),
-          );
+          requireValue(await options.prepareRestore(cloneData(snapshot), content.pack));
         }
         if (own !== ownership || disposed)
           return failure('superseded', 'Restore was superseded or disposed.');
         current = snapshot;
-        active = cloneData(content);
+        active = content;
         currentView = projected;
         durableRevision = restoreOptions.durableRevision ?? null;
         if (nextPauses !== undefined) {
@@ -965,15 +978,18 @@ export function createRuntimeHost<S, A, V, C>(
       try {
         const parsed = validateContent(candidate, adapter.content, file);
         if (!parsed.ok) return parsed;
+        const hash = dataHash(parsed.value);
         const prior = installed.get(contentKey(parsed.value));
-        if (prior !== undefined && dataHash(prior) !== dataHash(parsed.value)) {
+        if (prior !== undefined && prior.hash !== hash) {
           return failure(
             'content-revision-reused',
             'Changed content needs a new revision identifier.',
           );
         }
-        installed.set(contentKey(parsed.value), cloneData(parsed.value));
-        return success(cloneData(parsed.value));
+        // The caller gets a mutable copy; the host keeps the validated original, frozen.
+        const copy = cloneData(parsed.value);
+        installed.set(contentKey(parsed.value), seal(parsed.value, hash));
+        return success(copy);
       } catch (error) {
         return caughtFailure(error, 'invalid-content');
       }
@@ -984,17 +1000,22 @@ export function createRuntimeHost<S, A, V, C>(
       let committed: number | null = null;
       const result = await operation(async (own) => {
         const content = requireValue(validateContent(candidate, adapter.content));
-        const installedContent = installed.get(contentKey(content));
-        if (installedContent === undefined || dataHash(installedContent) !== dataHash(content)) {
+        const hash = dataHash(content);
+        const staged = installed.get(contentKey(content));
+        if (staged === undefined || staged.hash !== hash) {
           return failure('unstaged-content', 'Stage the complete candidate before activation.');
         }
-        const previous = cloneData(active);
+        // Seal the validated candidate rather than reuse the staged pack. The two are equal by
+        // hash, but a schema that keeps input key order may order them differently, and
+        // activation has always run rules on the candidate as passed.
+        const next = seal(content, hash);
+        const previous = active;
         let draft: Draft<S, C>;
         if (mode === 'restart') {
-          draft = fresh(content, current.seed);
+          draft = fresh(next, current.seed);
         } else if (mode === 'boundary') {
           draft = stage(current, active);
-          if (!adapter.canActivateContent?.(read(draft), freezeData(cloneData(content)))) {
+          if (!adapter.canActivateContent?.(read(draft), next.pack)) {
             return failure(
               'unsafe-boundary',
               'Consumer has not approved this content activation boundary.',
@@ -1005,9 +1026,9 @@ export function createRuntimeHost<S, A, V, C>(
               'pending-jobs',
               'Resolve or cancel old jobs before activating different rules.',
             );
-          draft.content = cloneData(content);
+          draft.content = next;
           synchronous(() =>
-            adapter.activateContent?.(context(draft, 'content.activate'), freezeData(previous)),
+            adapter.activateContent?.(context(draft, 'content.activate'), previous.pack),
           );
           drain(draft);
         } else return failure('invalid-policy', 'Content activation requires boundary or restart.');
