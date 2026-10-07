@@ -25,3 +25,6 @@ games/horror/assets/source/sculpt-insert/sculpt-provenance.json
 games/horror/assets/source/aftermath-input/baseline-inventory.json
 games/horror/assets/source/aftermath-input/baseline-presentation.json
 games/horror/assets/source/aftermath-input/placement-contract.json
+
+# Canonical extension specification, kept byte-identical to its import source.
+docs/specs/aegis-extension-spec.md
