@@ -209,7 +209,7 @@ describe('action runtime: HOST, TURN and runtime SAVE-05', () => {
         return success({
           rule: 'step',
           payload: action,
-          turns: action.type === 'run' ? 2_050 : 0,
+          turns: action.type === 'run' ? 1_100 : 0,
         });
       },
       commands: [
@@ -279,7 +279,7 @@ describe('action runtime: HOST, TURN and runtime SAVE-05', () => {
       seed: 'long-ledger',
     });
     requireValue(await restored.restore(JSON.parse(JSON.stringify(finalSaved))));
-    expect(await restored.dispatch({ type: 'claim', index: 2_050 })).toMatchObject({
+    expect(await restored.dispatch({ type: 'claim', index: 1_100 })).toMatchObject({
       ok: false,
       error: { code: 'duplicate-claim' },
     });
