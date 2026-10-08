@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { repositoryRoot } from '../scripts/sdk-tools.mjs';
