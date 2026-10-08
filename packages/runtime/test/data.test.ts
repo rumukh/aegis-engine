@@ -188,6 +188,39 @@ describe('DATA: schemas, staged revisions and boundary transforms', () => {
     expect(onlyNew.inspect().state.charged).toBe(3);
   });
 
+  it('DATA-04: a current multi-version registration can reinstall an old pack for restore', async () => {
+    const source = fixture();
+    requireValue(await source.dispatch({ type: 'purchase' }));
+    const saved = source.snapshot();
+    const counter = schema.number({ integer: true, min: 0 });
+    const v2Schema = schema.object({
+      costs: schema.object({ free: counter, wait: counter, two: counter }),
+      allowance: counter,
+      jobDelay: counter,
+      price: counter,
+      label: schema.optional(schema.string()),
+    });
+    const adapter = {
+      ...fixtureAdapter(),
+      content: { versions: { 1: configSchema, 2: v2Schema } },
+    };
+    const current = {
+      ...config,
+      revision: 'r2',
+      schemaVersion: 2,
+      data: { ...config.data, price: 7, label: 'current' },
+    };
+    const host = fixture(undefined, { adapter, content: current });
+    expect(await host.restore(saved)).toMatchObject({
+      ok: false,
+      error: { code: 'incompatible-save' },
+    });
+    requireValue(host.stageContent(config));
+    requireValue(await host.restore(saved));
+    requireValue(await host.dispatch({ type: 'purchase' }));
+    expect(host.inspect().state.charged).toBe(6);
+  });
+
   it('K07: independent rules read a common pre-boundary state regardless of enumeration order', async () => {
     const state = { slots: [1, 2, 3] };
     const transforms: BoundaryTransform<typeof state>[] = [
@@ -242,13 +275,48 @@ describe('DATA: schemas, staged revisions and boundary transforms', () => {
   });
 
   it('schema projections are independent mutable JSON values with exact field and variant checking', () => {
-    const shape = schema.object({ count: schema.number({ min: 0, max: 5, integer: true }) });
+    const shape = schema.object({
+      count: schema.number({ min: 0, max: 5, integer: true }),
+      label: schema.optional(schema.string()),
+    });
     const parsed = requireValue(shape.parse({ count: 1 }));
     parsed.count = 2;
     expect(parsed).toEqual({ count: 2 });
+    expect(Object.hasOwn(parsed, 'label')).toBe(false);
+    expect(shape.parse({ count: 1, label: undefined }).ok).toBe(false);
+    expect(shape.parse({ count: 1, label: null }).ok).toBe(false);
+    expect(requireValue(shape.parse({ count: 1, label: 'ok' }))).toEqual({
+      count: 1,
+      label: 'ok',
+    });
     expect(shape.parse({ count: 1, typo: 2 }).ok).toBe(false);
     expect(schema.union(schema.literal('a'), schema.literal('b')).parse('c').ok).toBe(false);
     expect(schema.array(schema.boolean, { min: 2, max: 3 }).parse([true]).ok).toBe(false);
     expect(schema.record(shape).parse({ record: { count: 90 } }).ok).toBe(false);
+  });
+
+  it('DATA-04: accepts compatible multi-version content and explicit migrations', () => {
+    const counter = schema.number({ integer: true, min: 0 });
+    const v1 = schema.object({ price: counter });
+    const v2 = schema.object({ price: counter, label: schema.optional(schema.string()) });
+    const registration = {
+      versions: { 1: v1, 2: v2 },
+      migrate(data: unknown, version: number) {
+        const parsed = requireValue(v1.parse(data));
+        return version === 1 ? { ...parsed, label: 'legacy' } : parsed;
+      },
+    };
+    const old = { id: 'compat', revision: 'r1', schemaVersion: 1, data: { price: 3 } };
+    const parsed = requireValue(validateContent(old, registration));
+    expect(parsed).toEqual({
+      id: 'compat',
+      revision: 'r1',
+      schemaVersion: 1,
+      data: { price: 3, label: 'legacy' },
+    });
+    expect(validateContent({ ...old, schemaVersion: 3 }, registration).ok).toBe(false);
+    expect(validateContent({ ...old, data: { price: 3, extra: true } }, registration).ok).toBe(
+      false,
+    );
   });
 });

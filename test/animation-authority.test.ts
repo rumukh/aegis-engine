@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as runtime from '@aegis/runtime';
 import { CutscenePlayer, PuppetModel } from '@aegis/browser/animation';
 import type { ClipFile, CutsceneFile, CutsceneHost, RigFile } from '@aegis/browser/animation';
-import { benchActions, benchAdapter, syntheticContent } from '../scripts/bench-runtime-content.mjs';
+import type { RuntimeAdapter } from '@aegis/runtime';
 import { documents } from '../poc/animation-lab/fixture.mjs';
 
 /**
@@ -13,16 +13,44 @@ import { documents } from '../poc/animation-lab/fixture.mjs';
  */
 describe('animation never changes authoritative state (F07)', () => {
   it('renders 10,000 frames with puppets and a cutscene without touching the runtime host', async () => {
-    const { createRuntimeHost, requireValue, success } = runtime;
-    const content = syntheticContent(0.2);
+    const { createRuntimeHost, requireValue, schema, success } = runtime;
+    const counter = schema.number({ integer: true, min: 0 });
+    const adapter: RuntimeAdapter<
+      { moves: number; seen: string[] },
+      { type: 'move' },
+      { moves: number },
+      unknown
+    > = {
+      id: 'k01',
+      stateVersion: 1,
+      state: schema.object({ moves: counter, seen: schema.array(schema.string()) }),
+      action: schema.object({ type: schema.literal('move') }),
+      content: { schemaVersion: 1, schema: schema.json },
+      eventPhases: ['ready'],
+      initialize: () => ({ moves: 0, seen: [] }),
+      resolve: (action) => success({ rule: 'move', payload: action, turns: 1 }),
+      commands: [
+        {
+          id: 'move',
+          payload: schema.object({ type: schema.literal('move') }),
+          progress: schema.literal(null),
+          turn(context) {
+            context.state.moves++;
+            context.state.seen.push('case-' + String(context.state.moves));
+            context.emit('moved', { moves: context.state.moves });
+          },
+        },
+      ],
+      jobs: [],
+      view: (read) => ({ moves: read.state.moves }),
+    };
     const host = createRuntimeHost({
-      // The benchmark adapter is untyped JavaScript; the host validates it at runtime.
-      adapter: benchAdapter(runtime) as never,
-      content,
+      adapter,
+      content: { id: 'k01', revision: 'r1', schemaVersion: 1, data: null },
       seed: 'k01',
       checkpoint: async () => success(undefined),
     });
-    for (const action of benchActions(content, 20)) requireValue(await host.dispatch(action));
+    for (let i = 0; i < 20; i++) requireValue(await host.dispatch({ type: 'move' }));
     const before = {
       hash: host.hash(),
       snapshot: JSON.stringify(host.snapshot()),
