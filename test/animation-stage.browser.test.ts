@@ -1,7 +1,4 @@
-import { createServer } from 'node:http';
-import { readFileSync, readdirSync, rmSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { rmSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   click,
@@ -13,154 +10,24 @@ import {
 } from '../packages/render-three/src/browser.js';
 import type { CdpSession, LaunchedBrowser } from '../packages/render-three/src/browser.js';
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
-import { generateFixture, wav } from '../poc/animation-lab/fixture.mjs';
+import { RAMP_RATE, RAMP_SECONDS, startStageSite } from '../scripts/stage-acceptance-site.mjs';
 
 /**
  * Section 23 browser acceptance in real Chromium: the 2D stage (ANIM-01..06), the narration
  * playback clock measured against the samples actually rendered (AUDIO-07, F03, F09), the
  * child-safe presets (issue #14) and memory across scene transitions (F08).
  */
-const root = dirname(fileURLToPath(import.meta.url));
-const dist = join(root, '..', 'packages', 'browser', 'dist');
-const base = '/stage-lab/';
-const files = new Map<string, { bytes: Buffer; type: string }>();
 let browser: LaunchedBrowser;
 let page: CdpSession;
-let origin: string;
-
-const RAMP_SECONDS = 4;
-const RATE = 48_000;
-/** A DC ramp whose sample value encodes its own media position: value = 0.9 * t / duration. */
-function rampWav(): Buffer {
-  const samples = new Float32Array(RAMP_SECONDS * RATE);
-  for (let i = 0; i < samples.length; i++) samples[i] = (0.9 * i) / samples.length;
-  return wav(samples, RATE) as Buffer;
-}
-const TAP = `class Tap extends AudioWorkletProcessor {
-  constructor() { super(); this.n = 0; }
-  process(inputs) {
-    const channel = inputs[0] && inputs[0][0];
-    if (channel && this.n++ % 2 === 0)
-      this.port.postMessage({ frame: currentFrame + channel.length - 1, value: channel[channel.length - 1] });
-    return true;
-  }
-}
-registerProcessor('tap', Tap);`;
-
-const DOCUMENTS = [
-  ...['fox', 'cat', 'rabbit', 'bear', 'hedgehog'].flatMap((s) => [
-    `avatar.${s}.atlas`,
-    `avatar.${s}`,
-  ]),
-  'acc.scarf.atlas',
-  'acc.hats.atlas',
-  'acc.scarf.long',
-  'acc.hat.detective',
-  'acc.hat.beret',
-  'acc.hat.cap',
-  'acc.badge',
-  'wave',
-  'nod',
-  'hop.small',
-  'startle',
-  'think',
-  'sway',
-];
-
-function add(path: string, bytes: Buffer | string, type: string): void {
-  files.set(`${base}${path}`, { bytes: Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes), type });
-}
-function modules(path: string): void {
-  for (const entry of readdirSync(path, { withFileTypes: true })) {
-    const file = join(path, entry.name);
-    if (entry.isDirectory()) modules(file);
-    else if (entry.name.endsWith('.js'))
-      add(
-        `sdk/${relative(dist, file).replaceAll('\\', '/')}`,
-        readFileSync(file),
-        'text/javascript',
-      );
-  }
-}
-const server = createServer((request, response) => {
-  const url = new URL(request.url ?? '/', 'http://localhost');
-  const value = files.get(url.pathname === base ? `${base}index.html` : url.pathname);
-  if (!value) {
-    response.writeHead(404).end();
-    return;
-  }
-  response
-    .writeHead(200, { 'content-type': value.type, 'cache-control': 'no-store' })
-    .end(value.bytes);
-});
+let site: Awaited<ReturnType<typeof startStageSite>>;
+const RATE = RAMP_RATE;
 
 beforeAll(async () => {
-  modules(dist);
-  for (const [name, bytes] of generateFixture().files)
-    add(
-      `assets/${name}`,
-      bytes,
-      name.endsWith('.png')
-        ? 'image/png'
-        : name.endsWith('.wav')
-          ? 'audio/wav'
-          : 'application/json',
-    );
-  add('assets/ramp.wav', rampWav(), 'audio/wav');
-  add('tap.js', TAP, 'text/javascript');
-  add(
-    'index.html',
-    `<!doctype html><html lang="ru"><meta charset="utf-8"><title>Stage</title>
-<body style="margin:0"><button id="unlock" style="position:fixed;left:0;top:0;width:60px;height:40px">Звук</button>
-<div id="host" style="position:absolute;left:0;top:60px;width:1280px;height:800px"></div>
-<script type="module">
-import { createStage } from './sdk/stage/index.js';
-import { createNarration } from './sdk/audio/index.js';
-import * as animation from './sdk/animation/index.js';
-import * as ui from './sdk/ui/index.js';
-Object.assign(globalThis, { createStage, createNarration, animation, ui, DOCUMENTS: ${JSON.stringify(DOCUMENTS)} });
-globalThis.resolveAsset = (id) => 'assets/' + id + (/\\.(png|wav|json)$/.test(id) ? '' : '.json');
-globalThis.newStage = async (extra = {}) => {
-  const stage = createStage({ host: document.querySelector('#host'), baseUrl: location.href, resolve: resolveAsset,
-    seed: 'test', effects: { sparkles: { frame: 'acc.hats.atlas#badge', count: 24 } }, ...extra });
-  const result = await stage.load({ documents: DOCUMENTS, images: ['bg.office.png', 'bg.office.warm.png'] });
-  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
-  stage.setBackground('bg.office.png');
-  return stage;
-};
-/** Read device pixels right after a render, in the same task (no preserveDrawingBuffer needed). */
-globalThis.pixels = (stage, points) => {
-  const copy = document.createElement('canvas');
-  copy.width = stage.canvas.width; copy.height = stage.canvas.height;
-  const c = copy.getContext('2d'); c.drawImage(stage.canvas, 0, 0);
-  const rect = stage.canvas.getBoundingClientRect();
-  const ratio = stage.canvas.width / rect.width;
-  return points.map((p) => { const client = stage.toClient(p);
-    return Array.from(c.getImageData(Math.round((client.x - rect.left) * ratio), Math.round((client.y - rect.top) * ratio), 1, 1).data); });
-};
-globalThis.luminance = (stage) => {
-  const copy = document.createElement('canvas'); copy.width = 64; copy.height = 40;
-  const c = copy.getContext('2d'); c.drawImage(stage.canvas, 0, 0, 64, 40);
-  const d = c.getImageData(0, 0, 64, 40).data; let sum = 0;
-  for (let i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-  return sum / (d.length / 4) / 255;
-};
-globalThis.ready = true;
-</script></body></html>`,
-    'text/html',
-  );
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Test server failed to bind.');
-  origin = `http://127.0.0.1:${address.port}`;
+  site = await startStageSite();
   browser = await launchBrowser({ viewport: { width: 1300, height: 900 } });
-  page = await openPage(browser.port, `${origin}${base}`);
+  page = await openPage(browser.port, `${site.origin}${site.base}`);
   await until(page, 'globalThis.ready', (value) => value === true, 30_000);
 }, 180_000);
-
 afterAll(async () => {
   try {
     page?.close();
@@ -170,8 +37,7 @@ afterAll(async () => {
     }
   } finally {
     stopExternalLagWitness();
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await site?.close();
   }
 });
 
@@ -610,5 +476,51 @@ describe('2D stage in Chromium (section 23)', () => {
       return out;
     `);
     expect(result).toEqual({ plain: '48px', small: '30px', before: 'spin', after: 'none' });
+  });
+  it('re-uploads owned images after a WebGL context loss and keeps drawing correctly', async () => {
+    const result = await execute<{
+      before: number[];
+      lost: boolean;
+      after: number[];
+      textures: number;
+    }>(`
+      const stage = await newStage({ autoStart: false });
+      const point = { x: 2400, y: 1500 };
+      stage.renderFrame(0); const before = pixels(stage, [point])[0];
+      const gl = stage.canvas.getContext('webgl'); const ext = gl.getExtension('WEBGL_lose_context');
+      ext.loseContext(); await new Promise((r) => setTimeout(r, 50));
+      const lost = gl.isContextLost(); ext.restoreContext();
+      await new Promise((r) => setTimeout(r, 100));
+      for (let i = 0; i < 40; i++) { stage.renderFrame(0); await new Promise((r) => setTimeout(r, 25)); }
+      stage.renderFrame(0); const after = pixels(stage, [point])[0];
+      const textures = stage.stats().textures; await stage.dispose();
+      return { before, lost, after, textures };
+    `);
+    expect(result.lost).toBe(true);
+    expect(result.after).toEqual(result.before);
+    expect(result.textures).toBe(9);
+  });
+
+  it('serves an installed media pack offline from the service worker after a cold start (F13, Chromium)', async () => {
+    const offline = await openPage(browser.port, `${site.origin}${site.base}offline.html`);
+    try {
+      await until(offline, 'globalThis.ready', (v) => v === true, 30_000);
+      const installed = await evaluate<{
+        plan: { fits: string; requiredBytes: number };
+        scope: string;
+      }>(offline, `installOffline(${JSON.stringify(site.manifest)})`);
+      expect(installed.plan.requiredBytes).toBeGreaterThan(0);
+      site.setOffline(true);
+      await offline.send('Page.reload');
+      await until(
+        offline,
+        'document.querySelector("#state")?.textContent',
+        (v) => v === 'served',
+        30_000,
+      );
+    } finally {
+      site.setOffline(false);
+      offline.close();
+    }
   });
 });

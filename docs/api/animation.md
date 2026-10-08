@@ -1,10 +1,11 @@
 # 2D animation: formats and APIs
 
-Status: **E0 draft, format version 1** (2026-10-08). This document fixes the authored
-file formats so that art production (workstream A) and the game presenter
-(workstream G) can start before the implementation lands. Field names and semantics
-below are the contract; the implementation will validate exactly these shapes. Any
-change after E0 is announced to every consumer with a versioned note.
+Status: **format version 1, implemented** (2026-10-08). The formats below were first
+published as the E0 contract and are now validated by `@aegis/browser/animation` and the
+`aegis-animation` CLI. Any change is announced to every consumer with a versioned note.
+Changes since the E0 draft (c35d3a4): the fallback-to-rest rule is `X` → `A` only for rigs
+without `X` (required anyway); `PuppetSpec` adds `private`, `layer` and `behaviours`; the
+stage adds `toScene`/`toClient`, `clearScene`/`release`, `setPrivacy` and `stats`.
 
 Specification: [section 23.2](../specs/aegis-extension-spec.md) (ANIM-01..07) and
 AUDIO-07 in section 23.3. Technology and package boundary:
@@ -582,52 +583,142 @@ Use `join` to wait for everything still running.
 ## 10. Stage (browser)
 
 ```ts
+import { createNarration } from '@aegis/browser/audio';
 import { createStage } from '@aegis/browser/stage';
 
+const narration = createNarration({ baseUrl, onState, onCaption });
+narration.registerPack(voicePack); // lines may name their cue tracks (section 7)
 const stage = createStage({
-  host: element, // the stage draws inside; DOM controls stay outside
-  logical: { width: 2560, height: 1600 },
-  assets: { baseUrl, resolve: (assetId) => url }, // asset IDs from the offline packs
-  memoryBudgetBytes: 96 * 1024 * 1024,
-  cameraPresets: { wide: { x: 1280, y: 800, zoom: 1 } },
+  host: element, // the stage canvas fills it; DOM controls stay outside
+  baseUrl, // asset URLs are same-origin, relative to this
+  resolve: (assetId) => paths[assetId], // offline-pack asset ID -> path
+  logical: { width: 2560, height: 1600 }, // default
+  memoryBudgetBytes: 96 * 1024 * 1024, // owned decoded images, width x height x 4
+  renderer: 'auto', // WebGL, Canvas 2D fallback (ADR-0013)
+  maxDevicePixelRatio: 2,
+  cameraPresets: { close: { x: 1280, y: 1000, zoom: 1.5 } }, // `wide` is built in
   reducedMotion: 'system', // or true/false from the consumer setting
-  comfort: { filter: { brightness: 1.12, warmth: 0.25 } },
+  comfort: { brightness: 1.12, warmth: 0.6 }, // the Q22 treatment, applied by setComfort
+  effects: { sparkles: { frame: 'fx.atlas#spark', count: 16, life: 1.2 } },
+  narration,
+  audioPackId: 'case01-voice', // used by cutscene lines, music and sfx
   seed: 'presentation-seed',
 });
-await stage.load({ rigs, atlases, clips }); // validated; diagnostics on failure
-stage.setBackground('bg.bureau.night');
-const fox = stage.puppet({ rig: 'avatar.fox', accessories, tints, at: { x: 900, y: 1450 } });
+const loaded = await stage.load({
+  documents: ['avatar.fox.atlas', 'avatar.fox', 'wave'],
+  images: ['bg.bureau.webp'],
+});
+if (!loaded.ok) show(loaded.diagnostics); // nothing is installed when validation fails
+stage.setBackground('bg.bureau.webp');
+const fox = stage.puppet({
+  rig: 'avatar.fox',
+  accessories,
+  tints,
+  at: { x: 900, y: 1450 },
+  behaviours: { breathe: {}, blink: {} },
+});
 fox.play('wave');
-fox.behave({ breathe: {}, blink: { seed: 'fox' } });
-fox.speak({ narration, packId: 'case01', lineId: 'case01.l1.watsoni.003' });
-const player = stage.cutscene(cutscene, { narration, packId, avatar: composition, onEvent });
+await fox.speak({ packId: 'case01-voice', lineId: 'case01.l1.watsoni.003' });
+fox.speech(); // { mode: 'cues' | 'talk-loop' | 'unheard' | 'rest', synchronized, shape }
+const scene = stage.cutscene(cutsceneFile, { avatar: composition, onEvent });
+scene.play(); // later: scene.next(), skip(), replay(), play({ from: 'marker' })
 stage.setComfort(true);
 stage.setReducedMotion(true);
-stage.pause('menu');
-stage.resume('menu');
-stage.toLogical(clientPoint); // same mapping as logicalPoint (letterboxed, contain)
-await stage.dispose(); // releases images, atlases, listeners, frame loop
+stage.pause('menu'); // composes with bindVisibilityPause(document, stage.pause, stage.resume)
+stage.toScene(clientPoint); // client -> scene coordinates through the camera (hotspots)
+stage.toLogical(clientPoint); // same as logicalPoint, camera ignored
+stage.clearScene(); // remove puppets, sprites, particles, background
+stage.release({ atlases, images, rigs, clips }); // free owned memory between scenes
+stage.stats(); // renderer, frames, drawCalls, quads, frameMs, ownedBytes, textures, listeners
+await stage.dispose(); // releases images, textures, listeners, the frame loop and the canvas
 ```
 
-Layers: `background`, `midground`, `characters`, `foreground`, `effects`. The camera is
-clamped to the scene bounds. Reduced motion turns camera moves into cuts or
-crossfades, damps large motion and never flashes; lip-sync and blinking remain. Hidden
-documents do no animation-frame work. A handoff/private projection hides private
-visuals and stops private narration.
+- **Layers:** `background`, `midground`, `characters` (puppets, sorted by their y),
+  `foreground`, `effects`. `addSprite({ layer, image, at })` places props; an `image` is
+  an image asset ID or an `atlas#frame`.
+- **Camera:** presets or `{ x, y, zoom }`, clamped so the view never leaves the scene.
+  Puppets and `toScene`/`toClient` stay aligned through resize, letterboxing and
+  rotation because both use the `logicalPoint` contain mapping.
+- **Lip-sync:** `speak` binds the puppet's mouth to the narration clock of that line.
+  With a valid cue track the mode is `cues` and `synchronized` is true. Without one the
+  mouth follows a generic talk loop for the line's duration (`talk-loop`, not
+  synchronized). When narration is blocked or failed the mouth stays neutral, or
+  plays a bounded subtle loop with `{ unheard: 'subtle', maxSubtleSeconds }`, and never
+  claims synchronized speech. Muted volume still animates from cues. After stop,
+  completion or failure the mouth returns to `X`.
+- **Reduced motion:** camera moves become a cut softened by a gentle dip, entrances and
+  exits become 0.4 s fades, hops, gait and breathing are damped to 30%, particles stay
+  still; lip-sync and blinking remain. Fades are at least 0.5 s: no flashing.
+- **Comfort:** a brightness/warmth grade applied instantly and reversibly; cutscene
+  steps may also swap assets with `comfort` variants.
+- **Lifecycle:** hidden documents do no animation-frame work; presentation time stops
+  while any pause reason is held; a WebGL context loss re-decodes and re-uploads owned
+  images; `setPrivacy(true)` hides `private` puppets and sprites and stops a private
+  puppet's narration (handoff, A30).
+- **Authority:** the stage has no reference to runtime state. Presentation time is its
+  own clock (TURN-01, K01).
 
-## 11. Profiles (SAVE-08, issue #15) — sketch
+## 11. Profiles
 
-```ts
-const profiles = createProfileRegistry({ storage, gameId: 'fluffy-bureau', limit: 4 });
-await profiles.list(); // [{ id, name, revision, data }]
-await profiles.create({ name: 'Маша', data: { avatar: composition } });
-await profiles.rename(id, 'Мария');
-await profiles.update(id, data); // per-profile settings/avatar (JSON)
-await profiles.remove(id, { confirm: id }); // also resets that profile's save
-await profiles.device(); // device-level settings, shared
-const envelope = rebindSave(imported, { profileId: target }, policy); // validated rewrite
+Profiles (SAVE-08) and `rebindSave` (issue #15) are documented in
+[browser-services.md](./browser-services.md#profiles-save-08-and-rebinding-a-backup-issue-15).
+
+## 12. Validation and the preview route (ANIM-07)
+
+Headless validation, without a browser:
+
+```powershell
+npx aegis-animation validate assets\characters assets\cutscenes --lines content\voice-pack.json --durations assets\voice\durations.json
+npx aegis-animation import-rhubarb voice\case01.l1.003.rhubarb.json --line case01.l1.003 --revision 2 --out voice\case01.l1.003.cues.json
+npx aegis-animation import-azure voice\case01.l1.003.visemes.json --line case01.l1.003 --duration 3.42 --out voice\case01.l1.003.cues.json
 ```
 
-Each profile's saves keep using `SaveService` with `{ gameId, profileId }`, so the
-existing cross-tab compare-and-swap conflict detection applies per profile. The
-registry is stored with the same compare-and-swap storage under a reserved key.
+`validate` reads every `*.json` below the given paths, keeps the animation documents and
+validates them together: rigs against atlases, clips against every rig that has their
+parts, cue tracks against audio durations, cutscenes against cast, rigs, clips, captioned
+lines, camera presets and effects. Exit code 0 means valid (warnings allowed), 2 invalid.
+The same checks are `validateBundle` in `@aegis/browser/animation`.
+
+The **animation lab** (`npm run build:labs`, then `npm run preview:labs`) is the local
+preview route. Without parameters it shows the original placeholder fixture: five species
+with identical part IDs, a tint-masked scarf, hats, a badge anchor, clips, a cutscene and a
+synthetic voice line with its cue track. To preview consumer files, mount their directory:
+
+```powershell
+npm run preview:labs -- --consumer F:\path\to\fluffy-assets
+# open http://127.0.0.1:4318/animation-lab/?manifest=consumer/manifest.json
+```
+
+The manifest lists what to load, by asset ID, with paths relative to the manifest:
+
+```json
+{
+  "paths": {
+    "avatar.fox": "rigs/avatar.fox.json",
+    "avatar.fox.atlas": "rigs/avatar.fox.atlas.json",
+    "avatar.fox.atlas.webp": "rigs/fox.webp"
+  },
+  "documents": ["avatar.fox.atlas", "avatar.fox", "acc.scarf.long", "wave"],
+  "images": ["bg.bureau.webp"],
+  "background": "bg.bureau.webp",
+  "audio": {
+    "id": "voice",
+    "revision": "1",
+    "assets": [{ "id": "l1", "src": "voice/l1.mp3" }],
+    "lines": [
+      { "id": "case01.l1.003", "asset": "l1", "caption": "…", "cues": "case01.l1.003.cues" }
+    ]
+  },
+  "cutscenes": ["prologue.intro"],
+  "avatars": {
+    "species": ["avatar.fox"],
+    "scarfColors": { "Синий": "#2f6fb3" },
+    "hats": ["acc.hat.detective"],
+    "badge": "acc.badge"
+  }
+}
+```
+
+The lab shows validation diagnostics, composes avatars, plays clips, emotes and lines with
+lip-sync, speaks a label, plays, advances, skips and replays cutscenes, and toggles
+reduced motion and comfort.

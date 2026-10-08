@@ -123,7 +123,7 @@ async function main(): Promise<void> {
   app.append(title, host, caption, status, controls, diagnostics);
 
   const narration = createNarration({
-    baseUrl: location.href,
+    baseUrl: base.href,
     onState: () => undefined,
     onCaption: (line) => {
       caption.textContent = line?.caption ?? '';

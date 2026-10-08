@@ -897,8 +897,33 @@ export function createStage(options: StageOptions) {
     }
     lastStats = renderer.end();
   };
+  let restoring: Promise<void> | undefined;
+  /** After a WebGL context loss and restore, re-decode and re-upload every owned image. */
+  const restoreTextures = (): void => {
+    if (restoring || !(renderer instanceof WebGlRenderer)) return;
+    const gl = renderer;
+    const stale = [...images.values()].filter((image) => !gl.valid(image.texture));
+    if (!stale.length) return;
+    restoring = (async () => {
+      for (const image of stale) {
+        try {
+          const decoded = await decode(image.id);
+          if (disposed || images.get(image.id) !== image) continue;
+          gl.deleteTexture(image.texture);
+          image.texture = gl.createTexture(decoded);
+          decoded.src = '';
+        } catch {
+          // The image stays missing; the next frame retries.
+        }
+      }
+    })().finally(() => {
+      restoring = undefined;
+    });
+  };
   const renderFrame = (): void => {
     if (disposed) return;
+    if (renderer.lost()) return;
+    restoreTextures();
     const start = view.performance.now();
     for (const controller of cutscenes) controller.player.update(now);
     render();
@@ -1192,10 +1217,24 @@ export function createStage(options: StageOptions) {
       const fetched = await Promise.all(
         (request.documents ?? []).map(async (id) => ({ source: id, value: await fetchJson(id) })),
       );
-      const documents = [
+      const supplied = [
         ...fetched,
         ...(request.values ?? []).map((value, i) => ({ source: `values[${String(i)}]`, value })),
       ];
+      // Re-supplying an identical, already-loaded document is a no-op; a different document
+      // with the same ID is still reported as a duplicate.
+      const loadedDoc = (value: unknown): unknown => {
+        const doc = value as { format?: unknown; id?: unknown } | null;
+        if (!doc || typeof doc.id !== 'string') return undefined;
+        if (doc.format === 'aegis-atlas/1') return atlases.get(doc.id);
+        if (doc.format === 'aegis-rig/1') return rigs.get(doc.id);
+        if (doc.format === 'aegis-clip/1') return clips.get(doc.id);
+        return undefined;
+      };
+      const documents = supplied.filter(({ value }) => {
+        const existing = loadedDoc(value);
+        return existing === undefined || JSON.stringify(existing) !== JSON.stringify(value);
+      });
       // Validate together with already-loaded documents so cross-references resolve.
       const known = [...atlases.values(), ...rigs.values(), ...clips.values()].map((value) => ({
         source: `loaded:${value.id}`,

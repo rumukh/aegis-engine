@@ -8,16 +8,20 @@ including nested GitHub Pages paths, **not a packaged Windows application**.
 
 ## Public entry points
 
-| Import                          | Responsibility                                                                                               |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `@aegis/browser/save`           | Pure bounded JSON save codec, migration, replaceable storage interface, memory adapter, ordered save service |
-| `@aegis/browser/indexeddb`      | Real transactional IndexedDB adapter                                                                         |
-| `@aegis/browser/checkpoint`     | Strict `@aegis/runtime` checkpoint bridge                                                                    |
-| `@aegis/browser/audio`          | Narration, authored atmosphere, independent buses, shared production voice cleanup/gain automation           |
-| `@aegis/browser/audio/nodes`    | Narrow shared primitives for existing renderer dev/static/preview module graphs                              |
-| `@aegis/browser/ui`             | Native controls, logical coordinates, placement, focus, projection, catalogs and opt-in preferences          |
-| `@aegis/browser/offline`        | Declared resource graphs and transactional pack publication                                                  |
-| `@aegis/browser/offline/worker` | Public worker attachment, fetch handler and registration helpers                                             |
+| Import                          | Responsibility                                                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `@aegis/browser/save`           | Pure bounded JSON save codec, migration, replaceable storage interface, memory adapter, ordered save service    |
+| `@aegis/browser/indexeddb`      | Real transactional IndexedDB adapter                                                                            |
+| `@aegis/browser/checkpoint`     | Strict `@aegis/runtime` checkpoint bridge                                                                       |
+| `@aegis/browser/audio`          | Narration, authored atmosphere, independent buses, shared production voice cleanup/gain automation              |
+| `@aegis/browser/audio/nodes`    | Narrow shared primitives for existing renderer dev/static/preview module graphs                                 |
+| `@aegis/browser/ui`             | Native controls, logical coordinates, placement, focus, projection, catalogs and opt-in preferences             |
+| `@aegis/browser/offline`        | Declared resource graphs and transactional pack publication                                                     |
+| `@aegis/browser/offline/worker` | Public worker attachment, fetch handler and registration helpers                                                |
+| `@aegis/browser/animation`      | 2D animation formats, validators, cue import, deterministic sampling, puppet model, cutscene player (Node-safe) |
+| `@aegis/browser/stage`          | WebGL/Canvas 2D puppet stage, lip-sync binding, cutscene host ([animation.md](./animation.md))                  |
+
+The animation and stage subpaths are opt-in and are **not** re-exported from the root.
 
 The root re-exports these APIs and therefore includes the runtime checkpoint
 dependency. `/save` remains independent of the runtime and browser storage; it is
@@ -151,6 +155,42 @@ private mode. Transaction acknowledgement is **not an unconditional permanent-sa
 guarantee**. Offer local backup and explicit recovery. `storage.close()` closes only
 the adapter's connection; it never clears unrelated databases.
 
+### Profiles (SAVE-08) and rebinding a backup (issue #15)
+
+`createProfileRegistry({ storage, gameId, limit, slots?, validateSettings?,
+validateDevice? })` keeps up to `limit` (1..64) local profiles in **one
+compare-and-swap record of the same `SaveStorage`**, under the reserved profile key
+`aegis.profiles`. Operations: `list()`, `get(id)`, `create({ name, settings?, id? })`,
+`rename(id, name)`, `updateSettings(id, settings)` and `remove(id, { confirm: id })`.
+Names are trimmed, NFC-normalised and 1..64 printable characters. Per-profile
+settings (for example the avatar composition) are bounded JSON (64 KiB) with an
+optional consumer validator. Generated IDs are `profile-<n>` and are **never
+reused**, so a new profile can never inherit a removed profile's reset tombstone.
+A concurrent change from another tab is detected by CAS; the registry re-reads and
+re-applies the change up to three times, against fresh state (a rename of a profile
+another tab deleted fails rather than resurrecting it).
+
+Saves stay ordinary `SaveService` instances keyed by `saveKeyFor(profileId, slot?)`,
+so the existing cross-tab conflict detection works **per profile**. Declare
+`slots: ['slot1', 'slot2', 'slot3']` for several saves per profile (key
+`<profile>:<slot>`); `remove` resets every declared slot before removing the profile.
+Device-level settings are a separate record (`device()`, `setDevice(value)`, key
+`aegis.device`) shared by all profiles.
+
+`rebindSave(source, { profileId, expectSource? }, targetPolicy)` validates a backup
+(text or envelope) as an ordinary envelope of **its own** profile, accepting older
+schema versions so migration still happens at load, rewrites only `profileId`, and
+validates the result for the target. The source is never mutated. The original
+`revision` is kept as provenance; install with
+`service.load(); service.save(withoutRevision(rebound))`, which assigns the next
+storage revision. `expectSource` refuses a backup from an unexpected profile.
+
+### Long-lived compatibility (DATA-04, SAVE-09)
+
+Optional object fields, multi-version content registrations, bounded job/claim
+ledgers and the per-commit budget for a campaign that saves after every action
+are runtime features; see [action-runtime.md](./action-runtime.md).
+
 ## Audio transport
 
 `createNarration({ baseUrl, onState, onCaption?, onComplete?, ...limits })` owns one
@@ -222,6 +262,45 @@ dev/preview import map, preview vendor allowlist and static module crawler resol
 that entry, including relative nested-deployment URLs. Preview does not expose
 the browser package's root or its runtime checkpoint adapter.
 
+### Playback clock, line metadata and spoken labels (AUDIO-07)
+
+All additions are optional; existing calls behave as before.
+
+- **Line metadata.** A line may carry `speaker`, `cues` (asset ID of an
+  `aegis-cues/1` track), `meta` (at most 32 bounded JSON scalars) and `kind`
+  (`line` or `label`). `line(packId, lineId)` returns a copy.
+- **Clock.** `clock()` returns `{ serial, packId, lineId, kind, status, position,
+duration }` and is cheap enough to call every animation frame. `position` is the
+  **audible** media position in seconds: the AudioContext output timestamp,
+  extrapolated with the frame clock and never ahead of the scheduled time, or
+  `currentTime - outputLatency` where output timestamps are unavailable. It is frozen
+  while paused, restarts at zero on `replay` (new `serial`) and continues from the
+  saved offset after gesture recovery. `state().offset` keeps its previous meaning
+  (the scheduled offset). Measured in Chromium against the rendered samples: at most
+  19 ms drift through pause, resume, replay and interruption (F03, F09).
+- **Notifications.** `subscribe(listener)` reports `start`, `resume`, `pause`,
+  `stop` (with `reason`: `replaced`, `stopped`, `label`, `cleared`, `released`),
+  `complete`, `fail` and `block` for every request. A throwing listener cannot
+  corrupt narration state.
+- **Labels (Q29).** `speakLabel(packId, lineId, { policy })` plays an interface label.
+  `replace` (default) stops the active line (`stop`, reason `label`) and does **not**
+  resume it; `queue` plays after the active line completes or fails, is replaced by a
+  newer queued label and is dropped when the line is stopped. Labels never call
+  `onCaption` or `onComplete`.
+- **Context.** `context()` returns `{ state, sampleRate }`; `state` is `none` before
+  the first unlock.
+
+### Effects, preloading and loops (issue #13)
+
+`preload(packId, assetIds?)` fetches assets ahead of first use and returns
+`{ loaded, failed }` without changing narration status. Before the first unlock the
+bytes are fetched and kept (counted in the PCM budget) and decoded on first use;
+afterwards they are decoded at once. `playEffect(packId, assetId, { gain })` applies a
+per-call gain of 0..4 on top of the effects bus. A failed effect rejects and is
+reported as `state().effectError`; it never changes `status`. `setAtmosphere` accepts
+`loopStart`/`loopEnd` in seconds to trim decoder padding; they are validated against
+the decoded buffer.
+
 ## DOM/SVG, input and privacy
 
 `logicalPoint` maps client coordinates through a **fresh**
@@ -283,6 +362,28 @@ primary choices and supports explicit consumer-configured limits. Art-dependent
 contrast, essential alt labels, sound-equivalent clues and actual screen-reader
 usability still require application acceptance. Comfort colors/assets and
 parent-facing settings/backup/reset controls belong to the consumer.
+
+Every `CHILD_SAFE_CSS` selector is wrapped in `:where(...)` and therefore has **zero
+specificity**: any consumer rule, even a single class, overrides the preset (issue
+#14). Reduced motion applies when `data-reduced-motion="true"` is on the
+`.aegis-child` root **or any ancestor** (such as `<html>`, where
+`applyPresentationPreferences` is usually applied), and under the system
+`prefers-reduced-motion` setting.
+
+### Landscape tablet profile (UI-10)
+
+`TABLET_PROFILE` is landscape-only with a 1024x600 minimum logical viewport (T02).
+`evaluateViewport(size, profile?)` classifies a CSS-pixel viewport as `ok`, `rotate`
+(portrait) or `small`. `bindViewportProfile(root, window, onChange?, profile?)` keeps
+`data-orientation` and `data-viewport` on `root` in sync with the visual viewport
+and returns an unbind function. The opt-in, zero-specificity `TABLET_PROFILE_CSS`
+pads `.aegis-safe-area` by the `env(safe-area-inset-*)` insets and shows a
+full-screen `.aegis-rotate-prompt` (hiding `.aegis-landscape-only`) while
+`data-viewport="rotate"`. Use
+`<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">`
+and make the hidden game root `inert` from the callback. WebKit evidence for audio
+unlock, IndexedDB and the service worker is recorded in
+[extension-acceptance.md](../extension-acceptance.md#section-23-fluffy-bureau).
 
 ## Installed offline packs and static hosting
 
@@ -365,6 +466,28 @@ no progress. `assertChildSafeView` rejects outbound navigation and embedded
 frames/objects in a candidate view before mounting. It does not certify arbitrary
 consumer JavaScript, hosting-provider logs, external CSS, or manually added
 third-party integrations. Audit the assembled production bundle too.
+
+### Incremental media packs (OFFLINE-04)
+
+Large media installs **pack by pack** (for example the prologue and case 1 first,
+later cases afterwards). `store.plan(manifests, marginBytes?)` reports, before any
+download, each pack's bytes and whether it is already installed, the bytes still
+required, and the `navigator.storage.estimate()` usage, quota and availability;
+`fits` is `yes` only when the requirement plus a safety margin (default 8 MiB) is
+available, `no` otherwise and `unknown` without an estimate.
+`store.installSequence(manifests, { signal, onProgress, marginBytes })` installs
+in order, re-checking the estimate **before each pack**; a pack that does not fit
+stops the sequence with a `limit` error before it downloads anything, leaving
+earlier packs installed. Progress reports `{ pack, index, count, completedBytes,
+totalBytes }`; `PackStatus` also carries `completedBytes`/`totalBytes`. A
+`QuotaExceededError` while writing becomes a `limit` error and the staging cache is
+removed. `requestPersistence()` asks the browser to keep storage (advisory:
+iPadOS Safari can decline and evicts storage of unvisited sites).
+
+Installing a later pack never activates it and never touches the active pack, its
+retention or the running page; the service worker serves every pinned pack that is
+installed and refuses the rest, so a later case simply becomes available. The rule
+against forced reloads mid-case is unchanged.
 
 ## Measured evidence and remaining acceptance
 

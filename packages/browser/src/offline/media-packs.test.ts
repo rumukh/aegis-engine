@@ -54,7 +54,7 @@ const base = 'https://example.test/fluffy/';
 const MB = 1024 * 1024;
 
 function pack(id: string, sizes: readonly number[]) {
-  const bodies = new Map<string, Uint8Array>();
+  const bodies = new Map<string, Uint8Array<ArrayBuffer>>();
   const manifest: OfflinePack = {
     id,
     revision: 'r1',
