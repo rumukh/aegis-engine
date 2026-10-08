@@ -55,7 +55,8 @@
     "test/**/*.ts",
     "poc/storybook-lab/**/*.ts",
     "poc/turn-kitchen-lab/**/*.ts",
-    "poc/lab-shared/**/*.ts"
+    "poc/lab-shared/**/*.ts",
+    "poc/animation-lab/**/*.ts"
   ],
   "exclude": ["**/dist/**", "**/node_modules/**"]
 }

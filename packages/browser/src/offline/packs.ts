@@ -30,6 +30,9 @@ export interface PackStatus {
   pack: OfflinePackRef;
   completed: number;
   total: number;
+  /** Verified bytes stored so far and the pack's declared byte total (OFFLINE-04). */
+  completedBytes?: number;
+  totalBytes?: number;
   error?: BrowserServiceError;
 }
 export interface OfflineOptions {
@@ -39,10 +42,32 @@ export interface OfflineOptions {
   fetch?: typeof fetch;
   crypto?: Crypto;
   locks?: Pick<LockManager, 'request'>;
+  /** Storage estimates and persistence; defaults to `navigator.storage`. */
+  storage?: Partial<Pick<StorageManager, 'estimate' | 'persist' | 'persisted'>>;
   maxRequests?: number;
   maxFileBytes?: number;
   maxPackBytes?: number;
   onStatus?(status: PackStatus): void;
+}
+/** Storage needs of a set of packs, computed before anything is downloaded (OFFLINE-04). */
+export interface InstallPlan {
+  packs: readonly { pack: OfflinePackRef; installed: boolean; bytes: number; resources: number }[];
+  /** Bytes still to download and store for packs not yet installed. */
+  requiredBytes: number;
+  /** From the storage estimate; undefined when the browser does not provide one. */
+  usage?: number;
+  quota?: number;
+  available?: number;
+  persisted?: boolean;
+  /** `yes` with the safety margin, `no` without it, `unknown` without an estimate. */
+  fits: 'yes' | 'no' | 'unknown';
+}
+export interface SequenceProgress {
+  pack: OfflinePackRef;
+  index: number;
+  count: number;
+  completedBytes: number;
+  totalBytes: number;
 }
 interface InstalledRecord {
   manifest: OfflinePack;
@@ -120,6 +145,18 @@ export function validateOfflinePack(
   return { id: input.id, revision: input.revision, resources };
 }
 
+/** Cache writes over quota surface as `QuotaExceededError` (Chromium, WebKit) or code 22. */
+export function isQuotaError(cause: unknown): boolean {
+  const value = cause as { name?: unknown; code?: unknown } | null;
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    (value.name === 'QuotaExceededError' ||
+      value.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      value.code === 22)
+  );
+}
+
 export async function sha256(
   bytes: ArrayBuffer,
   crypto: Pick<Crypto, 'subtle'> = globalThis.crypto,
@@ -143,6 +180,7 @@ export class OfflinePackStore {
   private readonly maxFile: number;
   private readonly maxPack: number;
   private active?: OfflinePackRef;
+  private readonly statusListeners = new Set<(status: PackStatus) => void>();
 
   constructor(readonly options: OfflineOptions) {
     requireId(options.namespace, 'offline namespace');
@@ -292,14 +330,21 @@ export class OfflinePackStore {
   private async installPack(manifest: OfflinePack, signal?: AbortSignal): Promise<void> {
     let staging: string | undefined;
     let completed = 0;
-    const publish = (status: PackStatus['status'], error?: BrowserServiceError): void =>
-      this.options.onStatus?.({
+    let completedBytes = 0;
+    const totalBytes = manifest.resources.reduce((sum, item) => sum + item.bytes, 0);
+    const publish = (status: PackStatus['status'], error?: BrowserServiceError): void => {
+      const value: PackStatus = {
         status,
         pack: { id: manifest.id, revision: manifest.revision },
         completed,
         total: manifest.resources.length,
+        completedBytes,
+        totalBytes,
         ...(error ? { error } : {}),
-      });
+      };
+      this.options.onStatus?.(value);
+      for (const listener of this.statusListeners) listener(value);
+    };
     try {
       const existing = await this.record(manifest);
       if (existing) {
@@ -310,6 +355,7 @@ export class OfflinePackStore {
           );
         await this.inspect(manifest);
         completed = manifest.resources.length;
+        completedBytes = totalBytes;
         publish('ready');
         return;
       }
@@ -347,6 +393,7 @@ export class OfflinePackStore {
                 headers.set('content-length', String(bytes.byteLength));
                 await cache.put(url.href, new Response(bytes, { headers }));
                 completed++;
+                completedBytes += bytes.byteLength;
                 publish('installing');
               } catch (cause) {
                 abort.abort();
@@ -355,8 +402,18 @@ export class OfflinePackStore {
             }),
           ),
         );
-        const failed = outcomes.find((outcome) => outcome.status === 'rejected');
-        if (failed?.status === 'rejected') throw failed.reason;
+        const rejected = outcomes.filter(
+          (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+        );
+        // Report the root cause, not a sibling download cancelled because of it.
+        const failed =
+          rejected.find(
+            (outcome) =>
+              !(
+                outcome.reason instanceof BrowserServiceError && outcome.reason.code === 'cancelled'
+              ),
+          ) ?? rejected[0];
+        if (failed) throw failed.reason;
         if (abort.signal.aborted)
           throw new BrowserServiceError('cancelled', 'Offline installation was interrupted.');
       } finally {
@@ -373,7 +430,13 @@ export class OfflinePackStore {
     } catch (cause) {
       let error = signal?.aborted
         ? new BrowserServiceError('cancelled', 'Offline installation was interrupted.', { cause })
-        : browserError(cause, 'storage');
+        : isQuotaError(cause)
+          ? new BrowserServiceError(
+              'limit',
+              'Browser storage is full; free space or install fewer packs.',
+              { cause },
+            )
+          : browserError(cause, 'storage');
       if (staging) {
         try {
           await this.caches().delete(staging);
@@ -385,6 +448,126 @@ export class OfflinePackStore {
       }
       publish(error.code === 'unavailable' ? 'unavailable' : 'failed', error);
       throw error;
+    }
+  }
+
+  /**
+   * Storage needs before installation (OFFLINE-04): bytes still to store for packs that are not
+   * installed, against the browser's storage estimate. iPadOS Safari reports a quota that can be
+   * far below the disk size and evicts unpersisted storage, so check before every pack.
+   */
+  async plan(
+    manifests: readonly OfflinePack[],
+    marginBytes = 8 * 1024 * 1024,
+  ): Promise<InstallPlan> {
+    const packs: { pack: OfflinePackRef; installed: boolean; bytes: number; resources: number }[] =
+      [];
+    let requiredBytes = 0;
+    for (const input of manifests) {
+      const manifest = validateOfflinePack(input, this.options.baseUrl, this.maxFile, this.maxPack);
+      const record = await this.record(manifest);
+      const installed =
+        record !== undefined &&
+        JSON.stringify(record.manifest) === JSON.stringify(manifest) &&
+        (await this.caches().has(record.cacheName));
+      const bytes = manifest.resources.reduce((sum, item) => sum + item.bytes, 0);
+      if (!installed) requiredBytes += bytes;
+      packs.push({
+        pack: { id: manifest.id, revision: manifest.revision },
+        installed,
+        bytes,
+        resources: manifest.resources.length,
+      });
+    }
+    const storage = this.options.storage ?? globalThis.navigator?.storage;
+    let estimate: StorageEstimate | undefined;
+    let persisted: boolean | undefined;
+    try {
+      estimate = await storage?.estimate?.();
+      persisted = await storage?.persisted?.();
+    } catch {
+      estimate = undefined;
+    }
+    const usage = estimate?.usage;
+    const quota = estimate?.quota;
+    const available =
+      typeof usage === 'number' && typeof quota === 'number'
+        ? Math.max(0, quota - usage)
+        : undefined;
+    return {
+      packs,
+      requiredBytes,
+      ...(usage !== undefined ? { usage } : {}),
+      ...(quota !== undefined ? { quota } : {}),
+      ...(available !== undefined ? { available } : {}),
+      ...(persisted !== undefined ? { persisted } : {}),
+      fits:
+        available === undefined
+          ? 'unknown'
+          : available >= requiredBytes + (requiredBytes ? marginBytes : 0)
+            ? 'yes'
+            : 'no',
+    };
+  }
+
+  /**
+   * Install packs one after another in the given order (for example the prologue and case 1
+   * first). Each pack is checked against the storage estimate before it downloads; a pack that
+   * does not fit stops the sequence with a `limit` error and leaves earlier packs installed.
+   * Installation never activates a pack, so an active case is undisturbed.
+   */
+  async installSequence(
+    manifests: readonly OfflinePack[],
+    options: {
+      signal?: AbortSignal;
+      marginBytes?: number;
+      onProgress?(progress: SequenceProgress): void;
+    } = {},
+  ): Promise<InstallPlan> {
+    const count = manifests.length;
+    for (const [index, manifest] of manifests.entries()) {
+      if (options.signal?.aborted)
+        throw new BrowserServiceError('cancelled', 'Offline installation was interrupted.');
+      const plan = await this.plan([manifest], options.marginBytes);
+      const pack = { id: manifest.id, revision: manifest.revision };
+      const totalBytes = plan.packs[0]!.bytes;
+      if (plan.packs[0]!.installed) {
+        options.onProgress?.({ pack, index, count, completedBytes: totalBytes, totalBytes });
+        continue;
+      }
+      if (plan.fits === 'no')
+        throw new BrowserServiceError(
+          'limit',
+          `Not enough browser storage for pack "${manifest.id}": ${String(plan.requiredBytes)} bytes needed, ${String(plan.available)} available.`,
+        );
+      const listener = (status: PackStatus): void => {
+        if (status.pack.id === manifest.id && status.pack.revision === manifest.revision)
+          options.onProgress?.({
+            pack,
+            index,
+            count,
+            completedBytes: status.completedBytes ?? 0,
+            totalBytes,
+          });
+      };
+      this.statusListeners.add(listener);
+      try {
+        await this.install(manifest, options.signal);
+      } finally {
+        this.statusListeners.delete(listener);
+      }
+    }
+    return this.plan(manifests, options.marginBytes);
+  }
+
+  /** Ask the browser to keep this origin's storage (advisory; Safari may decline). */
+  async requestPersistence(): Promise<boolean> {
+    const storage = this.options.storage ?? globalThis.navigator?.storage;
+    if (!storage?.persist) return false;
+    try {
+      return await storage.persist();
+    } catch {
+      return false;
     }
   }
 

@@ -7,6 +7,9 @@
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "aegis-animation": "bin/aegis-animation.mjs"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -43,6 +46,14 @@
     "./offline/worker": {
       "types": "./dist/offline/worker.d.ts",
       "import": "./dist/offline/worker.js"
+    },
+    "./animation": {
+      "types": "./dist/animation/index.d.ts",
+      "import": "./dist/animation/index.js"
+    },
+    "./stage": {
+      "types": "./dist/stage/index.d.ts",
+      "import": "./dist/stage/index.js"
     }
   },
   "files": [

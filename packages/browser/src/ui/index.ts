@@ -3,3 +3,4 @@ export * from './controls.js';
 export * from './placement.js';
 export * from './projection.js';
 export * from './preferences.js';
+export * from './tablet.js';

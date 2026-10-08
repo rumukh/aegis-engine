@@ -74,7 +74,7 @@ export function distributionManifest(source, version) {
     ...source,
     version,
     private: true,
-    files: ['dist', 'src', 'LICENSE', 'aegis-build.json'],
+    files: ['dist', 'src', ...(source.bin ? ['bin'] : []), 'LICENSE', 'aegis-build.json'],
     dependencies,
     scripts: undefined,
     devDependencies: undefined,
