@@ -8,6 +8,7 @@
  *
  *   npm run build
  *   node scripts/bench-runtime-content.mjs [--scale 1] [--rounds 5] [--dispatches 300]
+ *                                          [--fluffy] [--long-session]
  *                                          [--runtime <index.js>] [--json]
  *
  * By default the runtime under test is `@aegis/runtime`, i.e. this checkout's
@@ -147,23 +148,48 @@ export function syntheticContent(scale = 1, revision = 'r1') {
  * the same module instance as the host.
  * @param {typeof import('@aegis/runtime')} runtime
  */
-export function benchAdapter({ failure, schema, success }) {
+export function benchAdapter({ failure, schema, success }, options = {}) {
   const counter = schema.number({ integer: true, min: 0 });
   const answerPayload = schema.object({ fact: schema.string(), correct: schema.boolean });
+  const progressEntry = schema.object({
+    caseId: schema.string(),
+    level: counter,
+    status: schema.string(),
+    score: counter,
+  });
+  const notebookEntry = schema.object({
+    id: schema.string(),
+    caseId: schema.string(),
+    text: schema.string(),
+    foundAt: counter,
+  });
+  const collectionItem = schema.object({
+    id: schema.string(),
+    count: counter,
+    seen: schema.boolean,
+  });
+  const stateShape = {
+    region: schema.string(),
+    encounter: counter,
+    coins: counter,
+    streak: counter,
+    answered: counter,
+    rested: counter,
+    history: schema.array(answerPayload),
+    inventory: schema.record(counter),
+    log: schema.array(schema.string()),
+    ...(options.fluffy
+      ? {
+          progress: schema.array(progressEntry, { max: 24 }),
+          notebook: schema.array(notebookEntry, { max: 240 }),
+          collections: schema.array(collectionItem, { max: 120 }),
+        }
+      : {}),
+  };
   return {
     id: 'bench-runtime-content',
     stateVersion: 1,
-    state: schema.object({
-      region: schema.string(),
-      encounter: counter,
-      coins: counter,
-      streak: counter,
-      answered: counter,
-      rested: counter,
-      history: schema.array(answerPayload),
-      inventory: schema.record(counter),
-      log: schema.array(schema.string()),
-    }),
+    state: schema.object(stateShape),
     action: schema.union(
       schema.object({ type: schema.literal('answer'), fact: schema.string(), value: counter }),
       schema.object({ type: schema.literal('travel') }),
@@ -181,6 +207,27 @@ export function benchAdapter({ failure, schema, success }) {
       history: [],
       inventory: {},
       log: [],
+      ...(options.fluffy
+        ? {
+            progress: Array.from({ length: 8 * 3 }, (_, i) => ({
+              caseId: `case-${Math.floor(i / 3)}`,
+              level: i % 3,
+              status: i % 4 === 0 ? 'complete' : 'open',
+              score: (i * 17) % 100,
+            })),
+            notebook: Array.from({ length: 200 }, (_, i) => ({
+              id: `note-${i}`,
+              caseId: `case-${i % 8}`,
+              text: phrase(i, 18),
+              foundAt: i,
+            })),
+            collections: Array.from({ length: 100 }, (_, i) => ({
+              id: `collection-${i}`,
+              count: i % 5,
+              seen: i % 3 === 0,
+            })),
+          }
+        : {}),
     }),
     resolve(action, read) {
       if (action.type === 'travel') return success({ rule: 'travel', turns: 1, payload: null });
@@ -283,6 +330,8 @@ export function benchAdapter({ failure, schema, success }) {
         coins: read.state.coins,
         streak: read.state.streak,
         items: Object.keys(read.state.inventory).length,
+        notebook: options.fluffy ? read.state.notebook.length : 0,
+        collections: options.fluffy ? read.state.collections.length : 0,
         turn: read.turn,
         revision: read.revision,
       };
@@ -398,16 +447,32 @@ function revisionLabel() {
 const NUMERIC = { '--scale': 'scale', '--rounds': 'rounds', '--dispatches': 'dispatches' };
 const USAGE =
   'Usage: node scripts/bench-runtime-content.mjs [--scale <n>] [--rounds <n>] ' +
-  '[--dispatches <n>] [--runtime <index.js>] [--json]';
+  '[--dispatches <n>] [--fluffy] [--long-session] [--runtime <index.js>] [--json]';
 
 /** @param {string[]} argv */
 export function parseArguments(argv) {
-  /** @type {{ scale: number; rounds: number; dispatches: number; runtime?: string; json: boolean }} */
-  const options = { scale: 1, rounds: 5, dispatches: 300, json: false };
+  /** @type {{ scale: number; rounds: number; dispatches: number; runtime?: string; json: boolean; fluffy: boolean; longSession: boolean }} */
+  const options = {
+    scale: 1,
+    rounds: 5,
+    dispatches: 300,
+    json: false,
+    fluffy: false,
+    longSession: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--json') {
       options.json = true;
+      continue;
+    }
+    if (flag === '--fluffy') {
+      options.fluffy = true;
+      continue;
+    }
+    if (flag === '--long-session') {
+      options.longSession = true;
+      options.dispatches = Math.max(options.dispatches, 3000);
       continue;
     }
     const value = argv[i + 1];
@@ -433,7 +498,7 @@ export async function runBenchmark(options) {
     options.runtime === undefined ? '@aegis/runtime' : pathToFileURL(resolve(options.runtime)).href;
   /** @type {typeof import('@aegis/runtime')} */
   const runtime = await import(specifier);
-  const adapter = benchAdapter(runtime);
+  const adapter = benchAdapter(runtime, { fluffy: options.fluffy });
   const pack = syntheticContent(options.scale);
   const actions = benchActions(pack, options.dispatches);
   await round(runtime, adapter, pack, actions); // warm-up: JIT and allocation, not reported
@@ -464,6 +529,8 @@ export async function runBenchmark(options) {
       dispatches: options.dispatches,
       commitsPerRound: rounds[0].commits,
       rounds: options.rounds,
+      fluffy: options.fluffy,
+      longSession: options.longSession,
     },
     content: contentCosts(runtime, pack, 20),
     perCommitMs: {
@@ -491,7 +558,8 @@ function printReport(report) {
       `${report.pack.records} records · scale ${report.pack.scale}`,
     `workload  : ${report.workload.dispatches} dispatches -> ${report.workload.commitsPerRound} ` +
       `commits per round · strict in-memory checkpoint · ${report.workload.rounds} rounds ` +
-      '(+1 warm-up)',
+      `(+1 warm-up)${report.workload.fluffy ? ' · fluffy-sized state' : ''}` +
+      `${report.workload.longSession ? ' · long-session' : ''}`,
     `content   : dataHash ${ms(report.content.dataHashMs)} · cloneData ` +
       `${ms(report.content.cloneDataMs)} · freezeData(cloneData) ` +
       `${ms(report.content.freezeCloneMs)} (one call each)`,

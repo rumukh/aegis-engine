@@ -10,6 +10,25 @@ const prng = schema.object({
 });
 
 const ticket = schema.object({ id: identifierSchema, token: counterSchema });
+const consumedJobs = schema.union(
+  schema.array(ticket),
+  schema.object({
+    watermark: counterSchema,
+    tickets: schema.array(ticket),
+  }),
+);
+const claimRange = schema.object({
+  prefix: schema.string({ maxLength: 160 }),
+  from: counterSchema,
+  to: counterSchema,
+});
+const claims = schema.union(
+  schema.array(identifierSchema),
+  schema.object({
+    ranges: schema.array(claimRange),
+    ids: schema.array(identifierSchema),
+  }),
+);
 const anchor = schema.union(
   schema.object({ kind: schema.literal('elapsed'), turn: counterSchema }),
   schema.object({
@@ -79,8 +98,8 @@ export const runtimeSnapshotSchema: Schema<RuntimeSnapshot> = schema.object({
       dueTurn: counterSchema,
     }),
   ),
-  claims: schema.array(identifierSchema),
-  consumedJobs: schema.array(ticket),
+  claims,
+  consumedJobs,
   phase: schema.union(
     schema.literal(null),
     schema.object({

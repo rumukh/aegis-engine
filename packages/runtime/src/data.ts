@@ -16,6 +16,20 @@ export interface Schema<T> {
 }
 
 export type InferSchema<T> = T extends Schema<infer V> ? V : never;
+type OptionalSchema<T> = Schema<T> & { readonly optional: true; readonly item: Schema<T> };
+type OptionalKeys<S extends Record<string, Schema<unknown>>> = {
+  [K in keyof S]: S[K] extends OptionalSchema<unknown> ? K : never;
+}[keyof S];
+type RequiredKeys<S extends Record<string, Schema<unknown>>> = Exclude<keyof S, OptionalKeys<S>>;
+type ObjectValue<S extends Record<string, Schema<unknown>>> = {
+  -readonly [K in RequiredKeys<S>]: InferSchema<S[K]>;
+} & {
+  -readonly [K in OptionalKeys<S>]?: InferSchema<S[K]>;
+};
+
+function isOptionalSchema(value: Schema<unknown>): value is OptionalSchema<unknown> {
+  return 'optional' in value && value.optional === true && 'item' in value;
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -84,6 +98,10 @@ export function cloneData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+export function cloneTrustedData<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export function freezeData<T>(value: T): DeepReadonly<T> {
   if (value !== null && typeof value === 'object') {
     for (const child of Object.values(value)) freezeData(child);
@@ -94,6 +112,10 @@ export function freezeData<T>(value: T): DeepReadonly<T> {
 
 export function dataHash(value: unknown): string {
   requireValue(checkJson(value));
+  return hashString(canonicalStringify(value));
+}
+
+export function trustedDataHash(value: unknown): string {
   return hashString(canonicalStringify(value));
 }
 
@@ -166,9 +188,7 @@ export const schema = {
       },
     };
   },
-  object<const S extends Record<string, Schema<unknown>>>(
-    shape: S,
-  ): Schema<{ -readonly [K in keyof S]: InferSchema<S[K]> }> {
+  object<const S extends Record<string, Schema<unknown>>>(shape: S): Schema<ObjectValue<S>> {
     return {
       parse(value, path = '') {
         if (!isRecord(value)) return expected(path, 'an object');
@@ -177,6 +197,7 @@ export const schema = {
         }
         const result: Record<string, unknown> = {};
         for (const [key, item] of Object.entries(shape)) {
+          if (isOptionalSchema(item) && !Object.hasOwn(value, key)) continue;
           const parsed = item.parse(value[key], `${path}.${key}`);
           if (!parsed.ok) return parsed;
           Object.defineProperty(result, key, {
@@ -186,7 +207,17 @@ export const schema = {
             configurable: true,
           });
         }
-        return success(result as { -readonly [K in keyof S]: InferSchema<S[K]> });
+        return success(result as ObjectValue<S>);
+      },
+    };
+  },
+  optional<T>(item: Schema<T>): OptionalSchema<T> {
+    return {
+      optional: true,
+      item,
+      parse(value, path = '') {
+        if (value === undefined) return expected(path, 'a present JSON value');
+        return item.parse(value, path);
       },
     };
   },
@@ -248,9 +279,23 @@ export interface ContentRegistration<C> {
   readonly validate?: (data: DeepReadonly<C>) => readonly RuntimeDiagnostic[];
 }
 
+export interface MultiVersionContentRegistration<C> {
+  readonly versions: Readonly<Record<number, Schema<unknown>>>;
+  readonly migrate?: (data: unknown, fromVersion: number) => C | Outcome<C>;
+  readonly validate?: (data: DeepReadonly<C>) => readonly RuntimeDiagnostic[];
+}
+
+export type AnyContentRegistration<C> = ContentRegistration<C> | MultiVersionContentRegistration<C>;
+
+const contentSourceHashes = new WeakMap<object, string>();
+
+export function contentPackHash(pack: object): string | undefined {
+  return contentSourceHashes.get(pack);
+}
+
 export function validateContent<C>(
   candidate: unknown,
-  registration: ContentRegistration<C>,
+  registration: AnyContentRegistration<C>,
   file = 'content',
 ): Outcome<ContentPack<C>> {
   try {
@@ -262,11 +307,15 @@ export function validateContent<C>(
 
 function validateContentData<C>(
   candidate: unknown,
-  registration: ContentRegistration<C>,
+  registration: AnyContentRegistration<C>,
   file: string,
 ): Outcome<ContentPack<C>> {
   const json = checkJson(candidate);
   if (!json.ok) return json;
+  const sourceHash = trustedDataHash(candidate);
+  if ('versions' in registration) {
+    return validateVersionedContent(candidate, registration, file, sourceHash);
+  }
   const parsed = schema
     .object({
       id: identifierSchema,
@@ -285,6 +334,7 @@ function validateContentData<C>(
     };
   }
   const pack = cloneData(parsed.value);
+  contentSourceHashes.set(pack, sourceHash);
   const diagnostics = registration.validate?.(freezeData(pack.data)) ?? [];
   if (diagnostics.length > 0) {
     return {
@@ -301,7 +351,7 @@ function validateContentData<C>(
 
 export function parseContentJson<C>(
   text: string,
-  registration: ContentRegistration<C>,
+  registration: AnyContentRegistration<C>,
   file = 'content.json',
   maxCharacters = 2_000_000,
 ): Outcome<ContentPack<C>> {
@@ -316,6 +366,108 @@ export function parseContentJson<C>(
     });
   }
   return validateContent(candidate, registration, file);
+}
+
+function validateVersionedContent<C>(
+  candidate: unknown,
+  registration: MultiVersionContentRegistration<C>,
+  file: string,
+  sourceHash: string,
+): Outcome<ContentPack<C>> {
+  const header = schema
+    .object({
+      id: identifierSchema,
+      revision: identifierSchema,
+      schemaVersion: counterSchema,
+      data: schema.json,
+    })
+    .parse(candidate);
+  if (!header.ok) {
+    return {
+      ok: false,
+      error: {
+        ...header.error,
+        diagnostics: header.error.diagnostics.map((entry) => ({ ...entry, file })),
+      },
+    };
+  }
+  const versions = Object.keys(registration.versions)
+    .map((version) => Number(version))
+    .filter((version) => Number.isSafeInteger(version))
+    .sort((a, b) => a - b);
+  if (versions.length === 0)
+    return failure('invalid-content', 'At least one content schema version is required.', { file });
+  const item = registration.versions[header.value.schemaVersion];
+  if (item === undefined) {
+    return failure(
+      'invalid-content',
+      `Unsupported content schema version ${header.value.schemaVersion}.`,
+      { file, path: 'schemaVersion' },
+    );
+  }
+  const parsedData = item.parse(header.value.data, 'data');
+  if (!parsedData.ok) {
+    return {
+      ok: false,
+      error: {
+        ...parsedData.error,
+        diagnostics: parsedData.error.diagnostics.map((entry) => ({ ...entry, file })),
+      },
+    };
+  }
+  const latest = versions[versions.length - 1] as number;
+  let data: C;
+  if (registration.migrate !== undefined && header.value.schemaVersion !== latest) {
+    const migrated = registration.migrate(parsedData.value, header.value.schemaVersion);
+    data = requireValue(isOutcome(migrated) ? migrated : success(migrated));
+    const current = registration.versions[latest];
+    const checked = current?.parse(data, 'data');
+    if (checked === undefined || !checked.ok) {
+      return checked === undefined
+        ? failure('invalid-content', 'No current content schema version is registered.', { file })
+        : {
+            ok: false,
+            error: {
+              ...checked.error,
+              diagnostics: checked.error.diagnostics.map((entry: RuntimeDiagnostic) => ({
+                ...entry,
+                file,
+              })),
+            },
+          };
+    }
+    data = checked.value as C;
+  } else {
+    data = parsedData.value as C;
+  }
+  const pack: ContentPack<C> = {
+    id: header.value.id,
+    revision: header.value.revision,
+    schemaVersion: header.value.schemaVersion,
+    data: cloneData(data),
+  };
+  contentSourceHashes.set(pack, sourceHash);
+  const diagnostics = registration.validate?.(freezeData(pack.data)) ?? [];
+  if (diagnostics.length > 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'invalid-content',
+        messageKey: 'aegis.runtime.invalid-content',
+        diagnostics: diagnostics.map((entry) => ({ ...entry, file: entry.file ?? file })),
+      },
+    };
+  }
+  return success(pack);
+}
+
+function isOutcome<T>(value: T | Outcome<T>): value is Outcome<T> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'ok' in value &&
+    typeof (value as { ok?: unknown }).ok === 'boolean'
+  );
 }
 
 export function validateReferences(

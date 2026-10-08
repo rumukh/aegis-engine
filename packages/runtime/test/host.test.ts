@@ -6,8 +6,9 @@ import {
   runCommandTrace,
   schema,
   success,
+  validateRuntimeSnapshot,
 } from '../src/index.js';
-import type { Checkpoint, Outcome, RuntimeSnapshot } from '../src/index.js';
+import type { Checkpoint, Outcome, RuntimeAdapter, RuntimeSnapshot } from '../src/index.js';
 import { config, fixture, fixtureAdapter } from './fixture.js';
 
 function deferred<T>() {
@@ -170,13 +171,123 @@ describe('action runtime: HOST, TURN and runtime SAVE-05', () => {
       'arrival',
       'expiration',
     ]);
-    expect(host.snapshot().consumedJobs.map((job) => job.id)).toEqual([
+    const consumed = host.snapshot().consumedJobs;
+    // Small ledgers keep the legacy list representation (byte-identical snapshots).
+    if (!Array.isArray(consumed)) throw new Error('expected the legacy consumed-job list');
+    expect(consumed.map((job: { id: string }) => job.id)).toEqual([
       'job-a',
       'job-b',
       'arrival',
       'expiration',
     ]);
   });
+
+  it('SAVE-09: compacts long consumed-job and claim ledgers without losing idempotency', async () => {
+    const counter = schema.number({ integer: true, min: 0, max: 30_000 });
+    type LongState = { count: number; lastTicket: { id: string; token: number } | null };
+    type LongAction = { type: 'run' } | { type: 'claim'; index: number } | { type: 'cancel-last' };
+    const ticket = schema.object({ id: schema.string(), token: counter });
+    const adapter: RuntimeAdapter<LongState, LongAction, { count: number }, unknown> = {
+      id: 'long-ledger',
+      stateVersion: 1,
+      state: schema.object({
+        count: counter,
+        lastTicket: schema.union(schema.literal(null), ticket),
+      }),
+      action: schema.union(
+        schema.object({ type: schema.literal('run') }),
+        schema.object({ type: schema.literal('claim'), index: counter }),
+        schema.object({ type: schema.literal('cancel-last') }),
+      ),
+      content: { schemaVersion: 1, schema: schema.json },
+      eventPhases: ['ready'],
+      initialize: () => ({ count: 0, lastTicket: null }),
+      resolve(action, read) {
+        if (action.type === 'claim' && read.claims.includes(`claim-${action.index}`)) {
+          return failure('duplicate-claim', 'Claim already used.');
+        }
+        return success({
+          rule: 'step',
+          payload: action,
+          turns: action.type === 'run' ? 1_100 : 0,
+        });
+      },
+      commands: [
+        {
+          id: 'step',
+          payload: schema.union(
+            schema.object({ type: schema.literal('run') }),
+            schema.object({ type: schema.literal('claim'), index: counter }),
+            schema.object({ type: schema.literal('cancel-last') }),
+          ),
+          progress: schema.literal(null),
+          start(context, pending) {
+            const action = pending.payload as LongAction;
+            if (action.type === 'cancel-last') {
+              if (context.state.lastTicket === null) throw new Error('missing ticket');
+              requireValue(context.cancel(context.state.lastTicket));
+            }
+          },
+          turn(context) {
+            context.state.count++;
+            context.state.lastTicket = context.schedule({
+              id: 'instant',
+              rule: 'instant',
+              payload: context.turn,
+              anchor: { kind: 'elapsed', turn: context.turn },
+              phase: 'ready',
+              priority: 0,
+            });
+            if (!context.claim(`claim-${context.turn}`)) {
+              throw new Error('duplicate claim');
+            }
+          },
+        },
+      ],
+      jobs: [
+        {
+          id: 'instant',
+          payload: counter,
+          run(context) {
+            context.state.count++;
+          },
+        },
+      ],
+      view: (read) => ({ count: read.state.count }),
+    };
+    let saved: RuntimeSnapshot | undefined;
+    const host = createRuntimeHost({
+      adapter,
+      content: { id: 'long', revision: 'r1', schemaVersion: 1, data: null },
+      seed: 'long-ledger',
+      limits: { maxTurnsPerAction: 11_000 },
+    });
+    host.subscribeCommits((commit) => {
+      saved = commit.snapshot;
+    });
+    requireValue(await host.dispatch({ type: 'run' }));
+    if (saved === undefined) throw new Error('checkpoint did not run');
+    const finalSaved = saved;
+    expect(Array.isArray(finalSaved.consumedJobs)).toBe(false);
+    expect(JSON.stringify(finalSaved.consumedJobs).length).toBeLessThan(200);
+    expect(Array.isArray(finalSaved.claims)).toBe(false);
+    expect(JSON.stringify(finalSaved.claims).length).toBeLessThan(400);
+    expect(validateRuntimeSnapshot(finalSaved)).toMatchObject({ ok: true });
+    const restored = createRuntimeHost({
+      adapter,
+      content: { id: 'long', revision: 'r1', schemaVersion: 1, data: null },
+      seed: 'long-ledger',
+    });
+    requireValue(await restored.restore(JSON.parse(JSON.stringify(finalSaved))));
+    expect(await restored.dispatch({ type: 'claim', index: 1_100 })).toMatchObject({
+      ok: false,
+      error: { code: 'duplicate-claim' },
+    });
+    expect(await restored.dispatch({ type: 'cancel-last' })).toMatchObject({
+      ok: false,
+      error: { code: 'stale-job' },
+    });
+  }, 90_000);
 
   it('K04: restore an intermediate acknowledged checkpoint without resolving/charging again', async () => {
     let intermediate: RuntimeSnapshot | undefined;
