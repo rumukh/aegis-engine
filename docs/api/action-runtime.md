@@ -427,6 +427,11 @@ may write `consumedJobs: { watermark, tickets }`, where monotonic job tokens at
 or below the watermark are no longer listed individually, and
 `claims: { ranges, ids }`, where monotonic numeric claim IDs such as
 `reward-1..reward-10000` are stored as ranges while irregular IDs remain exact.
+Only canonical decimals count as numbers (`reward-01` stays an exact ID, distinct from
+`reward-1`). The compact form is canonical (ranges sorted by prefix and value and
+maximal, IDs sorted), and restore rejects any other encoding of a compact ledger, which also
+rules out overlapping ranges; legacy plain lists of any length remain readable. The host keeps
+claim bookkeeping incremental, so a commit does not re-sort or re-compact every claim.
 This bounds save size for campaigns that checkpoint after every action while
 preserving idempotency: pending/replacement tickets still use exact tokens, a
 consumed ticket cannot be canceled or replaced after restore, and

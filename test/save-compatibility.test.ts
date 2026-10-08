@@ -15,13 +15,18 @@ import type { RuntimeAdapter, RuntimeSnapshot } from '@aegis/runtime';
  * and still refuse a replayed claim or a stale job ticket.
  */
 type State = { moves: number; ticket: { id: string; token: number } | null };
-type Action = { type: 'move' } | { type: 'reclaim'; n: number } | { type: 'cancel' };
+type Action =
+  | { type: 'move' }
+  | { type: 'reclaim'; n: number }
+  | { type: 'cancel' }
+  | { type: 'grant'; id: string };
 const counter = schema.number({ integer: true, min: 0 });
 const ticket = schema.object({ id: schema.string(), token: counter });
 const action = schema.union(
   schema.object({ type: schema.literal('move') }),
   schema.object({ type: schema.literal('reclaim'), n: counter }),
   schema.object({ type: schema.literal('cancel') }),
+  schema.object({ type: schema.literal('grant'), id: schema.string() }),
 );
 const adapter: RuntimeAdapter<State, Action, { moves: number }, unknown> = {
   id: 'save-after-every-move',
@@ -32,6 +37,8 @@ const adapter: RuntimeAdapter<State, Action, { moves: number }, unknown> = {
   eventPhases: ['ready'],
   initialize: () => ({ moves: 0, ticket: null }),
   resolve(next, read) {
+    if (next.type === 'grant' && read.claims.includes(next.id))
+      return failure('duplicate-claim', 'Already granted.');
     if (next.type === 'reclaim' && read.claims.includes(`reward-${String(next.n)}`))
       return failure('duplicate-claim', 'Reward already granted.');
     return success({ rule: 'move', payload: next, turns: next.type === 'move' ? 1 : 0 });
@@ -42,7 +49,10 @@ const adapter: RuntimeAdapter<State, Action, { moves: number }, unknown> = {
       payload: action,
       progress: schema.literal(null),
       start(context, pending) {
-        if ((pending.payload as Action).type === 'cancel' && context.state.ticket)
+        const payload = pending.payload as Action;
+        if (payload.type === 'grant' && !context.claim(payload.id))
+          throw new Error('claim was granted twice');
+        if (payload.type === 'cancel' && context.state.ticket)
           requireValue(context.cancel(context.state.ticket));
       },
       turn(context) {
@@ -84,7 +94,7 @@ describe('long-lived saves stay bounded and idempotent (F11)', () => {
     for (let i = 0; i < 10_000; i++) {
       requireValue(await host.dispatch({ type: 'move' }));
       // Yield a macrotask now and then: microtask-only awaits would starve the worker's RPC.
-      if (i % 200 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      if (i % 25 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
     }
     expect(checkpoints).toBeGreaterThanOrEqual(10_000);
     const final = JSON.parse(JSON.stringify(last)) as RuntimeSnapshot;
@@ -103,6 +113,40 @@ describe('long-lived saves stay bounded and idempotent (F11)', () => {
     expect(await restored.dispatch({ type: 'cancel' })).toMatchObject({ ok: false });
     requireValue(await restored.dispatch({ type: 'move' }));
     expect(restored.getView()).toEqual({ moves: 10_001 });
+    // Leading zeros are not numbers: "reward-01" is a different claim from "reward-1".
+    requireValue(await restored.dispatch({ type: 'grant', id: 'reward-01' }));
+    expect(await restored.dispatch({ type: 'grant', id: 'reward-01' })).toMatchObject({
+      ok: false,
+    });
+    expect(await restored.dispatch({ type: 'grant', id: 'reward-1' })).toMatchObject({ ok: false });
+    // The incrementally written ledger round-trips through the canonical untrusted check.
+    const again = createRuntimeHost({ adapter, content, seed: 'campaign' });
+    requireValue(await again.restore(JSON.parse(JSON.stringify(restored.snapshot()))));
+    expect(await again.dispatch({ type: 'grant', id: 'reward-01' })).toMatchObject({ ok: false });
+    // A legacy snapshot with a long plain claim list (written before compaction) still restores.
+    const legacy = JSON.parse(JSON.stringify(final)) as { claims: unknown };
+    legacy.claims = Array.from({ length: 10_000 }, (_, i) => `reward-${String(i + 1)}`).sort();
+    const old = createRuntimeHost({ adapter, content, seed: 'campaign' });
+    requireValue(await old.restore(legacy as RuntimeSnapshot));
+    expect(await old.dispatch({ type: 'reclaim', n: 77 })).toMatchObject({ ok: false });
+    // Non-canonical compact ledgers (overlapping ranges, numeric ids) are refused.
+    for (const claims of [
+      {
+        ranges: [
+          { prefix: 'reward-', from: 1, to: 6_000 },
+          { prefix: 'reward-', from: 5_000, to: 10_000 },
+        ],
+        ids: [],
+      },
+      { ranges: [{ prefix: 'reward-', from: 1, to: 9_999 }], ids: ['reward-10000'] },
+    ]) {
+      const forged = { ...(JSON.parse(JSON.stringify(final)) as object), claims };
+      const target = createRuntimeHost({ adapter, content, seed: 'campaign' });
+      expect((await target.restore(forged as unknown as RuntimeSnapshot)).ok).toBe(false);
+      await target.dispose();
+    }
+    await again.dispose();
+    await old.dispose();
     await host.dispose();
     await restored.dispose();
   }, 120_000);

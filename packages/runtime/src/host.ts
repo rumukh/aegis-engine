@@ -132,37 +132,100 @@ function consumedTickets(ledger: JobLedger): JobTicket[] {
   return cloneData([...(ledger as JobLedgerCompact).tickets]);
 }
 
-function compactClaims(claims: Set<string>): RuntimeSnapshot['claims'] {
-  if (claims.size <= 1024) return [...claims].sort();
-  const numeric = new Map<string, number[]>();
-  const ids: string[] = [];
-  for (const claim of [...claims].sort()) {
-    const match = /^(.*?)([0-9]+)$/.exec(claim);
-    if (match === null) {
-      ids.push(claim);
-      continue;
-    }
-    const prefix = match[1] ?? '';
-    const value = Number(match[2]);
-    if (!Number.isSafeInteger(value)) {
-      ids.push(claim);
-      continue;
-    }
-    const list = numeric.get(prefix) ?? [];
-    list.push(value);
-    numeric.set(prefix, list);
+/** Claims kept as an exact sorted list up to this size (byte-identical legacy snapshots). */
+const LIST_CLAIMS = 1024;
+const MAX_EXPANDED_CLAIMS = 1_000_000;
+
+const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** `prefix` + canonical decimal (no leading zeros) is compactable; anything else stays exact. */
+function numericClaim(claim: string): { prefix: string; value: number } | undefined {
+  const match = /^(.*?)(0|[1-9][0-9]*)$/.exec(claim);
+  if (match === null) return undefined;
+  const value = Number(match[2]);
+  return Number.isSafeInteger(value) ? { prefix: match[1] ?? '', value } : undefined;
+}
+
+/** Insert `value` into a sorted list of maximal ranges, merging neighbours. */
+function insertValue(ranges: { from: number; to: number }[], value: number): void {
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (ranges[middle]!.to < value) low = middle + 1;
+    else high = middle;
   }
-  const encoded = [...numeric.entries()].flatMap(([prefix, values]) => {
-    const sorted = values.sort((a, b) => a - b);
-    const list: { from: number; to: number }[] = [];
-    for (const value of sorted) {
-      const last = list[list.length - 1];
-      if (last !== undefined && value === last.to + 1) last.to = value;
-      else if (last === undefined || value !== last.to) list.push({ from: value, to: value });
+  const next = ranges[low];
+  if (next !== undefined && next.from <= value) return;
+  const previous = ranges[low - 1];
+  const joinsPrevious = previous !== undefined && previous.to === value - 1;
+  const joinsNext = next !== undefined && next.from === value + 1;
+  if (joinsPrevious && joinsNext) {
+    previous.to = next.to;
+    ranges.splice(low, 1);
+  } else if (joinsPrevious) previous.to = value;
+  else if (joinsNext) next.from = value;
+  else ranges.splice(low, 0, { from: value, to: value });
+}
+
+/** Canonical compact ledger: ranges sorted by prefix then value, maximal; ids sorted. */
+function encodeClaims(
+  byPrefix: Map<string, { from: number; to: number }[]>,
+  ids: Iterable<string>,
+): RuntimeSnapshot['claims'] {
+  const ranges = [...byPrefix.keys()]
+    .sort(byString)
+    .flatMap((prefix) => byPrefix.get(prefix)!.map(({ from, to }) => ({ prefix, from, to })));
+  return { ranges, ids: [...ids].sort(byString) };
+}
+
+function compactClaims(claims: ReadonlySet<string>): RuntimeSnapshot['claims'] {
+  if (claims.size <= LIST_CLAIMS) return [...claims].sort(byString);
+  const byPrefix = new Map<string, { from: number; to: number }[]>();
+  const ids: string[] = [];
+  for (const claim of claims) {
+    const numeric = numericClaim(claim);
+    if (numeric === undefined) ids.push(claim);
+    else {
+      const list = byPrefix.get(numeric.prefix) ?? [];
+      byPrefix.set(numeric.prefix, list);
+      list.push({ from: numeric.value, to: numeric.value });
     }
-    return list.map((range) => ({ prefix, from: range.from, to: range.to }));
-  });
-  return encoded.length === 0 ? ids : { ranges: encoded, ids };
+  }
+  for (const [prefix, list] of byPrefix) {
+    const merged: { from: number; to: number }[] = [];
+    for (const { from } of list.sort((x, y) => x.from - y.from)) {
+      const last = merged[merged.length - 1];
+      if (last !== undefined && from <= last.to + 1) last.to = Math.max(last.to, from);
+      else merged.push({ from, to: from });
+    }
+    byPrefix.set(prefix, merged);
+  }
+  return encodeClaims(byPrefix, ids);
+}
+
+/** Incremental compaction of a canonical compact ledger plus new claims (same result as full). */
+function mergeClaims(
+  base: ClaimLedgerCompact,
+  added: readonly string[],
+): RuntimeSnapshot['claims'] {
+  const byPrefix = new Map<string, { from: number; to: number }[]>();
+  for (const range of base.ranges) {
+    const list = byPrefix.get(range.prefix) ?? [];
+    byPrefix.set(range.prefix, list);
+    list.push({ from: range.from, to: range.to });
+  }
+  const ids = new Set(base.ids);
+  for (const claim of added) {
+    const numeric = numericClaim(claim);
+    if (numeric === undefined) ids.add(claim);
+    else {
+      const list = byPrefix.get(numeric.prefix) ?? [];
+      byPrefix.set(numeric.prefix, list);
+      insertValue(list, numeric.value);
+    }
+  }
+  return encodeClaims(byPrefix, ids);
 }
 
 function expandClaims(ledger: RuntimeSnapshot['claims']): string[] {
@@ -180,8 +243,67 @@ function expandClaims(ledger: RuntimeSnapshot['claims']): string[] {
   }
   return claims;
 }
-const MAX_EXPANDED_CLAIMS = 1_000_000;
 
+/**
+ * Claim bookkeeping without per-commit O(n log n) work. Snapshots this host captured map to their
+ * sorted expansion; drafts remember their source ledger and the claims added since, so `read()`
+ * and `capture()` update incrementally instead of re-sorting and re-compacting every claim.
+ */
+const expandedLedgers = new WeakMap<object, readonly string[]>();
+const sortedDrafts = new WeakMap<Set<string>, readonly string[]>();
+const draftSources = new WeakMap<Set<string>, { ledger: ClaimLedgerCompact; added: string[] }>();
+
+function sortedClaims(claims: Set<string>): readonly string[] {
+  let list = sortedDrafts.get(claims);
+  if (list === undefined || list.length !== claims.size) {
+    list = Object.freeze([...claims].sort(byString));
+    sortedDrafts.set(claims, list);
+  }
+  return list;
+}
+
+function recordClaim(claims: Set<string>, id: string): void {
+  const list = sortedDrafts.get(claims);
+  if (list !== undefined && list.length === claims.size - 1) {
+    let low = 0;
+    let high = list.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (list[middle]! < id) low = middle + 1;
+      else high = middle;
+    }
+    sortedDrafts.set(claims, Object.freeze([...list.slice(0, low), id, ...list.slice(low)]));
+  }
+  draftSources.get(claims)?.added.push(id);
+}
+
+/** The ledger to write for a draft's claims. */
+function claimLedger(claims: Set<string>): RuntimeSnapshot['claims'] {
+  if (claims.size <= LIST_CLAIMS) return [...sortedClaims(claims)];
+  const source = draftSources.get(claims);
+  return source !== undefined ? mergeClaims(source.ledger, source.added) : compactClaims(claims);
+}
+
+/** A draft's claim set from a snapshot ledger; untrusted ledgers must be canonical. */
+function claimSet(ledger: RuntimeSnapshot['claims']): Set<string> {
+  let list = typeof ledger === 'object' ? expandedLedgers.get(ledger) : undefined;
+  if (list === undefined) {
+    const expanded = expandClaims(ledger);
+    unique(expanded, 'Claim');
+    const set = new Set(expanded);
+    // Legacy lists of any length stay readable; a compact ledger must be the canonical encoding,
+    // which also rules out overlapping or duplicate ranges.
+    if (!Array.isArray(ledger) && JSON.stringify(compactClaims(set)) !== JSON.stringify(ledger))
+      fault('invalid-claim', 'Claim ledger is not in canonical form.');
+    list = Object.freeze(expanded.sort(byString));
+    if (typeof ledger === 'object') expandedLedgers.set(ledger, list);
+  }
+  const claims = new Set(list);
+  sortedDrafts.set(claims, list);
+  if (!Array.isArray(ledger))
+    draftSources.set(claims, { ledger: ledger as ClaimLedgerCompact, added: [] });
+  return claims;
+}
 function streamApi(generator: Prng): RandomStream {
   return Object.freeze({
     nextUint32: () => generator.nextUint32(),
@@ -258,7 +380,7 @@ export function createRuntimeHost<S, A, V, C>(
       phase: freezeData(cloneData(draft.phase)),
       pending: freezeData(cloneData(draft.pending)),
       jobs: freezeData(cloneData(draft.jobs)),
-      claims: Object.freeze([...draft.claims].sort()),
+      claims: sortedClaims(draft.claims),
     };
   }
 
@@ -353,7 +475,6 @@ export function createRuntimeHost<S, A, V, C>(
     ) {
       fault('invalid-counter', 'Snapshot revision and identity counters are inconsistent.');
     }
-    unique([...draft.claims], 'Claim');
     if (draft.phase !== null) {
       requireValue(identifierSchema.parse(draft.phase.id));
       integer(draft.phase.allowance, maxAllowance);
@@ -434,14 +555,16 @@ export function createRuntimeHost<S, A, V, C>(
       streams,
       pending: draft.pending,
       jobs: [...draft.jobs].sort(order),
-      claims: compactClaims(draft.claims),
+      claims: claimLedger(draft.claims),
       consumedJobs: compactConsumedJobs(draft.consumedJobs, draft.nextJob),
       phase: draft.phase,
       nextAction: draft.nextAction,
       nextJob: draft.nextJob,
       nextPhase: draft.nextPhase,
     };
-    return cloneData(requireValue(runtimeSnapshotSchema.parse(cloneData(snapshot))));
+    const result = cloneData(requireValue(runtimeSnapshotSchema.parse(cloneData(snapshot))));
+    expandedLedgers.set(result.claims, sortedClaims(draft.claims));
+    return result;
   }
 
   function stage(
@@ -468,7 +591,7 @@ export function createRuntimeHost<S, A, V, C>(
       turn: snapshot.turn,
       pending: cloneData(snapshot.pending),
       jobs: cloneData([...snapshot.jobs]),
-      claims: new Set(expandClaims(snapshot.claims)),
+      claims: claimSet(snapshot.claims),
       consumedJobs: consumedTickets(snapshot.consumedJobs),
       phase: cloneData(snapshot.phase),
       nextAction: snapshot.nextAction,
@@ -478,10 +601,7 @@ export function createRuntimeHost<S, A, V, C>(
       cursor: null,
       processedJobs: 0,
     };
-    if (validateDraft) {
-      unique(expandClaims(snapshot.claims), 'Claim');
-      validate(draft);
-    }
+    if (validateDraft) validate(draft);
     return draft;
   }
 
@@ -589,6 +709,7 @@ export function createRuntimeHost<S, A, V, C>(
         requireValue(identifierSchema.parse(id));
         if (draft.claims.has(id)) return false;
         draft.claims.add(id);
+        recordClaim(draft.claims, id);
         return true;
       },
       schedule(request, replacement) {
