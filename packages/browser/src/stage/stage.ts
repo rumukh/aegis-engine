@@ -359,23 +359,22 @@ export function createStage(options: StageOptions) {
     if (renderer instanceof Canvas2DRenderer) total += renderer.cacheBytes();
     return total;
   };
+  /**
+   * Images load through `<img>` from their same-origin URL (served from the offline cache when
+   * installed), so a strict `img-src 'self'` CSP needs no `blob:` exception.
+   */
   const decode = async (assetId: string): Promise<HTMLImageElement> => {
-    const response = await (options.fetch ?? globalThis.fetch)(url(assetId), {
-      credentials: 'same-origin',
-      redirect: 'error',
-    });
-    if (!response.ok) throw new BrowserServiceError('asset', `Image "${assetId}" is unavailable.`);
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = url(assetId);
     try {
-      const image = new Image();
-      image.decoding = 'async';
-      image.src = objectUrl;
       await image.decode();
-      return image;
-    } finally {
-      URL.revokeObjectURL(objectUrl);
+    } catch (cause) {
+      throw new BrowserServiceError('asset', `Image "${assetId}" is unavailable or undecodable.`, {
+        cause,
+      });
     }
+    return image;
   };
   const loadImage = async (
     assetId: string,
@@ -1393,6 +1392,18 @@ export function createStage(options: StageOptions) {
       return {
         x: cam.x + (point.x - logical.width / 2) / cam.zoom,
         y: cam.y + (point.y - logical.height / 2) / cam.zoom,
+      };
+    },
+    /** Scene coordinates to client (CSS) coordinates through the current camera. */
+    toClient(scene: Point): Point {
+      const rect = canvas.getBoundingClientRect();
+      const cam = cameraAt(now);
+      const scale = Math.min(rect.width / logical.width, rect.height / logical.height);
+      const x = (scene.x - cam.x) * cam.zoom + logical.width / 2;
+      const y = (scene.y - cam.y) * cam.zoom + logical.height / 2;
+      return {
+        x: rect.left + (rect.width - logical.width * scale) / 2 + x * scale,
+        y: rect.top + (rect.height - logical.height * scale) / 2 + y * scale,
       };
     },
     start,

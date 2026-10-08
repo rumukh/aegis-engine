@@ -10,6 +10,8 @@ const mime = {
   json: 'application/json; charset=utf-8',
   css: 'text/css; charset=utf-8',
   svg: 'image/svg+xml',
+  png: 'image/png',
+  webp: 'image/webp',
   woff2: 'font/woff2',
   ttf: 'font/ttf',
   wav: 'audio/wav',
@@ -17,8 +19,18 @@ const mime = {
   mp3: 'audio/mpeg',
 };
 
-export async function serveLabs({ directory, port = 0, allowRequest = () => true }) {
+/**
+ * `consumer` mounts a local directory read-only at `<base>consumer/`, so the animation lab can
+ * preview consumer rigs, clips, cutscenes, cue tracks and voices (ANIM-07).
+ */
+export async function serveLabs({
+  directory,
+  port = 0,
+  allowRequest = () => true,
+  consumer = undefined,
+}) {
   const root = resolve(directory);
+  const mounted = consumer ? resolve(consumer) : undefined;
   const { base } = readJson(join(root, 'build-report.json'));
   validateBase(base);
   const server = createServer(async (request, response) => {
@@ -38,8 +50,11 @@ export async function serveLabs({ directory, port = 0, allowRequest = () => true
         return;
       }
       const leaf = path.slice(base.length);
-      const full = resolve(root, leaf.endsWith('/') || !leaf ? leaf + 'index.html' : leaf);
-      if (!full.startsWith(root + sep)) {
+      const inConsumer = mounted !== undefined && leaf.startsWith('consumer/');
+      const top = inConsumer ? mounted : root;
+      const rest = inConsumer ? leaf.slice('consumer/'.length) : leaf;
+      const full = resolve(top, rest.endsWith('/') || !rest ? rest + 'index.html' : rest);
+      if (!full.startsWith(top + sep)) {
         response.writeHead(403).end();
         return;
       }
@@ -77,12 +92,14 @@ if (isMain(import.meta.url)) {
   const args = process.argv.slice(2);
   let directory = join(repositoryRoot, 'out', 'labs');
   let port = 4318;
+  let consumer;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--dir') directory = resolve(args[++i]);
     else if (args[i] === '--port') port = Number(args[++i]);
+    else if (args[i] === '--consumer') consumer = resolve(args[++i]);
     else throw new Error(`Unknown option: ${args[i]}`);
   }
-  const preview = await serveLabs({ directory, port });
+  const preview = await serveLabs({ directory, port, consumer });
   console.log(JSON.stringify({ url: preview.url, target: 'static-preview', pid: process.pid }));
   for (const signal of ['SIGINT', 'SIGTERM'])
     process.once(signal, async () => {

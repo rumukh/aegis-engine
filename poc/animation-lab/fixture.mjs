@@ -357,7 +357,8 @@ function hatsAtlas() {
   ]);
 }
 
-function backgroundPng() {
+/** The comfort variant has a lit lamp and warmer light (Q22).*/
+function backgroundPng(warm) {
   const width = 2560;
   const height = 1600;
   const r = new Raster(width, height);
@@ -384,6 +385,21 @@ function backgroundPng() {
   r.rect(310, 680, 560, 30, '#5e3d26');
   const books = ['#b6623f', '#3f7a6b', '#c49a3f', '#5b4a8a'];
   for (let i = 0; i < 4; i++) r.rect(360 + i * 120, 760, 90, 140, books[i]);
+  // The comfort lamp on the shelf: lit and glowing in the warm variant.
+  r.rect(700, 560, 16, 120, '#3a2a1e');
+  r.polygon(
+    [
+      [650, 560],
+      [766, 560],
+      [740, 500],
+      [676, 500],
+    ],
+    warm ? '#ffd36e' : '#8a7a5a',
+  );
+  if (warm) {
+    r.ellipse(708, 600, 420, 300, '#ffcf80', 0.18);
+    r.rect(0, 0, width, height, '#ff9a3c', 0.08);
+  }
   // Corner marks of the centred 2100x1440 safe area.
   for (const [x, y] of [
     [230, 80],
@@ -475,7 +491,8 @@ export function generateFixture() {
     files.set(result.json.image, result.png);
   }
   for (const document of documents()) files.set(`${document.id}.json`, json(document));
-  files.set('bg.office.png', backgroundPng());
+  files.set('bg.office.png', backgroundPng(false));
+  files.set('bg.office.warm.png', backgroundPng(true));
   files.set('lab.babble.wav', babbleWav());
   files.set('lab.babble.cues.json', json(babbleCues()));
   return { files };
@@ -849,7 +866,7 @@ export function documents() {
       player: { role: 'avatar' },
     },
     steps: [
-      { op: 'background', asset: 'bg.office', comfort: { asset: 'bg.office' } },
+      { op: 'background', asset: 'bg.office.png', comfort: { asset: 'bg.office.warm.png' } },
       { op: 'camera', preset: 'wide', cut: true },
       { op: 'enter', actor: 'guide', from: 'left', to: { x: 900, y: 1400 }, duration: 1.4 },
       {

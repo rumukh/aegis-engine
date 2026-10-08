@@ -5,6 +5,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync
 import { join, relative, resolve, sep } from 'node:path';
 import { isMain, repositoryRoot } from './sdk-tools.mjs';
 import { atmosphereWav } from '../poc/lab-shared/atmosphere.mjs';
+import { generateFixture } from '../poc/animation-lab/fixture.mjs';
 
 export function validateBase(base) {
   if (!/^\/(?:[a-zA-Z0-9_-]+\/)*$/.test(base)) {
@@ -25,7 +26,7 @@ export async function buildLabs({ outDir, base = '/', root = repositoryRoot }) {
   const output = resolve(outDir ?? join(root, 'out', 'labs'));
   if (existsSync(output)) throw new Error(`Refusing to overwrite a lab build: ${output}`);
   mkdirSync(output, { recursive: true });
-  const entries = ['storybook-lab', 'turn-kitchen-lab'];
+  const entries = ['storybook-lab', 'turn-kitchen-lab', 'animation-lab'];
   const result = await build({
     absWorkingDir: root,
     entryPoints: Object.fromEntries(
@@ -48,11 +49,16 @@ export async function buildLabs({ outDir, base = '/', root = repositoryRoot }) {
   cpSync(join(root, 'poc', 'lab-shared', 'style.css'), join(output, 'style.css'));
   writeFileSync(join(output, 'assets', 'atmosphere-slow.wav'), atmosphereWav(4));
   writeFileSync(join(output, 'assets', 'atmosphere-fast.wav'), atmosphereWav(2));
+  // The animation lab's original placeholder art and audio are generated, not committed.
+  mkdirSync(join(output, 'animation-lab', 'assets'), { recursive: true });
+  for (const [name, bytes] of generateFixture().files)
+    writeFileSync(join(output, 'animation-lab', 'assets', name), bytes);
   for (const name of entries) {
-    cpSync(
-      join(root, 'poc', name, name === 'turn-kitchen-lab' ? 'balance.json' : 'content.json'),
-      join(output, name, name === 'turn-kitchen-lab' ? 'balance.json' : 'content.json'),
-    );
+    if (name !== 'animation-lab')
+      cpSync(
+        join(root, 'poc', name, name === 'turn-kitchen-lab' ? 'balance.json' : 'content.json'),
+        join(output, name, name === 'turn-kitchen-lab' ? 'balance.json' : 'content.json'),
+      );
     writeFileSync(
       join(output, name, 'index.html'),
       `<!doctype html>
@@ -68,7 +74,8 @@ export async function buildLabs({ outDir, base = '/', root = repositoryRoot }) {
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="./style.css"><title>AEGIS: лаборатории</title></head><body><main>
 <h1>Маленькие истории</h1><nav><a href="./storybook-lab/">Комната историй</a>
-<a href="./turn-kitchen-lab/">Мастерская ходов</a></nav></main></body></html>\n`,
+<a href="./turn-kitchen-lab/">Мастерская ходов</a>
+<a href="./animation-lab/">Лаборатория анимации</a></nav></main></body></html>\n`,
   );
   const printModule = await build({
     absWorkingDir: root,
@@ -105,6 +112,8 @@ export async function buildLabs({ outDir, base = '/', root = repositoryRoot }) {
           html: 'shell',
           js: 'script',
           svg: 'image',
+          png: 'image',
+          webp: 'image',
           ttf: 'font',
           woff2: 'font',
           wav: 'audio',
