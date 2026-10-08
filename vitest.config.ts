@@ -35,6 +35,8 @@ const aegisSourceAliases = [
   { find: /^@aegis\/browser\/ui$/, replacement: src('browser/src/ui/index.ts') },
   { find: /^@aegis\/browser\/offline$/, replacement: src('browser/src/offline/index.ts') },
   { find: /^@aegis\/browser\/offline\/worker$/, replacement: src('browser/src/offline/worker.ts') },
+  { find: /^@aegis\/browser\/animation$/, replacement: src('browser/src/animation/index.ts') },
+  { find: /^@aegis\/browser\/stage$/, replacement: src('browser/src/stage/index.ts') },
   { find: /^@aegis\/content$/, replacement: src('content/src/index.ts') },
   { find: /^@aegis\/harness$/, replacement: src('harness/src/index.ts') },
   { find: /^@aegis\/mode-platformer$/, replacement: src('mode-platformer/src/index.ts') },

@@ -9,7 +9,7 @@
  *
  * Run from the repository root:
  *
- *   node scripts/bench-stage.mjs --rounds 3 --out C:\path\bench-stage-chromium.json
+ *   node scripts/bench-stage.mjs --rounds 3 --graphics hardware --out C:\path\bench-stage-chromium.json
  *   node scripts/bench-stage.mjs --quick --tech webgl
  *   node scripts/bench-stage.mjs --serve-only
  *
@@ -34,13 +34,20 @@ const VIEWPORTS = [
 const THROTTLES = [1, 4];
 
 function parseArgs(argv) {
-  const options = { techs: DEFAULT_TECHS, rounds: 1, quick: false, serveOnly: false };
+  const options = {
+    techs: DEFAULT_TECHS,
+    rounds: 1,
+    quick: false,
+    serveOnly: false,
+    graphics: 'software',
+  };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === '--tech') options.techs = argv[++index].split(',').map((value) => value.trim());
     else if (arg === '--rounds') options.rounds = Number.parseInt(argv[++index], 10);
     else if (arg === '--out') options.out = resolve(argv[++index]);
     else if (arg === '--md-out') options.mdOut = resolve(argv[++index]);
+    else if (arg === '--graphics') options.graphics = argv[++index];
     else if (arg === '--quick') options.quick = true;
     else if (arg === '--serve-only') options.serveOnly = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
@@ -52,13 +59,17 @@ function parseArgs(argv) {
   for (const tech of options.techs) {
     if (!DEFAULT_TECHS.includes(tech)) throw new Error(`Unknown --tech ${tech}`);
   }
+  if (!['software', 'hardware'].includes(options.graphics)) {
+    throw new Error('--graphics must be "software" or "hardware"');
+  }
   return options;
 }
 
 function usage() {
   return (
     'Usage: node scripts/bench-stage.mjs [--tech dom,canvas,webgl] [--rounds N] ' +
-    '[--quick] [--out file] [--md-out file]\n       node scripts/bench-stage.mjs --serve-only'
+    '[--quick] [--graphics hardware|software] [--out file] [--md-out file]\n' +
+    '       node scripts/bench-stage.mjs --serve-only'
   );
 }
 
@@ -531,18 +542,26 @@ canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
     });
   }
 
+  const benchRuns = new Map();
+  let nextBenchRunId = 1;
+
   window.__stageBench = {
     ready: true,
-    async run(config) {
+    async prepare(sceneChanges) {
       disposeRenderer();
-      const sceneChanges = config.sceneChanges ?? 50;
       for (let i = 0; i < sceneChanges; i++) {
         await createRenderer();
         disposeRenderer();
       }
       await createRenderer();
-      const heapAfterSceneChanges = performance.memory ? performance.memory.usedJSHeapSize : null;
-      const domNodesAfterSceneChanges = document.getElementsByTagName('*').length;
+      return {
+        heapAfterSceneChanges: performance.memory ? performance.memory.usedJSHeapSize : null,
+        domNodesAfterSceneChanges: document.getElementsByTagName('*').length,
+      };
+    },
+    async run(config) {
+      let prepared = config.preparedMetrics;
+      if (!config.reusePrepared) prepared = await this.prepare(config.sceneChanges ?? 50);
       await frameLoop(config.warmupMs ?? 2000, null);
       const times = [];
       const drawTimes = [];
@@ -561,10 +580,63 @@ canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
         percentIntervalsOver33_4: intervals.length > 0 ? (over334 / intervals.length) * 100 : 0,
         medianDrawMs: percentile(drawTimes, 0.5),
         p95DrawMs: percentile(drawTimes, 0.95),
-        heapAfterSceneChanges,
-        domNodesAfterSceneChanges,
+        heapAfterSceneChanges: prepared.heapAfterSceneChanges,
+        domNodesAfterSceneChanges: prepared.domNodesAfterSceneChanges,
         devicePixelRatio,
         viewport: { width: innerWidth, height: innerHeight },
+      };
+    },
+    start(config) {
+      const id = nextBenchRunId++;
+      benchRuns.set(id, { done: false, value: null, error: null });
+      this.run(config).then(
+        (value) => benchRuns.set(id, { done: true, value, error: null }),
+        (error) =>
+          benchRuns.set(id, {
+            done: true,
+            value: null,
+            error: error && error.stack ? error.stack : String(error),
+          }),
+      );
+      return id;
+    },
+    startPrepare(sceneChanges) {
+      const id = nextBenchRunId++;
+      benchRuns.set(id, { done: false, value: null, error: null });
+      this.prepare(sceneChanges).then(
+        (value) => benchRuns.set(id, { done: true, value, error: null }),
+        (error) =>
+          benchRuns.set(id, {
+            done: true,
+            value: null,
+            error: error && error.stack ? error.stack : String(error),
+          }),
+      );
+      return id;
+    },
+    result(id) {
+      return benchRuns.get(id) ?? { done: true, value: null, error: 'unknown bench run id' };
+    },
+    gpuInfo() {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      let webglVendor = null;
+      let webglRenderer = null;
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          webglVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+          webglRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+        } else {
+          webglVendor = gl.getParameter(gl.VENDOR);
+          webglRenderer = gl.getParameter(gl.RENDERER);
+        }
+      }
+      return {
+        navigatorGpu: Boolean(navigator.gpu),
+        webglAvailable: Boolean(gl),
+        webglVendor,
+        webglRenderer,
       };
     },
     dispose: disposeRenderer,
@@ -596,7 +668,9 @@ async function startServer() {
 async function closeBrowser(browser, CdpSession) {
   let control;
   try {
-    const version = await (await fetch(`http://127.0.0.1:${browser.port}/json/version`)).json();
+    const version = await (
+      await globalThis.fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
     control = await CdpSession.connect(version.webSocketDebuggerUrl);
     await control.send('Browser.close').catch(() => undefined);
   } finally {
@@ -608,20 +682,36 @@ async function closeBrowser(browser, CdpSession) {
     browser.process.signalCode === null &&
     Date.now() < deadline
   ) {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    await new Promise((resolvePromise) => globalThis.setTimeout(resolvePromise, 100));
   }
   if (browser.process.exitCode === null && browser.process.signalCode === null)
     browser.process.kill();
 }
 
-async function runCase({ browserApi, baseUrl, tech, viewport, throttle, quick }) {
+async function pollPageRun(cdp, evaluate, runId, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const polled = await evaluate(cdp, `window.__stageBench.result(${JSON.stringify(runId)})`);
+    if (polled.done === true) {
+      if (polled.error !== null) throw new Error(polled.error);
+      return polled.value;
+    }
+    if (Date.now() > deadline) throw new Error(`Benchmark case timed out: ${label}`);
+    await new Promise((resolvePromise) => globalThis.setTimeout(resolvePromise, 1000));
+  }
+}
+
+async function runCase({ browserApi, baseUrl, tech, viewport, throttle, quick, graphics }) {
   const { launchBrowser, openPage, evaluate, until, CdpSession } = browserApi;
   const browser = await launchBrowser({
     viewport: { width: viewport.width, height: viewport.height },
+    graphics,
   });
   let cdp;
   try {
-    const version = await (await fetch(`http://127.0.0.1:${browser.port}/json/version`)).json();
+    const version = await (
+      await globalThis.fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
     cdp = await openPage(browser.port, `${baseUrl}?tech=${tech}`, {
       width: viewport.width,
       height: viewport.height,
@@ -632,22 +722,51 @@ async function runCase({ browserApi, baseUrl, tech, viewport, throttle, quick })
       deviceScaleFactor: viewport.deviceScaleFactor,
       mobile: viewport.deviceScaleFactor > 1,
     });
-    await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
     await until(
       cdp,
       'Boolean(window.__stageBench && window.__stageBench.ready)',
       (value) => value === true,
     );
-    const result = await evaluate(
+    const gpuInfo = await evaluate(cdp, 'window.__stageBench.gpuInfo()');
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    const prepareId = await evaluate(
       cdp,
-      `window.__stageBench.run(${JSON.stringify({
+      `window.__stageBench.startPrepare(${JSON.stringify(quick ? 5 : 50)})`,
+    );
+    const preparedMetrics = await pollPageRun(
+      cdp,
+      evaluate,
+      prepareId,
+      quick ? 120_000 : 900_000,
+      `${tech} ${viewport.id} prepare`,
+    );
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
+    const runId = await evaluate(
+      cdp,
+      `window.__stageBench.start(${JSON.stringify({
         warmupMs: quick ? 500 : 2000,
         measureMs: quick ? 1500 : 5000,
-        sceneChanges: quick ? 5 : 50,
+        preparedMetrics,
+        reusePrepared: true,
       })})`,
     );
+    const result = await pollPageRun(
+      cdp,
+      evaluate,
+      runId,
+      quick ? 120_000 : 900_000,
+      `${tech} ${viewport.id} ${throttle}x`,
+    );
     await evaluate(cdp, 'window.__stageBench.dispose()').catch(() => undefined);
-    return { ...result, browserProduct: version.Browser, viewportId: viewport.id, throttle, quick };
+    return {
+      ...result,
+      browserProduct: version.Browser,
+      viewportId: viewport.id,
+      throttle,
+      quick,
+      graphics,
+      gpuInfo,
+    };
   } finally {
     cdp?.close();
     await closeBrowser(browser, CdpSession);
@@ -707,6 +826,10 @@ function markdownTable(summary, metadata) {
   lines.push(`# Puppet stage benchmark (${new Date(metadata.createdAt).toISOString()})`);
   lines.push('');
   lines.push(`Chrome: ${metadata.chromeVersion ?? 'unknown'}`);
+  lines.push(`Graphics mode: ${metadata.graphics}`);
+  lines.push(
+    `GPU: navigator.gpu=${metadata.gpuInfo?.navigatorGpu ?? 'unknown'}; WebGL renderer=${metadata.gpuInfo?.webglRenderer ?? 'unknown'}`,
+  );
   lines.push(
     `Machine: ${metadata.machine.cpuCount} logical CPUs; ${metadata.machine.cpuModel}; ${metadata.machine.os}`,
   );
@@ -756,6 +879,7 @@ async function main() {
               viewport,
               throttle,
               quick: options.quick,
+              graphics: options.graphics,
             });
             chromeVersion ??= result.browserProduct;
             allResults.push({ ...result, round });
@@ -770,6 +894,8 @@ async function main() {
   const metadata = {
     createdAt: new Date().toISOString(),
     chromeVersion,
+    graphics: options.graphics,
+    gpuInfo: allResults[0]?.gpuInfo ?? null,
     options,
     machine: {
       cpuCount: cpus().length,

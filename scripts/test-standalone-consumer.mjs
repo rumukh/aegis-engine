@@ -89,7 +89,9 @@ export function testStandaloneConsumer({ artifactDir, keep = false, root = repos
       exports.push(
         ...Object.keys(manifest.exports).map((key) => ({
           specifier: key === '.' ? manifest.name : `${manifest.name}${key.slice(1)}`,
-          browser: name === 'browser',
+          // `@aegis/browser/animation` is the headless validator/sampling surface (ANIM-07):
+          // it must type-check without DOM types and execute in Node like core/runtime.
+          browser: name === 'browser' && key !== './animation',
         })),
       );
       installed.push({ name: manifest.name, version: manifest.version });

@@ -72,26 +72,35 @@ export function applyPresentationPreferences(
   root.dataset['hideSpoilers'] = String(preferences.hideSpoilers);
 }
 
-/** Scoped, opt-in styles. Readability/contrast are not a claim about arbitrary consumer artwork. */
+/**
+ * Scoped, opt-in styles. Readability/contrast are not a claim about arbitrary consumer artwork.
+ * Every selector is wrapped in `:where(...)`, so the preset has zero specificity and any consumer
+ * rule (even a single class) wins (issue #14). Reduced motion applies when `data-reduced-motion`
+ * is on the `.aegis-child` root itself **or on any ancestor**, such as `<html>` where
+ * `applyPresentationPreferences` is usually applied, and when the system asks for it.
+ */
 export const CHILD_SAFE_CSS = `
-.aegis-child {
+:where(.aegis-child) {
   color: #172333; background: #fffaf0; font-family: system-ui, sans-serif;
   font-size: calc(24px * var(--aegis-text-scale, 1)); line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.aegis-child *, .aegis-child *::before, .aegis-child *::after { box-sizing: border-box; }
-.aegis-child button, .aegis-child input, .aegis-child select {
+:where(.aegis-child *), :where(.aegis-child *)::before, :where(.aegis-child *)::after { box-sizing: border-box; }
+:where(.aegis-child button, .aegis-child input, .aegis-child select) {
   min-width: 48px; min-height: 48px; font: inherit; color: inherit;
   background: #ffffff; border: 2px solid #475569; border-radius: 0.3em;
   white-space: normal; max-width: 100%; padding: 0.3em 0.6em;
 }
-.aegis-child :focus-visible { outline: 3px solid #174da5; outline-offset: 3px; }
-.aegis-child nav, .aegis-child [data-choices] { display: flex; flex-wrap: wrap; gap: 0.5em; }
-.aegis-child dialog { color: inherit; background: #fffaf0; max-width: 90vw; max-height: 85vh; overflow: auto; }
-.aegis-child[data-reduced-motion="true"] *, .aegis-child[data-reduced-motion="true"] *::before,
-.aegis-child[data-reduced-motion="true"] *::after { animation: none !important; transition: none !important; }
+:where(.aegis-child :focus-visible) { outline: 3px solid #174da5; outline-offset: 3px; }
+:where(.aegis-child nav, .aegis-child [data-choices]) { display: flex; flex-wrap: wrap; gap: 0.5em; }
+:where(.aegis-child dialog) { color: inherit; background: #fffaf0; max-width: 90vw; max-height: 85vh; overflow: auto; }
+:where(.aegis-child[data-reduced-motion="true"] *, [data-reduced-motion="true"] .aegis-child *),
+:where(.aegis-child[data-reduced-motion="true"] *, [data-reduced-motion="true"] .aegis-child *)::before,
+:where(.aegis-child[data-reduced-motion="true"] *, [data-reduced-motion="true"] .aegis-child *)::after {
+  animation: none !important; transition: none !important;
+}
 @media (prefers-reduced-motion: reduce) {
-  .aegis-child *, .aegis-child *::before, .aegis-child *::after { animation: none !important; transition: none !important; }
+  :where(.aegis-child *), :where(.aegis-child *)::before, :where(.aegis-child *)::after { animation: none !important; transition: none !important; }
 }`;
 
 export function choicePage<T>(
