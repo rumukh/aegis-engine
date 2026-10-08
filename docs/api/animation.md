@@ -622,6 +622,7 @@ const fox = stage.puppet({
 fox.play('wave');
 await fox.speak({ packId: 'case01-voice', lineId: 'case01.l1.watsoni.003' });
 fox.speech(); // { mode: 'cues' | 'talk-loop' | 'unheard' | 'rest', synchronized, shape }
+const off = fox.onSpeech((state) => showMode(state)); // line/mode changes, after the frame
 const scene = stage.cutscene(cutsceneFile, { avatar: composition, onEvent });
 scene.play(); // later: scene.next(), skip(), replay(), play({ from: 'marker' })
 stage.setComfort(true);
@@ -647,7 +648,9 @@ await stage.dispose(); // releases images, textures, listeners, the frame loop a
   synchronized). When narration is blocked or failed the mouth stays neutral, or
   plays a bounded subtle loop with `{ unheard: 'subtle', maxSubtleSeconds }`, and never
   claims synchronized speech. Muted volume still animates from cues. After stop,
-  completion or failure the mouth returns to `X`.
+  completion or failure the mouth returns to `X`. `onSpeech(listener)` reports changes of
+  line or mode (not mouth shapes) once per rendered frame at most, after the frame;
+  read `speech()` per frame only if you need the shape.
 - **Reduced motion:** camera moves become a cut softened by a gentle dip, entrances and
   exits become 0.4 s fades, hops, gait and breathing are damped to 30%, particles stay
   still; lip-sync and blinking remain. Fades are at least 0.5 s: no flashing.

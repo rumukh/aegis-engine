@@ -149,6 +149,12 @@ export interface StagePuppet {
   speak(line: { packId: string; lineId: string }, options?: SpeakOptions): Promise<void>;
   silence(): void;
   speech(): SpeechState;
+  /**
+   * Called when the bound line or the speech mode changes (for example `cues` → `rest`), after
+   * the frame that observed it. Mouth-shape changes are not reported; read `speech()` per frame.
+   * Returns an unsubscribe function.
+   */
+  onSpeech(listener: (state: SpeechState) => void): () => void;
   remove(): void;
 }
 export interface PuppetSpec extends AvatarComposition {
@@ -224,6 +230,9 @@ interface PuppetEntry {
   fade?: { from: number; to: number; start: number; duration: number; hideAfter: boolean };
   speech?: Speech;
   cutscene?: boolean;
+  /** Last reported `lineId|mode`, for change notifications. */
+  speechKey?: string;
+  speechListeners?: Set<(state: SpeechState) => void>;
 }
 interface SpriteEntry {
   id: string;
@@ -713,17 +722,43 @@ export function createStage(options: StageOptions) {
     silence: () => {
       entry.speech = undefined;
       entry.model.setMouth(undefined);
+      notifySpeech(entry);
     },
-    speech: () => ({
-      ...(entry.speech ? { packId: entry.speech.packId, lineId: entry.speech.lineId } : {}),
-      mode: entry.speech?.mode ?? 'rest',
-      synchronized: entry.speech?.mode === 'cues',
-      shape: entry.speech?.shape ?? 'X',
-    }),
+    speech: () => speechState(entry),
+    onSpeech: (listener) => {
+      entry.speechListeners ??= new Set();
+      entry.speechListeners.add(listener);
+      return () => {
+        entry.speechListeners?.delete(listener);
+      };
+    },
     remove: () => {
       puppets.delete(entry.id);
+      entry.speechListeners?.clear();
     },
   });
+  const speechState = (entry: PuppetEntry): SpeechState => ({
+    ...(entry.speech ? { packId: entry.speech.packId, lineId: entry.speech.lineId } : {}),
+    mode: entry.speech?.mode ?? 'rest',
+    synchronized: entry.speech?.mode === 'cues',
+    shape: entry.speech?.shape ?? 'X',
+  });
+  /** Reports changes of line or mode (not per-frame mouth shapes) to `onSpeech` listeners. */
+  const notifySpeech = (entry: PuppetEntry): void => {
+    const state = speechState(entry);
+    const key = `${state.packId ?? ''}|${state.lineId ?? ''}|${state.mode}`;
+    if (key === (entry.speechKey ?? '||rest')) return;
+    entry.speechKey = key;
+    for (const listener of [...(entry.speechListeners ?? [])]) {
+      try {
+        listener(state);
+      } catch (cause) {
+        queueMicrotask(() => {
+          throw cause;
+        });
+      }
+    }
+  };
   const emote = (entry: PuppetEntry, name: string): number => {
     const definition = entry.model.base.emotes?.[name];
     if (!definition)
@@ -938,6 +973,8 @@ export function createStage(options: StageOptions) {
     frame++;
     frameTimes.push(view.performance.now() - start);
     if (frameTimes.length > 60) frameTimes.shift();
+    // After the frame, so listeners see a consistent stage and may change it.
+    for (const entry of [...puppets.values()]) if (entry.speechListeners?.size) notifySpeech(entry);
   };
   let request: number | undefined;
   const loop = (timestamp: number): void => {

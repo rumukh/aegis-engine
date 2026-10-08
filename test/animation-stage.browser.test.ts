@@ -292,6 +292,7 @@ describe('2D stage in Chromium (section 23)', () => {
       synchronized: boolean;
       shapes: number;
       rest: string;
+      changes: string[];
     }>(`
         const voice2 = createNarration({ baseUrl: location.href, onState: () => {} });
         await voice2.unlock();
@@ -299,19 +300,24 @@ describe('2D stage in Chromium (section 23)', () => {
           lines: [{ id: 'nocues', asset: 'babble', caption: 'Без дорожки' }] });
         const stage = await newStage({ narration: voice2, audioPackId: 'voice' });
         const p = stage.puppet({ rig: 'avatar.fox', at: { x: 1280, y: 1450 } });
+        const changes = []; const unsubscribe = p.onSpeech((s) => changes.push(s.mode + ':' + (s.lineId ?? '-')));
         await p.speak({ packId: 'voice', lineId: 'nocues' });
         const modes = new Set(); const shapes = new Set(); let synchronized = false;
         while (voice2.clock().status !== 'completed') { await new Promise((r) => requestAnimationFrame(r));
           modes.add(p.speech().mode); shapes.add(p.speech().shape); synchronized ||= p.speech().synchronized; }
         await new Promise((r) => setTimeout(r, 100));
-        const rest = p.speech().shape; await stage.dispose(); await voice2.dispose();
-        return { modes: [...modes], synchronized, shapes: shapes.size, rest };
+        const rest = p.speech().shape; unsubscribe(); await stage.dispose(); await voice2.dispose();
+        return { modes: [...modes], synchronized, shapes: shapes.size, rest, changes };
       `);
     expect(loop.modes).toContain('talk-loop');
     expect(loop.modes).not.toContain('cues');
     expect(loop.synchronized).toBe(false);
     expect(loop.shapes).toBeGreaterThan(3);
     expect(loop.rest).toBe('X');
+    // Change events report line and mode transitions only, not per-frame mouth shapes.
+    expect(loop.changes.at(-1)).toBe('rest:-');
+    expect(loop.changes).toContain('talk-loop:nocues');
+    expect(loop.changes.length).toBeLessThanOrEqual(4);
   });
 
   it('plays, pauses, skips, replays and restarts a cutscene from a marker with captions and no auto-advance (F05)', async () => {
