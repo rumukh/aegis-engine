@@ -1,5 +1,11 @@
 import type { Prng, PrngState, WorldSnapshot } from '@aegis/core';
-import type { ContentPack, ContentRegistration, DeepReadonly, JsonValue, Schema } from './data.js';
+import type {
+  AnyContentRegistration,
+  ContentPack,
+  DeepReadonly,
+  JsonValue,
+  Schema,
+} from './data.js';
 import type { Outcome, RuntimeError } from './outcome.js';
 
 export type RandomStream = Pick<
@@ -68,8 +74,8 @@ export interface RuntimeSnapshot {
   readonly streams: Readonly<Record<string, PrngState>>;
   readonly pending: PendingAction | null;
   readonly jobs: readonly ScheduledJob[];
-  readonly claims: readonly string[];
-  readonly consumedJobs: readonly JobTicket[];
+  readonly claims: ClaimLedger;
+  readonly consumedJobs: JobLedger;
   readonly phase: PhaseClock | null;
   readonly nextAction: number;
   readonly nextJob: number;
@@ -86,6 +92,26 @@ export interface RuntimeRead<S, C> {
   readonly jobs: DeepReadonly<readonly ScheduledJob[]>;
   readonly claims: readonly string[];
 }
+
+export interface JobLedgerCompact {
+  readonly watermark: number;
+  readonly tickets: readonly JobTicket[];
+}
+
+export type JobLedger = readonly JobTicket[] | JobLedgerCompact;
+
+export interface ClaimRange {
+  readonly prefix: string;
+  readonly from: number;
+  readonly to: number;
+}
+
+export interface ClaimLedgerCompact {
+  readonly ranges: readonly ClaimRange[];
+  readonly ids: readonly string[];
+}
+
+export type ClaimLedger = readonly string[] | ClaimLedgerCompact;
 
 export interface ResolveContext<S, C> extends RuntimeRead<S, C> {
   random(stream?: string): RandomStream;
@@ -141,7 +167,7 @@ export interface RuntimeAdapter<S, A, V, C> {
   readonly stateVersion: number;
   readonly state: Schema<S>;
   readonly action: Schema<A>;
-  readonly content: ContentRegistration<C>;
+  readonly content: AnyContentRegistration<C>;
   readonly randomStreams?: readonly string[];
   readonly eventPhases: readonly string[];
   readonly commands: readonly CommandRule<S, C>[];

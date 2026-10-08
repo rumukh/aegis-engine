@@ -367,10 +367,14 @@ prototype keys. Bound violations are diagnostics, not fallback success.
 
 ## External JSON, staged reload and saved compatibility
 
-Use `schema.object`, `array`, `record`, `union`, `literal`, `string`, `number`,
-`boolean` and `json`, or implement the public `Schema<T>` interface.
-Object schemas require exactly their declared fields. Use a union with
-`schema.literal(null)` for an explicitly nullable field.
+Use `schema.object`, `optional`, `array`, `record`, `union`, `literal`,
+`string`, `number`, `boolean` and `json`, or implement the public `Schema<T>`
+interface. Object schemas require exactly their declared fields. Mark additive
+fields as `schema.optional(inner)` inside `schema.object({ ... })`; when the key
+is absent it stays absent in the parsed value. If the key is present, its value
+must validate against `inner`. `undefined` is not JSON and is rejected rather
+than normalized. Use a union with `schema.literal(null)` for an explicitly
+nullable field.
 `InferSchema<typeof schemaValue>` yields a mutable state type.
 
 `ContentRegistration.validate(data)` performs complete-pack cross-reference and
@@ -403,6 +407,34 @@ reinstall that pack or report incompatibility. Never recompute resolved
 jobs/choices/rewards under edited rules. The offline adapter owns retaining pack
 assets across launches.
 
+`ContentRegistration` remains backward compatible in its original
+`{ schemaVersion, schema, validate? }` form. For compatible content evolution,
+register `versions: { 1: schemaV1, 2: schemaV2, ... }` instead. The runtime
+validates a pack with the schema named by its own `schemaVersion`; optional
+additions therefore let old archived packs remain valid. A registration may also
+provide `migrate(data, fromVersion)`, which explicitly converts older validated
+data to the latest in-memory shape before cross-reference validation and rule
+use. The pack still keeps its source `schemaVersion` and source content hash for
+save compatibility, so an old snapshot restores only when that exact old pack is
+installed or staged under the current registration. Incompatible schema/rule
+changes still use the existing `incompatible-save` recovery route; restore never
+silently normalizes untrusted input.
+
+Long-lived `aegis-runtime/1` snapshots compact append-only ledgers once they grow
+past the legacy small-list representation. Old snapshots with
+`claims: string[]` and `consumedJobs: JobTicket[]` still restore. New snapshots
+may write `consumedJobs: { watermark, tickets }`, where monotonic job tokens at
+or below the watermark are no longer listed individually, and
+`claims: { ranges, ids }`, where monotonic numeric claim IDs such as
+`reward-1..reward-10000` are stored as ranges while irregular IDs remain exact.
+This bounds save size for campaigns that checkpoint after every action while
+preserving idempotency: pending/replacement tickets still use exact tokens, a
+consumed ticket cannot be canceled or replaced after restore, and
+`context.claim(id)` still returns `false` for every compacted claim. Consumers
+that expect many once-ever claims should choose stable monotonic IDs with a
+numeric suffix to make them compactable; arbitrary nonnumeric claim IDs remain
+exact and therefore should be reserved for genuinely sparse one-shots.
+
 `stateVersion` is the consumer's state/rule compatibility contract; update it
 when changed rule semantics cannot continue old snapshots. The runtime format and
 core snapshot versions pin the engine-side representation. Consumer migrations
@@ -424,9 +456,21 @@ npx eslint packages\runtime
 
 `node scripts/bench-runtime-content.mjs` measures the time per commit of a
 synthetic game against a ~130 KB content pack, using the built runtime (run
-`npm run build` first). It reads a wall clock, so it is a measurement for
-comparing builds on one machine, not part of the gate; it also prints the run's
-final state hash, which a change that only removes redundant work must not move.
+`npm run build` first). Add `--fluffy` for a Fluffy-sized state (eight cases at
+three progress levels, about 200 notebook entries and about 100 collection
+items). Add `--long-session` to extend the run and exercise compacted ledgers.
+It reads a wall clock, so it is a measurement for comparing builds on one
+machine, not part of the gate; it also prints the run's final state hash, which a
+change that only removes redundant work must not move.
+
+On the Windows/Node 25 machine used for the DATA-04/SAVE-09/F12 pass, the
+Fluffy-sized budget is: median (`p50`) commit cost SHOULD stay under 15 ms and
+`p95` SHOULD stay under 35 ms for
+`node scripts/bench-runtime-content.mjs --fluffy --rounds 3`; a gross-regression
+test should use a looser bound than this budget to avoid failing on transient
+shared-machine load. Treat this as a local performance budget, not a portable
+device guarantee. Record the measured p50/p95 alongside the runtime revision
+when changing commit-path code.
 
 `runCommandTrace(host, steps)` collects commit hashes, turns and event types.
 Each step names relevant `ruleIds` and may pin literal turn/revision/hash
