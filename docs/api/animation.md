@@ -331,6 +331,8 @@ One per spoken line, keyed by the line ID.
   otherwise (`AEG-ANIM-0031`), because a mismatch usually means a stale cue file.
 - `revision` should be the voice line's revision so stale cues are detectable.
 - The producer is irrelevant: Rhubarb, Azure viseme events or hand editing.
+- The stage and the validator also accept **raw Rhubarb JSON** (mouthCues) as a cue
+  file; the validator names its line from the file name <line>[.<hex hash>].cues.json.
 
 Lip-sync samples the cue track at the **narration playback clock** (section 7) every
 frame. Pause, resume, replay, stop and interruption keep drift within 50 ms; after stop,

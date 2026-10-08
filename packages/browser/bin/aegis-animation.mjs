@@ -13,7 +13,7 @@
  * Exit codes: 0 valid (warnings allowed), 2 invalid documents, 64 usage error.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import process from 'node:process';
 import { importRhubarb, importVisemes, validateBundle } from '../dist/animation/index.js';
 
@@ -85,7 +85,24 @@ if (command === 'validate') {
         });
         continue;
       }
-      if (value && typeof value === 'object' && FORMATS.has(value.format))
+      if (value && typeof value === 'object' && Array.isArray(value.mouthCues)) {
+        // Raw Rhubarb JSON: imported as aegis-cues/1 for the line named by the file.
+        // File <line>[.<hex content hash>].cues.json names its line.
+        const line = basename(file)
+          .replace(/(\.cues|\.rhubarb)?\.json$/, '')
+          .replace(/\.[0-9a-f]{8,64}$/, '');
+        try {
+          documents.push({
+            source: relative(process.cwd(), file),
+            value: importRhubarb(value, { line }),
+          });
+        } catch (cause) {
+          documents.push({
+            source: relative(process.cwd(), file),
+            value: `invalid Rhubarb JSON: ${cause.message}`,
+          });
+        }
+      } else if (value && typeof value === 'object' && FORMATS.has(value.format))
         documents.push({ source: relative(process.cwd(), file), value });
       else skipped++;
     }

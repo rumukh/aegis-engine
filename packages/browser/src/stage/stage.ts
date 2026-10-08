@@ -11,7 +11,7 @@ import type {
   LineOutcome,
 } from '../animation/cutscene.js';
 import { ease } from '../animation/easing.js';
-import { sampleCues } from '../animation/mouth.js';
+import { importRhubarb, sampleCues } from '../animation/mouth.js';
 import { PuppetModel } from '../animation/puppet.js';
 import type { Behaviours, DrawItem, PlayOptions } from '../animation/puppet.js';
 import { createPresentationRandom } from '../animation/random.js';
@@ -554,7 +554,12 @@ export function createStage(options: StageOptions) {
       ? Promise.resolve(undefined)
       : fetchJson(line.cues).then(
           (value) => {
-            const result = validateCueTrack(value, { source: line.cues! });
+            // Raw Rhubarb Lip Sync JSON (`mouthCues`) is accepted as well as aegis-cues/1.
+            const track =
+              value !== null && typeof value === 'object' && 'mouthCues' in value
+                ? importRhubarb(value, { line: lineId })
+                : value;
+            const result = validateCueTrack(track, { source: line.cues! });
             if (!result.value)
               throw new BrowserServiceError(
                 'invalid-data',

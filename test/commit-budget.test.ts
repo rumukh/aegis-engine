@@ -1,4 +1,6 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { repositoryRoot } from '../scripts/sdk-tools.mjs';
@@ -12,8 +14,9 @@ import { repositoryRoot } from '../scripts/sdk-tools.mjs';
  * The final hash is pinned as a literal: removing redundant work must not change behaviour.
  */
 describe('Fluffy-sized commit cost (F12)', () => {
-  it('stays within three times the documented p50 budget and keeps the pinned final hash', () => {
-    const output = execFileSync(
+  it('stays within three times the documented p50 budget and keeps the pinned final hash', async () => {
+    // Asynchronous on purpose: a blocking child process would starve the vitest worker's RPC.
+    const { stdout: output } = await promisify(execFile)(
       process.execPath,
       [
         join(repositoryRoot, 'scripts', 'bench-runtime-content.mjs'),

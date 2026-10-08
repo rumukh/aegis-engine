@@ -81,7 +81,11 @@ describe('long-lived saves stay bounded and idempotent (F11)', () => {
         return success(undefined);
       },
     });
-    for (let i = 0; i < 10_000; i++) requireValue(await host.dispatch({ type: 'move' }));
+    for (let i = 0; i < 10_000; i++) {
+      requireValue(await host.dispatch({ type: 'move' }));
+      // Yield a macrotask now and then: microtask-only awaits would starve the worker's RPC.
+      if (i % 200 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    }
     expect(checkpoints).toBeGreaterThanOrEqual(10_000);
     const final = JSON.parse(JSON.stringify(last)) as RuntimeSnapshot;
     expect(validateRuntimeSnapshot(final)).toMatchObject({ ok: true });
