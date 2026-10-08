@@ -1,5 +1,5 @@
 import { BrowserServiceError } from '../errors.js';
-import { localAssetUrl } from '../io.js';
+import { checkSchemes, localAssetUrl } from '../io.js';
 import { logicalPoint } from '../ui/coordinates.js';
 import type { LogicalSize, Point } from '../ui/coordinates.js';
 import type { NarrationController } from '../audio/narration.js';
@@ -70,6 +70,8 @@ export interface StageOptions {
   host: HTMLElement;
   /** Logical scene size; defaults to 2560x1600. */
   logical?: LogicalSize;
+  /** Secure custom application schemes allowed for `baseUrl`, as for `createNarration`. */
+  schemes?: readonly string[];
   /** Base URL for asset paths returned by `resolve`. */
   baseUrl: string;
   /** Maps an asset ID (offline-pack resource ID) to a same-origin path or URL. */
@@ -266,6 +268,7 @@ export function createStage(options: StageOptions) {
   const logical = options.logical ?? DEFAULT_LOGICAL;
   if (!(logical.width > 0 && logical.height > 0))
     throw new BrowserServiceError('invalid-data', 'Stage logical size must be positive.');
+  const schemes = checkSchemes(options.schemes);
   const budget = options.memoryBudgetBytes ?? 96 * 1024 * 1024;
   const clearColor = options.clearColor ?? '#101418';
   const presets: Record<string, CameraTarget> = {
@@ -344,7 +347,7 @@ export function createStage(options: StageOptions) {
 
   // ---------------------------------------------------------------- assets
   const url = (assetId: string): string =>
-    localAssetUrl(options.resolve(assetId), options.baseUrl).href;
+    localAssetUrl(options.resolve(assetId), options.baseUrl, schemes).href;
   const fetchJson = async (assetId: string): Promise<unknown> => {
     const response = await (options.fetch ?? globalThis.fetch)(url(assetId), {
       credentials: 'same-origin',

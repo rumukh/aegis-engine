@@ -289,6 +289,12 @@ duration }` and is cheap enough to call every animation frame. `position` is the
   `onCaption` or `onComplete`.
 - **Context.** `context()` returns `{ state, sampleRate }`; `state` is `none` before
   the first unlock.
+- **Custom application schemes.** Assets must be same-origin HTTP(S). A desktop
+  shell serving the page from a secure custom scheme (for example Electron
+  `protocol.handle('app', ...)`) declares it: `createNarration({ baseUrl: 'app://x/',
+schemes: ['app:'] })`. Asset URLs must then keep that scheme and host exactly;
+  `http(s)`, `file`, `data`, `blob` and `javascript` cannot be declared. `createStage`
+  accepts the same option.
 
 ### Effects, preloading and loops (issue #13)
 
@@ -349,7 +355,8 @@ cryptographic privacy against local developer tools.
 `createMessages` requires consumer catalogs and exact authored placeholders:
 there is no English child-visible fallback or inferred grammatical inflection.
 `applyPresentationPreferences` sets root language, 100..200% text scale, reduced
-motion, comfort and spoiler flags. Preferences are serializable consumer-owned
+motion, comfort and spoiler flags. `textScale` is the factor, so 100..200% is
+written as `1`..`2`; `isPresentationPreferences` rejects other values. Preferences are serializable consumer-owned
 data; the application must persist them. Cyrillic/yo and long labels are preserved.
 Consumers supply/bundle licensed fonts with Cyrillic coverage; system fonts in
 the reference CSS are a fallback, not a dyslexia-treatment claim.

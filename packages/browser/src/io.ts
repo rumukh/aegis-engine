@@ -1,12 +1,52 @@
 import { BrowserServiceError } from './errors.js';
 
-/** Reject redirects as well as cross-origin URLs; child-safe services never follow an outbound hop. */
-export function localAssetUrl(path: string, base: string): URL {
+/** Schemes that can never be declared as a secure application scheme. */
+const UNSAFE_SCHEMES = new Set([
+  'http:',
+  'https:',
+  'file:',
+  'data:',
+  'blob:',
+  'javascript:',
+  'about:',
+  'ftp:',
+  'ws:',
+  'wss:',
+]);
+
+/**
+ * Validate explicitly declared secure custom application schemes (for example Electron's
+ * `protocol.handle('app', ...)`), so `app://host/` can host assets (DESKTOP-02).
+ */
+export function checkSchemes(schemes: readonly string[] | undefined): readonly string[] {
+  for (const scheme of schemes ?? [])
+    if (
+      typeof scheme !== 'string' ||
+      !/^[a-z][a-z0-9+.-]*:$/.test(scheme) ||
+      UNSAFE_SCHEMES.has(scheme)
+    )
+      throw new BrowserServiceError(
+        'invalid-data',
+        'Custom schemes must be declared like "app:" and cannot be http(s), file, data, blob or javascript.',
+      );
+  return schemes ?? [];
+}
+
+/**
+ * Reject redirects as well as cross-origin URLs; child-safe services never follow an outbound hop.
+ * `schemes` admits declared secure custom application schemes: their URLs must keep the base's
+ * scheme and host exactly (custom schemes have an opaque origin, so origins cannot be compared).
+ */
+export function localAssetUrl(path: string, base: string, schemes: readonly string[] = []): URL {
   const root = new URL(base);
   const url = new URL(path, root);
+  const custom = schemes.includes(root.protocol) && !UNSAFE_SCHEMES.has(root.protocol);
+  const sameOrigin = custom
+    ? url.protocol === root.protocol && url.host === root.host && root.host !== ''
+    : url.origin === root.origin;
   if (
-    !['http:', 'https:'].includes(root.protocol) ||
-    url.origin !== root.origin ||
+    !(['http:', 'https:'].includes(root.protocol) || custom) ||
+    !sameOrigin ||
     url.username ||
     url.password ||
     url.hash

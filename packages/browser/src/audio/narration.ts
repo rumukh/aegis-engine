@@ -5,7 +5,7 @@ import {
   requireId,
   requireInteger,
 } from '../errors.js';
-import { localAssetUrl, readBoundedResponse, RequestPool } from '../io.js';
+import { checkSchemes, localAssetUrl, readBoundedResponse, RequestPool } from '../io.js';
 import { rampAudioGain, releaseAudioVoice } from './nodes.js';
 import type { GainRamp, OwnedAudioVoice } from './nodes.js';
 
@@ -97,6 +97,11 @@ export interface NarrationOptions {
   baseUrl: string;
   contextFactory?(): AudioContext;
   fetch?: typeof fetch;
+  /**
+   * Secure custom application schemes allowed for the base URL, e.g. ['app:'] for an Electron
+   * protocol.handle('app', ...) page. HTTP(S) needs no declaration.
+   */
+  schemes?: readonly string[];
   /** Millisecond clock comparable with `AudioTimestamp.performanceTime`. Defaults to `performance.now`. */
   now?(): number;
   maxRequests?: number;
@@ -177,6 +182,7 @@ function validateLineExtras(line: NarrationLine): void {
 
 /** Web Audio offsets use the context clock, not wall-clock time or story ticks. */
 export function createNarration(options: NarrationOptions) {
+  const schemes = checkSchemes(options.schemes);
   const packs = new Map<string, Pack>();
   const voices = new Set<Voice>();
   const pool = new RequestPool(options.maxRequests ?? 4);
@@ -378,7 +384,7 @@ export function createNarration(options: NarrationOptions) {
         alive();
         if (pack.abort.signal.aborted)
           throw new BrowserServiceError('cancelled', 'Audio pack was released.');
-        const url = localAssetUrl(asset.src, options.baseUrl);
+        const url = localAssetUrl(asset.src, options.baseUrl, schemes);
         const response = await (options.fetch ?? globalThis.fetch)(url.href, {
           signal: pack.abort.signal,
           redirect: 'error',
@@ -420,7 +426,7 @@ export function createNarration(options: NarrationOptions) {
           pack.raw.delete(id);
           rawBytes -= data.byteLength;
         } else {
-          const url = localAssetUrl(asset.src, options.baseUrl);
+          const url = localAssetUrl(asset.src, options.baseUrl, schemes);
           const response = await (options.fetch ?? globalThis.fetch)(url.href, {
             signal: pack.abort.signal,
             redirect: 'error',
@@ -875,7 +881,7 @@ export function createNarration(options: NarrationOptions) {
       const assets = new Set<string>();
       for (const asset of manifest.assets) {
         requireId(asset.id);
-        localAssetUrl(asset.src, options.baseUrl);
+        localAssetUrl(asset.src, options.baseUrl, schemes);
         if (assets.has(asset.id))
           throw new BrowserServiceError('asset', 'Duplicate audio asset ID.');
         assets.add(asset.id);

@@ -391,3 +391,23 @@ describe('effects and preloading (issue #13)', () => {
     ).rejects.toMatchObject({ code: 'invalid-data' });
   });
 });
+
+describe('secure custom application schemes (DESKTOP-02)', () => {
+  it('accepts a declared app: scheme on its own host and refuses everything else', async () => {
+    const make = (baseUrl: string, schemes?: readonly string[]) =>
+      createNarration({ baseUrl, onState: () => {}, ...(schemes ? { schemes } : {}) });
+    const pack = (src: string): AudioPack => ({
+      id: 'p',
+      revision: '1',
+      assets: [{ id: 'a', src }],
+      lines: [],
+    });
+    expect(() => make('app://x/').registerPack(pack('a.ogg'))).toThrow(/same-origin/);
+    expect(() => make('app://x/', ['app:']).registerPack(pack('a.ogg'))).not.toThrow();
+    expect(() => make('app://x/', ['app:']).registerPack(pack('app://y/a.ogg'))).toThrow();
+    expect(() => make('app://x/', ['app:']).registerPack(pack('https://x/a.ogg'))).toThrow();
+    expect(() => make('app://x/', ['app:']).registerPack(pack('a.ogg#f'))).toThrow();
+    for (const bad of ['file:', 'javascript:', 'data:', 'blob:', 'https:', 'app'])
+      expect(() => make('app://x/', [bad])).toThrow(/Custom schemes/);
+  });
+});

@@ -411,16 +411,16 @@ retaining page scrolling outside the designated surface.
 No platform is marked accepted before it is exercised. In particular, Chromium
 automation with touch emulation is not a physical touch-device or iOS Safari pass.
 
-| Acceptance boundary                                                       | Status                                                                                                              |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Windows Chromium, exact version and OS                                    | Chromium 153.0.8010.50 on Windows; packaged reference and service/legacy routes exercised                           |
-| Firefox desktop, exact version and OS                                     | Not yet exercised                                                                                                   |
-| WebKit automation, exact version and OS                                   | Not yet exercised                                                                                                   |
-| Real touch device: layout, audio unlock/resume and offline installation   | Not yet exercised                                                                                                   |
-| Russian spoken sample rights, provenance, playback and human voice review | Three original prerecorded lines supplied; welcome voice audition approved; final clue/completion listening pending |
-| Bundled Cyrillic font and license                                         | Pinned Noto Sans/OFL; all 66 Russian alphabet codepoints verified and local font loaded in browser                  |
-| Educational accuracy, age suitability, emotional safety and pronunciation | Requires editorial/human review; not machine-certified                                                              |
-| Consumer campaign economy, reachable endings and full content coverage    | Consumer responsibility, not established by engine fixtures                                                         |
+| Acceptance boundary                                                       | Status                                                                                                               |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Windows Chromium, exact version and OS                                    | Chromium 153.0.8010.50 on Windows; packaged reference and service/legacy routes exercised                            |
+| Firefox desktop, exact version and OS                                     | Not yet exercised                                                                                                    |
+| WebKit automation, exact version and OS                                   | Section 23 only: Playwright WebKit 26.6 (playwright-core 1.63) on Windows; see below. Web Audio absent in that build |
+| Real touch device: layout, audio unlock/resume and offline installation   | Not yet exercised                                                                                                    |
+| Russian spoken sample rights, provenance, playback and human voice review | Three original prerecorded lines supplied; welcome voice audition approved; final clue/completion listening pending  |
+| Bundled Cyrillic font and license                                         | Pinned Noto Sans/OFL; all 66 Russian alphabet codepoints verified and local font loaded in browser                   |
+| Educational accuracy, age suitability, emotional safety and pronunciation | Requires editorial/human review; not machine-certified                                                               |
+| Consumer campaign economy, reachable endings and full content coverage    | Consumer responsibility, not established by engine fixtures                                                          |
 
 Fluffy Bureau's pending product choices remain configurable. Witch Kitchen's
 ending precedence, shelf feasibility, turn/economy budgets, event ordering and
@@ -430,6 +430,49 @@ labeled as illustrative rather than silently defining those games.
 Browser storage remains origin-scoped and subject to eviction or user clearing.
 An acknowledged IndexedDB transaction is not a promise of permanent storage.
 Offline readiness applies only to the installed, verified content revision.
+
+## Section 23: Fluffy Bureau
+
+Scope: spec [section 23](./specs/aegis-extension-spec.md) (ANIM-01..07, AUDIO-07,
+SAVE-08, DATA-04/SAVE-09, UI-10, OFFLINE-04) and issues #8, #9, #13, #14, #15 and
+#17. The specification's canonical copy now lives in
+[docs/specs](./specs/README.md). Design: [ADR-0013](./adr/0013-2d-stage.md) (WebGL stage,
+measured), [animation formats and APIs](./api/animation.md),
+[browser services](./api/browser-services.md) and [runtime](./api/action-runtime.md).
+
+Machine: Windows 11, Ryzen 7 5800X (16 threads), Node 25.6, Chromium 153 with the
+repository's default SwiftShader software rasterisation unless stated.
+
+| ID  | Scenario                                                               | Evidence (test or command)                                                                            | Result                                                                                                                                                              |
+| --- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F01 | Four puppets, effects, 2560x1600 background, 4x CPU throttling         | `test/animation-stage.browser.test.ts`; `scripts/bench-stage.mjs`; `scripts/webkit-acceptance.mjs`    | Chromium 55 fps (floor 30 asserted; 60 fps target met with hardware graphics in the benchmark). WebKit unthrottled 70 fps (no CPU throttling in WebKit)             |
+| F02 | Five species x six scarf colours x four hat choices                    | Chromium: 120 compositions with pixel-sampled tint and badge anchor; WebKit: 15                       | Passed; the same nine images serve every composition                                                                                                                |
+| F03 | Pause, resume, replay, interrupt a spoken line                         | Clock compared with the samples actually rendered (AudioWorklet tap on a self-describing ramp voice)  | Chromium max drift 19 ms (bound 50 ms); mouth at rest after interruption and completion. **Not exercised in WebKit** (no Web Audio in Playwright WebKit on Windows) |
+| F04 | Missing cue track; blocked narration                                   | `animation-stage.browser.test.ts`                                                                     | Talk loop or neutral/bounded subtle mouth; `synchronized` never true                                                                                                |
+| F05 | Pause, skip, replay, restore from a marker mid-cutscene                | Real narration and captions in Chromium; `packages/browser/src/animation/animation.test.ts`           | No automatic text advance; captions for every line; skip applies end state without narration; marker restart re-applies no gameplay (presentation only)             |
+| F06 | Reduced motion and comfort                                             | Chromium and WebKit                                                                                   | Camera pans become cuts, fades at least 0.5 s, zero flashes in a 30 Hz luminance trace; comfort brightens and warms, reversible                                     |
+| F07 | 10,000 animation frames                                                | `test/animation-authority.test.ts`                                                                    | Runtime hash, snapshot, revision and view byte-identical                                                                                                            |
+| F08 | 50 scene transitions with puppets and atlases                          | Chromium (GL texture count by instrumented context), WebKit (20 transitions)                          | Owned image bytes, live textures and listeners return to baseline; WebGL context loss re-uploads images                                                             |
+| F09 | Narration clock through pause, resume, replay, unlock recovery         | Same as F03, plus `packages/browser/src/audio/narration.test.ts`                                      | Exact event sequence `start, pause, resume, stop:replaced, start, block, resume, complete`                                                                          |
+| F10 | Four profiles: rebind, export, import, reset one                       | `packages/browser/src/save/profiles.test.ts`; WebKit IndexedDB registry                               | Isolated saves and settings; per-profile cross-tab conflicts; IDs never reused                                                                                      |
+| F11 | Older compatible save; incompatible save; 10,000 commits               | `test/save-compatibility.test.ts`, `packages/runtime/test/data.test.ts`, `host.test.ts`               | Optional fields and versioned content restore; incompatible keeps recovery; checkpoint stops growing, replayed claims and stale tickets still refused               |
+| F12 | Commit cost on a Fluffy-sized state                                    | `node scripts/bench-runtime-content.mjs --fluffy --rounds 3`; `test/commit-budget.test.ts`            | p50 9.0 ms, p95 11.9 ms after (10.9/15.1 before); budget p50 < 15 ms, p95 < 35 ms; final hash `0bb319b5ff6be9f4` pinned                                             |
+| F13 | Prologue and case 1 installed, offline cold start, later pack mid-case | `packages/browser/src/offline/media-packs.test.ts`; Chromium and WebKit service-worker offline reload | Storage plan before download, byte progress, quota as `limit`; active pack and retention undisturbed                                                                |
+| F14 | Standalone consumer with the new entries                               | `npm run test:consumer` (part of the gate through `test/extension-distribution.test.ts`)              | `@aegis/browser/animation` executes headlessly; browser bundle has no three.js or Node imports; animation lab type-checks against the packed SDK                    |
+
+Also exercised: issue #14 computed styles in Chromium and WebKit (a single-class
+consumer rule beats the preset; reduced motion set on `<html>` stops animations),
+the tablet viewport classification, label speech policies, effect gain, loop points
+and scoped effect failures, and the `aegis-animation` CLI over the reference fixture.
+
+WebKit run: `node scripts/webkit-acceptance.mjs` with Playwright WebKit 26.6 on
+Windows: 7 passed, 0 failed, 1 not exercised (F03/F09 audio: the build has no Web
+Audio). Its WebGL renderer string is masked, so GPU use is unconfirmed.
+
+**Not claimed:** iPadOS Safari or any physical tablet (frame rate, audio unlock,
+storage limits and eviction), Firefox, acoustic output, screen-reader review, and the
+60 fps target at 2x device pixel ratio with software rasterisation (measured about
+38 fps in Chromium; ADR-0013). These remain consumer acceptance.
 
 ## Consumer handoff
 

@@ -164,7 +164,7 @@ console.log(JSON.stringify({ publicExports: surface.length, randomState }));
     const smoke = JSON.parse(run(process.execPath, ['build.mjs'], directory));
     mkdirSync(join(directory, 'poc'));
     mkdirSync(join(directory, 'scripts'));
-    for (const name of ['storybook-lab', 'turn-kitchen-lab', 'lab-shared']) {
+    for (const name of ['storybook-lab', 'turn-kitchen-lab', 'animation-lab', 'lab-shared']) {
       cpSync(join(root, 'poc', name), join(directory, 'poc', name), { recursive: true });
     }
     for (const name of ['sdk-tools.mjs', 'build-labs.mjs', 'run-labs.mjs']) {
