@@ -98,6 +98,7 @@ export async function pocStaticGames(root = findRepoRoot(), entries = POC) {
         pluginModule: entry.pluginModule,
         pluginExport: entry.pluginExport,
         presentation: entry.presentationFor?.(parsed.value) ?? entry.presentation,
+        rights: entry.rights,
       };
     }),
   );

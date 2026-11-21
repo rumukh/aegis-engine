@@ -25,7 +25,15 @@ import { Primitives } from '../primitives.js';
 import { sharedResource } from '../resources.js';
 import type { ModelInstance, PresentationAssets } from './assets.js';
 import { RenderCode, renderDiagnostic } from './diagnostics.js';
-import type { Decoration, Pose, SpriteState, VisualSpec } from './schema.js';
+import type { RenderPosition } from './runtime-lights.js';
+import type {
+  Decoration,
+  ModelStateClip,
+  ObservedMotion,
+  Pose,
+  SpriteState,
+  VisualSpec,
+} from './schema.js';
 
 export function visualError(path: string, message: string, fix: string): DiagnosticError {
   return new DiagnosticError([renderDiagnostic(RenderCode.Reference, path, message, fix)]);
@@ -242,6 +250,13 @@ export type AnimationOverride =
   | { kind: 'clip'; clip: string; progress: number; node?: string }
   | { kind: 'frames'; frame: string };
 
+interface ModelLoop {
+  key: string;
+  clip?: string;
+  start: number;
+  rate: number;
+}
+
 /** An instance owns transforms, a mixer, and mutable flash materials, but never asset resources. */
 export class ManagedVisual {
   readonly root = new Group();
@@ -278,8 +293,11 @@ export class ManagedVisual {
   #eventFrame = false;
   #lastState?: SpriteState;
   #stateStart = 0;
-  #loopKey?: string;
-  #loopStart = 0;
+  #observesMotion = false;
+  #origin?: { tick: number; position: RenderPosition };
+  #motion: ObservedMotion = 'stationary';
+  #loop?: ModelLoop;
+  #fade?: { from: ModelLoop; start: number; ticks: number };
   #disposed = false;
 
   constructor(
@@ -342,6 +360,7 @@ export class ManagedVisual {
     this.#spec = spec;
     this.#role = role;
     if (spec.kind === 'model') {
+      this.#observesMotion = spec.stateClips?.some(({ when }) => 'motion' in when) === true;
       if (spec.clip !== undefined) this.clip(spec.clip);
       for (const name of Object.values(spec.animations ?? {})) this.clip(name);
       for (const entry of spec.stateClips ?? []) this.clip(entry.clip);
@@ -502,6 +521,23 @@ export class ManagedVisual {
     }
   }
 
+  /** Use the adapter's copied origin, never the animated skeleton, facing or fitted bounds. */
+  observeOrigin(tick: number, position: RenderPosition): void {
+    if (!this.#observesMotion || this.#origin?.tick === tick) return;
+    const last = this.#origin;
+    this.#motion =
+      last !== undefined &&
+      tick > last.tick &&
+      Math.hypot(
+        position.x - last.position.x,
+        position.y - last.position.y,
+        position.z - last.position.z,
+      ) > 1e-6
+        ? 'moving'
+        : 'stationary';
+    this.#origin = { tick, position };
+  }
+
   sample(
     tick: number,
     tickRate: number,
@@ -539,36 +575,66 @@ export class ManagedVisual {
           'State clips need a presentation state reader.',
           'Sample state-bound models through the presentation runtime.',
         );
-      const loop = spec.stateClips?.find((entry) => matches?.(entry.when));
-      const loopKey = loop === undefined ? '' : `${loop.clip}:${loop.timeScale ?? 1}`;
-      if (loopKey !== this.#loopKey) {
-        this.#loopStart = this.#loopKey === undefined ? 0 : tick;
-        this.#loopKey = loopKey;
-      }
-      const name =
-        override?.kind === 'clip'
-          ? override.clip
-          : (loop?.clip ?? spec.animations?.[state] ?? spec.clip);
+      const selected = spec.stateClips?.find(({ when }) =>
+        'motion' in when ? when.motion === this.#motion : matches?.(when),
+      );
+      this.#selectLoop(tick, selected, spec.animations?.[state] ?? spec.clip);
       this.#mixer?.stopAllAction();
-      if (name !== undefined && this.#mixer !== undefined) {
-        const oneShot = override?.kind === 'clip';
-        const clip = this.clip(name, oneShot ? override.node : undefined);
-        const root =
-          oneShot && override.node !== undefined ? this.node(override.node) : this.object;
+      if (override?.kind === 'clip' && this.#mixer !== undefined) {
+        const clip = this.clip(override.clip, override.node);
+        const root = override.node === undefined ? this.object : this.node(override.node);
         this.#mixerRoots.add(root);
         const action = this.#mixer.clipAction(clip, root);
-        action.reset().setLoop(oneShot ? LoopOnce : LoopRepeat, oneShot ? 1 : Infinity);
+        action.reset().setEffectiveWeight(1).setLoop(LoopOnce, 1);
         action.clampWhenFinished = true;
         action.play();
-        this.#mixer.setTime(
-          oneShot
-            ? Math.min(1, Math.max(0, override.progress)) * clip.duration
-            : (Math.max(0, tick - (loop === undefined ? this.#stateStart : this.#loopStart)) /
-                tickRate) *
-                (loop?.timeScale ?? 1),
-        );
+        this.#mixer.setTime(Math.min(1, Math.max(0, override.progress)) * clip.duration);
+      } else if (this.#loop !== undefined) {
+        const weight = this.#fade === undefined ? 1 : (tick - this.#fade.start) / this.#fade.ticks;
+        if (this.#fade !== undefined) this.#sampleLoop(this.#fade.from, tick, tickRate, 1 - weight);
+        this.#sampleLoop(this.#loop, tick, tickRate, weight);
+        this.#mixer?.update(0);
       }
     }
+  }
+
+  #selectLoop(tick: number, selected: ModelStateClip | undefined, fallback?: string): void {
+    if (this.#fade !== undefined && tick >= this.#fade.start + this.#fade.ticks)
+      this.#fade = undefined;
+    const name = selected?.clip ?? fallback;
+    const rate = selected?.timeScale ?? 1;
+    const key =
+      selected === undefined ? `state:${name}:${this.#stateStart}` : `rule:${name}:${rate}`;
+    const previous = this.#loop;
+    if (previous?.key === key) return;
+    // A one-tick waypoint stop must not restart the gait that is still fading out.
+    this.#loop =
+      this.#fade?.from.key === key
+        ? this.#fade.from
+        : {
+            key,
+            clip: name,
+            rate,
+            start: selected === undefined ? this.#stateStart : previous === undefined ? 0 : tick,
+          };
+    const ticks = selected?.blendTicks ?? 0;
+    this.#fade =
+      ticks > 0 && previous?.clip !== undefined && previous.clip !== name
+        ? { from: previous, start: tick, ticks }
+        : undefined;
+  }
+
+  #sampleLoop(loop: ModelLoop, tick: number, tickRate: number, weight: number): void {
+    if (loop.clip === undefined || this.#mixer === undefined || weight <= 0) return;
+    const clip = this.clip(loop.clip);
+    this.#mixerRoots.add(this.object);
+    const action = this.#mixer.clipAction(clip, this.object);
+    action.reset().setEffectiveWeight(weight).setLoop(LoopRepeat, Infinity).play();
+    // Each contributing action has its own native clock; mixer.setTime would seek both together.
+    action.time =
+      clip.duration > 0
+        ? ((Math.max(0, tick - loop.start) / tickRate) * loop.rate) % clip.duration
+        : 0;
   }
 
   flash(node: Object3D, color: Color, strength: number): void {
@@ -616,8 +682,10 @@ export class ManagedVisual {
     this.#mixer?.stopAllAction();
     this.#lastState = undefined;
     this.#stateStart = 0;
-    this.#loopKey = undefined;
-    this.#loopStart = 0;
+    this.#origin = undefined;
+    this.#motion = 'stationary';
+    this.#loop = undefined;
+    this.#fade = undefined;
     this.#eventFrame = false;
     this.#frame = this.#authoredFrame;
     if (this.#spec.kind === 'sprite') this.#applyMaterials('idle');

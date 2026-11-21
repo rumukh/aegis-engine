@@ -101,6 +101,12 @@ export interface EventReader {
    * was created with event recording enabled (the harness enables it for assertions).
    */
   history(): readonly GameEvent[];
+  /**
+   * Immutable tail starting at a zero-based position in the recorded log. Start at 0 and
+   * advance by the returned length. Cursors belong to one log; reset to 0 on world replacement.
+   * Costs O(new events), including O(1) when caught up. Invalid positions throw RangeError.
+   */
+  since(cursor: number): readonly GameEvent[];
   /** Total number of events of `type` in {@link EventReader.history}. */
   count(type: string): number;
   /** Whether any event of `type` was ever emitted (across history). */
@@ -126,6 +132,8 @@ export interface EventBusOptions {
   /** Retain a full historical log (needed for assertions/replay analysis). Default `false`. */
   record?: boolean;
 }
+
+const NO_EVENTS: readonly GameEvent[] = Object.freeze([]);
 
 /** Create an event bus. */
 export function createEventBus(options?: EventBusOptions): EventBus {
@@ -159,6 +167,14 @@ export function createEventBus(options?: EventBusOptions): EventBus {
     },
     history(): readonly GameEvent[] {
       return Object.freeze(log.slice());
+    },
+    since(cursor: number): readonly GameEvent[] {
+      if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > log.length) {
+        throw new RangeError(
+          `[aegis] event cursor ${cursor} is outside the recorded log [0, ${log.length}].`,
+        );
+      }
+      return cursor === log.length ? NO_EVENTS : Object.freeze(log.slice(cursor));
     },
     count(type: string): number {
       let n = 0;

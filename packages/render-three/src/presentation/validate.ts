@@ -1,8 +1,10 @@
 import type { Diagnostic, Validated } from '@aegis/core';
+import type { EventContracts } from '@aegis/harness';
 import { ROLE_COLORS } from '../appearance.js';
 import { isAssetPath, renderDiagnostic, RenderCode } from './diagnostics.js';
 import { PRESENTATION_LIMITS } from './schema.js';
 import type { PresentationManifest } from './schema.js';
+import { checkEventBindings } from './event-bindings.js';
 
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): value is RecordValue =>
@@ -14,6 +16,7 @@ const COLOR = /^#[0-9a-fA-F]{6}$/;
 export function validatePresentation(
   input: unknown,
   sourceFile?: string,
+  events?: EventContracts,
 ): Validated<PresentationManifest> {
   const diagnostics: Diagnostic[] = [];
   const fail = (path: string, message: string, code: string = RenderCode.Shape): void => {
@@ -182,10 +185,13 @@ export function validatePresentation(
     enumeration(camera.framing, 'camera.framing', ['follow', 'level']);
     optional(camera, 'padding', 'camera', nonnegative);
     if (camera.focus !== undefined) {
-      if (camera.framing !== 'level') fail('camera.focus', 'A focus toggle requires level framing.');
+      if (camera.framing !== 'level')
+        fail('camera.focus', 'A focus toggle requires level framing.');
       const focus = record(camera.focus, 'camera.focus', ['height', 'landmarks']);
       positive(focus.height, 'camera.focus.height');
-      list(focus.landmarks, 'camera.focus.landmarks', 16).forEach((name, i) => text(name, `camera.focus.landmarks[${i}]`));
+      list(focus.landmarks, 'camera.focus.landmarks', 16).forEach((name, i) =>
+        text(name, `camera.focus.landmarks[${i}]`),
+      );
     }
   }
   const assets = new Map<string, RecordValue>();
@@ -220,9 +226,17 @@ export function validatePresentation(
         'Use a relative local asset path without traversal, encoding, query, or fragment.',
         RenderCode.Path,
       );
-    const provenance = record(a.provenance, `${p}.provenance`, ['author', 'license', 'source']);
+    const provenance = record(a.provenance, `${p}.provenance`, [
+      'author',
+      'license',
+      'source',
+      'commercialUse',
+    ]);
     for (const field of ['author', 'license', 'source'])
       text(provenance[field], `${p}.provenance.${field}`);
+    optional(provenance, 'commercialUse', `${p}.provenance`, (v, path) =>
+      enumeration(v, path, ['restricted']),
+    );
     if (
       a.kind !== 'texture' &&
       ['colorSpace', 'filter', 'frames'].some((key) => a[key] !== undefined)
@@ -337,7 +351,7 @@ export function validatePresentation(
       if (Array.isArray(m.repeat)) m.repeat.forEach((n, j) => positive(n, `${p}.repeat[${j}]`));
     }
   }
-  const visual = (v: unknown, p: string): void => {
+  const visual = (v: unknown, p: string, entityBound = false): void => {
     const r = record(v, p, [
       'kind',
       'shape',
@@ -385,10 +399,19 @@ export function validatePresentation(
       if (r.stateClips !== undefined)
         list(r.stateClips, `${p}.stateClips`, 16).forEach((value, i) => {
           const at = `${p}.stateClips[${i}]`;
-          const clip = record(value, at, ['when', 'clip', 'timeScale']);
-          condition(clip.when, `${at}.when`);
+          const clip = record(value, at, ['when', 'clip', 'timeScale', 'blendTicks']);
+          if (object(clip.when) && 'motion' in clip.when) {
+            const when = record(clip.when, `${at}.when`, ['motion']);
+            enumeration(when.motion, `${at}.when.motion`, ['moving', 'stationary']);
+            if (!entityBound)
+              fail(`${at}.when.motion`, 'Observed motion requires an entity binding.');
+          } else condition(clip.when, `${at}.when`);
           text(clip.clip, `${at}.clip`);
           optional(clip, 'timeScale', at, (v, path) => number(v, path, 0, 4));
+          optional(clip, 'blendTicks', at, (v, path) => {
+            if (number(v, path, 0, 600) && !Number.isInteger(v))
+              fail(path, 'Expected whole ticks.');
+          });
         });
       if (r.animations !== undefined) {
         const animations = record(r.animations, `${p}.animations`, [
@@ -433,7 +456,7 @@ export function validatePresentation(
     const key = JSON.stringify(t);
     if (selectors.has(key)) fail(`${p}.target`, 'Duplicate entity selector.', RenderCode.Reference);
     selectors.add(key);
-    visual(r.visual, `${p}.visual`);
+    visual(r.visual, `${p}.visual`, true);
     optional(r, 'pose', p, pose);
     optional(r, 'fit', p, (v, at) => enumeration(v, at, ['bounds', 'authored']));
   }
@@ -870,5 +893,9 @@ export function validatePresentation(
       );
   }
   if (diagnostics.length > 0) return { ok: false, diagnostics };
-  return { ok: true, value: input as PresentationManifest, diagnostics };
+  const manifest = input as PresentationManifest;
+  if (events !== undefined) diagnostics.push(...checkEventBindings(manifest, events, sourceFile));
+  return diagnostics.length === 0
+    ? { ok: true, value: manifest, diagnostics }
+    : { ok: false, diagnostics };
 }

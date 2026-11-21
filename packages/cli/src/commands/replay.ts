@@ -14,7 +14,13 @@
  */
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { parseRecording, recordingTickRate, runScene, verifyReplay } from '@aegis/harness';
+import {
+  formatReplayDetails,
+  parseRecording,
+  recordingTickRate,
+  runScene,
+  verifyReplay,
+} from '@aegis/harness';
 import type { RunOptions } from '@aegis/harness';
 import { AegisCliError, CliCode, Exit } from '../errors.js';
 import { formatAscii, formatDiagnostics, formatFields, formatFrame, json } from '../format.js';
@@ -47,7 +53,8 @@ const USAGE = [
   '  --json            Emit the replay result as JSON.',
   '',
   'Verification is ON by default and covers the final state hash AND the recorded per-tick',
-  'timeline. Exit codes: 0 = everything the recording pinned was reproduced, 1 = it was not.',
+  'timeline. Files recorded with --explain also compare state fields and ordered events.',
+  'Exit codes: 0 = everything the recording pinned was reproduced, 1 = it was not.',
   '',
   'Examples:',
   '  aegis replay run.replay.json',
@@ -138,6 +145,7 @@ export const replayCommand: Command = {
       ticks: recording.ticks,
       seed: recording.seed,
       tickRate,
+      captureReplayEvidence: recording.evidence !== undefined,
     };
     // A recording's script is the whole run, not a prefix of one, so a statement in it that has
     // no effect means the file was edited after it was written. `aegis run` deliberately stays
@@ -177,6 +185,7 @@ export const replayCommand: Command = {
           actualHash: result.hash,
           match: matched,
           verified: verified.ok,
+          details: verified.details,
           problems: verified.problems,
           unverified: verified.unverified,
           ...(inputDiagnostics.length > 0 ? { inputDiagnostics } : {}),
@@ -221,9 +230,10 @@ export const replayCommand: Command = {
         );
       }
       if (inputDiagnostics.length > 0) blocks.push(formatDiagnostics(inputDiagnostics));
-      if (!matched && divergentTick !== undefined) {
+      if (verified.details.status !== 'diverged' && divergentTick !== undefined) {
         blocks.push(`first divergence at tick ${divergentTick}`);
       }
+      blocks.push(formatReplayDetails(verified.details));
       if (flagBool(args, 'frame')) blocks.push(formatFrame(frameOf(result, modeName)));
       if (flagBool(args, 'ascii')) {
         blocks.push(formatAscii(asciiOf(result, modeName, undefined, result.world)));

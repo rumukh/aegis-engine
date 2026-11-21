@@ -225,7 +225,7 @@ describe('the generated pages', () => {
 describe('renderStaticBootModule', () => {
   it('imports the plugin by the catalogue’s own specifier and export name', () => {
     const source = renderStaticBootModule(game());
-    expect(source).toContain("import { demoPlugin } from '@demo/game';");
+    expect(source).toContain("import { demoPlugin as selectedPlugin } from '@demo/game';");
     expect(source).toContain(`from '${STATIC_BOOT_SPECIFIER}'`);
     expect(moduleSpecifiers(source).statik.sort()).toEqual(
       ['@aegis/content', '@demo/game', STATIC_BOOT_SPECIFIER].sort(),

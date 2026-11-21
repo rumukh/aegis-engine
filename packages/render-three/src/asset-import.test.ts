@@ -256,6 +256,11 @@ describe('model import using the production dependency preflight', () => {
       { ...provenance, model: 'inferred' },
     ])
       expect(() => parseImportProvenance(value)).toThrow(/exactly/);
+    expect(parseImportProvenance({ ...provenance, commercialUse: 'restricted' })).toEqual({
+      ...provenance,
+      commercialUse: 'restricted',
+    });
+    expect(() => parseImportProvenance({ ...provenance, commercialUse: 'cleared' })).toThrow();
   });
 
   it('cleans owned staging on publication failure without changing source bytes', () => {

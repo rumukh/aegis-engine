@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { MeshStandardMaterial, SpotLight, Vector3 } from 'three';
-import { defineComponent, Transform } from '@aegis/core';
+import {
+  AnimationClip,
+  MeshStandardMaterial,
+  NumberKeyframeTrack,
+  SpotLight,
+  Vector3,
+} from 'three';
+import { createSchedule, createSimulation, defineComponent, Transform } from '@aegis/core';
 import { fpsPlugin } from '@aegis/mode-fps';
 import { createRenderAdapter } from '../adapters/index.js';
 import { FPS_SCENE } from '../testing/scenes.js';
@@ -220,6 +226,101 @@ describe('opt-in cinematic presentation', () => {
     expect(modelPart(runtime, 'grunt').position.y).toBeCloseTo(1.6);
     adapter.present?.(presentationFrame(211));
     expect(modelPart(runtime, 'grunt').position.y).toBeCloseTo(1.1);
+  });
+
+  it('mixes two advancing poses on a real stop, freezes on pause and forgets the fade on restart', async () => {
+    const spec = runtimeManifest({
+      entities: [
+        {
+          target: { name: 'grunt' },
+          visual: {
+            kind: 'model',
+            mesh: 'rig',
+            stateClips: [
+              { when: { motion: 'moving' }, clip: 'lift', timeScale: 2 },
+              { when: { motion: 'stationary' }, clip: 'scan', blendTicks: 4 },
+            ],
+          },
+        },
+      ],
+    });
+    const assets = own(
+      await runtimeAssets(spec, (gltf) => {
+        gltf.animations.push(
+          new AnimationClip('scan', 1, [
+            new NumberKeyframeTrack('fin.position[y]', [0, 1], [3.1, 5.1]),
+          ]),
+        );
+      }),
+    );
+    const world = buildTestWorld(FPS_SCENE, fpsPlugin);
+    const spawn = world.snapshot();
+    const sim = createSimulation({ world, schedule: createSchedule(), tickRate: 60 });
+    const grunt = entityNamed(world, 'grunt');
+    const adapter = own(createRenderAdapter('fps', { presentation: { manifest: spec, assets } }));
+    adapter.mount(world);
+    const runtime = adapter.presentation!;
+    const fin = modelPart(runtime, 'grunt');
+    let generation = 0;
+    const show = (displayTick = world.tick) => {
+      adapter.sync(world);
+      adapter.sync(world);
+      runtime.present(presentationFrame(displayTick, { paused: true, generation }));
+      return fin.position.y;
+    };
+    const step = (dx: number) => {
+      sim.step();
+      world.getOrThrow(grunt, Transform).position.x += dx;
+      return show();
+    };
+    const walking = (age: number) => 1.1 + (2 * age) / 60;
+    const searching = (age: number) => 3.1 + (2 * age) / 60;
+    expect(show()).toBeCloseTo(searching(0), 5);
+    expect(step(0.1)).toBeCloseTo(walking(0), 5);
+    expect(step(0.1)).toBeCloseTo(walking(1), 5);
+    expect(show(100)).toBeCloseTo(walking(1), 5); // more paints, no simulation step
+    expect(step(0)).toBeCloseTo(walking(2), 5);
+    expect(step(0.1)).toBeCloseTo(walking(3), 5); // a waypoint tick didn't restart the gait
+    expect(step(0)).toBeCloseTo(walking(4), 5);
+    for (let age = 1; age <= 4; age++) {
+      const expected = walking(4 + age) * (1 - age / 4) + (searching(age) * age) / 4;
+      expect(step(0)).toBeCloseTo(expected, 5);
+      expect(show(100)).toBeCloseTo(expected, 5);
+    }
+    expect(step(0)).toBeCloseTo(searching(5), 5);
+    expect(step(0.1)).toBeCloseTo(walking(0), 5);
+    step(0);
+    step(0); // restart from inside another crossfade
+    world.restore(spawn);
+    generation++;
+    expect(show()).toBeCloseTo(searching(0), 5);
+    expect(step(0.1)).toBeCloseTo(walking(0), 5);
+  });
+
+  it('rejects invalid motion predicates, unbound motion and invalid crossfade lengths', () => {
+    const model = {
+      kind: 'model',
+      mesh: 'rig',
+      stateClips: [{ when: { motion: 'moving' }, clip: 'lift', blendTicks: 8 }],
+    };
+    const bound = (visual: unknown) => ({
+      ...runtimeManifest(),
+      entities: [{ target: { name: 'grunt' }, visual }],
+    });
+    expect(validatePresentation(bound(model)).ok).toBe(true);
+    for (const when of [{ motion: 'walking' }, { motion: 'moving', field: 'speed' }])
+      expect(
+        validatePresentation(bound({ ...model, stateClips: [{ when, clip: 'lift' }] })).ok,
+      ).toBe(false);
+    for (const blendTicks of [-1, 0.5, 601, NaN])
+      expect(
+        validatePresentation(bound({ ...model, stateClips: [{ when, clip: 'lift', blendTicks }] }))
+          .ok,
+      ).toBe(false);
+    expect(
+      validatePresentation({ ...runtimeManifest(), objects: [{ id: 'unbound', visual: model }] })
+        .ok,
+    ).toBe(false);
   });
 
   it('rejects unbounded lights, missing pipeline, invalid scalar paths, spatial and caption mistakes', () => {

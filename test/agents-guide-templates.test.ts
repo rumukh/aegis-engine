@@ -75,6 +75,8 @@ const KNOWN_CODE_BLOCKS = 15;
 
 /** One fenced block, with the line above its opening fence. */
 interface Block {
+  /** Omitted in the synthetic controls. */
+  guide?: string;
   /** Fence language, e.g. `ts`. */
   lang: string;
   /** 1-based line number of the opening fence, for failure messages. */
@@ -175,16 +177,17 @@ function mismatch(
 ): string | undefined {
   const want = normalise(block.body, mode);
   const have = normalise(source, mode);
-  if (want.length === 0) return `the block at AGENTS.md:${block.line} normalised to nothing`;
+  const location = `${block.guide ?? 'guide'}:${block.line}`;
+  if (want.length === 0) return `the block at ${location} normalised to nothing`;
 
   if (mode === 'file') {
     if (want.length === have.length && want.every((l, i) => l === have[i])) return undefined;
     const at = want.findIndex((l, i) => l !== have[i]);
     const i = at === -1 ? want.length : at;
     return (
-      `AGENTS.md:${block.line} is no longer a verbatim copy of ${path}.\n` +
+      `${location} is no longer a verbatim copy of ${path}.\n` +
       `  first difference at code line ${i + 1}:\n` +
-      `    AGENTS.md: ${JSON.stringify(want[i] ?? '<end of block>')}\n` +
+      `    guide: ${JSON.stringify(want[i] ?? '<end of block>')}\n` +
       `    ${path}:   ${JSON.stringify(have[i] ?? '<end of file>')}`
     );
   }
@@ -192,7 +195,7 @@ function mismatch(
   if (containsRun(have, want)) return undefined;
   const missing = want.find((l) => !have.includes(l)) ?? want[0];
   return (
-    `AGENTS.md:${block.line} is no longer a contiguous excerpt of ${path}.\n` +
+    `${location} is no longer a contiguous excerpt of ${path}.\n` +
     `  this line is absent from ${path}, or no longer adjacent to the rest:\n` +
     `    ${JSON.stringify(missing)}`
   );
@@ -203,11 +206,13 @@ function readSource(path: string): string {
   return readFileSync(join(ROOT, ...path.split('/')), 'utf8');
 }
 
-const blocks = readBlocks(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
+const blocks = ['AGENTS.md', 'GAME-AUTHORING.md'].flatMap((guide) =>
+  readBlocks(readFileSync(join(ROOT, guide), 'utf8')).map((block) => ({ ...block, guide })),
+);
 const codeBlocks = blocks.filter((b) => CODE_LANGS.has(b.lang));
 const pinnedBlocks = codeBlocks
   .map((block) => ({ block, src: parseSourceMarker(block.marker) }))
-  .filter((e): e is { block: Block; src: SourceRef } => e.src !== undefined);
+  .filter((e): e is { block: (typeof blocks)[number]; src: SourceRef } => e.src !== undefined);
 
 describe('AGENTS.md templates are quotes of files the gate runs', () => {
   it('the extractor still sees the guide (anti-vacuity)', () => {
@@ -224,7 +229,7 @@ describe('AGENTS.md templates are quotes of files the gate runs', () => {
   it('every code block declares its provenance', () => {
     const unmarked = codeBlocks
       .filter((b) => parseSourceMarker(b.marker) === undefined && !isExemptMarker(b.marker))
-      .map((b) => `AGENTS.md:${b.line} (${b.lang})`);
+      .map((b) => `${b.guide}:${b.line} (${b.lang})`);
     expect(
       unmarked,
       'these code blocks carry no provenance marker on the nearest non-blank line above the\n' +
@@ -247,7 +252,7 @@ describe('AGENTS.md templates are quotes of files the gate runs', () => {
 
   it.each(
     pinnedBlocks.map((e) => ({
-      name: `AGENTS.md:${e.block.line} = ${e.src.path} (#${e.src.mode})`,
+      name: `${e.block.guide}:${e.block.line} = ${e.src.path} (#${e.src.mode})`,
       ...e,
     })),
   )('$name', ({ block, src }) => {

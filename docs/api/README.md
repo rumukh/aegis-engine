@@ -7,6 +7,8 @@ index into that surface; read it alongside [`../architecture.md`](../architectur
 
 For plugin vocabulary discovery and bounded headless observations, see the
 [Agent workbench CLI guide](./agent-workbench.md).
+For manifest-based live play, static builds and release-owner asset rights checks, see
+[Distributing a mode-based game](./game-distribution.md).
 
 The contracts are type-only: function bodies are `notImplemented()` stubs (or, where trivial and
 non-gameplay, real plumbing). Implementation sessions fill in behaviour **without changing the

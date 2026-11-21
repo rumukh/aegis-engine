@@ -300,6 +300,41 @@ describe('static-client controller polling', () => {
 });
 
 describe('bootStatic observes revisions, not displayed frames', () => {
+  it('reads only the new FIFO batch on frames; full history remains an explicit debug read', () => {
+    const { debug, session } = boot();
+    const reader = session.world.events;
+    const history = vi.spyOn(reader, 'history');
+    const started = {
+      sequence: 0,
+      type: 'probe.started',
+      tick: 0,
+      data: { nested: { value: 29 } },
+    };
+    reader.emit('first', { n: 1 });
+    reader.emit('second', { n: 2 });
+    display();
+    expect(host.receive).toHaveBeenLastCalledWith(
+      [
+        started,
+        { sequence: 1, type: 'first', tick: 0, data: { n: 1 } },
+        { sequence: 2, type: 'second', tick: 0, data: { n: 2 } },
+      ],
+      0,
+    );
+    display();
+    expect(host.receive).toHaveBeenLastCalledWith([], 0);
+    expect(history).not.toHaveBeenCalled();
+    expect(debug.events().map((e) => e.type)).toEqual(['probe.started', 'first', 'second']);
+    expect(history).toHaveBeenCalledTimes(1);
+    command('KeyR');
+    session.world.events.emit('after', {});
+    display();
+    expect(host.receive).toHaveBeenLastCalledWith(
+      [started, { sequence: 1, type: 'after', tick: 0, data: {} }],
+      1,
+    );
+  });
+
   it('captures first mount, then keeps input and presentation running without paused copies', async () => {
     const run = boot();
     expect(run.debug.tick()).toBe(-1);

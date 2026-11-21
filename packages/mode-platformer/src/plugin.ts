@@ -19,7 +19,12 @@ import type { GameMode, Schedule, World } from '@aegis/core';
 import type { ModePlugin, ViewProvider } from '@aegis/harness';
 import { PLATFORMER_COMPONENTS } from './components.js';
 import { buildCollisionGrid, emptyGrid, PlatformerCollision, PlatformerTilemap } from './level.js';
-import { PLATFORMER_SYSTEM_LIST } from './systems.js';
+import {
+  PLATFORMER_SYSTEM_LIST,
+  PLATFORM_BOARDED,
+  PLAYER_JUMPED,
+  PLAYER_LANDED,
+} from './systems.js';
 import { createPlatformerView } from './view.js';
 
 /**
@@ -55,13 +60,50 @@ export function platformerView(): ViewProvider {
 }
 
 /** Authored resource vocabulary, shared by the mode and composed game plugins. */
-export const PLATFORMER_RESOURCES = [PlatformerTilemap, PlatformerCollision] as const;
+const dimensions = {
+  width: 'nonnegative-integer',
+  height: 'nonnegative-integer',
+  tileSize: 'positive-number',
+} as const;
+export const PLATFORMER_RESOURCES = [
+  {
+    ...PlatformerTilemap,
+    schema: {
+      fields: {
+        ...dimensions,
+        legend: {
+          record: {
+            fields: {},
+            optional: { solid: 'boolean', sprite: 'string', data: { record: 'any' } },
+          },
+        },
+        layers: { array: { fields: { name: 'string', data: { array: 'string' } } } },
+      },
+      optional: { aegis: { enum: ['tilemap/1'] }, name: 'string' },
+    },
+  },
+  {
+    ...PlatformerCollision,
+    schema: {
+      fields: { ...dimensions, solid: { array: 'boolean' }, hazard: { array: 'boolean' } },
+    },
+  },
+] as const;
+
+export const PLATFORMER_INPUTS = { actions: ['Jump', 'Left', 'Right'], axes: ['MoveX'] } as const;
+export const PLATFORMER_EVENTS = {
+  [PLAYER_JUMPED]: { fields: { tick: 'number', fromGround: 'boolean' } },
+  [PLAYER_LANDED]: { fields: { tick: 'number' } },
+  [PLATFORM_BOARDED]: { fields: { name: 'string' } },
+} as const;
 
 /** The platformer mode plugin. */
 export const platformerPlugin: ModePlugin = {
   mode: 'platformer' as GameMode,
   components: () => PLATFORMER_COMPONENTS,
   resources: () => PLATFORMER_RESOURCES,
+  inputs: () => PLATFORMER_INPUTS,
+  events: () => PLATFORMER_EVENTS,
   init: platformerInit,
   systems: () => platformerSchedule(),
   view: () => platformerView(),

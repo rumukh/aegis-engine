@@ -230,7 +230,10 @@ describe('prefix-safe dev delivery', () => {
     const broken = game();
     broken.presentation = {
       assetRoot,
-      manifest: { ...manifest, hud: { playerName: 'absent', winEvent: 'won', loseEvents: [] } },
+      manifest: {
+        ...manifest,
+        hud: { playerName: 'absent', winEvent: 'player.jumped', loseEvents: [] },
+      },
     };
     expect(() => startDevServer({ games: [broken], port: 0, repoRoot })).toThrow(
       /AEG-RENDER-0004.*mesh.bin/,
@@ -265,7 +268,7 @@ describe('prefix-safe dev delivery', () => {
         assetRoot,
         manifest: {
           ...manifest,
-          hud: { playerName: 'expanded-child', winEvent: 'won', loseEvents: [] },
+          hud: { playerName: 'expanded-child', winEvent: 'player.jumped', loseEvents: [] },
         },
       };
       const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});

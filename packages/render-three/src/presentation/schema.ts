@@ -37,6 +37,8 @@ export interface Provenance {
   author: string;
   license: string;
   source: string;
+  /** An explicit upstream restriction is a veto, never a grant of rights. */
+  commercialUse?: 'restricted';
 }
 export interface AssetBase {
   id: string;
@@ -79,6 +81,15 @@ export interface SpriteSequence {
   frames: readonly string[];
   frameTicks: number;
 }
+export type ObservedMotion = 'moving' | 'stationary';
+export interface ModelStateClip {
+  /** Motion reads the bound entity's displacement between distinct world ticks, not its AI. */
+  when: StateCondition | { motion: ObservedMotion };
+  clip: string;
+  timeScale?: number;
+  /** Crossfade from the outgoing loop over this many simulation ticks on entry (default: cut). */
+  blendTicks?: number;
+}
 export type VisualSpec =
   | { kind: 'primitive'; shape: 'box' | 'plane'; material?: string }
   | {
@@ -95,7 +106,7 @@ export type VisualSpec =
       clip?: string;
       animations?: Readonly<Partial<Record<SpriteState, string>>>;
       /** First matching condition selects a looping clip; event effects still take priority. */
-      stateClips?: readonly { when: StateCondition; clip: string; timeScale?: number }[];
+      stateClips?: readonly ModelStateClip[];
     };
 export interface Pose {
   position?: Vec3;

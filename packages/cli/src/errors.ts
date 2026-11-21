@@ -60,6 +60,8 @@ export const CliCode = {
    * Refusing beats a clean exit 0 over a world whose game layer never executed.
    */
   PluginNotResolved: 'AEG-CLI-0020',
+  /** Standalone game manifest is missing required or usable project data. */
+  GameManifest: 'AEG-CLI-0021',
 } as const;
 
 /** A CLI diagnostic code value. */

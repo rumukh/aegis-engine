@@ -51,6 +51,29 @@ describe('event bus', () => {
     expect(on.contains('B')).toBe(true);
     expect(on.contains('Z')).toBe(false);
   });
+
+  it('returns detached frozen tails with log-local cursors, including on a replaced world', () => {
+    const w = createWorld({ seed: 1, recordEvents: true });
+    const { events } = w;
+    const empty = events.since(0);
+    events.emit('a', {});
+    events.emit('b', { v: [2] });
+    const tail = events.since(1);
+    events.emit('c', {});
+    expect(tail.map((e) => e.type)).toEqual(['b']);
+    expect(tail[0]).toBe(events.history()[1]);
+    expect(Object.isFrozen(tail)).toBe(true);
+    expect(Object.isFrozen((tail[0]!.data as { v: number[] }).v)).toBe(true);
+    expect(events.since(3)).toBe(empty);
+    for (const offset of [-1, 4, NaN, Infinity, 1.5])
+      expect(() => events.since(offset)).toThrow(RangeError);
+    w.restore(w.snapshot());
+    expect(() => events.since(2)).toThrow(RangeError);
+    expect(events.since(0)).toBe(empty);
+    const off = createEventBus();
+    off.emit('not recorded', {});
+    expect(off.since(0)).toEqual([]);
+  });
 });
 
 /**

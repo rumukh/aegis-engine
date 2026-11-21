@@ -48,6 +48,8 @@ export const HarnessCode = {
    * **order in the file**. Re-ordering the script would change the compiled input.
    */
   OrderSensitiveOverlap: 'AEG-HARNESS-0012',
+  UnknownAction: 'AEG-HARNESS-0013',
+  UnknownAxis: 'AEG-HARNESS-0014',
 } as const;
 
 /** A harness diagnostic code value. */

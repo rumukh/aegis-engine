@@ -13,17 +13,20 @@
  */
 import { createSchedule } from '@aegis/core';
 import type { GameMode, Schedule, World } from '@aegis/core';
-import { healthSystem } from '@aegis/content';
+import { HEALTH_EVENTS, healthSystem } from '@aegis/content';
 import type { ModePlugin, ViewProvider } from '@aegis/harness';
 import {
   platformerInit,
   platformerView,
   PLATFORMER_COMPONENTS,
+  PLATFORMER_EVENTS,
+  PLATFORMER_INPUTS,
   PLATFORMER_RESOURCES,
   PLATFORMER_SYSTEM_LIST,
 } from '@aegis/mode-platformer';
 import { COYOTE_GAP_COMPONENTS } from './components.js';
 import { COYOTE_GAP_GAME_SYSTEMS } from './systems.js';
+import { DAMAGE_TAKEN, ENEMY_KILLED, LEVEL_COMPLETED, PLAYER_DIED } from './events.js';
 
 /** Build the full Coyote Gap schedule: mode movement/collision + content health + game logic. */
 export function coyoteGapSchedule(): Schedule {
@@ -39,6 +42,15 @@ export const coyoteGapPlugin: ModePlugin = {
   mode: 'platformer' as GameMode,
   components: () => [...PLATFORMER_COMPONENTS, ...COYOTE_GAP_COMPONENTS],
   resources: () => PLATFORMER_RESOURCES,
+  inputs: () => PLATFORMER_INPUTS,
+  events: () => ({
+    ...PLATFORMER_EVENTS,
+    ...HEALTH_EVENTS,
+    [DAMAGE_TAKEN]: { fields: { amount: 'number', source: { enum: ['critter', 'hazard'] } } },
+    [ENEMY_KILLED]: { fields: { name: { nullable: 'string' }, tick: 'number' } },
+    [PLAYER_DIED]: { fields: { cause: 'string', tick: 'number' } },
+    [LEVEL_COMPLETED]: { fields: { tick: 'number' } },
+  }),
   init: (world: World): void => platformerInit(world),
   systems: () => coyoteGapSchedule(),
   view: (): ViewProvider => platformerView(),

@@ -15,8 +15,8 @@ import { loadScene, resolveRunPlugin } from './sim.js';
 const USAGE = [
   'aegis describe [scene] [options]',
   '',
-  'Discover the selected plugin, component defaults/schema facts, registered resource IDs,',
-  'prefab declarations, resolved systems and supported CLI operations. No simulation runs.',
+  'Discover the selected plugin, component facts, logical actions/axes, event payloads,',
+  'resource value schemas, prefabs, resolved systems and CLI operations. No simulation runs.',
   '',
   '  --plugin <spec>   A mode name, package, or <module>#<export> (highest precedence).',
   '  --mode <mode>     platformer | iso | fps; fallback selection or plugin-mode assertion.',

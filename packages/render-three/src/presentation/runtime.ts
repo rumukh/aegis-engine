@@ -479,9 +479,11 @@ export class PresentationRuntime {
       });
     }
     for (const [key, binding] of this.#bindings) {
-      if (this.#claimed.has(key)) continue;
-      this.#release(binding);
-      this.#bindings.delete(key);
+      if (this.#claimed.has(key)) binding.visual?.observeOrigin(world.tick, binding.origin);
+      else {
+        this.#release(binding);
+        this.#bindings.delete(key);
+      }
     }
     this.#lights.sync(world);
     this.#practicals.sync(this.#camera, this.state);
@@ -743,7 +745,16 @@ export class PresentationRuntime {
     if (!Number.isFinite(frame.tickRate) || frame.tickRate <= 0 || !Number.isFinite(frame.tick))
       throw new Error('[aegis] Presentation requires a finite tick and positive tickRate.');
     if (frame.generation !== this.#generation) {
-      if (this.#generation !== undefined) this.reset();
+      if (this.#generation !== undefined) {
+        const synced = this.#syncedTick;
+        this.reset();
+        // A fresh mirror can be synced before its first presentation frame identifies the restart.
+        if (synced === frame.tick) {
+          this.#syncedTick = synced;
+          for (const binding of this.#bindings.values())
+            binding.visual?.observeOrigin(synced, binding.origin);
+        }
+      }
       this.#generation = frame.generation;
     }
     // Paused display frames freeze, but an explicitly stepped and synchronized world does not.

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -146,6 +147,83 @@ afterEach(() => {
 });
 
 describe('static presentation assets', () => {
+  it('reviews each shipped file, not a top-level model, parent license, or the asset directory', () => {
+    const reviews = paths.map((path) => ({
+      path,
+      sha256: createHash('sha256')
+        .update(readFileSync(join(assetRoot, path)))
+        .digest('hex'),
+      commercial: 'cleared' as const,
+      reviewer: 'Fixture author',
+      evidence: 'Recorded commercial grant for these fixture bytes.',
+    }));
+    const reviewed = game({ rights: { aegis: 'asset-rights/1', files: reviews } });
+    const result = exportStaticSite({ ...options([reviewed]), release: 'commercial' });
+    const receipt = readFileSync(join(outDir, 'release.json'), 'utf8');
+    expect(JSON.parse(receipt)).toMatchObject({ aegis: 'release/1', release: 'commercial' });
+    expect(result.assetFiles).toBe(5);
+    expect(result.assets.every((a) => a.commercial === 'cleared')).toBe(true);
+    expect(receipt).not.toContain('not-declared.txt');
+
+    // A transitive mesh buffer isn't an assets[] entry. A clear review of its parent glTF
+    // (which also has the word "MIT" in provenance) must never authorize this file.
+    reviewed.rights = {
+      aegis: 'asset-rights/1',
+      files: reviews.filter((r) => r.path !== 'model/mesh.bin'),
+    };
+    expect(() => exportStaticSite({ ...options([reviewed]), release: 'commercial' })).toThrow(
+      /demo\/model\/mesh.bin is unreviewed.*Aegis tests.*authored delivery fixture/,
+    );
+    expect(readFileSync(join(outDir, 'release.json'), 'utf8')).toBe(receipt);
+    reviewed.rights = { aegis: 'asset-rights/1', files: reviews };
+    write(join(assetRoot, 'model', 'mesh.bin'), 'edit');
+    expect(() => exportStaticSite({ ...options([reviewed]), release: 'commercial' })).toThrow(
+      /model\/mesh.bin is changed/,
+    );
+    expect(readFileSync(join(outDir, 'release.json'), 'utf8')).toBe(receipt);
+    const evaluation = exportStaticSite(options([reviewed]));
+    expect(evaluation.assets.find((a) => a.path.endsWith('/mesh.bin'))?.commercial).toBe('changed');
+    expect(evaluation.release).toBe('evaluation');
+    // A later sidecar cannot silently override an upstream restriction, even with matching bytes.
+    write(join(assetRoot, 'model', 'mesh.bin'), 'mesh');
+    const restricted = game({
+      ...reviewed,
+      presentation: {
+        assetRoot,
+        manifest: {
+          ...manifest,
+          assets: manifest.assets!.map((asset) =>
+            asset.id === 'rig'
+              ? {
+                  ...asset,
+                  provenance: { ...asset.provenance, commercialUse: 'restricted' },
+                }
+              : asset,
+          ),
+        },
+      },
+    });
+    expect(() => exportStaticSite({ ...options([restricted]), release: 'commercial' })).toThrow(
+      /rig\.gltf is restricted/,
+    );
+  });
+
+  it('rejects malformed or ambiguous reviews instead of granting permission', () => {
+    const row = {
+      path: 'image.svg',
+      commercial: 'cleared' as const,
+      sha256: '1'.repeat(64),
+      reviewer: 'Fixture author',
+      evidence: 'Grant 1',
+    };
+    const exportWith = (files: (typeof row)[]) =>
+      exportStaticSite({
+        ...options([game({ rights: { aegis: 'asset-rights/1', files } })]),
+        release: 'commercial',
+      });
+    expect(() => exportWith([{ ...row, evidence: '' }])).toThrow(/Invalid asset review/);
+    expect(() => exportWith([row, { ...row, path: 'Image.svg' }])).toThrow(/duplicate review/);
+  });
   it('copies the exact prepared closure and reports public file/byte/digest/provenance inventory', () => {
     sentinel();
     const result = exportStaticSite(options());
@@ -355,7 +433,7 @@ describe('shared generated chrome and safe metadata', () => {
     const staticGame = game();
     const devGame: GameDefinition = {
       ...staticGame,
-      plugin: platformerPlugin,
+      plugin: { ...platformerPlugin, events: () => ({ won: null, lost: null }) },
       scene,
     };
     const devPage = renderPlayPage(devGame);

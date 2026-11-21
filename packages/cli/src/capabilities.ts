@@ -6,7 +6,7 @@
 import { canonicalStringify, SYSTEM_PHASES } from '@aegis/core';
 import type { ComponentType, GameMode } from '@aegis/core';
 import { componentFields, componentSchema, isDescribedId } from '@aegis/content';
-import type { ComponentSchema, FieldKind } from '@aegis/content';
+import type { ComponentSchema, FieldKind, ValueSchema } from '@aegis/content';
 import { createSceneContext } from '@aegis/harness';
 import { GLOBAL_FLAGS } from './args.js';
 import type { Command } from './command.js';
@@ -132,10 +132,10 @@ const LIMITS = [
   'These are content validation facts, not a complete JSON Schema. Undeclared ranges, string unions, references and runtime requirements cannot be inferred.',
   'Component data must be an object and all authored values must be serialisable. Array elements, empty nested default objects and optional object/array contents have no shape constraints beyond serialisability.',
   'Top-level component fields may be omitted. Authored nonempty nested default objects must contain every declared key; they replace the default object rather than deep-merging.',
-  'Resource declarations constrain IDs, not value schemas. Mode initialization may impose additional requirements.',
+  'Resource values are checked only against explicit schemas. A null schema means ID-only registration; mode initialization may impose additional requirements.',
   'Prefab catalog entries are declarations, not expanded or validated instances. Describing a scene selects its plugin; it does not validate that scene.',
   'Plugin modules and declaration/default factories are executed. No world is created; init, system run functions and view providers are not called.',
-  'Available input actions, emitted events and scene-specific view availability are not declared by ModePlugin and are not inferred from source code.',
+  'Null input channels or event inventories mean undeclared, not empty. Event payloads describe possible emissions, not a guarantee that a particular run emits them.',
 ] as const;
 
 /** Build deterministic, versioned discovery data from a real selected plugin and CLI registry. */
@@ -147,6 +147,8 @@ export function describeCapabilities(
 ) {
   const { plugin } = resolved;
   const context = createSceneContext(plugin);
+  const inputs = plugin.inputs?.();
+  const events = plugin.events?.();
   const components = context.registry.ids().map((id) => {
     const type = context.registry.get(id);
     if (type === undefined) {
@@ -186,10 +188,25 @@ export function describeCapabilities(
       ...(resolved.configFile !== undefined ? { configFile: resolved.configFile } : {}),
     },
     components,
+    inputs: {
+      actions: inputs?.actions === undefined ? null : [...new Set(inputs.actions)].sort(),
+      axes: inputs?.axes === undefined ? null : [...new Set(inputs.axes)].sort(),
+    },
+    events:
+      events === undefined
+        ? null
+        : Object.fromEntries<ValueSchema | null>(
+            Object.entries(events).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+          ),
     resources: {
       ids: context.resources.ids(),
       declared: plugin.resources !== undefined,
-      valueSchemas: null,
+      valueSchemas:
+        plugin.resources === undefined
+          ? null
+          : Object.fromEntries(
+              context.resources.ids().map((id) => [id, context.resources.schema?.(id) ?? null]),
+            ),
     },
     prefabs: { declared: plugin.prefabs !== undefined, expanded: false, catalog },
     systems: {
@@ -245,8 +262,20 @@ export function formatCapabilities(
     }
   }
   lines.push(
-    `resources: ${description.resources.ids.length} registered ID(s); value schemas unavailable`,
-    ...description.resources.ids.map((id) => `  ${id}`),
+    ...(['actions', 'axes'] as const).map((key) => {
+      const names = description.inputs[key];
+      return `${key}: ${names === null ? '(undeclared)' : names.join(', ') || '(none)'}`;
+    }),
+    `events: ${description.events === null ? '(undeclared)' : `${Object.keys(description.events).length} declared`}`,
+    ...Object.entries(description.events ?? {}).map(
+      ([name, schema]) =>
+        `  ${name}: ${schema === null ? '(undeclared payload)' : canonicalStringify(schema)}`,
+    ),
+    `resources: ${description.resources.declared ? `${description.resources.ids.length} registered ID(s)` : '(undeclared)'}`,
+    ...description.resources.ids.map(
+      (id) =>
+        `  ${id}: ${description.resources.valueSchemas?.[id] == null ? '(ID only)' : canonicalStringify(description.resources.valueSchemas[id])}`,
+    ),
     `prefabs: ${description.prefabs.catalog.length} catalog declaration(s); not expanded`,
     ...description.prefabs.catalog.map((prefab) => `  ${canonicalStringify(prefab)}`),
     `systems: ${description.systems.order.length} in resolved execution order`,

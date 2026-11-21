@@ -237,19 +237,21 @@ npx aegis describe games\iso\levels\server-vault.scene.json --json
 
 The versioned `capabilities/1` response exposes actual plugin declarations and supported CLI
 operations. It does not create a world or run game systems. Unknown facts remain explicitly
-unavailable: for example, resource value schemas and complete action/event inventories are
-not inferred from arbitrary gameplay code.
+unavailable: `inputs`, `events` and `resources.valueSchemas` report what the selected plugin
+declares, never guesses from arbitrary gameplay code. For a copyable, tested scaffold-to-test
+loop, start at [AGENTS.md](AGENTS.md).
 
 ### 2. Validate authored content
 
 ```powershell
 npx aegis validate games\platformer\levels\coyote-gap.scene.json --json
+npx aegis validate games\platformer\play\coyote-gap.input --json
 npx aegis validate poc\previews\asset-studies.presentation.json --json
 ```
 
-Scene validation checks the selected game's vocabulary. Presentation validation is
-**structural**: it does not prove that every referenced file decodes or that a game entity
-exists. Asset preparation and rendering provide those separate observations.
+Scene and script validation check the selected game's vocabulary. Presentation validation is
+**structural by default**; `--game-context` also checks declared event names and audio payload
+predicates. Neither proves that a referenced file decodes or a named entity exists.
 
 ### 3. Inspect the state you actually need
 

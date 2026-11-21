@@ -7,6 +7,7 @@ export * from './scene.js';
 export * from './diagnostics.js';
 export * from './registry.js';
 export * from './schema.js';
+export * from './value-schema.js';
 export * from './load.js';
 export * from './builder.js';
 export * from './components/visual.js';

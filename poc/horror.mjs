@@ -82,6 +82,7 @@ const infestationProvenance = {
   source: 'games/horror/assets/source/horror-pass.recipe.json',
 };
 const trellisMonsterProvenance = {
+  commercialUse: 'restricted',
   author:
     'Aegis contributors using local Microsoft TRELLIS and asset-specific Blender character production',
   license:
@@ -232,6 +233,11 @@ export const horrorPresentation = {
               clip: 'Idle',
             },
             {
+              when: { motion: 'stationary' },
+              clip: 'Search',
+              blendTicks: 8,
+            },
+            {
               when: {
                 entity: 'responder',
                 component: 'HorrorThreat',
@@ -250,15 +256,6 @@ export const horrorPresentation = {
               },
               clip: 'Stalk',
               timeScale: 3.64375,
-            },
-            {
-              when: {
-                entity: 'responder',
-                component: 'HorrorThreat',
-                field: 'path.length',
-                equals: 0,
-              },
-              clip: 'Search',
             },
             {
               when: {
@@ -405,6 +402,9 @@ export const horrorPresentation = {
 
 export const horror = {
   id: 'horror',
+  rights: JSON.parse(
+    readFileSync(new URL('../games/horror/assets/asset-rights.json', import.meta.url), 'utf8'),
+  ),
   title: 'NULL MERIDIAN',
   blurb: 'An abandoned orbital facility. A rescue signal that should have stopped.',
   objective:

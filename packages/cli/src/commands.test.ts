@@ -292,6 +292,49 @@ describe('aegis validate', () => {
 });
 
 describe('aegis record / replay', () => {
+  it('verifies opt-in evidence and rejects a missing event even when every state hash matched', async () => {
+    const dir = makeDir();
+    expect(
+      (
+        await cli(
+          ['record', 'level.scene.json', '--out', 'detail.json', '--ticks', '4', '--explain'],
+          dir,
+        )
+      ).code,
+    ).toBe(0);
+    const replay = () => cli(['replay', 'detail.json', '--json'], dir);
+    expect(JSON.parse((await replay()).out)).toMatchObject({
+      verified: true,
+      details: { status: 'matched' },
+    });
+    const path = join(dir, 'detail.json');
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    saved.evidence.frames[2].events.push({ tick: 1, type: 'missing', data: { alarm: true } });
+    writeFileSync(path, JSON.stringify(saved));
+    const failure = await replay();
+    expect(failure.code).toBe(1);
+    expect(JSON.parse(failure.out)).toMatchObject({
+      match: true,
+      verified: false,
+      firstDivergentTick: 1,
+      details: {
+        status: 'diverged',
+        fields: { total: 0 },
+        events: { expected: { entries: [{ type: 'missing' }] } },
+      },
+    });
+    const diagnostic = await cli(['replay', 'detail.json', '--no-verify'], dir);
+    expect(diagnostic.code).toBe(0);
+    expect(diagnostic.out).toContain('First divergence at tick 1');
+    expect(diagnostic.out).toContain('"missing"@1');
+    delete saved.evidence;
+    writeFileSync(path, JSON.stringify(saved));
+    expect(JSON.parse((await replay()).out)).toMatchObject({
+      verified: true,
+      details: { reason: 'hash-only-recording' },
+    });
+  });
+
   it('reproduces the three-tick Coyote Gap recording at 30 Hz with no replay override', async () => {
     const dir = makeDir();
     const coyote = join(

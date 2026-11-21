@@ -1,0 +1,12 @@
+{
+  "aegis": "asset-rights/1",
+  "files": [
+    {
+      "path": "imported/responder-trellis/model/responder.glb",
+      "sha256": "848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7",
+      "commercial": "restricted",
+      "reviewer": "Aegis project — Cable Warden cook-v4 approval, 2026-09-25",
+      "evidence": "games/horror/assets/source/trellis-monster/approval.json retains research/evaluation-only licensing; games/horror/assets/imported/responder-trellis/import.json identifies the shipped bytes and restricted toolchain."
+    }
+  ]
+}

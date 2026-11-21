@@ -8,7 +8,7 @@
  * read back from disk by an instrument that shares nothing with it.
  *
  * "Shares nothing" is the load-bearing part, and it is deliberate down to the mechanism. The
- * exporter finds import specifiers with anchored regular expressions; this file finds them by
+ * exporter finds import specifiers with an ESM lexer; this file finds them by
  * parsing each module with the TypeScript compiler's parser and walking `ImportDeclaration` /
  * `ExportDeclaration` nodes. It resolves bare specifiers through the **import map the page itself
  * carries**, not through the exporter's module table. Two detectors that share a mechanism cannot
@@ -236,6 +236,42 @@ const PLAY_PAGES = [
 ] as const;
 
 describe('the exported site is a real artifact (anti-vacuity)', () => {
+  it('labels evaluation honestly and blocks commercial against the actual shipped Cable Warden', async () => {
+    const receipt = readSite('release.json');
+    const path = 'assets/horror/imported/responder-trellis/model/responder.glb';
+    expect(JSON.parse(receipt)).toMatchObject({
+      release: 'evaluation',
+      assets: expect.arrayContaining([
+        expect.objectContaining({
+          path,
+          commercial: 'restricted',
+          sha256: '848b13514963215faabff6d93839b088dc24c39064184a399313a8dabef667b7',
+          provenance: expect.objectContaining({
+            license: expect.stringContaining('Research/evaluation'),
+          }),
+          evidence: expect.stringContaining('approval.json'),
+        }),
+      ]),
+    });
+    expect(siteFiles).toContain(path);
+    expect(readSite('index.html')).toContain('Evaluation build');
+    await expect(
+      run(
+        process.execPath,
+        [join('poc', 'build-site.mjs'), '--out', siteDir, '--release', 'commercial'],
+        {
+          cwd: REPO_ROOT,
+          maxBuffer: 4 * 1024 * 1024,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringMatching(
+        /AEG-RENDER-0008: Commercial export blocked: horror\/imported\/responder-trellis\/model\/responder\.glb is restricted\..*Research\/evaluation.*approval\.json/,
+      ),
+    });
+    expect(readFileSync(join(siteDir, 'release.json'), 'utf8')).toBe(receipt);
+  });
   it('was built, and is not a handful of files', () => {
     // Every check below is "no member of a corpus has a property", which an empty corpus satisfies
     // perfectly. A build that silently produced three files would pass all of them.
@@ -445,7 +481,7 @@ describe('the pages run the games this repository actually ships', () => {
       ['horror', '@aegis/game-horror', 'nullMeridianPlugin'],
     ]) {
       const boot = readSite(`play/${id}/boot.js`);
-      expect(boot).toContain(`import { ${exportName} } from '${specifier}';`);
+      expect(boot).toContain(`import { ${exportName} as selectedPlugin } from '${specifier}';`);
       expect(importedSpecifiers(`play/${id}/boot.js`, boot)).toContain(specifier);
     }
   });

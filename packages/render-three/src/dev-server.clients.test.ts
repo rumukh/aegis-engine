@@ -215,6 +215,34 @@ describe('shared live host browser clients', () => {
     expect((await frame('two', 3)).events).toEqual([]);
   });
 
+  it('restores a cold page and independent named cursors across a generation change', async () => {
+    const host = await start();
+    await frame('one', 1);
+    const reader = host.session('test')!.world.events;
+    reader.emit('open', { id: 1 });
+    reader.emit('open', { id: 2 });
+    const batch = (await frame('one', 2)).events;
+    expect(batch.map((e) => e.sequence)).toEqual([0, 1]);
+    const cold = await frame('reconnected', 1, false, {}, null);
+    expect(cold.eventHistory).toEqual(batch);
+    expect(cold.events).toEqual(batch);
+    expect((await frame('one', 3)).events).toEqual([]);
+    await fetch(`${host.url}/api/test/control`, {
+      method: 'POST',
+      body: JSON.stringify({ command: 'restart' }),
+    });
+    host.session('test')!.world.events.emit('new', null);
+    for (const id of ['one', 'reconnected']) {
+      const changed = await frame(id, 4);
+      expect(changed.generation).toBe(1);
+      expect(changed.eventHistory).toEqual([{ sequence: 0, type: 'new', tick: 0, data: null }]);
+      expect(changed.events).toEqual(changed.eventHistory);
+      const warm = await frame(id, 5, false, {}, 1);
+      expect(warm.events).toEqual([]);
+      expect(warm.eventHistory).toBeUndefined();
+    }
+  });
+
   it('rejects stale and cross-generation claims and preserves paused restart', async () => {
     const host = await start();
     await frame('one', 10, true, { Forward: 1 });

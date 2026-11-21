@@ -5,9 +5,18 @@
  * interface, never on a concrete mode.
  * @packageDocumentation
  */
-import type { ComponentType, GameMode, ResourceType, Schedule, World } from '@aegis/core';
-import type { PrefabFile } from '@aegis/content';
+import type { ComponentType, GameMode, Schedule, World } from '@aegis/core';
+import type { PrefabFile, ResourceDeclaration, ValueSchema } from '@aegis/content';
 import type { ViewProvider } from './view.js';
+
+/** Omit a channel when its vocabulary is unknown; [] declares that no names are accepted. */
+export interface InputVocabulary {
+  readonly actions?: readonly string[];
+  readonly axes?: readonly string[];
+}
+
+/** Event name to payload schema. null acknowledges an event without promising a payload shape. */
+export type EventContracts = Readonly<Record<string, ValueSchema | null>>;
 
 /** Everything a mode contributes to a simulation. */
 export interface ModePlugin {
@@ -24,7 +33,11 @@ export interface ModePlugin {
    * legacy callers may instead supply an explicit resource registry to the bootstrap/run.
    * Runtime resources created by systems do not need registration to be stored in a World.
    */
-  resources?(): readonly (ResourceType<unknown> | string)[];
+  resources?(): readonly ResourceDeclaration[];
+  /** Logical channels used by hold/press/release/axis. Pointer and look are native DSL inputs. */
+  inputs?(): InputVocabulary;
+  /** Simulation event names and payloads. Omission means unknown; {} declares no events. */
+  events?(): EventContracts;
   /**
    * Reusable prefab documents, keyed by unique `name`. Available to every run path, including
    * CLI and live sessions. A caller-supplied PrefabResolver takes precedence over this catalog.

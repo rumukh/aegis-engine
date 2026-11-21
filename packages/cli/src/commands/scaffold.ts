@@ -43,8 +43,8 @@ const USAGE = [
   '',
   '  <kind>            game | scene | tilemap | test | prefab.',
   '                    "game" writes aegis.json + a scene (with its tilemap embedded under',
-  '                    resources) + an input script + a starter GameTest into <name>/, ready',
-  '                    for: aegis validate / run / test.',
+  '                    resources) + presentation + input script + starter GameTest into <name>/,',
+  '                    ready for: aegis validate / run / test / play / export.',
   '  --mode <mode>     platformer | iso | fps (default: platformer).',
   '  --out <dir>       Base directory to write into (default: cwd).',
   '  --force           Overwrite existing files.',
@@ -349,7 +349,7 @@ function assertionsFor(mode: GameMode): string[] {
  * and do fail the test, but the harness cannot see them, so it cannot tell you what was verified.
  * A template that used only those would teach every scaffolded game to be invisible to the audit.
  */
-function testDoc(name: string, mode: GameMode, sceneRel: string): string {
+function testDoc(name: string, mode: GameMode, sceneRel: string, fromManifest = false): string {
   const pkg = `@aegis/mode-${mode}`;
   const modePlugin = `${mode}Plugin`;
   return [
@@ -371,6 +371,7 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
     `// Once your game ships its own composed ModePlugin, replace the whole block with an import`,
     `// of it (or name './dist/${name}.js#${pluginIdent(name)}' for the CLI to resolve).`,
     `import { fileURLToPath } from 'node:url';`,
+    ...(fromManifest ? [`import { readFileSync } from 'node:fs';`] : []),
     ``,
     `const plugin = await import('${pkg}').then(`,
     `  (m) => m.${modePlugin},`,
@@ -382,7 +383,12 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
     `  },`,
     `);`,
     ``,
-    `const scene = fileURLToPath(new URL('./${sceneRel}', import.meta.url));`,
+    ...(fromManifest
+      ? [
+          `const manifest = JSON.parse(readFileSync(new URL('./aegis.json', import.meta.url), 'utf8'));`,
+          `const scene = fileURLToPath(new URL(manifest.scene, import.meta.url));`,
+        ]
+      : [`const scene = fileURLToPath(new URL('./${sceneRel}', import.meta.url));`]),
     ``,
     `export default {`,
     `  name: '${name} plays for ${TICKS} ticks',`,
@@ -391,10 +397,12 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
     `  seed: 1,`,
     `  // captureHistory lets assertInvariant re-check every tick, not just the last one.`,
     `  options: { plugin, captureHistory: true },`,
-    `  input: \`${inputDoc(mode)
-      .split('\n')
-      .filter((l) => l.length > 0 && !l.startsWith('#'))
-      .join('\\n')}\`,`,
+    fromManifest
+      ? `  input: readFileSync(new URL(manifest.input, import.meta.url), 'utf8'),`
+      : `  input: \`${inputDoc(mode)
+          .split('\n')
+          .filter((l) => l.length > 0 && !l.startsWith('#'))
+          .join('\\n')}\`,`,
     `  expect(result) {`,
     ...assertionsFor(mode),
     `  },`,
@@ -414,6 +422,10 @@ function testDoc(name: string, mode: GameMode, sceneRel: string): string {
  */
 function configDoc(name: string, mode: GameMode): string {
   return doc({
+    id: name,
+    scene: `./${name}.scene.json`,
+    presentation: `./${name}.presentation.json`,
+    input: `./${name}.input`,
     plugin: mode,
     tests: [`./${name}.gametest.mjs`],
     $note: `Replace "plugin" with "./dist/${name}.js#${pluginIdent(name)}" once this game ships its own composed ModePlugin, and point "tests" at wherever its GameTests end up. 'aegis run/inspect/record/replay' resolve the plugin automatically for any scene in this directory, and 'aegis test' picks up the declared tests wherever they live.`,
@@ -442,7 +454,17 @@ function artifactsFor(kind: Kind, name: string, mode: GameMode): Artifact[] {
         { rel: `${name}/aegis.json`, content: configDoc(name, mode) },
         { rel: `${name}/${name}.scene.json`, content: sceneDoc(name, mode) },
         { rel: `${name}/${name}.input`, content: inputDoc(mode) },
-        { rel: `${name}/${name}.gametest.mjs`, content: testDoc(name, mode, `${name}.scene.json`) },
+        {
+          rel: `${name}/${name}.presentation.json`,
+          content: doc({
+            aegis: 'presentation/1',
+            ui: { eyebrow: `${name} · ${mode}`, accent: '#68d7bc' },
+          }),
+        },
+        {
+          rel: `${name}/${name}.gametest.mjs`,
+          content: testDoc(name, mode, `${name}.scene.json`, true),
+        },
       ];
     case 'scene':
       return [{ rel: `${name}.scene.json`, content: sceneDoc(name, mode) }];
@@ -509,6 +531,11 @@ export const scaffoldCommand: Command = {
       });
     }
     const name = requirePositional(args, 1, 'name', 'aegis scaffold <kind> <name>');
+    if (kind === 'game' && !/^[A-Za-z0-9_-]+$/.test(name))
+      throw new AegisCliError(
+        CliCode.InvalidFlagValue,
+        'A game name must be a URL slug (letters, digits, "_" or "-").',
+      );
     const mode = flagChoice(args, 'mode', GAME_MODES, 'platformer');
     const baseDir = resolvePath(io, flagString(args, 'out') ?? '.');
 
@@ -525,6 +552,8 @@ export const scaffoldCommand: Command = {
               `  aegis validate ${name}/${name}.scene.json`,
               `  aegis run ${name}/${name}.scene.json --ticks ${TICKS} --input ${name}/${name}.input --ascii`,
               `  aegis test "${name}/*.gametest.mjs"`,
+              `  aegis play ${name}`,
+              `  aegis export ${name}`,
             ]
           : [];
       io.out(

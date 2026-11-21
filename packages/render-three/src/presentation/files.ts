@@ -8,6 +8,7 @@ import { extname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { DiagnosticError } from '@aegis/core';
 import type { Diagnostic } from '@aegis/core';
 import type { EntityDecl, SceneFile } from '@aegis/content';
+import type { EventContracts } from '@aegis/harness';
 import { isAssetPath, renderDiagnostic, RenderCode } from './diagnostics.js';
 import { PRESENTATION_LIMITS } from './schema.js';
 import type { PresentationManifest, PresentationSource, Provenance } from './schema.js';
@@ -158,8 +159,9 @@ function checkScene(manifest: PresentationManifest, scene: SceneFile): readonly 
 export function preparePresentation(
   source: PresentationSource,
   scene?: SceneFile,
+  events?: EventContracts,
 ): PreparedPresentation {
-  const validated = validatePresentation(source.manifest);
+  const validated = validatePresentation(source.manifest, undefined, events);
   if (!validated.ok || validated.value === undefined)
     throw new DiagnosticError(validated.diagnostics);
   const manifest = structuredClone(validated.value);
@@ -196,7 +198,8 @@ export function preparePresentation(
       previous !== undefined &&
       (previous.author !== asset.provenance.author ||
         previous.license !== asset.provenance.license ||
-        previous.source !== asset.provenance.source)
+        previous.source !== asset.provenance.source ||
+        previous.commercialUse !== asset.provenance.commercialUse)
     )
       fail(
         RenderCode.Reference,

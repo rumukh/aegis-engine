@@ -121,7 +121,7 @@ describe('aegis validate presentation/1: built CLI', () => {
     );
   });
 
-  it('does not import a nearby or explicitly selected game plugin for presentation validation', () => {
+  it('does not import a nearby or explicitly selected game plugin for structural-only validation', () => {
     const dir = fixture();
     writeDocument(dir, 'look.json', MANIFEST);
     writeDocument(dir, 'aegis.json', { plugin: './must-not-run.mjs#plugin' });
@@ -136,6 +136,102 @@ describe('aegis validate presentation/1: built CLI', () => {
       expect(report.files[0]?.plugin).toBeUndefined();
       expect(report.files[0]?.validation?.notChecked).toContain('initialized-world-bindings');
     }
+  });
+
+  it('checks trusted game event/field bindings only on request, with file paths and suggested repairs', () => {
+    const dir = fixture();
+    writeDocument(dir, 'aegis.json', { plugin: '@aegis/game-horror#nullMeridianPlugin' });
+    const file = 'watch.json';
+    const manifest: PresentationManifest = {
+      aegis: 'presentation/1',
+      hud: {
+        playerName: 'player',
+        winEvent: 'level.completed',
+        loseEvents: ['player.died'],
+        steps: [{ id: 'power', label: 'Restore power', event: 'horror.power.restored' }],
+      },
+      audio: {
+        cues: [
+          {
+            event: 'horror.player.step',
+            when: { field: 'position.x', equals: 1 },
+            caption: { text: 'Footstep' },
+          },
+        ],
+      },
+      effects: [
+        {
+          event: 'horror.flashlight.changed',
+          kind: 'pulse',
+          target: { entity: 'player' },
+          durationTicks: 3,
+        },
+      ],
+    };
+    const check = (value: unknown, code: number) => {
+      writeDocument(dir, file, value);
+      const result = cli(['validate', file, '--game-context', '--json'], dir);
+      expect(result.code, result.err || result.out).toBe(code);
+      return (JSON.parse(result.out) as Report).files[0]!;
+    };
+    expect(check(manifest, 0)).toMatchObject({
+      validation: { scope: 'structural-and-declared-events', eventsDeclared: true },
+      diagnostics: [],
+    });
+    const diagnostics = check(
+      {
+        ...manifest,
+        hud: {
+          playerName: 'player',
+          winEvent: 'level.complteed',
+          loseEvents: ['player.dide'],
+          steps: [{ id: 'power', label: 'Power', event: 'horror.power.restroed' }],
+        },
+        audio: {
+          cues: [
+            { event: 'horror.player.stpe', caption: { text: 'x' } },
+            {
+              event: 'horror.player.step',
+              caption: { text: 'x' },
+              when: { field: 'posiiton.x', equals: 1 },
+            },
+            {
+              event: 'horror.player.step',
+              caption: { text: 'x' },
+              when: { field: 'style', equals: 'sprnit' },
+            },
+            {
+              event: 'horror.player.step',
+              caption: { text: 'x' },
+              when: { field: 'position.z', equals: 'one' },
+            },
+          ],
+        },
+        effects: [{ ...manifest.effects![0], event: 'horror.flashlgiht.changed' }],
+      },
+      2,
+    ).diagnostics;
+    for (const [path, suggestion] of [
+      ['effects[0].event', 'horror.flashlight.changed'],
+      ['hud.winEvent', 'level.completed'],
+      ['hud.loseEvents[0]', 'player.died'],
+      ['hud.steps[0].event', 'horror.power.restored'],
+      ['audio.cues[0].event', 'horror.player.step'],
+      ['audio.cues[1].when.field', 'position'],
+      ['audio.cues[2].when.equals', 'sprint'],
+    ] as const) {
+      expect(diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: 'AEG-RENDER-0007',
+          location: { file, path },
+          fix: expect.stringContaining(suggestion),
+        }),
+      );
+    }
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ location: { file, path: 'audio.cues[3].when.equals' } }),
+    );
+    expect(cli(['validate', file], dir).code).toBe(0); // Structurally valid; game bindings are the only errors.
   });
 
   it.each([
@@ -316,7 +412,7 @@ describe('aegis validate presentation/1: built CLI', () => {
     const data = JSON.parse(result.out) as CapabilityDescription;
     const validation = data.operations.commands.find((command) => command.name === 'validate');
     expect(validation?.formats).toEqual({
-      reads: ['scene/1', 'prefab/1', 'tilemap/1', 'presentation/1'],
+      reads: ['scene/1', 'prefab/1', 'tilemap/1', 'presentation/1', 'input-script'],
       writes: [],
       stdout: ['text', 'json'],
     });
@@ -324,6 +420,7 @@ describe('aegis validate presentation/1: built CLI', () => {
     expect(validation?.usage).toContain('initialized-world bindings are NOT checked');
     expect(validation?.flags).toEqual({
       h: 'boolean',
+      'game-context': 'boolean',
       help: 'boolean',
       json: 'boolean',
       mode: 'value',

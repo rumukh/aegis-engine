@@ -14,7 +14,7 @@ must be new. Remove `--dry-run` to publish the checked package. An existing file
 directory, symlink or junction is refused, including an empty directory.
 There is deliberately no `--force`; import another revision instead.
 
-The required provenance JSON contains exactly three nonempty strings:
+The required provenance JSON contains three nonempty strings:
 
 ```json
 {
@@ -24,6 +24,9 @@ The required provenance JSON contains exactly three nonempty strings:
 }
 ```
 
+An optional `"commercialUse": "restricted"` field records an upstream veto. Import preserves
+it in the descriptor and receipt; it cannot grant permission. See the
+[commercial export preflight](game-distribution.md#release-preflight-media-not-legal-clearance).
 Provenance is a declaration, not legal verification. Do not pass a full local
 generation log as this document or copy private host paths into a public source
 reference. For generated content, retain input rights, model/code/settings and

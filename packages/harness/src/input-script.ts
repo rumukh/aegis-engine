@@ -48,7 +48,9 @@
  * @packageDocumentation
  */
 import type { Diagnostic, InputFrame, PointerInput, SourceLocation, Validated } from '@aegis/core';
+import { suggestName } from '@aegis/core';
 import { diagnostic, HarnessCode } from './diagnostics.js';
+import type { InputVocabulary } from './plugin.js';
 
 /** Inclusive-start, exclusive-end tick span. `@t` parses to `{ start: t, end: t + 1 }`. */
 export interface TickSpan {
@@ -65,6 +67,8 @@ export interface TickSpan {
 interface Located {
   /** 1-based line/column of the statement in the original script text. */
   at?: SourceLocation;
+  /** Column of the action/axis token (not the verb), when parsed from text. */
+  nameColumn?: number;
 }
 
 /** Hold a digital action across a span. */
@@ -332,8 +336,49 @@ function checkArity(
   return true;
 }
 
-/** Parse input-script `text` into an {@link InputScript}, reporting syntax errors as diagnostics. */
-export function parseInputScript(text: string): Validated<InputScript> {
+/** Check only named DSL inputs. Omitted channels are unknown, not an empty vocabulary. */
+export function validateInputVocabulary(
+  commands: readonly InputCommand[],
+  vocabulary?: InputVocabulary,
+  file?: string,
+): Diagnostic[] {
+  if (vocabulary === undefined) return [];
+  const diagnostics: Diagnostic[] = [];
+  commands.forEach((cmd, index) => {
+    if (!('action' in cmd || 'axis' in cmd)) return;
+    const axis = cmd.kind === 'axis';
+    const name = axis ? cmd.axis : cmd.action;
+    const known = axis ? vocabulary.axes : vocabulary.actions;
+    if (known === undefined || known.includes(name)) return;
+    const kind = axis ? 'axis' : 'action';
+    const suggestion = suggestName(name, known);
+    diagnostics.push(
+      diagnostic(
+        axis ? HarnessCode.UnknownAxis : HarnessCode.UnknownAction,
+        `Unknown ${kind} "${name}" in "${cmd.kind}".`,
+        {
+          location: {
+            ...(cmd.at ?? { path: `commands[${index}].${kind}` }),
+            ...(cmd.nameColumn !== undefined ? { column: cmd.nameColumn } : {}),
+            ...(file !== undefined ? { file } : {}),
+          },
+          fix: suggestion
+            ? `Use "${suggestion}".`
+            : `Declared ${axis ? 'axes' : 'actions'}: ${known.join(', ') || '(none)'}.`,
+          data: { name, kind, ...(suggestion ? { suggestion } : {}) },
+        },
+      ),
+    );
+  });
+  return diagnostics;
+}
+
+/** Parse a script, optionally checking its names against the selected plugin before compiling. */
+export function parseInputScript(
+  text: string,
+  vocabulary?: InputVocabulary,
+  file?: string,
+): Validated<InputScript> {
   const diags: Diagnostic[] = [];
   const commands: InputCommand[] = [];
   const lines = text.split(/\r?\n/);
@@ -352,14 +397,27 @@ export function parseInputScript(text: string): Validated<InputScript> {
       case 'hold': {
         if (!checkArity(tokens, 2, 'hold', lineNo, 'hold <Action> <a>..<b>', diags)) return;
         const span = parseSpan(tokens[2]!, lineNo, diags);
-        if (span) commands.push({ kind: 'hold', action: tokens[1]!.text, span, at });
+        if (span)
+          commands.push({
+            kind: 'hold',
+            action: tokens[1]!.text,
+            nameColumn: tokens[1]!.column,
+            span,
+            at,
+          });
         return;
       }
       case 'press': {
         if (!checkArity(tokens, 2, 'press', lineNo, 'press <Action> @<t>', diags)) return;
         const t = parseAt(tokens[2]!, lineNo, diags);
         if (t !== undefined) {
-          commands.push({ kind: 'press', action: tokens[1]!.text, tick: t, at });
+          commands.push({
+            kind: 'press',
+            action: tokens[1]!.text,
+            nameColumn: tokens[1]!.column,
+            tick: t,
+            at,
+          });
         }
         return;
       }
@@ -367,7 +425,13 @@ export function parseInputScript(text: string): Validated<InputScript> {
         if (!checkArity(tokens, 2, 'release', lineNo, 'release <Action> @<t>', diags)) return;
         const t = parseAt(tokens[2]!, lineNo, diags);
         if (t !== undefined) {
-          commands.push({ kind: 'release', action: tokens[1]!.text, tick: t, at });
+          commands.push({
+            kind: 'release',
+            action: tokens[1]!.text,
+            nameColumn: tokens[1]!.column,
+            tick: t,
+            at,
+          });
         }
         return;
       }
@@ -376,7 +440,14 @@ export function parseInputScript(text: string): Validated<InputScript> {
         const value = parseNum(tokens[2]!, lineNo, diags);
         const span = parseSpan(tokens[3]!, lineNo, diags);
         if (value !== undefined && span) {
-          commands.push({ kind: 'axis', axis: tokens[1]!.text, value, span, at });
+          commands.push({
+            kind: 'axis',
+            axis: tokens[1]!.text,
+            nameColumn: tokens[1]!.column,
+            value,
+            span,
+            at,
+          });
         }
         return;
       }
@@ -429,9 +500,11 @@ export function parseInputScript(text: string): Validated<InputScript> {
     }
   });
 
+  diags.push(...validateInputVocabulary(commands, vocabulary, file));
   const hasError = diags.some((d) => d.severity === 'error');
+  if (!hasError) diags.push(...orderSensitivityDiagnostics(commands));
+  if (file !== undefined) for (const d of diags) d.location = { ...d.location, file };
   if (hasError) return { ok: false, diagnostics: diags };
-  diags.push(...orderSensitivityDiagnostics(commands));
   return { ok: true, value: scriptFromCommands(commands), diagnostics: diags };
 }
 

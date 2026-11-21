@@ -12,7 +12,9 @@ import { entityGeneration, entityIndex, makeEntity, NULL_ENTITY } from './entity
 import { MAX_ENTITY_GENERATION } from './entity.js';
 import { createEventBus } from './events.js';
 import { createPrng } from './prng.js';
-import { hashSnapshot } from './hash.js';
+import { hashString } from './hash.js';
+import { encodedRecord, worldValueEncoder } from './world-hash.js';
+import { canonicalStringify } from './serialize.js';
 import { CoreDiagnosticCode } from './codes.js';
 import {
   assertSerialisable,
@@ -447,8 +449,8 @@ export function createWorld(config: WorldConfig): World {
   let stores = new Map<string, ComponentStore>();
   let resources = new Map<string, unknown>();
   /**
-   * `stores` keys, sorted, cached until a new component type appears. `snapshot()` needs them in
-   * a canonical order and runs once per `hash()` — every tick, in the harness — so re-sorting per
+   * `stores` keys, sorted, cached until a new component type appears. Both `snapshot()` and
+   * `hash()` need canonical order — every tick, in the harness — so re-sorting per
    * call would put an O(n log n) on the hot path for a list that changes a handful of times in a
    * whole run.
    */
@@ -788,11 +790,11 @@ export function createWorld(config: WorldConfig): World {
    * diffable save is for, so the ordering is fixed here and not only at the hash. Entities stay
    * in ascending slot order, which is already canonical.
    */
-  function snapshot(): WorldSnapshot {
-    const entities: EntitySnapshot[] = [];
+  function projectState<T>(readValue: (value: unknown) => T) {
+    const entities: { id: string; name?: string; components: Record<string, T> }[] = [];
     const componentIds = componentIdsSorted();
     for (const slot of liveSlotsAscending()) {
-      const components: Record<string, unknown> = {};
+      const components: Record<string, T> = {};
       const id = String(handleFor(slot));
       // Resolve Name first so a diagnostic can quote the authoring name of the culprit.
       let name: string | undefined;
@@ -805,7 +807,7 @@ export function createWorld(config: WorldConfig): World {
         const s = stores.get(componentId) as ComponentStore;
         if (!storeHas(s, slot)) continue;
         try {
-          components[componentId] = deepCloneSerialisable(storeGet(s, slot));
+          components[componentId] = readValue(storeGet(s, slot));
         } catch (err) {
           if (err instanceof UnserialisableValueError) {
             throw unserialisableDiagnostic(
@@ -818,15 +820,13 @@ export function createWorld(config: WorldConfig): World {
           throw err;
         }
       }
-      const snap: EntitySnapshot =
-        name === undefined ? { id, components } : { id, name, components };
-      entities.push(snap);
+      entities.push(name === undefined ? { id, components } : { id, name, components });
     }
 
-    const resourcesOut: Record<string, unknown> = {};
+    const resourcesOut: Record<string, T> = {};
     for (const id of [...resources.keys()].sort()) {
       try {
-        resourcesOut[id] = deepCloneSerialisable(resources.get(id));
+        resourcesOut[id] = readValue(resources.get(id));
       } catch (err) {
         if (err instanceof UnserialisableValueError) {
           throw unserialisableDiagnostic(err, `resources.${id}`, `resource "${id}"`, {
@@ -840,13 +840,17 @@ export function createWorld(config: WorldConfig): World {
     }
 
     return {
-      version: 1,
+      version: 1 as const,
       tick,
       entities,
       resources: resourcesOut,
       prng: random.save(),
       allocator: { slots: generations.slice(), free: free.slice() },
     };
+  }
+
+  function snapshot(): WorldSnapshot {
+    return projectState(deepCloneSerialisable);
   }
 
   /**
@@ -902,8 +906,20 @@ export function createWorld(config: WorldConfig): World {
     (events as ManagedEventBus)[RESET_LOG]();
   }
 
+  const encodeValue = worldValueEncoder();
   function hash(): StateHash {
-    return hashSnapshot(snapshot());
+    const state = projectState(encodeValue);
+    // Literal structural keys are in canonicalStringify order; arbitrary component/resource
+    // ids and values still use the canonical encoding. hashSnapshot(snapshot()) is the oracle.
+    const entities = state.entities.map(({ components, id, name }) => {
+      const fields = `"components":${encodedRecord(components)},"id":${JSON.stringify(id)}`;
+      return name === undefined ? `{${fields}}` : `{${fields},"name":${JSON.stringify(name)}}`;
+    });
+    return hashString(
+      `{"allocator":${canonicalStringify(state.allocator)},"entities":[${entities.join(',')}],` +
+        `"prng":${canonicalStringify(state.prng)},"resources":${encodedRecord(state.resources)},` +
+        `"tick":${canonicalStringify(state.tick)},"version":${state.version}}`,
+    );
   }
 
   function clone(): World {

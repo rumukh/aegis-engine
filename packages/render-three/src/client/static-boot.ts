@@ -31,7 +31,8 @@
  */
 import { Vector3 } from 'three';
 import { createWorld } from '@aegis/core';
-import type { GameEvent, GameMode, World, WorldSnapshot } from '@aegis/core';
+import type { GameMode, World, WorldSnapshot } from '@aegis/core';
+import { drainEventLines, toEventLines } from '../frame-events.js';
 import type { SceneFile } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
 import type { RenderAdapter } from '../adapter.js';
@@ -116,15 +117,6 @@ export interface StaticDebugHandle {
 /** The wall-clock ceiling one displayed frame may convert into simulation. */
 const MAX_FRAME_SECONDS = MAX_CATCHUP_SECONDS;
 
-/** Flatten recorded events into the HUD feed shape. */
-function toEventLines(events: readonly GameEvent[], withData = false, offset = 0): EventLine[] {
-  return events.map((event, index) => ({
-    type: event.type,
-    tick: event.tick,
-    ...(withData ? { data: event.data, sequence: offset + index } : {}),
-  }));
-}
-
 /**
  * Boot a self-contained game page. Returns the same handle it publishes as `globalThis.aegis`.
  *
@@ -173,7 +165,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   let frames = 0;
   let lastFrameAt = clock();
   let clockRevision = 0;
-  let eventCursor = 0;
+  const cursor = { eventCursor: 0 };
   let generation = 0;
   let observedGeneration = -1;
   let stopped = false;
@@ -204,7 +196,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       session.restart();
       collector.clear();
       steps = 0;
-      eventCursor = 0;
+      cursor.eventCursor = 0;
       host.reset(++generation);
     }
     lastFrameAt = clock();
@@ -231,7 +223,7 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
   const applySnapshot = (snapshot: WorldSnapshot): void => {
     mirror.restore(snapshot);
     if (!mounted) {
-      host.validateWorld(mirror);
+      host.validateWorld(mirror, config.plugin.events?.());
       adapter.mount(mirror);
       mounted = true;
       resize();
@@ -240,15 +232,6 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
     lastSnapshot = snapshot;
     lastTick = snapshot.tick;
     observedGeneration = generation;
-  };
-
-  /** Drain the events the session has emitted since the last frame, for the HUD feed. */
-  const drainEvents = (): EventLine[] => {
-    const history = session.world.events.history();
-    const offset = eventCursor;
-    const fresh = history.slice(eventCursor);
-    eventCursor = history.length;
-    return toEventLines(fresh, config.presentation !== undefined, offset);
   };
 
   const frame = (): void => {
@@ -276,7 +259,10 @@ export function bootStatic(config: StaticBootConfig): StaticDebugHandle {
       if (lastTick !== session.tick || observedGeneration !== generation) {
         applySnapshot(session.snapshot());
       }
-      host.receive(drainEvents(), generation);
+      host.receive(
+        drainEventLines(session.world.events, cursor, config.presentation !== undefined),
+        generation,
+      );
       adapter.sync(mirror);
       host.present(lastTick, session.paused);
       host.render();

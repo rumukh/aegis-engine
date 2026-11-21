@@ -10,7 +10,7 @@ import type { Schedule, World } from '@aegis/core';
 import type { ModePlugin } from '@aegis/harness';
 import { FPS_COMPONENTS } from './components.js';
 import { FPS_COLLISION, FPS_FLOORPLAN, extrudeFloorplan } from './geometry.js';
-import { FPS_SYSTEMS } from './systems.js';
+import { FPS_SYSTEMS, HITSCAN_HIT, HITSCAN_MISS, WEAPON_FIRED } from './systems.js';
 import { FpsViewProvider } from './view.js';
 
 /** Build the FPS schedule from the mode's ordered systems. */
@@ -30,13 +30,50 @@ export function initFloorplan(world: World): void {
 }
 
 /** Authored resource vocabulary, shared by the mode and composed game plugins. */
-export const FPS_RESOURCES = [FPS_FLOORPLAN, FPS_COLLISION] as const;
+const dimensions = {
+  width: 'nonnegative-integer',
+  height: 'nonnegative-integer',
+  tileSize: 'positive-number',
+  origin: { fields: { x: 'number', z: 'number' } },
+} as const;
+const tile = { solid: 'boolean', floor: 'number', ceil: 'number' } as const;
+const flags = { door: 'boolean', hazard: 'boolean' } as const;
+export const FPS_RESOURCES = [
+  {
+    ...FPS_FLOORPLAN,
+    schema: {
+      fields: {
+        ...dimensions,
+        rows: { array: 'string' },
+        legend: { record: { fields: tile, optional: flags } },
+      },
+    },
+  },
+  {
+    ...FPS_COLLISION,
+    schema: {
+      fields: {
+        ...dimensions,
+        cells: { array: { fields: { ...tile, ...flags, key: 'string' } } },
+      },
+    },
+  },
+] as const;
+
+export const FPS_INPUTS = { actions: ['Fire', 'Jump'], axes: ['Forward', 'Strafe'] } as const;
+export const FPS_EVENTS = {
+  [WEAPON_FIRED]: { fields: { tick: 'number' } },
+  [HITSCAN_MISS]: { fields: { tick: 'number' } },
+  [HITSCAN_HIT]: { fields: { target: 'string', distance: 'number', tick: 'number' } },
+} as const;
 
 /** The FPS mode plugin. */
 export const fpsPlugin: ModePlugin = {
   mode: 'fps',
   components: () => FPS_COMPONENTS,
   resources: () => FPS_RESOURCES,
+  inputs: () => FPS_INPUTS,
+  events: () => FPS_EVENTS,
   systems: () => fpsSchedule(),
   init: (world) => initFloorplan(world),
   view: () => new FpsViewProvider(),

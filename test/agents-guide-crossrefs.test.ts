@@ -74,7 +74,9 @@ function readCorpusFile(p: string): string | undefined {
   }
 }
 
-const guide = read(join(root, 'AGENTS.md'));
+const entry = read(join(root, 'AGENTS.md'));
+const reference = 'GAME-AUTHORING.md';
+const guide = read(join(root, reference));
 
 const SOURCE_ROOTS = ['packages', 'games', 'test', 'scripts', 'poc'];
 
@@ -153,7 +155,7 @@ interface Citation {
   tail: string;
 }
 
-const CITATION = /`?AGENTS\.md`?[^\n§]{0,40}§\s*(\d+(?:\.\d+)*)/g;
+const CITATION = /`?(?:AGENTS|GAME-AUTHORING)\.md`?[^\n§]{0,40}§\s*(\d+(?:\.\d+)*)/g;
 
 function citations(): Citation[] {
   const found: Citation[] = [];
@@ -193,6 +195,7 @@ function rowNumber(tail: string): string | undefined {
 
 describe('AGENTS.md citations resolve', () => {
   it('the corpora are non-empty, so the checks below examined something', () => {
+    expect(entry).toContain(`[Numbered authoring reference](${reference})`);
     // Floors, not exact counts: exact counts would redden on every unrelated edit, which trains
     // people to update the number without reading why it moved.
     expect(SECTIONS.size, 'no numbered headings parsed out of AGENTS.md').toBeGreaterThan(20);

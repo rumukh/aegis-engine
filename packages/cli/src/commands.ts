@@ -15,6 +15,7 @@ import { scaffoldCommand } from './commands/scaffold.js';
 import { createDescribeCommand } from './commands/describe.js';
 import { previewCommand } from './commands/preview.js';
 import { importCommand } from './commands/import.js';
+import { exportCommand, playCommand } from './commands/distribution.js';
 
 export { runCommand } from './commands/run.js';
 export { testCommand } from './commands/test.js';
@@ -25,6 +26,7 @@ export { replayCommand } from './commands/replay.js';
 export { scaffoldCommand } from './commands/scaffold.js';
 export { previewCommand, createPreviewCommand } from './commands/preview.js';
 export { importCommand } from './commands/import.js';
+export { exportCommand, playCommand } from './commands/distribution.js';
 
 /** Capability discovery reads this same live registry, including its own registration. */
 export const describeCommand = createDescribeCommand(() => COMMANDS);
@@ -54,13 +56,15 @@ export const COMMANDS: readonly Command[] = [
   {
     ...validateCommand,
     formats: {
-      reads: VALIDATION_FORMATS,
+      reads: [...VALIDATION_FORMATS, 'input-script'],
       writes: [],
       stdout: ['text', 'json'],
     },
   },
   previewCommand,
   importCommand,
+  playCommand,
+  exportCommand,
   {
     ...recordCommand,
     formats: {
@@ -81,6 +85,7 @@ export const COMMANDS: readonly Command[] = [
         'scene/1',
         'prefab/1',
         'tilemap/1',
+        'presentation/1',
         'input-script',
         'game-test-module',
         'aegis.json',

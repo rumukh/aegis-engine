@@ -75,6 +75,7 @@
     "@aegis/mode-platformer": "*",
     "@aegis/mode-iso": "*",
     "@aegis/mode-fps": "*",
+    "es-module-lexer": "1.7.0",
     "three": "^0.169.0"
   },
   "devDependencies": {

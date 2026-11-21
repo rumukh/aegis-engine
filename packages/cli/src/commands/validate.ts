@@ -21,7 +21,7 @@ import {
   validateScene,
 } from '@aegis/content';
 import type { Diagnostic } from '@aegis/core';
-import { createSceneContext } from '@aegis/harness';
+import { createSceneContext, parseInputScript } from '@aegis/harness';
 import type { PresentationManifest } from '@aegis/render-three/presentation/schema';
 import { validatePresentation } from '@aegis/render-three/presentation/validate';
 import { dirname } from 'node:path';
@@ -49,6 +49,10 @@ const PRESENTATION_VALIDATION = {
   scope: 'structural',
   notChecked: ['asset-files', 'asset-decoding', 'initialized-world-bindings'],
 } as const;
+type PresentationValidation = Omit<typeof PRESENTATION_VALIDATION, 'scope'> & {
+  scope: 'structural' | 'structural-and-declared-events';
+  eventsDeclared?: boolean;
+};
 
 const USAGE = [
   'aegis validate <file...> [options]',
@@ -61,12 +65,14 @@ const USAGE = [
   "  --mode <mode>     Validate scenes against this mode instead of the scene's own.",
   '                    Prefabs use the chosen plugin too; without one, only core/content',
   '                    components are available. Named prefab references require its catalog.',
+  '  --game-context    Also check presentation event bindings against the selected plugin',
+  '                    (--plugin, nearby aegis.json, or --mode). No world is created.',
+  '                    .input files are checked against that selection when available.',
   '  --json            Emit diagnostics as JSON (stable error codes).',
   '  --strict          Treat warnings as errors (affects exit code).',
   '',
-  'presentation/1 checks are STRUCTURAL ONLY: manifest fields, declared references and limits.',
-  'Asset files/decoding and initialized-world bindings are NOT checked. No plugin is loaded',
-  'for presentation documents; --plugin/--mode apply only to scene/prefab documents.',
+  'Without --game-context, presentation/1 checks are STRUCTURAL ONLY and do not load a plugin.',
+  'Asset files/decoding and initialized-world bindings are NOT checked.',
   '',
   'Exit codes: 0 = clean, 2 = one or more documents had problems.',
   '',
@@ -83,12 +89,15 @@ interface FileReport {
   file: string;
   ok: boolean;
   plugin?: string;
-  validation?: typeof PRESENTATION_VALIDATION;
+  validation?: PresentationValidation;
   diagnostics: readonly Diagnostic[];
 }
 
-/** Prefabs have no mode field to infer; use an explicit plugin/mode or nearby config. */
-async function prefabPlugin(ctx: CommandContext, abs: string): Promise<ResolvedPlugin | undefined> {
+/** Non-scene documents have no mode field; use an explicit plugin/mode or nearby config. */
+async function documentPlugin(
+  ctx: CommandContext,
+  abs: string,
+): Promise<ResolvedPlugin | undefined> {
   const flagSpec = flagString(ctx.args, 'plugin');
   const mode = flagString(ctx.args, 'mode');
   const config = flagSpec === undefined ? discoverPluginSpec(dirname(abs)) : undefined;
@@ -123,6 +132,13 @@ async function validateDocument(
   abs: string,
   text: string,
 ): Promise<Omit<FileReport, 'file' | 'ok'>> {
+  if (abs.endsWith('.input')) {
+    const resolved = await documentPlugin(ctx, abs);
+    return {
+      diagnostics: parseInputScript(text, resolved?.plugin.inputs?.(), file).diagnostics,
+      ...(resolved !== undefined ? { plugin: describePluginSource(resolved) } : {}),
+    };
+  }
   let document: unknown;
   try {
     document = JSON.parse(text);
@@ -154,7 +170,7 @@ async function validateDocument(
     case 'prefab/1': {
       const parsed = parsePrefab(text, file);
       if (!parsed.ok || parsed.value === undefined) return { diagnostics: parsed.diagnostics };
-      const resolved = await prefabPlugin(ctx, abs);
+      const resolved = await documentPlugin(ctx, abs);
       const context =
         resolved === undefined
           ? { registry: baseRegistry(), file }
@@ -167,11 +183,32 @@ async function validateDocument(
     }
     case 'tilemap/1':
       return { diagnostics: parseTilemap(text, file).diagnostics };
-    case PRESENTATION_FORMAT:
+    case PRESENTATION_FORMAT: {
+      if (!flagBool(ctx.args, 'game-context'))
+        return {
+          diagnostics: validatePresentation(document, file).diagnostics,
+          validation: PRESENTATION_VALIDATION,
+        };
+      const resolved = await documentPlugin(ctx, abs);
+      if (resolved === undefined)
+        throw new AegisCliError(
+          CliCode.MissingArgument,
+          'No game context selected for presentation validation.',
+          {
+            fix: 'Pass --plugin or --mode, provide a nearby aegis.json, or omit --game-context for structural validation only.',
+          },
+        );
+      const events = resolved.plugin.events?.();
       return {
-        diagnostics: validatePresentation(document, file).diagnostics,
-        validation: PRESENTATION_VALIDATION,
+        diagnostics: validatePresentation(document, file, events).diagnostics,
+        plugin: describePluginSource(resolved),
+        validation: {
+          ...PRESENTATION_VALIDATION,
+          scope: events === undefined ? 'structural' : 'structural-and-declared-events',
+          eventsDeclared: events !== undefined,
+        },
       };
+    }
     default:
       return {
         diagnostics: [
@@ -218,9 +255,9 @@ function expandTargets(ctx: CommandContext, patterns: readonly string[]): string
 /** `aegis validate` — validate content or presentation with its owning package's validator. */
 export const validateCommand: Command = {
   name: 'validate',
-  summary: 'Validate a scene/prefab/tilemap/presentation document.',
+  summary: 'Validate content, an input script or a presentation document.',
   usage: USAGE,
-  flags: { plugin: 'value', mode: 'value', strict: 'boolean' },
+  flags: { plugin: 'value', mode: 'value', strict: 'boolean', 'game-context': 'boolean' },
   async run(ctx: CommandContext): Promise<number> {
     const { args, io } = ctx;
     requirePositional(args, 0, 'file', 'aegis validate <file...>');
@@ -246,8 +283,13 @@ export const validateCommand: Command = {
           .map((r) => {
             const head =
               r.validation !== undefined
-                ? `# ${r.file}: ${r.validation.format} structural validation only.\n` +
-                  '# Not checked: asset files/decoding or initialized-world bindings.\n'
+                ? `# ${r.file}: ${r.validation.format} ${
+                    r.validation.scope === 'structural-and-declared-events'
+                      ? `structure and declared events against ${r.plugin}`
+                      : r.validation.eventsDeclared === false
+                        ? `structural validation only; ${r.plugin} does not declare events`
+                        : 'structural validation only'
+                  }.\n` + '# Not checked: asset files/decoding or initialized-world bindings.\n'
                 : r.plugin !== undefined
                   ? `# ${r.file} against plugin ${r.plugin}\n`
                   : '';

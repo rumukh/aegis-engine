@@ -20,10 +20,11 @@ import { createServer } from 'node:http';
 import { extname } from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { DiagnosticError } from '@aegis/core';
-import type { Diagnostic, GameEvent, InputSource } from '@aegis/core';
+import type { Diagnostic, InputSource } from '@aegis/core';
+import { drainEventLines, toEventLines } from './frame-events.js';
 import { createLiveSession } from './session.js';
 import type { LiveSession } from './session.js';
-import { findRepoRoot } from './catalog.js';
+import { engineModules } from './static-site.js';
 import type { GameDefinition } from './catalog.js';
 import { renderIndexPage, renderPlayPage } from './pages.js';
 import { MAX_CATCHUP_SECONDS, systemClock } from './loop.js';
@@ -38,13 +39,7 @@ import { isAssetPath } from './presentation/diagnostics.js';
 import { resolveVendorPath } from './vendor.js';
 import { FrameClients, validFrameClient } from './frame-clients.js';
 import type { FrameClientState, FrameInputStatus } from './frame-clients.js';
-import type {
-  ControlRequest,
-  EventLine,
-  EventLog,
-  FrameRequest,
-  FrameResponse,
-} from './protocol.js';
+import type { ControlRequest, EventLog, FrameRequest, FrameResponse } from './protocol.js';
 
 export { resolveVendorPath } from './vendor.js';
 
@@ -56,7 +51,7 @@ export interface DevServerOptions {
   port?: number;
   /** Host interface to bind. Defaults to `127.0.0.1`. */
   host?: string;
-  /** Repository root used to resolve `/vendor` requests. Defaults to auto-detection. */
+  /** Legacy repository layout override. Defaults to the installed engine packages. */
   repoRoot?: string;
   /** Wall clock used by the fixed-step accumulator. Injectable for tests. */
   clock?: Clock;
@@ -163,21 +158,12 @@ async function readJsonBody<T>(request: IncomingMessage): Promise<T | undefined>
   }
 }
 
-/** Flatten recorded events into the HUD feed shape. */
-function toEventLines(events: readonly GameEvent[], presentation = false, offset = 0): EventLine[] {
-  return events.map((event, index) => ({
-    type: event.type,
-    tick: event.tick,
-    ...(presentation ? { data: event.data, sequence: offset + index } : {}),
-  }));
-}
-
 /** Start the dev server. Resolves once it is listening. */
 export function startDevServer(options: DevServerOptions): Promise<DevServer> {
   if (options.games.length === 0) {
     throw new Error('[aegis:render-three] startDevServer: at least one game is required');
   }
-  const repoRoot = options.repoRoot ?? findRepoRoot();
+  const vendorRoots = options.repoRoot ?? new Map(engineModules().map((m) => [m.name, m.root]));
   const clock = options.clock ?? systemClock;
   const host = options.host ?? '127.0.0.1';
   const basePath = normalizeBasePath(options.basePath);
@@ -191,7 +177,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       );
     ids.add(game.id.toLowerCase());
     if (game.presentation !== undefined) {
-      const prepared = preparePresentation(game.presentation, game.scene);
+      const prepared = preparePresentation(game.presentation, game.scene, game.plugin.events?.());
       presentations.set(game.id, prepared);
       for (const diagnostic of prepared.diagnostics ?? [])
         diagnostics.push({
@@ -257,17 +243,12 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       inputStatus?: FrameInputStatus;
     } = {},
   ): FrameResponse => {
-    let fresh: readonly GameEvent[] = [];
-    const history =
-      options.drainEvents === true || options.withEventHistory === true
-        ? runtime.session.world.events.history()
-        : [];
+    const reader = runtime.session.world.events;
     const cursor = options.client ?? runtime;
-    const offset = cursor.eventCursor;
-    if (options.drainEvents === true) {
-      fresh = history.slice(cursor.eventCursor);
-      cursor.eventCursor = history.length;
-    }
+    const fromStart = options.drainEvents && cursor.eventCursor === 0;
+    const events = options.drainEvents
+      ? drainEventLines(reader, cursor, runtime.presentation !== undefined)
+      : [];
     return {
       tick: runtime.session.tick,
       steps,
@@ -275,11 +256,13 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       ...(options.inputStatus === undefined ? {} : { inputStatus: options.inputStatus }),
       ...(options.withHash === true ? { hash: runtime.session.hash() } : {}),
       snapshot: runtime.session.snapshot(),
-      events: toEventLines(fresh, runtime.presentation !== undefined, offset),
+      events,
       ...(runtime.presentation === undefined && options.client === undefined
         ? {}
         : { generation: runtime.generation }),
-      ...(options.withEventHistory === true ? { eventHistory: toEventLines(history, true) } : {}),
+      ...(options.withEventHistory === true
+        ? { eventHistory: fromStart ? events : toEventLines(reader.history(), true) }
+        : {}),
     };
   };
 
@@ -369,6 +352,19 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       return;
     }
 
+    const example = /^\/play\/([A-Za-z0-9_-]+)\/example\.input$/.exec(path);
+    if (request.method === 'GET' && example !== null) {
+      const script = byId.get(example[1]!)?.script;
+      if (script === undefined) sendJson(response, 404, { error: 'no example input' });
+      else {
+        response.writeHead(200, {
+          'content-type': 'text/plain; charset=utf-8',
+          'x-content-type-options': 'nosniff',
+        });
+        response.end(script);
+      }
+      return;
+    }
     const play = /^\/play\/([A-Za-z0-9_-]+)(\/(?:index\.html)?)?$/.exec(path);
     if (request.method === 'GET' && play !== null) {
       const game = byId.get(play[1] as string);
@@ -433,7 +429,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
     }
 
     if (request.method === 'GET' && path.startsWith('/vendor/')) {
-      const file = resolveVendorPath(repoRoot, path);
+      const file = resolveVendorPath(vendorRoots, path);
       if (file === undefined) {
         sendJson(response, 404, { error: `no such module: ${path}` });
         return;

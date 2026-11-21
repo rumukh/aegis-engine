@@ -4,6 +4,7 @@ import type { ModeBindings } from './bindings.js';
 import type { PresentationManifest } from './presentation/schema.js';
 
 export interface GameChromeOptions {
+  exampleInput?: boolean;
   title: string;
   objective: string;
   mode: GameMode;
@@ -23,6 +24,7 @@ export interface CatalogGame {
 }
 
 export interface CatalogBodyOptions {
+  releaseLabel?: string;
   games: readonly CatalogGame[];
   gameHref(id: string): string;
   staticSite: boolean;
@@ -384,7 +386,7 @@ ${
         <summary>Controls</summary>
         <div class="details-content" tabindex="0" aria-label="Controls reference"><dl class="binding-list">
 ${controls}
-        </dl></div>
+        </dl>${options.exampleInput ? '<a href="./example.input" download>Example input script</a>' : ''}</div>
       </details>
       <details class="panel details-panel" id="diagnostics">
         <summary>Diagnostics</summary>
@@ -427,6 +429,6 @@ export function renderCatalogBody(options: CatalogBodyOptions): string {
     <section class="game-grid" aria-label="Games">
 ${cards || '      <p class="lede">No games are configured yet.</p>'}
     </section>
-    <footer class="catalog-footer">Play first. Open the in-game diagnostics when you want to look under the hood.</footer>
+    <footer class="catalog-footer">${options.releaseLabel ? escape(options.releaseLabel) : 'Play first. Open the in-game diagnostics when you want to look under the hood.'}</footer>
   </main>`;
 }

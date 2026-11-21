@@ -73,6 +73,12 @@ replaces the primitive level; the original geometry remains available to diagnos
 logical cell picking. Rear server banks, service conduits, and the structural plinth are
 static instances or authored props, not additional collision or navigable rooms.
 
+The tactical HUD shows the next objective and health; expand the objective for the full
+brief. **Focus view** enlarges the operative while fitting the sentinel, key console and
+uplink in the actual viewport. Select it again for the whole-board overview. The console's
+rectangular key sign and the uplink's diamond arrow are meshes of their respective entities:
+aiming at the symbol picks its cell, not the ground projected behind it.
+
 Actor and interaction bindings use `fit: 'authored'`: one unit remains one cell and actor
 roots remain at the floor. The generic iso adapter faces resolved paths and opponents,
 briefly interpolates observed adjacent cell steps, and keeps clicks tied to the logical
