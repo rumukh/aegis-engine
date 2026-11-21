@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import { cpus, platform, release } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
@@ -60,6 +61,7 @@ if (values.device === 'target')
 async function instrument() {
   const { PresentationHost } =
     await import('/vendor/@aegis/render-three/dist/client/presentation-host.js');
+  const { document, performance, devicePixelRatio } = globalThis;
   const gl = document.querySelector('#stage').getContext('webgl2');
   const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
   const debug = gl.getExtension('WEBGL_debug_renderer_info');
@@ -154,7 +156,9 @@ try {
     viewport: { width, height },
     graphics: values.device === 'software' ? 'software' : 'hardware',
   });
-  const version = await (await fetch(`http://127.0.0.1:${browser.port}/json/version`)).json();
+  const version = await (
+    await globalThis.fetch(`http://127.0.0.1:${browser.port}/json/version`)
+  ).json();
   const control = await CdpSession.connect(version.webSocketDebuggerUrl);
   let devices;
   try {
@@ -185,7 +189,7 @@ try {
     'warm: same browser/profile/origin, fresh page and world',
   ]) {
     startedAt = null;
-    const restarted = await fetch(`${server.url}/api/horror/control`, {
+    const restarted = await globalThis.fetch(`${server.url}/api/horror/control`, {
       method: 'POST',
       body: JSON.stringify({ command: 'restart' }),
     });

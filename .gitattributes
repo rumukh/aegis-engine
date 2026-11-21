@@ -37,3 +37,4 @@ poc/lab-shared/assets/OFL.txt text eol=lf whitespace=-blank-at-eol
 # Imported packages pin exact bytes: a 542-byte descriptor (33adc0c...) became
 # 557 bytes (f0234ed...) with autocrlf checkout. Preserve imported JSON/glTF too.
 games/*/assets/imported/** -text
+docs/games/evidence/horror-*-rtx4070ti-super.json -text
