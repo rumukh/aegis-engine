@@ -233,10 +233,24 @@ function critter(frame) {
 }
 
 function rockTile(index) {
-  const next = random(300 + index);
+  const next = random(300 + index * 977);
   // Shared seam heights, different interior fracture planes: bands continue through a tile
   // boundary instead of stamping the same outlined bricks on every collision cell.
   let body = rect(0, 0, 128, 128, '#344951');
+  // A tall cast-shadow facet and a sandstone shoulder carry across the exposed outcrop.
+  const fault = 24 + Math.round(next() * 58);
+  body += path(
+    `M${fault + 8} 0L${fault - 2} 21L${fault + 3} 44L${fault - 9} 71L${fault - 14} 113L${fault - 34} 128H0V0Z`,
+    '#40545a',
+  );
+  body += path(
+    `M${fault + 8} 0L${fault + 24} 0L${fault + 7} 37L${fault + 4} 62L${fault - 14} 113L${fault - 9} 71L${fault + 3} 44L${fault - 2} 21Z`,
+    '#637070',
+  );
+  body += path(
+    `M${fault + 25} 0L${fault + 17} 28L${fault + 26} 55L${fault + 13} 88L${fault + 17} 128H128V0Z`,
+    '#2c414c',
+  );
   const offset = () => Math.round(next() * 34) - 17;
   for (const [height, tone, light] of [
     [26, '#48585a', '#8a8070'],
