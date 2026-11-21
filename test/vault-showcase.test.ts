@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -20,6 +21,7 @@ import { runScene } from '@aegis/harness';
 import { GridPosition, NavGrid } from '@aegis/mode-iso';
 import { serverVaultPlugin, SERVER_VAULT_SCRIPT, trajectoryDigest } from '@aegis/game-iso';
 import { iso, vaultPresentation } from '../poc/iso.mjs';
+import { pocGames, pocStaticGames } from '../poc/poc-games.mjs';
 import { createIsoAdapter } from '../packages/render-three/src/adapters/iso.js';
 import { preparePresentation } from '../packages/render-three/src/presentation/files.js';
 import { loadPresentationAssets } from '../packages/render-three/src/presentation/assets.js';
@@ -122,6 +124,34 @@ beforeAll(async () => {
 afterAll(() => assets?.dispose());
 
 describe('Server Vault real composition', () => {
+  it('an edit to (4,1) changes the bake and both delivered representations without editing a wall list', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'vault-cell-'));
+    try {
+      const entry = { ...iso, scene: 'vault.scene.json', script: 'vault.input' };
+      const modified = JSON.parse(readFileSync(iso.scene, 'utf8'));
+      expect(modified.resources.IsoGrid.walls[1][4]).toBe('#');
+      modified.resources.IsoGrid.walls[1] = '#.......#..#';
+      writeFileSync(join(root, entry.scene), JSON.stringify(modified));
+      writeFileSync(join(root, entry.script), '');
+      const [live] = await pocGames(root, [entry]);
+      const [exported] = await pocStaticGames(root, [entry]);
+      const run = await runScene(live!.scene, { plugin: serverVaultPlugin, ticks: 0 });
+      expect(run.world.getResource(NavGrid)!.blocked[12 + 4]).toBe(false);
+      expect(JSON.parse(exported!.sceneText).resources.IsoGrid.walls[1][4]).toBe('.');
+      for (const delivered of [live!, exported!]) {
+        const objects: NonNullable<typeof vaultPresentation.manifest.objects> =
+          delivered.presentation.manifest.objects!;
+        const positions = (id: string) =>
+          objects.find((object) => object.id === id)!.instances!.map((pose) => pose.position);
+        expect(positions('walkable-deck')).toContainEqual([4, -0.04, 1]);
+        expect(positions('service-partitions')).not.toContainEqual([4, 0, 1]);
+        expect(positions('service-partitions')).toContainEqual([8, 0, 1]);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('prepares the authored graph and instances only static models, with collision-derived coverage', () => {
     expect(prepared.files).toHaveLength(24);
     expect(prepared.totalBytes).toBeLessThan(1_500_000);
@@ -138,6 +168,46 @@ describe('Server Vault real composition', () => {
       const instance = assets.instantiateModel(object.visual.mesh);
       expect(instance.clips).toHaveLength(0);
       instance.dispose();
+    }
+  });
+
+  it('focus enlarges the operative on a portrait board without cropping or mis-picking either objective glyph', async () => {
+    const run = await runScene(scene, {
+      plugin: serverVaultPlugin,
+      input: SERVER_VAULT_SCRIPT,
+      ticks: 510,
+      captureHistory: true,
+    });
+    const adapter = createIsoAdapter({
+      aspect: 390 / 844,
+      presentation: { manifest: vaultPresentation.manifest, assets },
+    });
+    const world = run.world;
+    try {
+      adapter.mount(world);
+      for (const tick of [0, 180, 330, 506]) {
+        world.restore(run.at(tick).snapshot());
+        adapter.setPlayerFocus(false);
+        adapter.sync(world);
+        const overview = adapter.camera.top;
+        for (const focus of [false, true]) {
+          adapter.setPlayerFocus(focus);
+          adapter.sync(world);
+          if (focus) expect(adapter.camera.top).toBeLessThan(overview * 0.85);
+          for (const [entity, node, x, z] of [
+            ['security-switch', 'key-marker', 9, 1],
+            ['vault-exit', 'uplink-marker', 4, 7],
+          ] as const) {
+            const marker = adapter.presentation!.entity(entity)!.object.getObjectByName(node)!;
+            const ndc = marker.getWorldPosition(new Vector3()).project(adapter.camera);
+            expect(Math.abs(ndc.x)).toBeLessThan(0.95);
+            expect(Math.abs(ndc.y)).toBeLessThan(0.95);
+            expect(adapter.pick(ndc.x, ndc.y)).toEqual({ x, y: z, z: 0 });
+          }
+        }
+      }
+    } finally {
+      adapter.dispose();
     }
   });
 

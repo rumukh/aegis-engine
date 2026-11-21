@@ -16,6 +16,8 @@
 // transpiled, stripped or resolved by hand.
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { parseScene } from '@aegis/content';
+import { DiagnosticError } from '@aegis/core';
 import { platformer } from './platformer.mjs';
 import { iso } from './iso.mjs';
 import { fps } from './fps.mjs';
@@ -48,23 +50,25 @@ function at(root, relative) {
 }
 
 /** Build the catalogue the dev server and the screenshot capture both serve. */
-export async function pocGames() {
-  const root = findRepoRoot();
+export async function pocGames(root = findRepoRoot(), entries = POC) {
   return Promise.all(
-    POC.map(async (entry) => ({
-      id: entry.id,
-      title: entry.title,
-      blurb: entry.blurb,
-      objective: entry.objective,
-      mode: entry.plugin.mode,
-      plugin: entry.plugin,
-      scene: await loadScene(at(root, entry.scene)),
-      script: await loadInputScript(at(root, entry.script)),
-      scriptTicks: entry.scriptTicks,
-      acceptance: entry.acceptance,
-      presentation: entry.presentation,
-      bindings: entry.bindings ?? BINDINGS[entry.plugin.mode],
-    })),
+    entries.map(async (entry) => {
+      const scene = await loadScene(at(root, entry.scene));
+      return {
+        id: entry.id,
+        title: entry.title,
+        blurb: entry.blurb,
+        objective: entry.objective,
+        mode: entry.plugin.mode,
+        plugin: entry.plugin,
+        scene,
+        script: await loadInputScript(at(root, entry.script)),
+        scriptTicks: entry.scriptTicks,
+        acceptance: entry.acceptance,
+        presentation: entry.presentationFor?.(scene) ?? entry.presentation,
+        bindings: entry.bindings ?? BINDINGS[entry.plugin.mode],
+      };
+    }),
   );
 }
 
@@ -76,21 +80,26 @@ export async function pocGames() {
  * `parseScene` a headless run does), and the plugin travels as a module specifier plus an export
  * name rather than as an object.
  */
-export async function pocStaticGames() {
-  const root = findRepoRoot();
+export async function pocStaticGames(root = findRepoRoot(), entries = POC) {
   return Promise.all(
-    POC.map(async (entry) => ({
-      id: entry.id,
-      title: entry.title,
-      blurb: entry.blurb,
-      objective: entry.objective,
-      mode: entry.plugin.mode,
-      bindings: entry.bindings ?? BINDINGS[entry.plugin.mode],
-      sceneText: await readFile(at(root, entry.scene), 'utf8'),
-      pluginModule: entry.pluginModule,
-      pluginExport: entry.pluginExport,
-      presentation: entry.presentation,
-    })),
+    entries.map(async (entry) => {
+      const path = at(root, entry.scene);
+      const sceneText = await readFile(path, 'utf8');
+      const parsed = parseScene(sceneText, path);
+      if (!parsed.ok || !parsed.value) throw new DiagnosticError(parsed.diagnostics);
+      return {
+        id: entry.id,
+        title: entry.title,
+        blurb: entry.blurb,
+        objective: entry.objective,
+        mode: entry.plugin.mode,
+        bindings: entry.bindings ?? BINDINGS[entry.plugin.mode],
+        sceneText,
+        pluginModule: entry.pluginModule,
+        pluginExport: entry.pluginExport,
+        presentation: entry.presentationFor?.(parsed.value) ?? entry.presentation,
+      };
+    }),
   );
 }
 

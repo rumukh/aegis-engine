@@ -231,12 +231,14 @@ export interface PresentationManifest {
     framing: 'follow' | 'level';
     /** Nonnegative world-unit margin around the level; used only for level framing. */
     padding?: number;
+    /** Optional player-focused alternative to the overview; keep named landmarks on screen. */
+    focus?: { height: number; landmarks: readonly string[] };
   };
   ui?: {
     accent?: string;
     eyebrow?: string;
     cover?: string;
-    layout?: 'standard' | 'cinematic';
+    layout?: 'standard' | 'cinematic' | 'tactical';
     lossEnding?: LossEndingSpec;
     winEnding?: WinEndingSpec;
   };

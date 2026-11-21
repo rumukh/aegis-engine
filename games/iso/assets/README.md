@@ -67,8 +67,8 @@ voice limits, and disposal belong to the shared presentation audio system.
 `presentation/1` manifest, for both the dev server and the static exporter. The scene,
 plugin, input route, final-state hash, and trajectory are unchanged.
 
-The rendered deck and low partition batches derive from the game's `WALL_ROWS`, the same
-collision source checked against the authoritative scene. `legacy.level: false` explicitly
+The rendered deck and low partition batches derive from the selected scene's `resources.IsoGrid`
+using the mode's navigation bake. Edit that scene, not a second wall list. `legacy.level: false` explicitly
 replaces the primitive level; the original geometry remains available to diagnostics and
 logical cell picking. Rear server banks, service conduits, and the structural plinth are
 static instances or authored props, not additional collision or navigable rooms.

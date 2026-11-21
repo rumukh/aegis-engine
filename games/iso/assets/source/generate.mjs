@@ -256,6 +256,16 @@ function consoleModel() {
   base.bevel([0, 0.055, 0], [0.49, 0.11, 0.36], 0.035, P.ink);
   base.bevel([0, 0.255, -0.065], [0.25, 0.35, 0.18], 0.03, P.steel);
   base.box([0, 0.245, 0.031], [0.045, 0.22, 0.014], P.white, glow);
+  // The glyphs belong to the actual model, so clicking a sign selects its objective cell.
+  const key = model.part('key-marker', [0, 0.92, -0.12]);
+  model.nodes[key.index].rotation = quaternion(1, Math.PI / 4);
+  key.shape.bevel([0, 0, 0], [0.65, 0.38, 0.046], 0.035, P.ink);
+  key.shape.bevel([-0.025, -0.25, 0], [0.055, 0.18, 0.04], 0.01, P.brass);
+  const enamel = rgb('#ffdd95');
+  key.shape.box([-0.14, 0.025, 0.033], [0.19, 0.19, 0.018], enamel);
+  key.shape.box([-0.14, 0.025, 0.049], [0.07, 0.07, 0.018], P.ink);
+  key.shape.box([0.071, 0.025, 0.033], [0.25, 0.061, 0.018], enamel);
+  key.shape.box([0.16, -0.021, 0.033], [0.058, 0.1, 0.018], enamel);
   const display = model.part('screen', [0, 0.48, -0.025]);
   display.shape.bevel([0, 0, 0], [0.52, 0.105, 0.36], 0.025, P.ink);
   const face = [
@@ -331,6 +341,29 @@ function door() {
 function extraction() {
   const model = new Model('Data extraction uplink');
   const glow = model.glow('Uplink cyan', '#6de4df');
+  const marker = model.part('uplink-marker', [0, 0.73, -0.14]);
+  model.nodes[marker.index].rotation = quaternion(1, Math.PI / 4);
+  const diamond = [
+    [-0.32, 0, 0],
+    [0, -0.32, 0],
+    [0.32, 0, 0],
+    [0, 0.32, 0],
+  ];
+  marker.shape.face(diamond, P.ink, 0, [0, 0, 1]);
+  marker.shape.face(
+    [
+      [-0.2, 0.015, 0.014],
+      [0, 0.235, 0.014],
+      [0.2, 0.015, 0.014],
+      [0.075, 0.015, 0.014],
+      [0, -0.04, 0.014],
+      [-0.075, 0.015, 0.014],
+    ],
+    rgb('#a2fff0'),
+    0,
+    [0, 0, 1],
+  );
+  marker.shape.box([0, -0.058, 0.014], [0.085, 0.213, 0.018], rgb('#a2fff0'));
   const pad = model.part('pad').shape;
   pad.prism([0, 0.025, 0], 0.44, 0.05, P.ink, 0, 16);
   pad.prism([0, 0.058, 0], 0.37, 0.028, P.steel, 0, 16, 0.3);

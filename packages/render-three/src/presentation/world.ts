@@ -40,6 +40,9 @@ export function validatePresentationWorld(
       requireName(effect.target.entity, `effects[${index}].target.entity`);
   });
   if (manifest.hud !== undefined) requireName(manifest.hud.playerName, 'hud.playerName');
+  manifest.camera?.focus?.landmarks.forEach((name, index) =>
+    requireName(name, `camera.focus.landmarks[${index}]`),
+  );
   const state = new PresentationState('fps');
   state.sync(world);
   try {

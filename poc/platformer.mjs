@@ -106,7 +106,7 @@ for (let row = 0; row < tilemap.height; row++) {
           ? dock
             ? 'girder'
             : 'edge'
-          : `rock-${(col * 7 + row * 3) % 4}`;
+          : `rock-${((col * 19) ^ (row * 11) ^ (col >> 1) ^ (row >> 1)) & 3}`;
     const instances = terrainInstances.get(material) ?? [];
     instances.push({
       position: [
@@ -283,8 +283,11 @@ export const coyotePresentation = {
       prop('departure-turbine', 'turbine', [0.8, 6.85, -0.4], 4),
       prop('departure-route', 'direction', [5.7, 6.05, -0.2], 2.3),
       prop('plateau-compressor', 'compressor', [12.5, 6.65, -0.2], 3.5),
-      prop('left-ferry-gantry', 'gantry', [18.7, 7.6, -0.4], 5.4),
-      prop('right-ferry-gantry', 'gantry', [28.2, 7.6, -0.4], 5.4),
+      prop('left-ferry-gantry', 'gantry', [18.7, 7.12, -0.4], 4.5),
+      {
+        ...prop('right-ferry-gantry', 'gantry', [28.2, 7.12, -0.4], 4.5),
+        pose: { position: [28.2, 7.12, -0.4], rotation: [0, 180, 0], scale: [3.375, 4.5, 1] },
+      },
       prop('far-route', 'direction', [35.6, 6.05, -0.2], 2.3),
       prop('beacon-works', 'compressor', [44.6, 7.4, -0.3], 3),
       {

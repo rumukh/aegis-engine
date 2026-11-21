@@ -234,19 +234,31 @@ function critter(frame) {
 
 function rockTile(index) {
   const next = random(300 + index);
-  let body = rect(0, 0, 128, 128, 'url(#rock)');
-  const strata = [
-    ['M0 12L32 8L66 18L106 7L128 11L128 32L91 38L41 28L0 37Z', '#3b5e69'],
-    ['M0 44L36 38L75 48L115 33L128 38L128 76L83 66L44 79L0 66Z', '#2f4e5c'],
-    ['M0 86L37 75L79 87L128 74L128 112L91 110L61 122L0 114Z', '#244351'],
-  ];
-  for (const [d, color] of strata) body += path(d, color);
+  // Shared seam heights, different interior fracture planes: bands continue through a tile
+  // boundary instead of stamping the same outlined bricks on every collision cell.
+  let body = rect(0, 0, 128, 128, '#344951');
+  const offset = () => Math.round(next() * 34) - 17;
+  for (const [height, tone, light] of [
+    [26, '#48585a', '#8a8070'],
+    [78, '#283f4a', '#606b68'],
+  ]) {
+    const a = height + offset(),
+      b = height + offset(),
+      c = height + offset();
+    const seam = `M0 ${height}L27 ${a}L65 ${b}L99 ${c}L128 ${height}`;
+    body += path(
+      `${seam}L128 ${height + 13}L98 ${c + 8}L61 ${b + 20}L26 ${a + 6}L0 ${height + 13}Z`,
+      tone,
+    );
+    body += path(`M27 ${a}L65 ${b}L50 ${b + 8}Z`, light, 'none', 1, 'opacity=".65"');
+  }
+  const x = 25 + Math.round(next() * 70),
+    y = 40 + offset();
   body += path(
-    'M0 33L32 27L53 33L76 30L103 36L128 29M0 74L34 70L49 76L91 66L128 73M15 128L28 99L22 80M83 68L77 44L85 33M106 128L98 111L106 95',
-    'none',
-    '#102936',
-    2,
+    `M${x + 14} 5L${x} ${y}L${x + 6} ${y + 13}L${x - 20} 113L${x - 6} 72L${x - 3} ${y}Z`,
+    '#203743',
   );
+  body += path(`M${x} ${y}L${x + 13} ${y - 26}L${x + 6} ${y + 13}Z`, '#786e60');
   for (let i = 0; i < 15; i++) {
     const x = Math.round(next() * 110);
     const y = Math.round(next() * 112);
@@ -371,7 +383,7 @@ function terrainCell(index) {
 
 function ferry() {
   let body = [
-    ellipse(256, 151, 229, 22, '#061721', 'opacity=".32"'),
+    ellipse(256, 142, 221, 41, 'url(#ember)', 'opacity=".42"'),
     path('M18 38L493 38L504 64L480 121L35 121L8 66Z', '#27424e', ink, 5),
     rect(17, 35, 478, 17, 'url(#metal)', 4, `stroke="${ink}" stroke-width="3"`),
     rect(22, 40, 468, 4, cream, 2),
@@ -380,17 +392,17 @@ function ferry() {
     [61, 145, 229, 313, 397]
       .map((x) => path(`M${x} 107L${x + 42} 78L${x + 82} 107`, 'none', '#5a7d80', 7))
       .join(''),
-    rect(39, 118, 436, 12, '#66858a', 2, `stroke="${ink}" stroke-width="3"`),
-    rect(36, 120, 440, 3, '#a7b5a6', 1),
+    path('M35 108L476 108L463 126L398 133L95 133L47 125Z', '#934e3d', ink, 3),
+    path('M48 123L463 121L450 127L394 132L94 132Z', '#ed9c58'),
     [62, 194, 326, 450].map((x) => bolt(x, 60, 4)).join(''),
     [80, 430]
       .map(
         (x) =>
           circle(x, 117, 29, ink) +
-          circle(x, 116, 23, '#52737a') +
+          circle(x, 116, 23, '#a06e51') +
           circle(x, 116, 16, '#1c3644') +
           circle(x, 115, 8, brass) +
-          path(`M${x - 15} 114L${x + 15} 114M${x} 101L${x} 131`, 'none', '#73908d', 3),
+          path(`M${x - 15} 114L${x + 15} 114M${x} 101L${x} 131`, 'none', '#ca985e', 3),
       )
       .join(''),
     rect(190, 84, 132, 21, ink, 5),
@@ -489,14 +501,24 @@ function machinery(index) {
     );
   }
   return (
-    path('M11 232L181 232L181 248L11 248Z', '#152e3d', ink, 3) +
-    path('M34 232L34 54L54 38L54 232M138 232L138 38L158 54L158 232', '#3b5f68', ink, 4) +
-    path('M37 63L155 63L155 40L37 40Z', brass, ink, 4) +
-    path('M54 75L136 211M136 75L54 211', 'none', '#3b5b65', 10) +
-    rect(29, 101, 24, 23, brass, 3) +
-    rect(138, 169, 24, 23, brass, 3) +
-    path('M52 27Q96 -4 141 27', 'none', '#91aa9f', 5) +
-    path('M50 28L141 28', 'none', '#254b57', 3)
+    path('M29 231L47 224L101 226L115 241L104 247L25 247Z', '#55605b', '#344650', 1.5) +
+    path('M37 229L60 74L72 50L85 50L68 230Z', '#546766', '#34474c', 1.8) +
+    path('M37 228L61 74L70 56L52 224Z', '#ae9b79') +
+    path('M69 52L149 29L172 34L168 44L78 74L56 119Z', '#6e8076', '#344a4b', 2) +
+    path('M72 53L151 30L168 33L151 36L70 60Z', '#ccaf80') +
+    path('M73 77L153 42L115 66L60 107', 'none', '#495e5f', 3) +
+    path('M54 208L116 68L150 40M80 64L100 224', 'none', '#627672', 1.8) +
+    path(
+      'M60 88L74 79M57 109L69 102M54 130L66 125M50 153L64 150M47 181L60 178',
+      'none',
+      '#9d927b',
+      2,
+    ) +
+    circle(155, 38, 9, '#455853', `stroke="#bba17a" stroke-width="3"`) +
+    circle(155, 38, 3, '#dbb985') +
+    path('M155 48Q150 86 153 111L157 117L160 112M161 44Q166 88 158 112', 'none', '#657671', 1.5) +
+    path('M49 206L68 203L65 211L48 214Z', '#c29761') +
+    [84, 107, 130].map((x, i) => circle(x, 59 - i * 7, 1.6, '#dac398')).join('')
   );
 }
 

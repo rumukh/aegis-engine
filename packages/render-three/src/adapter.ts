@@ -78,6 +78,8 @@ export interface RenderAdapter {
   present?(frame: PresentationFrame): void;
   /** Reset transient presentation state, retaining shared assets. */
   resetPresentation?(): void;
+  /** Switch an authored tactical camera between the full board and player focus. */
+  setPlayerFocus?(enabled: boolean): void;
   /** Update the camera projection for a new viewport size. */
   resize(width: number, height: number): void;
   /**

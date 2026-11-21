@@ -139,6 +139,7 @@ export class IsoAdapter extends BaseAdapter {
   readonly #pickProxies = new Set<Object3D>();
   #aspect: number;
   #levelBuilt = false;
+  #playerFocus = false;
   #levelBounds?: Box3;
   #overview?: { yaw: number; width: number; height: number; center: Vector3 };
 
@@ -198,6 +199,10 @@ export class IsoAdapter extends BaseAdapter {
   resize(width: number, height: number): void {
     this.#aspect = aspectOf(width, height);
     this.#applyFrustum(this.camera.top - this.camera.bottom);
+  }
+
+  setPlayerFocus(enabled: boolean): void {
+    this.#playerFocus = enabled;
   }
 
   /**
@@ -598,7 +603,46 @@ export class IsoAdapter extends BaseAdapter {
     let focusY = 0;
     let viewHeight = config?.viewHeight ?? FALLBACK_VIEW_HEIGHT;
     const framing = this.presentation?.manifest.camera;
-    if (framing?.framing === 'level') {
+    if (this.#playerFocus && framing?.focus !== undefined) {
+      // Fit the player and landmarks in camera space, then choose the nearest feasible
+      // center to the player. On a portrait board this keeps both objectives reachable.
+      const right = new Vector3(cos(yaw), 0, -sin(yaw));
+      const up = new Vector3(-sin(yaw) * sin(elevation), horizontal, -cos(yaw) * sin(elevation));
+      const subject = new Vector3(focus.x, 0.5, focus.z);
+      const sx = subject.dot(right),
+        sy = subject.dot(up);
+      let left = sx,
+        top = sy,
+        bottom = sy,
+        end = sx;
+      for (const view of world.query({ has: [Name] }).views()) {
+        if (!framing.focus.landmarks.includes(view.get(Name).value)) continue;
+        const grid = view.tryGet(GridPosition);
+        const at = view.tryGet(Transform)?.position;
+        if (!grid && !at) continue;
+        // In iso scenes a Transform's x/y pair names the ground cell (not its x/z).
+        const p = new Vector3(grid?.cellX ?? at!.x, 0, grid?.cellY ?? at!.y);
+        const x = p.dot(right),
+          y = p.dot(up);
+        left = Math.min(left, x);
+        end = Math.max(end, x);
+        bottom = Math.min(bottom, y);
+        top = Math.max(top, y + horizontal * 1.25);
+      }
+      const margin = framing.padding ?? 0.75;
+      viewHeight = Math.max(
+        framing.focus.height,
+        top - bottom + 2 * margin,
+        (end - left + 2 * margin) / this.#aspect,
+      );
+      const halfWidth = (viewHeight * this.#aspect) / 2,
+        halfHeight = viewHeight / 2;
+      const cx = Math.max(end + margin - halfWidth, Math.min(sx, left - margin + halfWidth));
+      const cy = Math.max(top + margin - halfHeight, Math.min(sy, bottom - margin + halfHeight));
+      subject.addScaledVector(right, cx - sx).addScaledVector(up, cy - sy);
+      focus = subject;
+      focusY = subject.y;
+    } else if (framing?.framing === 'level') {
       if (this.#levelBounds === undefined)
         throw new Error('[aegis] Isometric level framing requires a nonempty navigation grid.');
       if (this.#overview?.yaw !== yaw) {

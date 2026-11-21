@@ -136,7 +136,7 @@ const presentation = {
       {
         event: 'enemy.damaged',
         kind: 'pulse',
-        target: { entity: 'grunt' },
+        target: { entity: 'grunt', node: 'ImpactPlate' },
         color: '#c7f4ff',
         amount: 0,
         durationTicks: 8,

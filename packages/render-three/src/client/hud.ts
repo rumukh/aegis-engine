@@ -47,6 +47,7 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
   const statsEl = root.getElementById('hud-stats');
   const feedEl = root.getElementById('hud-events');
   const objectiveEl = root.getElementById('hud-objective');
+  const nextEl = root.getElementById('hud-next');
   const promptEl = root.getElementById('hud-prompt');
   const subtitleEl = root.getElementById('hud-subtitle');
   const threatEl = root.getElementById('hud-narrative-status');
@@ -92,6 +93,8 @@ export function createHud(root: Document = document, options: HudOptions = {}): 
       element.disabled = value;
   };
   const progress = (): void => {
+    const next = steps.find((step) => !completed.has(step.id));
+    set(nextEl, next?.label ?? 'Objectives complete');
     set(progressEl, steps.length === 0 ? '' : `${completed.size} / ${steps.length} complete`);
     hidden(progressEl, steps.length === 0);
     for (const step of steps) {

@@ -269,6 +269,13 @@ export class PresentationHost {
     button('action-restart', () => this.#options.onCommand('restart'));
     button('action-retry', () => globalThis.location.reload());
     button('action-mute', () => this.#toggleMute());
+    const focus = document.getElementById('action-focus');
+    if (focus !== null)
+      this.#listen(focus, 'click', () => {
+        const active = focus.getAttribute('aria-pressed') !== 'true';
+        this.#adapter?.setPlayerFocus?.(active);
+        focus.setAttribute('aria-pressed', String(active));
+      });
     const quality = document.getElementById('quality');
     if (typeof HTMLSelectElement !== 'undefined' && quality instanceof HTMLSelectElement) {
       quality.value = this.#quality;

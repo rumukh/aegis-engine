@@ -16,10 +16,10 @@
     },
     {
       "file": "kestrel-security.glb",
-      "bytes": 166504,
-      "triangles": 1446,
-      "primitives": 30,
-      "nodes": 9,
+      "bytes": 187968,
+      "triangles": 1650,
+      "primitives": 33,
+      "nodes": 10,
       "animations": [
         {
           "name": "SentinelIdle",
@@ -38,7 +38,7 @@
           "channels": 3
         }
       ],
-      "sha256": "15cace4671b34c89387b7ba353d12fbd4b46b4f386b13506c418426f444a847d"
+      "sha256": "a31a6029356d406d347788236527407bb58af22bf486b93d9694c1821145957e"
     },
     {
       "file": "vaultline-rifle.glb",

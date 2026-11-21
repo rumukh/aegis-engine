@@ -178,9 +178,15 @@ export function validatePresentation(
     }
   }
   if (root.camera !== undefined) {
-    const camera = record(root.camera, 'camera', ['framing', 'padding']);
+    const camera = record(root.camera, 'camera', ['framing', 'padding', 'focus']);
     enumeration(camera.framing, 'camera.framing', ['follow', 'level']);
     optional(camera, 'padding', 'camera', nonnegative);
+    if (camera.focus !== undefined) {
+      if (camera.framing !== 'level') fail('camera.focus', 'A focus toggle requires level framing.');
+      const focus = record(camera.focus, 'camera.focus', ['height', 'landmarks']);
+      positive(focus.height, 'camera.focus.height');
+      list(focus.landmarks, 'camera.focus.landmarks', 16).forEach((name, i) => text(name, `camera.focus.landmarks[${i}]`));
+    }
   }
   const assets = new Map<string, RecordValue>();
   const materials = new Set<string>();
@@ -762,7 +768,7 @@ export function validatePresentation(
       'lossEnding',
       'winEnding',
     ]);
-    optional(r, 'layout', 'ui', (v, p) => enumeration(v, p, ['standard', 'cinematic']));
+    optional(r, 'layout', 'ui', (v, p) => enumeration(v, p, ['standard', 'cinematic', 'tactical']));
     optional(r, 'accent', 'ui', color);
     optional(r, 'eyebrow', 'ui', text);
     optional(r, 'cover', 'ui', (v, p) => asset(v, p, 'texture'));

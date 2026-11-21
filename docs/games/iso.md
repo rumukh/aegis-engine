@@ -128,9 +128,9 @@ on one target is the proof that pathfinding re-resolves against a _mutated_ grid
 
 ## Level layout
 
-Authored as an ADR-0003 tilemap (`levels/server-vault.tilemap.json`), 12×9, `tileSize: 1`. Row 0 is
+Authored in `levels/server-vault.scene.json`, 12×9, `tileSize: 1`. Row 0 is
 the top. Operative, guard, switch-trigger, door and exit-trigger are scene entities placed by cell;
-walls/floor live in the tilemap's `collision` layer.
+walls/floor live in `resources.IsoGrid.walls`. Both navigation and the rendered partitions/deck use this grid.
 
 Legend:
 
@@ -260,13 +260,11 @@ Notes for the implementer:
 
 ```ts
 import { defineGameTest, expectSim } from '@aegis/harness';
-import { GridPosition } from '@aegis/mode-iso';
+import { GridPosition, IsoGrid } from '@aegis/mode-iso';
 import { Health } from '@aegis/content';
-// The game ships a composed ModePlugin (mode systems + its own semantic systems), the wall cells
-// derived from the level's collision rows, and the two pinned goldens.
+// The game ships a composed ModePlugin and two pinned goldens.
 import {
   serverVaultPlugin,
-  WALL_CELLS,
   GOLDEN_HASH,
   GOLDEN_TRAJECTORY,
   patrolCell,
@@ -322,7 +320,7 @@ export default defineGameTest({
         .query({ has: ['Operative', 'GridPosition'] })
         .one()
         .get(GridPosition);
-      return WALL_CELLS.every((c) => !(c.x === g.cellX && c.y === g.cellY));
+      return w.getResource(IsoGrid)?.walls[g.cellY]?.[g.cellX] === '.';
     });
 
     // Whole-timeline invariant #2 — bounded, deterministic incoming damage.

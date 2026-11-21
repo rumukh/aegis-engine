@@ -110,7 +110,7 @@ does not require clicking the canvas or capturing the mouse.
 ### NULL MERIDIAN
 
 [Play NULL MERIDIAN](https://rumukh.github.io/aegis-engine/play/horror/) ·
-[Game guide and acceptance limits](docs/games/horror.md) · [Source](games/horror)
+[Game guide and acceptance limits](docs/games/horror.md) · [Full-route benchmark](docs/games/null-meridian-benchmark.md) · [Spoiler-free playtest protocol](docs/games/null-meridian-first-play.md) · [Source](games/horror)
 
 Investigate an abandoned orbital station, diagnose and restore auxiliary power, recover the
 crew evidence, evade a corrupted rescue responder and depart. **No gun combat.** Spatially
