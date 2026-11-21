@@ -218,6 +218,10 @@ describe('independent browser streams on one live session', () => {
             return fetch.apply(this,args);
           };
           proto.render=function(...args){
+            // This case measures the first exchange *after* a stalled draw. An older HTTP
+            // response already in flight would instead test a 2250 ms block against its
+            // 2000 ms transport deadline, correctly latching an ambiguous-delivery error.
+            if(globalThis.aegis.timings().inFlight) return render.apply(this,args);
             proto.render=render;
             const result=render.apply(this,args);
             __drawTask.started=performance.now();

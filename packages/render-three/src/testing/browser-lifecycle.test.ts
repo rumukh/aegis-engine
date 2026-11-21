@@ -1,8 +1,12 @@
 import { ChildProcess } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LaunchedBrowser } from '../browser.js';
 import { CdpDisconnectedError } from '../browser.js';
 import { closeOwnedBrowser } from './browser-lifecycle.js';
+import { closeOwnedBrowserProfile } from '../browser-lifecycle.js';
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
@@ -49,6 +53,34 @@ function browser() {
 }
 
 describe('owned browser test lifetimes', () => {
+  it('keeps an owned profile on shutdown failure and removes it only after a clean, inspected exit', async () => {
+    const profile = mkdtempSync(join(tmpdir(), 'aegis-profile-control-'));
+    try {
+      const marker = join(profile, 'Preferences');
+      writeFileSync(marker, '{}');
+      const crashed = { ...browser(), profile };
+      crashed.process.exitCode = 7;
+      await expect(closeOwnedBrowserProfile(crashed)).rejects.toThrow('exited unexpectedly');
+      expect(existsSync(marker)).toBe(true);
+      const owned = { ...browser(), profile };
+      mocks.send.mockImplementation(async (method: string) => {
+        expect(existsSync(marker)).toBe(true);
+        if (method === 'SystemInfo.getProcessInfo') return { processInfo: [] };
+        expect(method).toBe('Browser.close');
+        owned.process.exitCode = 0;
+        owned.process.emit('exit', 0, null);
+        return {};
+      });
+      await closeOwnedBrowserProfile(owned);
+      expect(mocks.send.mock.calls.map(([method]) => method)).toEqual([
+        'SystemInfo.getProcessInfo',
+        'Browser.close',
+      ]);
+      expect(existsSync(profile)).toBe(false);
+    } finally {
+      rmSync(profile, { recursive: true, force: true });
+    }
+  });
   it('accepts an expected close-socket disconnect only alongside a separately observed clean exit', async () => {
     const own = browser();
     const kill = vi.spyOn(own.process, 'kill');

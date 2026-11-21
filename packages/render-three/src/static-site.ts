@@ -484,13 +484,20 @@ const PLAY_DEPTH = '../../';
  * and from a reviewer's `python -m http.server` in a subdirectory — without the exporter being
  * told which it will be.
  */
-export function staticImportMap(base: string, modules: readonly StaticModule[]): string {
+export function staticImportMap(
+  base: string,
+  modules: readonly StaticModule[],
+  used?: ReadonlySet<string>,
+): string {
   const imports: Record<string, string> = {};
   for (const module of [...modules].sort((a, b) => a.specifier.localeCompare(b.specifier))) {
-    const rel = relative(module.root, module.entry)
-      .split(sep)
-      .filter((part) => part !== '');
-    imports[module.specifier] = base + posix.join('vendor', module.name, ...rel);
+    if (used !== undefined && !used.has(module.specifier)) continue;
+    // A custom entry can live inside another vendored root. Address the copy the graph placed,
+    // even when the owning package's own bare specifier was never imported.
+    const target = vendorTarget(modules, module.entry);
+    if (target === undefined)
+      throw new StaticGraphError(`No vendor address for ${module.specifier}: ${module.entry}`);
+    imports[module.specifier] = base + target;
   }
   return scriptJson({ imports });
 }
@@ -625,6 +632,7 @@ export function renderStaticPlayPage(
   game: StaticGame,
   modules: readonly StaticModule[],
   release: ReleaseTarget = 'evaluation',
+  used?: ReadonlySet<string>,
 ): string {
   const body = renderGameChrome({
     title: game.title,
@@ -645,7 +653,7 @@ export function renderStaticPlayPage(
   <title>${escapeHtml(game.title)} — Aegis</title>
   <style>${PAGE_STYLE}</style>
   <script type="importmap">
-${staticImportMap(PLAY_DEPTH, modules)}
+${staticImportMap(PLAY_DEPTH, modules, used)}
   </script>
 </head>
 <body>
@@ -849,7 +857,7 @@ export function exportStaticSite(options: ExportOptions): ExportResult {
   // Only the specifiers the graph actually used reach the import map. A map entry pointing at a
   // module nobody imports is a module nobody copied — a dangling address that would 404 the first
   // time anything did import it, with nothing in the build to say so.
-  const used = modules.filter((module) => graph.usedSpecifiers.includes(module.specifier));
+  const used = new Set(graph.usedSpecifiers);
 
   for (const file of graph.files) {
     if (!boots.has(file.source) && isInside(outDir, file.source))
@@ -920,7 +928,7 @@ export function exportStaticSite(options: ExportOptions): ExportResult {
       path,
       bytes: write(
         join(outDir, 'play', game.id, 'index.html'),
-        renderStaticPlayPage(game, used, release),
+        renderStaticPlayPage(game, modules, release, used),
       ),
     });
     pages.push(path);

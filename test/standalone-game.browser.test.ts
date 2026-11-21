@@ -1,6 +1,5 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
@@ -11,7 +10,7 @@ import {
   stopExternalLagWitness,
   until,
 } from '../packages/render-three/src/browser.js';
-import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
+import { closeOwnedBrowserProfile } from '../packages/render-three/src/browser-lifecycle.js';
 import { navigateAndWait } from '../packages/render-three/src/browser-navigation.js';
 import { standaloneFixture } from './support/standalone-game.js';
 
@@ -63,8 +62,7 @@ beforeAll(async () => {
 afterAll(async () => {
   try {
     if (browser) {
-      await closeOwnedBrowser(browser, { inspectProcesses: true });
-      await rm(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      await closeOwnedBrowserProfile(browser);
     }
   } finally {
     stopExternalLagWitness();
