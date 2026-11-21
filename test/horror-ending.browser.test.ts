@@ -10,10 +10,10 @@ import {
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { cpus, tmpdir, totalmem } from 'node:os';
-import { extname, join } from 'node:path';
+import { dirname, extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { fpsPlugin } from '@aegis/mode-fps';
-import type { ModePlugin } from '@aegis/harness';
+import { plugin } from './support/ending-preview.mjs';
 import { horror } from '../poc/horror.mjs';
 import { BINDINGS } from '../packages/render-three/src/bindings.js';
 import { startDevServer } from '../packages/render-three/src/dev-server.js';
@@ -44,17 +44,6 @@ const bindings = {
   ...BINDINGS.fps,
   actions: [...BINDINGS.fps.actions, { code: 'KeyV', action: 'Win' }],
 };
-const plugin: ModePlugin = {
-  ...fpsPlugin,
-  systems: () =>
-    fpsPlugin.systems().add({
-      name: 'fixture.win',
-      phase: 'postUpdate',
-      run({ world, input }): void {
-        if (input.pressed.includes('Win')) world.events.emit('level.completed', {});
-      },
-    }),
-};
 const source = horror.presentation.manifest;
 assert.ok(source.ui?.winEnding);
 const manifest: PresentationManifest = {
@@ -66,7 +55,7 @@ const manifest: PresentationManifest = {
   ),
   environment: { reflections: source.environment?.reflections },
   audio: { headroom: 0.65, cues: source.audio?.cues?.filter((cue) => cue.asset === 'vo-exit') },
-  hud: { playerName: 'player', winEvent: 'level.completed', loseEvents: ['player.died'] },
+  hud: { playerName: 'player', winEvent: 'level.completed', loseEvents: [] },
   ui: { winEnding: source.ui.winEnding },
 };
 let directory: string, dev: DevServer, files: Server, staticUrl: string;
@@ -150,16 +139,7 @@ function speechBoundaryModule(assetFiles: readonly string[]): string {
 
 beforeAll(async () => {
   directory = mkdtempSync(join(tmpdir(), 'aegis-win-ending-'));
-  const module = join(directory, 'plugin.mjs');
-  writeFileSync(
-    module,
-    `import{fpsPlugin}from'@aegis/mode-fps';
-    export const plugin={...fpsPlugin,systems:()=>fpsPlugin.systems().add({
-      name:'fixture.win',phase:'postUpdate',run({world,input}){
-        if(input.pressed.includes('Win'))world.events.emit('level.completed',{});
-      }
-    })};`,
-  );
+  const module = fileURLToPath(new URL('./support/ending-preview.mjs', import.meta.url));
   const game = {
     id: 'ending',
     title: 'NULL MERIDIAN / ending preview fixture',
@@ -185,7 +165,7 @@ beforeAll(async () => {
       {
         specifier: '@aegis/ending-fixture',
         name: '@aegis/ending-fixture',
-        root: directory,
+        root: dirname(module),
         entry: module,
       },
     ],
