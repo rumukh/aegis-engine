@@ -20,7 +20,7 @@ import { createServer } from 'node:http';
 import { extname } from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { DiagnosticError } from '@aegis/core';
-import type { Diagnostic, GameEvent } from '@aegis/core';
+import type { Diagnostic, GameEvent, InputSource } from '@aegis/core';
 import { createLiveSession } from './session.js';
 import type { LiveSession } from './session.js';
 import { findRepoRoot } from './catalog.js';
@@ -62,6 +62,8 @@ export interface DevServerOptions {
   clock?: Clock;
   /** Optional deployment prefix, e.g. `/preview/aegis/`. Normalized on startup. */
   basePath?: string;
+  /** Server-owned tick-indexed playback, never supplied by an HTTP client. */
+  replayInputs?: ReadonlyMap<string, InputSource>;
 }
 
 /** A running dev server. */
@@ -216,6 +218,7 @@ export function startDevServer(options: DevServerOptions): Promise<DevServer> {
       session: createLiveSession({
         scene: game.scene,
         plugin: game.plugin,
+        replayInput: options.replayInputs?.get(gameId),
         ...(game.seed !== undefined ? { seed: game.seed } : {}),
         ...(game.tickRate !== undefined ? { tickRate: game.tickRate } : {}),
       }),
