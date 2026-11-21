@@ -10,10 +10,11 @@ import {
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { extname, join, resolve, sep } from 'node:path';
+import { dirname, extname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Health } from '@aegis/content';
-import { fpsPlugin } from '@aegis/mode-fps';
+import { cinematicPlugin } from '../test/fixtures/fps-fixtures.js';
 import { findRepoRoot } from './catalog.js';
 import { BINDINGS } from './bindings.js';
 import {
@@ -59,9 +60,9 @@ beforeAll(async () => {
     ui: { layout: 'cinematic' },
     hud: {
       playerName: 'player',
-      winEvent: 'done',
+      winEvent: 'hitscan.hit',
       loseEvents: [],
-      steps: [{ id: 'later', label: 'A later objective', event: 'done' }],
+      steps: [{ id: 'later', label: 'A later objective', event: 'hitscan.hit' }],
     },
     pipeline: {
       toneMapping: 'aces',
@@ -185,7 +186,7 @@ beforeAll(async () => {
     blurb: 'Lighting and audio fixture',
     objective: 'Two shadow lights; LDR reflections; linear foreground composition.',
     mode: 'fps' as const,
-    plugin: fpsPlugin,
+    plugin: cinematicPlugin,
     scene,
     bindings: BINDINGS.fps,
     presentation,
@@ -195,13 +196,22 @@ beforeAll(async () => {
   expect(initial.ok).toBe(true);
   dev.session('cinematic')!.paused = true;
   const outDir = join(root, 'site');
+  const entry = fileURLToPath(new URL('../test/fixtures/fps-fixtures.js', import.meta.url));
   exportStaticSite({
     games: [
       {
         ...game,
         sceneText: JSON.stringify(scene),
-        pluginModule: '@aegis/mode-fps',
-        pluginExport: 'fpsPlugin',
+        pluginModule: '@aegis/cinematic-fixture',
+        pluginExport: 'cinematicPlugin',
+      },
+    ],
+    modules: [
+      {
+        specifier: '@aegis/cinematic-fixture',
+        name: '@aegis/cinematic-fixture',
+        root: dirname(entry),
+        entry,
       },
     ],
     repoRoot: findRepoRoot(),

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { fpsPlugin } from '@aegis/mode-fps';
+import { fpsPlugin, FPS_EVENTS } from '@aegis/mode-fps';
 import { BINDINGS } from './bindings.js';
 import { startDevServer } from './dev-server.js';
 import type { DevServer } from './dev-server.js';
@@ -59,7 +59,7 @@ beforeAll(async () => {
         blurb: '',
         objective: 'One controller, independent viewers.',
         mode: 'fps',
-        plugin: fpsPlugin,
+        plugin: { ...fpsPlugin, events: () => ({ ...FPS_EVENTS, 'stream.cue': { fields: {} } }) },
         scene: FPS_SCENE,
         bindings: BINDINGS.fps,
         presentation: {
