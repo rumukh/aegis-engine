@@ -11,6 +11,11 @@
 import type { StateHash } from '@aegis/core';
 import { isValidTickRate } from '@aegis/core';
 import { asError } from './report.js';
+import { parseEvidence } from './replay-evidence.js';
+import type { ReplayEvidence } from './replay-evidence.js';
+
+export { formatReplayDetails } from './replay-evidence.js';
+export type { ReplayEvidence, ReplayDetails } from './replay-evidence.js';
 
 /** A portable, human-readable recording of a run. */
 export interface Recording {
@@ -30,6 +35,8 @@ export interface Recording {
   finalHash: StateHash;
   /** Optional per-tick hashes, enabling pinpointing the first divergent tick on replay. */
   tickHashes?: readonly StateHash[];
+  /** Opt-in state-field and FIFO event pins. Absent on ordinary and legacy recordings. */
+  evidence?: ReplayEvidence;
 }
 
 /** Read and validate the recorded rate, using the historical 60 Hz default only when absent. */
@@ -62,6 +69,7 @@ export function serializeRecording(recording: Recording): string {
   if (recording.tickHashes && recording.tickHashes.length > 0) {
     ordered.tickHashes = recording.tickHashes;
   }
+  if (recording.evidence !== undefined) ordered.evidence = recording.evidence;
   return JSON.stringify(ordered, null, 2) + '\n';
 }
 
@@ -105,5 +113,6 @@ export function parseRecording(text: string): Recording {
   if (Array.isArray(obj.tickHashes)) {
     recording.tickHashes = obj.tickHashes.map((h) => String(h));
   }
+  if (obj.evidence !== undefined) recording.evidence = parseEvidence(obj.evidence, recording.ticks);
   return recording;
 }

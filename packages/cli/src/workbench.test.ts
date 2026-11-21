@@ -235,6 +235,7 @@ export const empty = {
   view: () => platformerPlugin.view(),
 };
 export const scalarResources = { ...empty, resources: () => ['enabled', 'nil', 'number'] };
+export const noVocabulary = { ...empty, inputs: () => ({ actions: [], axes: [] }), events: () => ({}), resources: () => [] };
 
 const Observed = defineTag('Observed');
 const Recycled = defineTag('Recycled');
@@ -328,7 +329,13 @@ describe('aegis describe: built CLI acceptance', () => {
       expect(data.components.map((c) => c.id)).toEqual(
         [...BASE_COMPONENTS, ...stock.components].sort(),
       );
-      expect(data.resources).toEqual({ declared: true, ids: stock.resources, valueSchemas: null });
+      expect(data.resources).toMatchObject({ declared: true, ids: stock.resources });
+      expect(Object.keys(data.resources.valueSchemas ?? {})).toEqual(stock.resources);
+      for (const id of stock.resources)
+        expect(data.resources.valueSchemas?.[id]).toHaveProperty(
+          'fields.width',
+          'nonnegative-integer',
+        );
       expect(data.systems.order.map((s) => s.name)).toEqual(stock.systems);
       expect(data.systems.unresolved).toEqual([]);
       const explicit = capabilities(['--plugin', stock.mode]);
@@ -444,6 +451,10 @@ describe('aegis describe: built CLI acceptance', () => {
   it('exposes declarations and real scheduler order without calling init, run, view or resource factories', () => {
     const data = capabilities(['--plugin', './plugin.mjs#declarations'], fixture());
     expect(data.resources.ids).toEqual(['fixture.empty', 'fixture.settings']);
+    expect(data.resources.valueSchemas).toEqual({
+      'fixture.empty': null,
+      'fixture.settings': null,
+    });
     expect(data.systems.phases).toEqual([
       'input',
       'preUpdate',
@@ -590,8 +601,56 @@ describe('aegis describe: built CLI acceptance', () => {
     const data = capabilities(['--plugin', './plugin.mjs#empty'], fixture());
     expect(data.components.map((component) => component.id)).toEqual([...BASE_COMPONENTS].sort());
     expect(data.resources).toEqual({ declared: false, ids: [], valueSchemas: null });
+    expect(data.inputs).toEqual({ actions: null, axes: null });
+    expect(data.events).toBeNull();
     expect(data.prefabs).toEqual({ declared: false, expanded: false, catalog: [] });
     expect(data.systems.order).toEqual([]);
+    const closed = capabilities(['--plugin', './plugin.mjs#noVocabulary'], fixture());
+    expect(closed.inputs).toEqual({ actions: [], axes: [] });
+    expect(closed.events).toEqual({});
+    expect(closed.resources).toEqual({ ids: [], declared: true, valueSchemas: {} });
+  });
+
+  it('discovers game-specific contracts even for two different games on the same mode', () => {
+    const horror = capabilities(['games/horror/levels/null-meridian.scene.json']);
+    expect(horror.inputs).toEqual({
+      actions: ['Crouch', 'Fire', 'Flashlight', 'Interact', 'Jump', 'Select', 'Sprint'],
+      axes: ['Forward', 'Strafe'],
+    });
+    expect(horror.events?.['horror.player.step']).toMatchObject({
+      fields: { variant: 'number', position: { fields: { x: 'number' } } },
+    });
+    const fps = capabilities(['games/fps/levels/sector-breach.scene.json']);
+    expect(fps.inputs.actions).not.toContain('Interact');
+    expect(fps.events?.['horror.player.step']).toBeUndefined();
+    expect(fps.events?.['hitscan.hit']).toEqual(horror.events?.['hitscan.hit']);
+    expect(fps.resources.valueSchemas).toEqual(horror.resources.valueSchemas);
+  });
+
+  it('validates the same input token against the same plugin before a run or independently', () => {
+    const dir = fixture();
+    const script = 'route.input';
+    writeFileSync(join(dir, script), '# beat 2\npress Jmup @28\n');
+    const scene = join(ROOT, 'games/platformer/levels/coyote-gap.scene.json');
+    const check = cli(
+      ['validate', script, '--plugin', '@aegis/game-platformer#coyoteGapPlugin', '--json'],
+      dir,
+    );
+    const run = cli(['run', scene, '--input', script, '--ticks', '90', '--json'], dir);
+    expect([check.code, run.code]).toEqual([2, 2]);
+    const diagnostics = JSON.parse(check.out).files[0].diagnostics;
+    expect(diagnostics).toMatchObject([
+      {
+        code: 'AEG-HARNESS-0013',
+        location: { file: script, line: 2, column: 7 },
+        data: { suggestion: 'Jump' },
+      },
+    ]);
+    expect(JSON.parse(run.err).diagnostics).toEqual(diagnostics);
+    writeFileSync(join(dir, script), 'press Jump @28\n');
+    const fixed = cli(['run', scene, '--input', script, '--ticks', '90', '--json'], dir);
+    expect(fixed.code, fixed.err).toBe(0);
+    expect(JSON.parse(fixed.out).events['player.jumped']).toBe(1);
   });
 
   it('resolves config-relative modules above cwd and rejects mode disagreements', () => {
@@ -609,8 +668,10 @@ describe('aegis describe: built CLI acceptance', () => {
     const data = capabilities(['--mode', 'platformer']);
     expect(data.operations.commands.map((c) => c.name)).toEqual([
       'describe',
+      'export',
       'import',
       'inspect',
+      'play',
       'preview',
       'record',
       'replay',
@@ -652,6 +713,7 @@ describe('aegis describe: built CLI acceptance', () => {
       'prefab/1',
       'tilemap/1',
       'presentation/1',
+      'input-script',
     ]);
     expect(cli(['--help']).out).toContain('describe');
     expect(cli(['describe', '--help']).out).toContain('capabilities/1');

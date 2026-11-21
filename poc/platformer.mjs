@@ -93,28 +93,42 @@ const terrainNames = [
 const terrainInstances = new Map();
 const solid = (col, row) => tilemap.legend[collision.data[row]?.[col]]?.solid === true;
 
-// The painting follows the collision cells, never a second hand-maintained level layout.
+// Find contiguous faces *in the collision grid*. A stratum spans a cliff rather than
+// repeating once per physics cell. Industrial panels and dock girders keep their true pitch.
+function faceAt(col, row) {
+  if (!solid(col, row)) return null;
+  if (col === tilemap.width - 1) return 'panel';
+  if (solid(col, row - 1)) return 'rock';
+  return (col >= 17 && col < 20) || (col >= 27 && col < 30) ? 'girder' : 'edge';
+}
+const painted = new Set();
+const key = (col, row) => row * tilemap.width + col;
 for (let row = 0; row < tilemap.height; row++) {
   for (let col = 0; col < tilemap.width; col++) {
-    if (!solid(col, row)) continue;
-    const top = !solid(col, row - 1);
-    const dock = (col >= 17 && col < 20) || (col >= 27 && col < 30);
-    const material =
-      col === tilemap.width - 1
-        ? 'panel'
-        : top
-          ? dock
-            ? 'girder'
-            : 'edge'
-          : `rock-${(col * 7 + row * 3) % 4}`;
+    const face = faceAt(col, row);
+    if (face === null || painted.has(key(col, row))) continue;
+    const free = (x, y) =>
+      x < tilemap.width && y < tilemap.height && !painted.has(key(x, y)) && faceAt(x, y) === face;
+    let w = 1,
+      h = 1;
+    if (face === 'rock' || face === 'edge') {
+      const maxWidth = face === 'rock' ? 6 + (col % 3) : 3;
+      while (w < maxWidth && free(col + w, row)) w++;
+      if (face === 'rock') {
+        while (Array.from({ length: w }, (_, dx) => free(col + dx, row + h)).every(Boolean)) h++;
+      }
+    }
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++) painted.add(key(col + dx, row + dy));
+    const material = face === 'rock' ? `rock-${(col + row) % 4}` : face;
     const instances = terrainInstances.get(material) ?? [];
     instances.push({
       position: [
-        (col + 0.5) * tilemap.tileSize,
-        (tilemap.height - row - 0.5) * tilemap.tileSize,
+        (col + w / 2) * tilemap.tileSize,
+        (tilemap.height - row - h / 2) * tilemap.tileSize,
         0.1,
       ],
-      scale: [tilemap.tileSize, tilemap.tileSize, 1],
+      scale: [w * tilemap.tileSize, h * tilemap.tileSize, 1],
     });
     terrainInstances.set(material, instances);
   }
@@ -283,8 +297,11 @@ export const coyotePresentation = {
       prop('departure-turbine', 'turbine', [0.8, 6.85, -0.4], 4),
       prop('departure-route', 'direction', [5.7, 6.05, -0.2], 2.3),
       prop('plateau-compressor', 'compressor', [12.5, 6.65, -0.2], 3.5),
-      prop('left-ferry-gantry', 'gantry', [18.7, 7.6, -0.4], 5.4),
-      prop('right-ferry-gantry', 'gantry', [28.2, 7.6, -0.4], 5.4),
+      prop('left-ferry-gantry', 'gantry', [18.7, 7.12, -0.4], 4.5),
+      {
+        ...prop('right-ferry-gantry', 'gantry', [28.2, 7.12, -0.4], 4.5),
+        pose: { position: [28.2, 7.12, -0.4], rotation: [0, 180, 0], scale: [3.375, 4.5, 1] },
+      },
       prop('far-route', 'direction', [35.6, 6.05, -0.2], 2.3),
       prop('beacon-works', 'compressor', [44.6, 7.4, -0.3], 3),
       {

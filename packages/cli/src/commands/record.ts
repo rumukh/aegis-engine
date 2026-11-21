@@ -51,6 +51,7 @@ const USAGE = [
   '  --input <file>    Input-script (.input DSL) to drive the run.',
   '  --seed <value>    PRNG seed override.',
   '  --max-ticks <n>   Raise the tick ceiling (default: 1000000).',
+  '  --explain         Pin detailed state and ordered events for bounded divergence reports.',
   '  --force           Overwrite <file> if it already exists.',
   '  --json            Emit the record summary as JSON.',
   '',
@@ -73,6 +74,7 @@ export const recordCommand: Command = {
     input: 'value',
     seed: 'value',
     'max-ticks': 'value',
+    explain: 'boolean',
     force: 'boolean',
   },
   async run(ctx: CommandContext): Promise<number> {
@@ -108,11 +110,15 @@ export const recordCommand: Command = {
       plugin: resolved.plugin,
       ticks,
       tickRate: flagTickRate(args) ?? 60,
+      captureReplayEvidence: flagBool(args, 'explain'),
     };
     const seed = flagSeed(args);
     if (seed !== undefined) options.seed = seed;
     const inputFile = flagString(args, 'input');
-    if (inputFile !== undefined) options.input = readText(resolvePath(io, inputFile), io);
+    if (inputFile !== undefined) {
+      options.input = readText(resolvePath(io, inputFile), io);
+      options.inputFile = inputFile;
+    }
 
     const result = await runScene(loaded.scene, options);
     // Keep the scene reference the user gave (a portable, relative path) rather than the

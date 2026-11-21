@@ -82,7 +82,7 @@ export function renderIndexPage(games: readonly GameDefinition[]): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="data:," />
-  <title>Aegis — play the proof-of-concept games</title>
+  <title>${games.length === 1 ? escapeHtml(games[0]!.title) : 'Aegis — game collection'}</title>
   <style>${PAGE_STYLE}</style>
 </head>
 <body>
@@ -95,7 +95,7 @@ ${body}
 /** The play page for one game. Hosts can pass their already-prepared asset inventory. */
 export function renderPlayPage(game: GameDefinition, presentation?: ResolvedPresentation): string {
   if (presentation === undefined && game.presentation !== undefined) {
-    const prepared = preparePresentation(game.presentation, game.scene);
+    const prepared = preparePresentation(game.presentation, game.scene, game.plugin.events?.());
     presentation = {
       manifest: prepared.manifest,
       baseUrl: `../../assets/${game.id}/`,
@@ -118,6 +118,7 @@ export function renderPlayPage(game: GameDefinition, presentation?: ResolvedPres
     mode: game.mode,
     bindings: game.bindings,
     backHref: '../../',
+    exampleInput: game.script !== undefined,
     ...(presentation === undefined ? {} : { manifest: presentation.manifest }),
   });
   return `<!doctype html>

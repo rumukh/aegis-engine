@@ -129,6 +129,7 @@ describe('Coyote Gap real showcase composition', () => {
 
       const grid = world.getResource(PlatformerCollision)!;
       const covered = new Set<number>();
+      let faces = 0;
       for (const object of manifest.objects ?? []) {
         if (!object.id.startsWith('cliff-')) continue;
         const batch = runtime.object(object.id)!.root.children[0]!;
@@ -138,20 +139,28 @@ describe('Coyote Gap real showcase composition', () => {
           batch.getMatrixAt(instance, matrix);
           matrix.premultiply(batch.matrixWorld);
           const point = new Vector3().setFromMatrixPosition(matrix);
-          const col = Math.floor(point.x / grid.tileSize);
-          const row = grid.height - 1 - Math.floor(point.y / grid.tileSize);
-          const index = row * grid.width + col;
-          expect(grid.solid[index], `decoration must not bridge empty cell ${col},${row}`).toBe(
-            true,
-          );
-          expect(covered.has(index)).toBe(false);
-          covered.add(index);
-          expect(matrix.elements[0]).toBe(grid.tileSize);
-          expect(matrix.elements[5]).toBe(grid.tileSize);
+          const width = matrix.elements[0] / grid.tileSize;
+          const height = matrix.elements[5] / grid.tileSize;
+          const left = point.x / grid.tileSize - width / 2;
+          const top = grid.height - point.y / grid.tileSize - height / 2;
+          expect([left, top, width, height].every(Number.isInteger)).toBe(true);
+          expect(width > 0 && height > 0).toBe(true);
+          for (let row = top; row < top + height; row++)
+            for (let col = left; col < left + width; col++) {
+              expect(col >= 0 && col < grid.width && row >= 0 && row < grid.height).toBe(true);
+              const index = row * grid.width + col;
+              expect(grid.solid[index], `decoration must not bridge empty cell ${col},${row}`).toBe(
+                true,
+              );
+              expect(covered.has(index)).toBe(false);
+              covered.add(index);
+            }
+          faces++;
         }
       }
       expect(covered.size).toBe(180);
       expect(covered.size).toBe(grid.solid.filter(Boolean).length);
+      expect(faces).toBeLessThan(covered.size / 2);
       expect(world.snapshot()).toEqual(before);
       runtime.setDebugGeometry(true);
       expect(adapter.scene.getObjectByName('level')!.visible).toBe(true);

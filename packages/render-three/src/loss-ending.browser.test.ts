@@ -1,12 +1,11 @@
-import { createReadStream, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { extname, join, resolve, sep } from 'node:path';
+import { dirname, extname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Health } from '@aegis/content';
-import { fpsPlugin } from '@aegis/mode-fps';
-import type { ModePlugin } from '@aegis/harness';
+import { lossPlugin } from '../test/fixtures/fps-fixtures.js';
 import { BINDINGS } from './bindings.js';
 import { findRepoRoot } from './catalog.js';
 import { startDevServer } from './dev-server.js';
@@ -38,22 +37,6 @@ const bindings = {
     { code: 'KeyV', action: 'Win' },
   ],
 };
-const plugin: ModePlugin = {
-  ...fpsPlugin,
-  systems: () =>
-    fpsPlugin.systems().add({
-      name: 'fixture.outcome',
-      phase: 'postUpdate',
-      run({ world, input }): void {
-        const player = world.query({ has: ['FpsController', Health] }).one();
-        if (input.pressed.includes('Lose') && player.get(Health).current > 0) {
-          player.get(Health).current = 0;
-          world.events.emit('fixture.lost', { actor: player.entity });
-        }
-        if (input.pressed.includes('Win')) world.events.emit('fixture.won', {});
-      },
-    }),
-};
 const manifest: PresentationManifest = {
   aegis: 'presentation/1',
   hud: { playerName: 'player', winEvent: 'fixture.won', loseEvents: ['fixture.lost'] },
@@ -73,27 +56,14 @@ let browser: LaunchedBrowser;
 
 beforeAll(async () => {
   directory = mkdtempSync(join(tmpdir(), 'aegis-loss-ending-'));
-  const module = join(directory, 'plugin.mjs');
-  writeFileSync(
-    module,
-    `import {Health} from '@aegis/content';import{fpsPlugin}from'@aegis/mode-fps';
-    export const plugin={...fpsPlugin,systems:()=>fpsPlugin.systems().add({
-      name:'fixture.outcome',phase:'postUpdate',run({world,input}){
-        const player=world.query({has:['FpsController',Health]}).one();
-        if(input.pressed.includes('Lose')&&player.get(Health).current>0){
-          player.get(Health).current=0;world.events.emit('fixture.lost',{actor:player.entity});
-        }
-        if(input.pressed.includes('Win'))world.events.emit('fixture.won',{});
-      }
-    })};`,
-  );
+  const module = fileURLToPath(new URL('../test/fixtures/fps-fixtures.js', import.meta.url));
   const game = {
     id: 'ending',
     title: 'Loss ending fixture',
     blurb: '',
     objective: 'Authoritative outcome fixture',
     mode: 'fps' as const,
-    plugin,
+    plugin: lossPlugin,
     scene: FPS_SCENE,
     bindings,
     presentation: { manifest },
@@ -106,14 +76,14 @@ beforeAll(async () => {
         ...game,
         sceneText: JSON.stringify(FPS_SCENE),
         pluginModule: '@aegis/ending-fixture',
-        pluginExport: 'plugin',
+        pluginExport: 'lossPlugin',
       },
     ],
     modules: [
       {
         specifier: '@aegis/ending-fixture',
         name: '@aegis/ending-fixture',
-        root: directory,
+        root: dirname(module),
         entry: module,
       },
     ],

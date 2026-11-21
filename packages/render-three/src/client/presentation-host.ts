@@ -10,6 +10,7 @@ import { QUALITY } from '../presentation/schema.js';
 import { CinematicPipeline, cinematicSize } from '../presentation/pipeline.js';
 import { renderAdapter } from '../render.js';
 import { validatePresentationWorld } from '../presentation/world.js';
+import type { EventContracts } from '@aegis/harness';
 import type { QualityTier, ResolvedPresentation } from '../presentation/schema.js';
 import { createAudio } from './audio.js';
 import type { AudioController } from './audio.js';
@@ -269,6 +270,13 @@ export class PresentationHost {
     button('action-restart', () => this.#options.onCommand('restart'));
     button('action-retry', () => globalThis.location.reload());
     button('action-mute', () => this.#toggleMute());
+    const focus = document.getElementById('action-focus');
+    if (focus !== null)
+      this.#listen(focus, 'click', () => {
+        const active = focus.getAttribute('aria-pressed') !== 'true';
+        this.#adapter?.setPlayerFocus?.(active);
+        focus.setAttribute('aria-pressed', String(active));
+      });
     const quality = document.getElementById('quality');
     if (typeof HTMLSelectElement !== 'undefined' && quality instanceof HTMLSelectElement) {
       quality.value = this.#quality;
@@ -448,9 +456,9 @@ export class PresentationHost {
     this.#resolveReady();
   }
 
-  validateWorld(world: World): void {
+  validateWorld(world: World, events?: EventContracts): void {
     if (this.#options.presentation === undefined) return;
-    const result = validatePresentationWorld(this.#options.presentation.manifest, world);
+    const result = validatePresentationWorld(this.#options.presentation.manifest, world, events);
     if (!result.ok) throw new DiagnosticError(result.diagnostics);
   }
 

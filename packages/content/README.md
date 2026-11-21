@@ -69,9 +69,10 @@ Each of these is a boundary, not an oversight — if you hit one, it is not a bu
   Only fields explicitly declared as closed sets are checked.
 - **Free-form maps.** A field declared `optional: { x: 'object' }`, or one whose default is an
   empty object (`{ bag: {} }`), declares no keys — its contents are not key-checked.
-- **Resource value schemas.** Resources are applied wholesale with no merge, and some (an fps
-  floorplan legend) are legitimately free-form. Values are always checked for JSON storability;
-  their application-specific shape is not inferred.
+- **Undeclared resource shapes.** Resources are applied wholesale and always checked for JSON
+  storability. A plugin can register `{ id, schema }` to check a shape (including each value
+  in a floorplan legend); legacy type/string registrations do not infer shapes from defaults.
+  See the [value schema reference](../../docs/api/agent-workbench.md#declare-once-validate-the-authored-input).
 - **Components this package does not own.** Validation works for every registered component, but
   `describeComponent` declarations are made by each component's owner.
 

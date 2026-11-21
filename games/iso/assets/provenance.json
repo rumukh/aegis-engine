@@ -119,11 +119,11 @@
     },
     {
       "file": "access-console.gltf",
-      "bytes": 37472,
-      "sha256": "ae16f445530acd81deebc580adc5bdd494f49f1e8f92f743355d6439fe23d2ea",
+      "bytes": 59735,
+      "sha256": "49776e43743d4243e923033763dcabdd82c9c45d9ad2b5bce0d00a584aa20a0f",
       "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
-      "triangles": 196,
-      "primitives": 5,
+      "triangles": 364,
+      "primitives": 6,
       "source": "source/generate.mjs"
     },
     {
@@ -137,11 +137,11 @@
     },
     {
       "file": "extraction-pad.gltf",
-      "bytes": 99110,
-      "sha256": "5e5a8a09402869fca115eefcb5d9c2ae441f2e6a9b92c8aa8dd8d7d703eb7dbe",
+      "bytes": 103359,
+      "sha256": "7ce95a31e91a78bc079cfd92ae44ae9c79f8c6b433758bcb25956e01cdc26deb",
       "units": "One unit is one navigation cell. +Y up; actors face +Z; origin at feet.",
-      "triangles": 756,
-      "primitives": 3,
+      "triangles": 774,
+      "primitives": 4,
       "source": "source/generate.mjs"
     },
     {

@@ -615,6 +615,36 @@ describe('Server Vault actual showcase', () => {
         expect(layout.route.filter((cell) => !cell.visible)).toEqual([]);
         expect(layout.route.filter((cell) => cell.covered || !cell.picked)).toEqual([]);
         expect(layout.cellPixels).toBeGreaterThanOrEqual(14);
+        await pressButton('action-focus');
+        await until(
+          page,
+          `document.getElementById('action-focus').getAttribute('aria-pressed')`,
+          (s) => s === 'true',
+        );
+        const focused = await evaluate<{ pixels: number; picks: boolean[]; noticeClear: boolean }>(
+          page,
+          `(() => {
+          const api=globalThis.aegis, stage=document.getElementById('stage').getBoundingClientRect();
+          const a=api.project(5,0,5),b=api.project(6,0,5);
+          const notice=document.getElementById('hud-input').getBoundingClientRect();
+          return { pixels:Math.hypot(a.x-b.x,a.y-b.y),
+            picks:[['security-switch','key-marker',9,1],['vault-exit','uplink-marker',4,7]].map(([name,node,x,y])=>{
+              const mark=api.adapter.presentation.entity(name).object.getObjectByName(node),p=mark.getWorldPosition(mark.position.clone()).project(api.adapter.camera);
+              const hit=api.adapter.pick(p.x,p.y);
+              const el=document.elementFromPoint(stage.x+(p.x+1)*stage.width/2,stage.y+(1-p.y)*stage.height/2);
+              return el?.id==='stage' && hit?.x===x && hit?.y===y;
+            }),
+            noticeClear:['action-restart','action-mute','quality'].every(id=>{
+              const r=document.getElementById(id).getBoundingClientRect();
+              return !notice.height || r.bottom<=notice.top || notice.bottom<=r.top || r.right<=notice.left || notice.right<=r.left;
+            })
+          };
+        })()`,
+        );
+        expect(focused.pixels).toBeGreaterThan(layout.cellPixels * 1.15);
+        expect(focused.picks).toEqual([true, true]);
+        expect(focused.noticeClear).toBe(true);
+        await photo(page, `${transport}-narrow-focus`);
         await evaluate(page, "window.dispatchEvent(new Event('beforeunload'))");
         const disposed = await evaluate<AppearanceRead['presentation']>(
           page,

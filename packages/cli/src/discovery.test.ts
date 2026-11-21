@@ -541,7 +541,7 @@ describe('aegis scaffold produces a runnable game', () => {
     await cli(['scaffold', 'game', 'demo', '--mode', 'platformer'], dir);
     const source = readFileSync(join(dir, 'demo', 'demo.gametest.mjs'), 'utf8');
     const imports = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1]!);
-    expect(imports).toEqual(['node:url']);
+    expect(imports).toEqual(['node:url', 'node:fs']);
   });
 
   /**
@@ -737,6 +737,7 @@ describe('aegis scaffold produces a runnable game', () => {
       'demo/aegis.json',
       'demo/demo.scene.json',
       'demo/demo.input',
+      'demo/demo.presentation.json',
       'demo/demo.gametest.mjs',
     ]);
   });

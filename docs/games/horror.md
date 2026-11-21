@@ -341,7 +341,7 @@ scans or a claim of recovered physically accurate PBR.
 The imported GLB is **5,334,140 bytes, 33,273 triangles and one primitive**,
 with a 2048-square base-color map and 1024-square normal/roughness maps. The
 stable `responder` binding, Idle 3.4 s, Stalk 2.2 s, Search 4.4 s, Lunge 0.8 s,
-state conditions, 48-tick warning, spatial audio and playback rates are
+48-tick warning, spatial audio and playback rates are
 unchanged. The Stalk cycle advances 1.6 m per 2.2 s, with a 75 mm swing lift;
 world locomotion is still authoritative and the rig has no locomotion root motion.
 
@@ -354,12 +354,21 @@ zero over-limit edge samples, sole error below 0.002 mm and zero root motion
 in that isolated clip proof. This is not an assertion about arbitrary terrain
 or a substitute for the final in-game review.
 
-The unchanged path-based state binding has an inherited limitation: during
-the AI's short direct-target finish with `path.length === 0`, Search may play
-while the entity still translates. The same behavior existed with the old
-model. This presentation-only revision does not alter AI, bindings or gameplay
-hashes to hide it; stationary Search and the normal patrol/chase Stalk states
-are reviewed separately.
+The responder plays Stalk while its observed position changes, both around corners
+and on the final direct approach after the AI path empties. On the first stationary
+tick it begins an eight-tick crossfade into Search. Both clips advance during
+the fade; pause freezes the pose, and a single step advances it by one tick.
+Dormant and ended states still use Idle; the warning still overrides the loop with Lunge.
+
+**Browser acceptance (Sol):** `npx vitest run test/horror-locomotion.browser.test.ts`
+after `npm run build`. On the authored win route (no mouse-pixel quantization), the
+responder turns in pursuit at tick 5119. With an empty path it advances 0.025 units
+per tick from 5319 through 5348 (`11709b0d651208ee`). At tick 5349 its origin stops
+(`9325607625a6fb13`); the knees and helmet should show a half Stalk/half Search pose
+at 5353 and only Search at 5357.
+Restart should restore the tick-zero pose. `AEGIS_HORROR_ARTIFACTS` optionally
+names a directory for the fixed corridor-view frames; the player has already
+broken sight, so these are observer views, not first-person screenshots.
 
 The complete game now closes over **65 runtime files / 42,433,448 bytes**:
 **40,927,661 visual bytes** and the unchanged **1,505,787 audio bytes**.

@@ -772,10 +772,15 @@ function robot() {
   const m = new Model('Kestrel_K09_SecurityRobot');
   const body = m.node('Chassis', 0, [0, 1.1, 0]);
   m.bevel(body, 'dark', [0, 0.04, 0], [0.43, 0.53, 0.37], 0.08);
-  m.bevel(body, 'armor', [0, 0.19, -0.08], [0.58, 0.5, 0.4], 0.12);
+  m.bevel(body, 'amber', [0, 0.19, -0.08], [0.58, 0.5, 0.4], 0.12);
   m.bevel(body, 'edge', [0, -0.1, -0.05], [0.36, 0.24, 0.43], 0.045);
-  m.box(body, 'amber', [0, 0.27, -0.285], [0.34, 0.055, 0.015]);
-  m.box(body, 'warm', [0, 0.1, -0.287], [0.08, 0.085, 0.018]);
+  const plate = m.node('ImpactPlate', body);
+  m.bevel(plate, 'black', [0, 0.18, -0.284], [0.36, 0.22, 0.03], 0.045);
+  // Paired ceramic shoulder caps, a dark breastplate and a triangular optic read as
+  // one silhouette against the narrow, horizontal equipment lights behind K-09.
+  for (const side of [-1, 1]) {
+    m.box(plate, 'white', [side * 0.135, 0.185, -0.306], [0.043, 0.13, 0.012]);
+  }
   m.cylinder(body, 'dark', [0, -0.22, 0], 0.16, 0.15);
   m.bevel(body, 'armor', [0, -0.32, 0], [0.4, 0.21, 0.29], 0.045);
   for (const x of [-0.12, 0.12]) m.cylinder(body, 'copper', [x, 0.03, 0.24], 0.038, 0.39);
@@ -783,10 +788,11 @@ function robot() {
   m.cylinder(neck, 'edge', [0, 0.025, 0], 0.095, 0.15);
   const head = m.node('OpticHead', neck, [0, 0.14, -0.015]);
   m.bevel(head, 'dark', [0, 0.035, 0], [0.43, 0.29, 0.32], 0.065);
-  m.bevel(head, 'armor', [0, 0.095, 0.02], [0.45, 0.19, 0.33], 0.055);
-  m.bevel(head, 'black', [0, 0.025, -0.173], [0.36, 0.115, 0.032], 0.025);
-  m.box(head, 'warm', [0, 0.037, -0.192], [0.26, 0.027, 0.016]);
-  m.box(head, 'warm', [0.1, 0.015, -0.193], [0.032, 0.073, 0.019]);
+  m.bevel(head, 'amber', [0, 0.095, 0.02], [0.45, 0.19, 0.33], 0.055);
+  m.bevel(head, 'black', [0, 0.025, -0.173], [0.36, 0.16, 0.042], 0.025);
+  m.cylinder(head, 'warm', [0, 0.04, -0.205], 0.055, 0.028, 2);
+  for (const side of [-1, 1])
+    m.cylinder(head, 'warm', [side * 0.09, 0.005, -0.201], 0.022, 0.021, 2);
   m.cylinder(head, 'edge', [-0.23, 0.03, 0], 0.07, 0.04, 0);
   const leftLeg = m.node('Leg_L', 0, [-0.18, 0.78, 0]);
   const rightLeg = m.node('Leg_R', 0, [0.18, 0.78, 0.03]);
@@ -805,6 +811,7 @@ function robot() {
   for (const arm of [leftArm, rightArm]) {
     m.cylinder(arm, 'edge', [0, 0, 0], 0.085, 0.14, 0);
     m.bevel(arm, 'armor', [0, -0.09, 0.005], [0.16, 0.23, 0.28], 0.042);
+    m.bevel(arm, 'white', [0, -0.015, -0.08], [0.152, 0.075, 0.16], 0.018);
     m.cylinder(arm, 'dark', [0, -0.24, -0.025], 0.055, 0.16, 0);
     m.bevel(arm, 'dark', [0, -0.25, -0.15], [0.15, 0.16, 0.32], 0.035);
     m.box(arm, 'amber', [0, -0.21, -0.13], [0.155, 0.07, 0.19]);

@@ -32,11 +32,13 @@ import { parseScene } from '@aegis/content';
 import type { SceneFile } from '@aegis/content';
 import { bootstrapScene } from './bootstrap.js';
 import type { SceneContentOptions, SceneContext } from './bootstrap.js';
-import { parseInputScript } from './input-script.js';
+import { parseInputScript, validateInputVocabulary } from './input-script.js';
 import type { InputScript } from './input-script.js';
-import type { ModePlugin } from './plugin.js';
+import type { InputVocabulary, ModePlugin } from './plugin.js';
 import type { Recording } from './replay.js';
 import { recordingTickRate } from './replay.js';
+import { compareEvidence, EvidenceRecorder, formatReplayDetails } from './replay-evidence.js';
+import type { ReplayDetails, ReplayEvidence } from './replay-evidence.js';
 import { formatInputScript, scriptFromCommands } from './input-script.js';
 import { describeRun, renderValue, summariseWorld, toOutcome } from './report.js';
 import type { CheckResult } from './report.js';
@@ -82,8 +84,10 @@ export interface RunOptions extends SceneContentOptions {
    * checks work. Costs memory; defaults to `false`.
    */
   captureHistory?: boolean;
-  /** Record a hash after every tick (cheap). Defaults to `true`. */
+  /** Record a hash after every tick. Defaults to `true`. */
   captureTickHashes?: boolean;
+  /** Retain detailed state and events for replay comparison. Opt-in; not needed for hash-only verification. */
+  captureReplayEvidence?: boolean;
   /** Viewport for {@link SimResult.frame}. Defaults to the mode's convention. */
   viewport?: Viewport;
   /**
@@ -113,6 +117,8 @@ export interface RunOptions extends SceneContentOptions {
    * working. Opt in for CI, where a script that silently evaporated is never intended.
    */
   strictInput?: boolean;
+  /** Source filename for DSL token diagnostics; independent of the scene's `file`. */
+  inputFile?: string;
 }
 
 /** The inspectable outcome of a run — the object every gameplay test reads. */
@@ -129,6 +135,7 @@ export interface SimResult {
   readonly hash: StateHash;
   /** Per-tick hashes (index = tick), when `captureTickHashes` was on. */
   readonly tickHashes: readonly StateHash[];
+  readonly replayEvidence?: ReplayEvidence;
   /** The event log reader. */
   readonly events: EventReader;
 
@@ -275,6 +282,7 @@ interface ResolvedRun {
   recordEvents: boolean;
   captureHistory: boolean;
   captureTickHashes: boolean;
+  captureReplayEvidence: boolean;
   view?: ViewOptions;
   invariants: readonly Invariant[];
 }
@@ -283,13 +291,15 @@ interface ResolvedRun {
 function resolveInput(
   input: string | InputScript | readonly InputFrame[] | undefined,
   ticks: number,
+  vocabulary?: InputVocabulary,
+  file?: string,
 ): { frames: readonly InputFrame[]; script?: InputScript; diagnostics: readonly Diagnostic[] } {
   if (input === undefined) {
     const script = scriptFromCommands([]);
     return { frames: script.frames(ticks), script, diagnostics: [] };
   }
   if (typeof input === 'string') {
-    const parsed = parseInputScript(input);
+    const parsed = parseInputScript(input, vocabulary, file);
     if (!parsed.ok || !parsed.value) throw new DiagnosticError(parsed.diagnostics);
     const script = parsed.value;
     return {
@@ -302,6 +312,8 @@ function resolveInput(
   // `in` rather than `Array.isArray`: the latter's `arg is any[]` signature does not remove a
   // `readonly InputFrame[]` from the union, which is what previously forced a cast here.
   if ('frames' in input) {
+    const invalid = validateInputVocabulary(input.commands, vocabulary, file);
+    if (invalid.length > 0) throw new DiagnosticError(invalid);
     return { frames: input.frames(ticks), script: input, diagnostics: input.check(ticks) };
   }
   return { frames: input, diagnostics: [] };
@@ -322,6 +334,7 @@ interface RunTrace {
   context: SceneContext;
   tickHashes: StateHash[];
   history: WorldSnapshot[];
+  evidence?: ReplayEvidence;
 }
 
 /**
@@ -350,10 +363,16 @@ function executeRun(run: ResolvedRun): RunTrace {
 
   const tickHashes: StateHash[] = [];
   const history: WorldSnapshot[] = [];
+  const recorder = run.captureReplayEvidence ? new EvidenceRecorder() : undefined;
+  recorder?.capture(world.snapshot(), world.events.thisTick());
   for (let t = 0; t < run.ticks; t++) {
     sim.step();
     if (run.captureTickHashes) tickHashes.push(world.hash());
-    if (run.captureHistory) history.push(world.snapshot());
+    if (run.captureHistory || recorder !== undefined) {
+      const snapshot = world.snapshot();
+      if (run.captureHistory) history.push(snapshot);
+      recorder?.capture(snapshot, world.events.thisTick());
+    }
     for (const inv of run.invariants) {
       const outcome = toOutcome(checkAt(inv.name, inv.check, world, t, run));
       if (outcome.ok) continue;
@@ -368,7 +387,7 @@ function executeRun(run: ResolvedRun): RunTrace {
       });
     }
   }
-  return { world, context, tickHashes, history };
+  return { world, context, tickHashes, history, evidence: recorder?.finish() };
 }
 
 /** Reconstruct a detached world from a captured snapshot. */
@@ -412,6 +431,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
     seed: run.seed,
     hash: world.hash(),
     tickHashes,
+    ...(trace.evidence === undefined ? {} : { replayEvidence: trace.evidence }),
     events: world.events,
 
     query(descriptor: QueryDescriptor): QueryResult {
@@ -481,6 +501,7 @@ function makeResult(run: ResolvedRun, trace: RunTrace): SimResult {
         input: formatInputScript(run.script),
         finalHash: world.hash(),
         ...(tickHashes.length > 0 ? { tickHashes } : {}),
+        ...(trace.evidence === undefined ? {} : { evidence: trace.evidence }),
       };
       return markRecordingOrigin(rec, self);
     },
@@ -539,7 +560,17 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
         `least 1 tick, or drop the invariants.`,
     );
   }
-  const { frames, script, diagnostics } = resolveInput(options.input, ticks);
+  // Bootstrap owns invalid-plugin diagnostics (including the common CLI spec-string mistake).
+  const vocabulary =
+    options.input !== undefined && typeof options.plugin?.inputs === 'function'
+      ? options.plugin.inputs()
+      : undefined;
+  const { frames, script, diagnostics } = resolveInput(
+    options.input,
+    ticks,
+    vocabulary,
+    options.inputFile,
+  );
   if (diagnostics.length > 0) {
     options.onInputDiagnostics?.(diagnostics);
     if (options.strictInput === true) {
@@ -569,6 +600,7 @@ function resolveRun(scene: SceneFile, sceneRef: string, options: RunOptions): Re
     recordEvents: options.recordEvents ?? true,
     captureHistory: options.captureHistory ?? false,
     captureTickHashes: options.captureTickHashes ?? true,
+    captureReplayEvidence: options.captureReplayEvidence ?? false,
     ...(Object.keys(view).length > 0 ? { view } : {}),
     invariants,
   };
@@ -631,12 +663,15 @@ export async function replayRecording(
     seed: recording.seed,
     input: recording.input,
     tickRate: options.tickRate === undefined ? recordedRate : options.tickRate,
+    captureReplayEvidence: recording.evidence !== undefined || options.captureReplayEvidence,
   });
   const verified = verifyReplay(recording, result);
   if (!verified.ok) {
     throw new Error(
       `[aegis] replay verification FAILED for "${recording.scene}":\n` +
         verified.problems.map((p) => `  - ${p}`).join('\n') +
+        '\n' +
+        formatReplayDetails(verified.details) +
         `\nA recording must replay identically. Either a system is non-deterministic, or the ` +
         `recording no longer describes the run it claims to.`,
     );
@@ -694,8 +729,10 @@ export interface ReplayVerification {
   ok: boolean;
   /** Whether the final state hash matched. */
   finalHashMatched: boolean;
-  /** First tick whose replayed hash differs from the recorded one, when both are available. */
+  /** Earliest divergence in the hash timeline or detailed state/event evidence. */
   firstDivergentTick?: number;
+  /** Bounded explanation at the earliest mismatch, or why none can be supplied. */
+  details: ReplayDetails;
   /** Every discrepancy, in report order. Empty when `ok`. */
   problems: readonly string[];
   /**
@@ -763,8 +800,10 @@ export function verifyReplay(recording: Recording, result: SimResult): ReplayVer
   // replayed clean.
   if (recorded === undefined) {
     unverified.push(
-      `the per-tick hash timeline (this recording pins none, so only its final state was checked — ` +
-        `a change in *when* things happen can leave the final hash identical)`,
+      recording.evidence === undefined
+        ? `the per-tick hash timeline (this recording pins none, so only its final state was checked — ` +
+            `a change in *when* things happen can leave the final hash identical)`
+        : 'the per-tick hash timeline (not pinned; detailed state and events are checked separately)',
     );
   } else {
     if (recorded.length !== recording.ticks) {
@@ -789,9 +828,22 @@ export function verifyReplay(recording: Recording, result: SimResult): ReplayVer
     }
   }
 
+  const details = compareEvidence(recording.evidence, result.replayEvidence, divergentTick);
+  if (details.status === 'diverged') {
+    divergentTick = details.tick;
+    if (details.fields.total || details.events.firstDifference !== null)
+      problems.push(
+        `detailed evidence at tick ${details.tick} (${details.phase}): ${details.fields.total} state difference(s); events ${details.events.firstDifference === null ? 'matched' : 'differ'}`,
+      );
+  } else if (details.status === 'unavailable' && recording.evidence !== undefined) {
+    problems.push(
+      `recorded evidence could not be checked (${details.reason}); replay the same tick count with captureReplayEvidence: true`,
+    );
+  }
   return {
     ok: problems.length === 0,
     finalHashMatched,
+    details,
     ...(divergentTick !== undefined ? { firstDivergentTick: divergentTick } : {}),
     problems,
     unverified,

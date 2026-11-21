@@ -8,6 +8,8 @@ export const RenderCode = {
   Asset: 'AEG-RENDER-0004',
   Unsupported: 'AEG-RENDER-0005',
   Budget: 'AEG-RENDER-0006',
+  EventBinding: 'AEG-RENDER-0007',
+  Rights: 'AEG-RENDER-0008',
 } as const;
 
 export function renderDiagnostic(

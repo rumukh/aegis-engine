@@ -68,6 +68,38 @@ describe('shared scene bootstrap', () => {
     expect(createSceneContext(legacy).resources.ids()).toEqual([]);
   });
 
+  it('preserves value schemas when composing host registries; an ID-only addition cannot weaken one', () => {
+    const resource = () =>
+      ({ id: 'game.settings', schema: { fields: { offset: 'number' } } }) as const;
+    const declared = { ...legacy, resources: () => [resource()] };
+    const host = createResourceRegistry(resource(), 'game.settings', {
+      id: 'host.flag',
+      schema: 'boolean',
+    });
+    const context = createSceneContext(declared, { resources: host });
+    expect(
+      validateScene(
+        {
+          ...scene,
+          entities: [],
+          resources: { 'game.settings': { offset: 3 }, 'host.flag': true },
+        },
+        context,
+      ).ok,
+    ).toBe(true);
+    const invalid = validateScene(
+      { ...scene, entities: [], resources: { 'game.settings': { offset: '3' }, 'host.flag': 1 } },
+      context,
+    );
+    expect(invalid.diagnostics.map((d) => d.location?.path)).toEqual([
+      'resources["game.settings"].offset',
+      'resources["host.flag"]',
+    ]);
+    expect(() => host.register({ id: 'host.flag', schema: 'number' })).toThrow(
+      /conflicting schemas/,
+    );
+  });
+
   it('loads declared resources and prefabs before running init exactly once', async () => {
     const beforeScene = JSON.stringify(scene);
     const beforePrefab = JSON.stringify(actor);

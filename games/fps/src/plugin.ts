@@ -15,17 +15,27 @@
  */
 import { createSchedule } from '@aegis/core';
 import type { Schedule } from '@aegis/core';
-import { healthSystem } from '@aegis/content';
+import { HEALTH_EVENTS, healthSystem } from '@aegis/content';
 import type { ModePlugin } from '@aegis/harness';
 import {
   FPS_COMPONENTS,
+  FPS_INPUTS,
+  FPS_EVENTS,
   FPS_RESOURCES,
   FPS_SYSTEMS,
   FpsViewProvider,
   initFloorplan,
 } from '@aegis/mode-fps';
 import { GAME_COMPONENTS } from './components.js';
-import { SECTOR_BREACH_SYSTEMS } from './systems.js';
+import {
+  DAMAGE_TAKEN,
+  DOOR_OPENED,
+  ENEMY_DAMAGED,
+  ENEMY_KILLED,
+  LEVEL_COMPLETED,
+  PLAYER_DIED,
+  SECTOR_BREACH_SYSTEMS,
+} from './systems.js';
 
 /**
  * Build the composed schedule: the FPS pipeline, then content's health/death resolution, then
@@ -42,6 +52,17 @@ export const sectorBreachPlugin: ModePlugin = {
   mode: 'fps',
   components: () => [...FPS_COMPONENTS, ...GAME_COMPONENTS],
   resources: () => FPS_RESOURCES,
+  inputs: () => FPS_INPUTS,
+  events: () => ({
+    ...FPS_EVENTS,
+    ...HEALTH_EVENTS,
+    [DOOR_OPENED]: { fields: { name: 'string' } },
+    [DAMAGE_TAKEN]: { fields: { amount: 'number', source: 'string', remaining: 'number' } },
+    [ENEMY_DAMAGED]: { fields: { name: 'string', amount: 'number', remaining: 'number' } },
+    [ENEMY_KILLED]: { fields: { name: 'string', tick: 'number' } },
+    [PLAYER_DIED]: { fields: { cause: 'string', tick: 'number' } },
+    [LEVEL_COMPLETED]: { fields: { tick: 'number' } },
+  }),
   systems: () => sectorBreachSchedule(),
   init: (world) => initFloorplan(world),
   view: () => new FpsViewProvider(),

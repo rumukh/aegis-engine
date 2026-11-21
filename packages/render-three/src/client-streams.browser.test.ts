@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { fpsPlugin } from '@aegis/mode-fps';
+import { fpsPlugin, FPS_EVENTS } from '@aegis/mode-fps';
 import { BINDINGS } from './bindings.js';
 import { startDevServer } from './dev-server.js';
 import type { DevServer } from './dev-server.js';
@@ -59,7 +59,7 @@ beforeAll(async () => {
         blurb: '',
         objective: 'One controller, independent viewers.',
         mode: 'fps',
-        plugin: fpsPlugin,
+        plugin: { ...fpsPlugin, events: () => ({ ...FPS_EVENTS, 'stream.cue': { fields: {} } }) },
         scene: FPS_SCENE,
         bindings: BINDINGS.fps,
         presentation: {
@@ -218,6 +218,10 @@ describe('independent browser streams on one live session', () => {
             return fetch.apply(this,args);
           };
           proto.render=function(...args){
+            // This case measures the first exchange *after* a stalled draw. An older HTTP
+            // response already in flight would instead test a 2250 ms block against its
+            // 2000 ms transport deadline, correctly latching an ambiguous-delivery error.
+            if(globalThis.aegis.timings().inFlight) return render.apply(this,args);
             proto.render=render;
             const result=render.apply(this,args);
             __drawTask.started=performance.now();

@@ -12,7 +12,13 @@
  * one through `ValidateOptions.resources` to have those ids checked.
  * @packageDocumentation
  */
+import { canonicalStringify } from '@aegis/core';
 import type { ComponentType, ResourceType } from '@aegis/core';
+import type { ValueSchema } from './value-schema.js';
+
+/** Existing type/string registrations stay ID-only; a plugin can also declare the value shape. */
+export type ResourceDeclaration =
+  string | ResourceType<unknown> | { readonly id: string; readonly schema: ValueSchema };
 
 /** A lookup from component id to {@link ComponentType}. */
 export interface ComponentRegistry {
@@ -62,9 +68,8 @@ export function createRegistry(...types: ComponentType<unknown>[]): ComponentReg
 }
 
 /**
- * A lookup of the singleton resource ids a scene may set. Resources are applied wholesale
- * (no merge over defaults), so the only thing worth validating is the **id** — an unknown one
- * means the mode that was supposed to read it never will.
+ * A lookup of the singleton resources a scene may set. Resources are applied wholesale
+ * (no merge over defaults). Value constraints come only from explicit schemas.
  *
  * The shared harness bootstrap builds this from `ModePlugin.resources()` plus any explicit
  * caller registry. Headless runs, CLI validation and live sessions therefore reject unknown
@@ -76,9 +81,11 @@ export function createRegistry(...types: ComponentType<unknown>[]): ComponentReg
  */
 export interface ResourceRegistry {
   /** Register a resource by type, or by bare id when the type is not to hand. */
-  register(resource: ResourceType<unknown> | string): this;
+  register(resource: ResourceDeclaration): this;
   /** Register many resources. */
-  registerAll(resources: Iterable<ResourceType<unknown> | string>): this;
+  registerAll(resources: Iterable<ResourceDeclaration>): this;
+  /** A missing schema (including an older ID-only registry) supplies no value constraints. */
+  schema?(id: string): ValueSchema | undefined;
   /** Whether an id is registered. */
   has(id: string): boolean;
   /** All registered ids, sorted, for diagnostics/tab-completion. */
@@ -86,17 +93,25 @@ export interface ResourceRegistry {
 }
 
 /** Create a resource registry, optionally seeded with resource types or bare ids. */
-export function createResourceRegistry(
-  ...resources: (ResourceType<unknown> | string)[]
-): ResourceRegistry {
-  const known = new Set<string>();
+export function createResourceRegistry(...resources: ResourceDeclaration[]): ResourceRegistry {
+  const known = new Map<string, ValueSchema | undefined>();
 
   const registry: ResourceRegistry = {
-    register(resource: ResourceType<unknown> | string): ResourceRegistry {
-      known.add(typeof resource === 'string' ? resource : resource.id);
+    register(resource: ResourceDeclaration): ResourceRegistry {
+      const id = typeof resource === 'string' ? resource : resource.id;
+      if (typeof resource === 'object' && 'schema' in resource) {
+        const previous = known.get(id);
+        if (
+          previous !== undefined &&
+          previous !== resource.schema &&
+          canonicalStringify(previous) !== canonicalStringify(resource.schema)
+        )
+          throw new Error(`[aegis] ResourceRegistry: conflicting schemas for "${id}".`);
+        known.set(id, resource.schema);
+      } else if (!known.has(id)) known.set(id, undefined);
       return registry;
     },
-    registerAll(list: Iterable<ResourceType<unknown> | string>): ResourceRegistry {
+    registerAll(list: Iterable<ResourceDeclaration>): ResourceRegistry {
       for (const r of list) registry.register(r);
       return registry;
     },
@@ -104,8 +119,9 @@ export function createResourceRegistry(
       return known.has(id);
     },
     ids(): readonly string[] {
-      return [...known].sort();
+      return [...known.keys()].sort();
     },
+    schema: (id) => known.get(id),
   };
   registry.registerAll(resources);
   return registry;

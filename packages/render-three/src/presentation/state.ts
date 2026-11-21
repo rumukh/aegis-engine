@@ -52,7 +52,9 @@ export function stateFields(manifest: PresentationManifest): StateField[] {
     ),
     ...Object.values(manifest.hud?.bindings ?? {}),
     ...[...(manifest.entities ?? []), ...(manifest.objects ?? [])].flatMap((entry) =>
-      entry.visual.kind === 'model' ? (entry.visual.stateClips ?? []).map((clip) => clip.when) : [],
+      entry.visual.kind === 'model'
+        ? (entry.visual.stateClips ?? []).flatMap(({ when }) => ('motion' in when ? [] : [when]))
+        : [],
     ),
   ];
 }

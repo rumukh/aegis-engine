@@ -8,9 +8,7 @@
  *
  * Beyond the game's exported `defineGameTest`s it proves three things those tests can't cleanly
  * express: a cross-run + `replay()` determinism proof against both goldens (the final hash **and**
- * the per-tick trajectory digest), the negative `path.blocked` case from a cold start, and a
- * consistency assertion that the scene's `IsoGrid.walls` on disk still matches the game's in-code
- * `WALL_ROWS`.
+ * the per-tick trajectory digest), the negative `path.blocked` case from a cold start, and script parity.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -22,7 +20,6 @@ import serverVaultTest, {
   serverVaultDeathTest,
   serverVaultPlugin,
   trajectoryDigest,
-  WALL_ROWS,
 } from '../src/server-vault.js';
 
 const SCENE = 'games/iso/levels/server-vault.scene.json';
@@ -83,13 +80,6 @@ describe('game: The Server Vault (iso PoC acceptance)', () => {
     const blocked = result.events.history().filter((e) => e.type === 'path.blocked');
     expect(blocked.length).toBeGreaterThanOrEqual(1);
     expect(result.events.history().some((e) => e.type === 'mission.completed')).toBe(false);
-  });
-
-  it("scene IsoGrid.walls stays identical to the game's WALL_ROWS", () => {
-    const scene = JSON.parse(readFileSync(SCENE, 'utf8')) as {
-      resources: { IsoGrid: { walls: string[] } };
-    };
-    expect(scene.resources.IsoGrid.walls).toEqual([...WALL_ROWS]);
   });
 
   it('play/server-vault.input mirrors the script the test actually runs (no drift)', () => {

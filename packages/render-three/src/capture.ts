@@ -318,7 +318,7 @@ async function captureGame(
     );
   }
 
-  const parsed = parseInputScript(game.script);
+  const parsed = parseInputScript(game.script, game.plugin.inputs?.());
   if (!parsed.ok || parsed.value === undefined) throw new DiagnosticError(parsed.diagnostics);
   const ticks = game.scriptTicks ?? scriptSpan(parsed.value);
   const plan = compileDomInput(parsed.value.frames(ticks), game.bindings);

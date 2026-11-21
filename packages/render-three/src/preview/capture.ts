@@ -3,8 +3,10 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { arch, platform } from 'node:os';
 import { DiagnosticError } from '@aegis/core';
 import type { Diagnostic } from '@aegis/core';
-import { closeAllPages, evaluate, launchBrowser, openPage, until } from '../browser.js';
+import { evaluate, launchBrowser, openPage, until } from '../browser.js';
 import type { CdpSession, LaunchedBrowser } from '../browser.js';
+import { closeOwnedBrowserProfile } from '../browser-lifecycle.js';
+import { navigateAndWait } from '../browser-navigation.js';
 import { PreviewCode, previewDiagnostics, previewError } from './diagnostics.js';
 import { startAssetPreviewServer, validateCaptureRequest } from './server.js';
 import type { AssetPreviewServer, AssetPreviewServerOptions } from './server.js';
@@ -77,37 +79,6 @@ export function previewPngSize(bytes: Buffer): { width: number; height: number }
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
-async function stopOwnedBrowser(browser: LaunchedBrowser): Promise<void> {
-  const child = browser.process;
-  if (child.exitCode === null && child.signalCode === null) {
-    const exited = new Promise<void>((done, fail) => {
-      const timer = setTimeout(
-        () =>
-          fail(
-            previewError(
-              PreviewCode.Browser,
-              'browser',
-              `Owned browser PID ${child.pid} did not exit after termination.`,
-              'Stop only this reported process; do not kill unrelated browser processes.',
-            ),
-          ),
-        10_000,
-      );
-      child.once('exit', () => {
-        clearTimeout(timer);
-        done();
-      });
-      child.once('error', (error) => {
-        clearTimeout(timer);
-        fail(error);
-      });
-    });
-    child.kill();
-    await exited;
-  }
-  rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-}
-
 /** A warm asset-only browser, server, and bounded output writer with one explicit lifetime. */
 export async function startAssetPreview(options: AssetPreviewOptions): Promise<AssetPreview> {
   const started = performance.now();
@@ -132,11 +103,19 @@ export async function startAssetPreview(options: AssetPreviewOptions): Promise<A
           failures.push(error);
         }
       }
+      if (owned) {
+        const page = cdp;
+        try {
+          await navigateAndWait(page, () => page.send('Page.navigate', { url: 'about:blank' }));
+        } catch (error) {
+          failures.push(error);
+        }
+      }
       cdp.close();
     }
     if (browser !== undefined) {
       try {
-        if (owned) await closeAllPages(browser.port);
+        if (owned) await closeOwnedBrowserProfile(browser);
         else if (targetId !== undefined) {
           const response = await fetch(`http://127.0.0.1:${browser.port}/json/close/${targetId}`, {
             signal: AbortSignal.timeout(10_000),
@@ -146,13 +125,6 @@ export async function startAssetPreview(options: AssetPreviewOptions): Promise<A
         }
       } catch (error) {
         failures.push(error);
-      }
-      if (owned) {
-        try {
-          await stopOwnedBrowser(browser);
-        } catch (error) {
-          failures.push(error);
-        }
       }
     }
     try {

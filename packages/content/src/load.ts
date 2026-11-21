@@ -33,6 +33,7 @@ import {
 } from './schema.js';
 import type { ComponentData, EntityDecl, PrefabFile, SceneFile, TilemapFile } from './scene.js';
 import type { ComponentRegistry, ResourceRegistry } from './registry.js';
+import { validateValue } from './value-schema.js';
 
 /** Resolves a prefab name to its {@link PrefabFile}. */
 export interface PrefabResolver {
@@ -838,13 +839,13 @@ function validateResources(
   ctx: SemanticContext,
 ): void {
   for (const [id, value] of Object.entries(resources)) {
-    reportUnserialisable(
-      value,
-      `resources[${JSON.stringify(id)}]`,
-      `Resource "${id}"`,
-      ctx.file,
-      ctx.diags,
-    );
+    const path = `resources[${JSON.stringify(id)}]`;
+    const before = ctx.diags.length;
+    reportUnserialisable(value, path, `Resource "${id}"`, ctx.file, ctx.diags);
+    const schema = ctx.options.resources?.schema?.(id);
+    if (ctx.diags.length === before && schema !== undefined) {
+      for (const d of validateValue(value, schema, path, ctx.file)) ctx.diags.push(d);
+    }
   }
   const known = ctx.options.resources;
   if (known === undefined) return;

@@ -12,25 +12,27 @@
 // Like the rest of `poc/`, this file is the composition root where the engine meets the games. It
 // is deliberately not a workspace project, which is the only reason it is allowed to name both.
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 import { exportStaticSite } from '../packages/render-three/dist/static-site.js';
 import { findRepoRoot } from '../packages/render-three/dist/catalog.js';
 import { pocStaticGames, pocStaticModules } from './poc-games.mjs';
 
 const root = findRepoRoot();
-const flag = process.argv.indexOf('--out');
-const outDir =
-  flag >= 0 && process.argv[flag + 1] ? process.argv[flag + 1] : join(root, 'dist-site');
+const { values } = parseArgs({ options: { out: { type: 'string' }, release: { type: 'string' } } });
+const outDir = values.out ?? join(root, 'dist-site');
 
 const result = exportStaticSite({
   games: await pocStaticGames(),
   modules: await pocStaticModules(root),
   outDir,
   repoRoot: root,
+  release: values.release ?? 'evaluation',
 });
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(0)} KB`;
 process.stdout.write(
   `static site : ${result.outDir}\n` +
+    `release     : ${result.release} (runtime media inventory: release.json)\n` +
     `pages       : ${result.pages.join(', ')}\n` +
     `modules     : ${result.modules} (module graph crawled from the pages' own entry points)\n` +
     `files       : ${result.files.length}\n` +

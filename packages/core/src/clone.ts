@@ -39,8 +39,8 @@
  * predict these rejections *before* a world exists — a scene that validates clean and then
  * throws on load is the defect that statement closes. `assertSerialisable` below calls it
  * directly. {@link deepCloneSerialisable} does **not**: it checks while it copies, in one pass,
- * because `snapshot()` runs it over every component of every entity on every `hash()` and the
- * harness hashes every tick, so a second traversal cost the fps PoC's acceptance test 29% of
+ * because `snapshot()` needs it for every component and `hash()` needs it for changed values.
+ * When the harness hashed snapshots every tick, a second traversal cost the fps PoC's acceptance test 29% of
  * its runtime — measured, not assumed. The price is that the rules are expressed twice, so
  * `serialisable.test.ts` holds the two together by comparing this path against
  * `findUnserialisable` over a corpus of hostile values, which is the only reason a second
@@ -94,7 +94,7 @@ export function deepClone<T>(value: T): T {
  * {@link UnserialisableValueError} naming the JSON path of the first offender.
  *
  * Checks and copies in **one** traversal. `snapshot()` calls this for every component of every
- * live entity on every `hash()`, and the harness hashes every tick, so walking twice is a
+ * live entity; hash cache misses need the same checked copy. Walking twice is a
  * measurable tax on the whole engine: expressing it as `assertSerialisable` followed by
  * `deepClone` cost the fps PoC's acceptance test 29% of its runtime. The price of the single
  * pass is a second expression of the rules, so `serialisable.test.ts` compares this path

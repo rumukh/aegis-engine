@@ -30,6 +30,7 @@
     "@aegis/mode-platformer": "*",
     "@aegis/mode-iso": "*",
     "@aegis/mode-fps": "*",
-    "@aegis/render-three": "*"
+    "@aegis/render-three": "*",
+    "esbuild": "0.27.7"
   }
 }

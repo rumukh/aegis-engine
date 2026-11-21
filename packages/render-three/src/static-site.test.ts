@@ -165,6 +165,35 @@ describe('collectModuleGraph', () => {
 });
 
 describe('staticImportMap', () => {
+  it('maps a nested plugin to its actual shipped file even when the outer package was not imported by name', () => {
+    const modules = [
+      {
+        name: 'engine',
+        specifier: 'engine',
+        root: resolve('pkg'),
+        entry: resolve('pkg', 'engine.js'),
+      },
+      {
+        name: 'custom',
+        specifier: 'custom',
+        root: resolve('pkg', 'fixtures'),
+        entry: resolve('pkg', 'fixtures', 'plugin.js'),
+      },
+    ];
+    const entry = resolve('site', 'boot.js');
+    const graph = collectModuleGraph({
+      entries: [entry],
+      modules,
+      siteRoot: resolve('site'),
+      read: (file) => (file === entry ? "import 'custom';" : ''),
+      exists: () => true,
+    });
+    expect(graph.usedSpecifiers).toEqual(['custom']);
+    const map = JSON.parse(staticImportMap('../../', modules, new Set(graph.usedSpecifiers)));
+    expect(map.imports).toEqual({
+      custom: '../../' + graph.files.find((f) => f.source === modules[1]!.entry)!.target,
+    });
+  });
   it('writes only relative addresses, which is what survives a /<repo>/ Pages prefix', () => {
     const map = JSON.parse(staticImportMap('../../', engineModules('/repo'))) as {
       imports: Record<string, string>;
@@ -225,7 +254,7 @@ describe('the generated pages', () => {
 describe('renderStaticBootModule', () => {
   it('imports the plugin by the catalogue’s own specifier and export name', () => {
     const source = renderStaticBootModule(game());
-    expect(source).toContain("import { demoPlugin } from '@demo/game';");
+    expect(source).toContain("import { demoPlugin as selectedPlugin } from '@demo/game';");
     expect(source).toContain(`from '${STATIC_BOOT_SPECIFIER}'`);
     expect(moduleSpecifiers(source).statik.sort()).toEqual(
       ['@aegis/content', '@demo/game', STATIC_BOOT_SPECIFIER].sort(),

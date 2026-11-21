@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { GameMode } from '@aegis/core';
-import { platformerPlugin } from '@aegis/mode-platformer';
+import { platformerPlugin, PLATFORMER_EVENTS } from '@aegis/mode-platformer';
 import { isoPlugin } from '@aegis/mode-iso';
 import { fpsPlugin } from '@aegis/mode-fps';
 import type { GameDefinition } from './catalog.js';
@@ -75,6 +75,15 @@ beforeAll(async () => {
     ...presentation,
     manifest: {
       ...presentation.manifest,
+      audio: {
+        ambient: { asset: 'tone', volume: 0.15 },
+        cues: [
+          {
+            event: { platformer: 'player.jumped', iso: 'cell.entered', fps: 'weapon.fired' }[mode],
+            asset: 'tone',
+          },
+        ],
+      },
       objects: [
         {
           id: 'specimen',
@@ -106,10 +115,6 @@ beforeAll(async () => {
       ],
     },
   });
-  presentation.manifest.audio = {
-    ambient: { asset: 'tone', volume: 0.15 },
-    cues: [{ event: 'player.jumped', asset: 'tone' }],
-  };
   const games: GameDefinition[] = CASES.map((entry) => ({
     id: entry.id,
     title: `Presentation ${entry.id}`,
@@ -155,7 +160,21 @@ beforeAll(async () => {
   dev = await startDevServer({
     games: [
       ...games,
-      { ...games[0]!, id: 'reload', presentation: reloadPresentation },
+      {
+        ...games[0]!,
+        id: 'reload',
+        presentation: reloadPresentation,
+        // The test explicitly emits these records on the live world's event bus.
+        plugin: {
+          ...platformerPlugin,
+          events: () => ({
+            ...PLATFORMER_EVENTS,
+            opened: { fields: {} },
+            ping: { fields: {} },
+            completed: { fields: {} },
+          }),
+        },
+      },
       {
         id: 'broken',
         title: 'Broken required texture',

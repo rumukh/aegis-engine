@@ -1,5 +1,6 @@
 import { DiagnosticError, Name } from '@aegis/core';
 import type { Diagnostic, Validated, World } from '@aegis/core';
+import type { EventContracts } from '@aegis/harness';
 import { renderDiagnostic, RenderCode } from './diagnostics.js';
 import type { PresentationManifest } from './schema.js';
 import { validatePresentation } from './validate.js';
@@ -9,8 +10,9 @@ import { PresentationState } from './state.js';
 export function validatePresentationWorld(
   manifest: PresentationManifest,
   world: World,
+  events?: EventContracts,
 ): Validated<PresentationManifest> {
-  const shape = validatePresentation(manifest);
+  const shape = validatePresentation(manifest, undefined, events);
   if (!shape.ok) return shape;
   const names = new Set(
     [...world.query({ has: [Name] }).views()].map((entity) => entity.get(Name).value),
@@ -40,6 +42,9 @@ export function validatePresentationWorld(
       requireName(effect.target.entity, `effects[${index}].target.entity`);
   });
   if (manifest.hud !== undefined) requireName(manifest.hud.playerName, 'hud.playerName');
+  manifest.camera?.focus?.landmarks.forEach((name, index) =>
+    requireName(name, `camera.focus.landmarks[${index}]`),
+  );
   const state = new PresentationState('fps');
   state.sync(world);
   try {

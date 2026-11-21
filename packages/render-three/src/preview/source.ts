@@ -6,7 +6,7 @@ import { preparePresentation, readPreparedPresentationFile } from '../presentati
 import type { PreparedPresentation } from '../presentation/files.js';
 import { PRESENTATION_LIMITS } from '../presentation/schema.js';
 import type { AssetSpec, PresentationManifest } from '../presentation/schema.js';
-import { validatePresentation } from '../presentation/validate.js';
+import { validatePresentationShape } from '../presentation/validate-shape.js';
 import { PreviewCode, previewError } from './diagnostics.js';
 import { validateSelection } from './settings.js';
 import type {
@@ -75,7 +75,7 @@ function descriptor(bytes: Buffer, file: string): PresentationManifest {
       'Supply a presentation/1 descriptor, not a scene, asset catalog, or JavaScript module.',
     );
   }
-  const result = validatePresentation(value, file);
+  const result = validatePresentationShape(value, file);
   if (!result.ok || result.value === undefined) throw new DiagnosticError(result.diagnostics);
   return result.value;
 }

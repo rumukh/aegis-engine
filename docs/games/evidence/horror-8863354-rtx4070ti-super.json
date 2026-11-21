@@ -1,0 +1,222 @@
+{
+  "benchmark": "null-meridian-live-route/1",
+  "revision": "88633542830c5cd9e418f96ba41de52532e0463a",
+  "dirty": false,
+  "inputSha256": "bc5c4a2ef9b4fb6190195d1503085206e68ea2e2c3baa5b7fc097f9369de9691",
+  "measuredAt": "2026-11-21T21:51:11.209Z",
+  "deviceClass": "target",
+  "driverReportedByOperator": "32.0.16.2124",
+  "os": "win32 10.0.26300",
+  "cpu": "AMD Ryzen 7 5800X 8-Core Processor             ",
+  "browser": "Chrome/158.0.8127.36",
+  "devices": [
+    {
+      "vendorId": 4318,
+      "deviceId": 9865,
+      "subSysId": 4069922153,
+      "revision": 161,
+      "vendorString": "",
+      "deviceString": "NVIDIA GeForce RTX 4070 Ti SUPER",
+      "driverVendor": "NVIDIA",
+      "driverVersion": "32.0.16.2124"
+    },
+    {
+      "vendorId": 4318,
+      "deviceId": 9865,
+      "subSysId": 4069922153,
+      "revision": 161,
+      "vendorString": "",
+      "deviceString": "NVIDIA GeForce RTX 4070 Ti SUPER",
+      "driverVendor": "",
+      "driverVersion": "32.0.16.2124"
+    },
+    {
+      "vendorId": 5140,
+      "deviceId": 140,
+      "subSysId": 0,
+      "revision": 0,
+      "vendorString": "",
+      "deviceString": "Microsoft Basic Render Driver",
+      "driverVendor": "",
+      "driverVersion": "10.0.26100.9818"
+    }
+  ],
+  "conditions": "Local dev-server transport; real-time fixed-step simulation; shipped input, scene, assets and selected pipeline. Default headless compositor pacing; DPR 1. No simulated ticks skipped.",
+  "scope": "Frame gaps between host renders. CPU wall time in PresentationHost.render (includes submit/wait, not simulation). GPU: disjoint timer around same render every 20 frames when available. Peak used V8 heap of the page sampled about once per second from route start, not process RAM or VRAM.",
+  "runs": [
+    {
+      "condition": "cold: new browser profile",
+      "loadMs": 5035.89999999851,
+      "activeRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "backing": [
+        2560,
+        1440
+      ],
+      "dpr": 1,
+      "quality": "high",
+      "pipeline": {
+        "width": 2560,
+        "height": 1440,
+        "pixels": 3686400,
+        "pixelBudget": 3686400,
+        "quality": "high",
+        "passes": 5,
+        "ambientOcclusion": false,
+        "bloom": true,
+        "toneMapping": "aces",
+        "outputTransforms": 1,
+        "msaaSamples": 2,
+        "reflections": true,
+        "drawCalls": 416,
+        "triangles": 1045656,
+        "gpuResources": {
+          "geometries": 214,
+          "textures": 37
+        }
+      },
+      "gpuTimerAvailable": true,
+      "beats": [
+        {
+          "type": "horror.power.restored",
+          "tick": 2477
+        },
+        {
+          "type": "horror.recorder.recovered",
+          "tick": 4818
+        },
+        {
+          "type": "horror.threat.chase",
+          "tick": 5038
+        },
+        {
+          "type": "horror.threat.evaded",
+          "tick": 5677
+        },
+        {
+          "type": "level.completed",
+          "tick": 8153
+        }
+      ],
+      "exchangeErrors": 0,
+      "firstRenderedTick": 0,
+      "lastPreWinRenderedTick": 8153,
+      "completedTicks": [
+        8153
+      ],
+      "routeElapsedMs": 140501.29999999888,
+      "frameGapMs": {
+        "samples": 5915,
+        "p50": 23.300000000745058,
+        "p95": 30.40000000037253,
+        "p99": 32.80000000074506,
+        "max": 3589
+      },
+      "cpuRenderMs": {
+        "samples": 5916,
+        "p50": 2.300000000745058,
+        "p95": 3.600000001490116,
+        "p99": 4.5,
+        "max": 3583.199999999255
+      },
+      "gpuRenderMs": {
+        "samples": 296,
+        "p50": 19.700736,
+        "p95": 29.315072,
+        "p99": 30.91968,
+        "max": 34.219008
+      },
+      "gpuDisjoint": 0,
+      "peakHeapBytes": 46053248,
+      "heapSamples": 137,
+      "vramBytes": null,
+      "processResidentBytes": null
+    },
+    {
+      "condition": "warm: same browser/profile/origin, fresh page and world",
+      "loadMs": 1473.5999999977648,
+      "activeRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "backing": [
+        2560,
+        1440
+      ],
+      "dpr": 1,
+      "quality": "high",
+      "pipeline": {
+        "width": 2560,
+        "height": 1440,
+        "pixels": 3686400,
+        "pixelBudget": 3686400,
+        "quality": "high",
+        "passes": 5,
+        "ambientOcclusion": false,
+        "bloom": true,
+        "toneMapping": "aces",
+        "outputTransforms": 1,
+        "msaaSamples": 2,
+        "reflections": true,
+        "drawCalls": 416,
+        "triangles": 1045656,
+        "gpuResources": {
+          "geometries": 214,
+          "textures": 37
+        }
+      },
+      "gpuTimerAvailable": true,
+      "beats": [
+        {
+          "type": "horror.power.restored",
+          "tick": 2477
+        },
+        {
+          "type": "horror.recorder.recovered",
+          "tick": 4818
+        },
+        {
+          "type": "horror.threat.chase",
+          "tick": 5038
+        },
+        {
+          "type": "horror.threat.evaded",
+          "tick": 5677
+        },
+        {
+          "type": "level.completed",
+          "tick": 8153
+        }
+      ],
+      "exchangeErrors": 0,
+      "firstRenderedTick": 0,
+      "lastPreWinRenderedTick": 8153,
+      "completedTicks": [
+        8153
+      ],
+      "routeElapsedMs": 135892.90000000224,
+      "frameGapMs": {
+        "samples": 7635,
+        "p50": 17,
+        "p95": 21.100000001490116,
+        "p99": 27,
+        "max": 137.89999999850988
+      },
+      "cpuRenderMs": {
+        "samples": 7636,
+        "p50": 2,
+        "p95": 3.300000000745058,
+        "p99": 4.199999999254942,
+        "max": 134.30000000074506
+      },
+      "gpuRenderMs": {
+        "samples": 382,
+        "p50": 15.839232,
+        "p95": 19.835904,
+        "p99": 23.155712,
+        "max": 24.971264
+      },
+      "gpuDisjoint": 0,
+      "peakHeapBytes": 45559004,
+      "heapSamples": 136,
+      "vramBytes": null,
+      "processResidentBytes": null
+    }
+  ]
+}

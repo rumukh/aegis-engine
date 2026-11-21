@@ -11,11 +11,22 @@
  */
 import { createSchedule } from '@aegis/core';
 import type { ComponentType, Schedule, System, World } from '@aegis/core';
-import { healthSystem } from '@aegis/content';
+import { HEALTH_EVENTS, healthSystem } from '@aegis/content';
 import type { ModePlugin, ViewProvider } from '@aegis/harness';
 import { ISO_COMPONENTS, IsoGrid, NavGrid } from './components.js';
 import { buildNavGrid } from './grid.js';
-import { ISO_SYSTEM_LIST } from './systems.js';
+import { ISO_SYSTEM_LIST, TRIGGER_ENTERED_EVENT } from './systems.js';
+import {
+  ATTACK_FIRED,
+  ATTACK_ORDERED,
+  CELL_ENTERED,
+  DAMAGE_TAKEN,
+  ENEMY_DAMAGED,
+  ENEMY_KILLED,
+  MOVE_ORDERED,
+  PATH_BLOCKED,
+  PATH_RESOLVED,
+} from './events.js';
 import { IsoViewProvider } from './view.js';
 
 export { IsoViewProvider } from './view.js';
@@ -46,13 +57,44 @@ export function isoSchedule(): Schedule {
 }
 
 /** Authored resource vocabulary, shared by the mode and composed game plugins. */
-export const ISO_RESOURCES = [IsoGrid, NavGrid] as const;
+const dimensions = {
+  width: 'nonnegative-integer',
+  height: 'nonnegative-integer',
+  tileSize: 'positive-number',
+} as const;
+export const ISO_RESOURCES = [
+  { ...IsoGrid, schema: { fields: { ...dimensions, walls: { array: 'string' } } } },
+  { ...NavGrid, schema: { fields: { ...dimensions, blocked: { array: 'boolean' } } } },
+] as const;
+
+export const ISO_INPUTS = { actions: [], axes: [] } as const;
+const cell = { fields: { x: 'number', y: 'number' } } as const;
+const named = { nullable: 'string' } as const;
+const targetCell = { fields: { entity: 'number', target: cell, tick: 'number' } } as const;
+export const ISO_EVENTS = {
+  ...HEALTH_EVENTS,
+  [MOVE_ORDERED]: targetCell,
+  [ATTACK_ORDERED]: { fields: { entity: 'number', target: 'number', tick: 'number' } },
+  [PATH_RESOLVED]: { fields: { entity: 'number', length: 'number', tick: 'number' } },
+  [PATH_BLOCKED]: targetCell,
+  [CELL_ENTERED]: { fields: { entity: 'number', x: 'number', y: 'number', tick: 'number' } },
+  [ATTACK_FIRED]: { fields: { attacker: 'number', target: 'number', tick: 'number' } },
+  [DAMAGE_TAKEN]: { fields: { amount: 'number', source: 'number', remaining: 'number' } },
+  [ENEMY_DAMAGED]: { fields: { name: named, amount: 'number', remaining: 'number' } },
+  [ENEMY_KILLED]: { fields: { name: named, tick: 'number' } },
+  [TRIGGER_ENTERED_EVENT]: {
+    fields: { entity: 'number', name: named, kind: 'string', tick: 'number' },
+    optional: { data: { record: 'any' } },
+  },
+} as const;
 
 /** The isometric mode plugin. */
 export const isoPlugin: ModePlugin = {
   mode: 'iso',
   components: (): readonly ComponentType<unknown>[] => ISO_COMPONENTS,
   resources: () => ISO_RESOURCES,
+  inputs: () => ISO_INPUTS,
+  events: () => ISO_EVENTS,
   systems: (): Schedule => isoSchedule(),
   init: (world: World): void => isoInit(world),
   view: (): ViewProvider => new IsoViewProvider(),

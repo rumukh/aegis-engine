@@ -26,16 +26,18 @@ JSON has discriminator **`"aegis": "capabilities/1"`**. Keys and inventories are
 execution/child order is preserved. Config provenance includes an absolute path, so that path
 naturally differs across checkouts. Without `--json`, the command prints a readable inventory.
 
-| Field                    | Meaning                                                                                                                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `plugin`                 | Selected `spec`, `source` (`flag`, `config`, `mode`), `mode`, and `configFile` when applicable.                                                                                                  |
-| `components`             | The shared scene context's registered IDs, complete default values, accepted fields, and identity-keyed schema declarations.                                                                     |
-| `resources.ids`          | Sorted IDs accepted for authored resources by this plugin. Never inferred from scene keys.                                                                                                       |
-| `resources.valueSchemas` | `null`: resource registration does not declare value schemas.                                                                                                                                    |
-| `prefabs.catalog`        | Plugin-provided prefab documents, sorted by name. `expanded: false`; these are declarations, not validated instances.                                                                            |
-| `systems`                | Fixed phases, actual resolved execution order, original before/after constraints, and unresolved constraints that were not applied.                                                              |
-| `operations`             | Available modes and the live CLI command registry: help, flag arities, published choice arrays, and file/response formats. Missing choice metadata is `null`, not an open-ended-value guarantee. |
-| `limits`                 | Explicit limits of discovery, including unavailable input-action/event inventories.                                                                                                              |
+| Field                           | Meaning                                                                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `plugin`                        | Selected `spec`, `source` (`flag`, `config`, `mode`), `mode`, and `configFile` when applicable.                                                                                                  |
+| `components`                    | The shared scene context's registered IDs, complete default values, accepted fields, and identity-keyed schema declarations.                                                                     |
+| `resources.ids`                 | Sorted IDs accepted for authored resources by this plugin. Never inferred from scene keys.                                                                                                       |
+| `resources.valueSchemas`        | By ID: the declared value schema, or `null` for an ID-only registration. `null` in place of the whole map means `resources()` is absent; `{}` means explicitly empty.                            |
+| `inputs.actions`, `inputs.axes` | Sorted logical names. Each channel independently uses `null` for unknown and `[]` for declared empty.                                                                                            |
+| `events`                        | Map of possible simulation event names to payload schemas (`null` payload = known name, unknown shape). `null` inventory is undeclared; `{}` declares no emissions.                              |
+| `prefabs.catalog`               | Plugin-provided prefab documents, sorted by name. `expanded: false`; these are declarations, not validated instances.                                                                            |
+| `systems`                       | Fixed phases, actual resolved execution order, original before/after constraints, and unresolved constraints that were not applied.                                                              |
+| `operations`                    | Available modes and the live CLI command registry: help, flag arities, published choice arrays, and file/response formats. Missing choice metadata is `null`, not an open-ended-value guarantee. |
+| `limits`                        | What declaration-based discovery cannot infer or observe.                                                                                                                                        |
 
 The registry comes from `createSceneContext`, and accepted field names and optional/enumerated
 facts come from `componentFields`/`componentSchema`. In each component field:
@@ -56,20 +58,55 @@ and calls declaration/default factories and schedule resolution. It does not cre
 call `init`, run systems, or call a view provider. A supplied scene is parsed for selection but
 is not semantically validated. Use `aegis validate` before running authored content.
 
-## Validate presentation structure
+## Declare once; validate the authored input
+
+`ModePlugin.inputs()` returns `{ actions?, axes? }`. `events()` returns a name-to-schema map;
+`resources()` accepts `{ id, schema }` entries alongside legacy resource types and strings.
+Compose the mode declarations when adding game systems, rather than duplicating a list for
+the CLI or renderer. For example [Coyote Gap](../../games/platformer/src/plugin.ts) includes
+the platformer and health events; [NULL MERIDIAN](../../games/horror/src/plugin.ts) extends
+the FPS action list. Declaring a name does not bind a physical key or emit an event.
+
+The serialisable `ValueSchema` language is shared by event payloads and authored resource
+values. Scalars are `string`, finite `number`, `boolean`, `nonnegative-integer` (safe),
+`positive-number` (finite), and `any` (no additional shape check). `{ fields: { … },
+optional: { … } }` is a closed object: fields are required and extra keys are rejected.
+`{ record: schema }` checks an open map's values; `{ array: schema }` checks each item;
+`{ enum: [...] }` declares a string vocabulary and `{ nullable: schema }` also accepts null.
+These are shape constraints, not cross-field rules or default values. A resource value
+replaces the whole value; a legacy ID-only declaration still checks only storability.
+
+```text
+aegis validate games/platformer/play/coyote-gap.input --json
+aegis validate games/iso/play/server-vault.input --mode iso --json
+```
+
+For `.input` files the CLI resolves `--plugin`, nearby config or `--mode`; with no plugin
+it checks DSL syntax and overlaps only. `parseInputScript(text, plugin.inputs?.(), file)`
+performs the same check without simulating. `runScene` checks both DSL strings and previously
+parsed scripts against its plugin **before init/tick 0**. Raw `InputFrame[]` stays a host
+interface rather than a DSL document. Closed action/axis names are case-sensitive. For example,
+`press Jmup @28` is `AEG-HARNESS-0013` at line 1, column 7 with suggestion `Jump`; `press Jump @28`
+in Coyote Gap emits `player.jumped` even though its tick-90 state hash equals an idle run's.
+An unknown axis is `AEG-HARNESS-0014`. `look`, `aim`, `click` and `point` are native DSL
+commands, not action names. `strictInput` controls tick-window errors, not vocabulary typos.
+
+## Validate presentation structure and event bindings
 
 ```text
 aegis validate look.presentation.json --json
 aegis validate "*.presentation.json" --strict
+aegis validate look.presentation.json --game-context --plugin "@aegis/game-fps#sectorBreachPlugin" --json
 ```
 
 The existing `validate` command accepts **`presentation/1`** alongside `scene/1`, `prefab/1`
-and `tilemap/1`. Selection uses the document's `aegis` discriminator, not its filename.
+and `tilemap/1`. JSON selection uses the document's `aegis` discriminator; `.input` is the
+separate text format.
 It calls the published `@aegis/render-three/presentation/validate` `validatePresentation`
 function; its types come from `@aegis/render-three/presentation/schema`. The CLI does not
 maintain a second presentation schema.
 
-**This is structural validation only.** It checks manifest fields, declared intra-manifest
+**The default is structural validation only.** It checks manifest fields, declared intra-manifest
 references, asset path syntax and the pure validator's limits. It does not read asset files,
 decode textures/models/audio, verify provenance, compute inventories or digests, initialize
 a scene, or resolve identifiers against a world. A valid manifest can still refer to a
@@ -94,13 +131,18 @@ source file and field path; malformed JSON and unknown versions use the existing
 diagnostics. Exit codes remain `0` for no reported problems, `2` for content/presentation
 errors (or warnings under `--strict`), and `1` for CLI/IO errors.
 
-`--plugin`, `--mode` and nearby `aegis.json` selection remain relevant to scenes/prefabs only.
-Presentation validation never imports a plugin or validates world bindings, including when
-files of multiple formats are validated in one command. Undeclared flags requesting asset
-preparation or a world-validation operation are rejected, not silently honored.
+**Opt into trusted game code with `--game-context`.** A presentation then resolves `--plugin`,
+nearby `aegis.json`, or `--mode`; no selection is an error. If the plugin declares events, the
+report says `structural-and-declared-events` and checks effect triggers, audio cues, audio
+`when.field`/`when.equals`, HUD win/lose events and step events. A typo in `hud.winEvent` or
+`audio.cues[0].when.field` returns `AEG-RENDER-0007` with that path and a near match when
+available. Only audio can consume a cutscene's separately scheduled presentation-only cues.
+If a legacy plugin omits `events()`, the report says `eventsDeclared: false` and stays structural.
+No context check opens assets or initializes a world. Without `--game-context`, even a mixed
+validation request does **not** load a plugin for its presentation documents.
 
 `describe` reports `presentation/1` in the registered `validate` command's `formats.reads`,
-with the structural-only guarantee in its usage text. This is validation support, not a
+with the selection/structural guarantees in its usage text. This is validation support, not a
 presentation-schema inventory, a new simulation resource, or a claim of asset readiness.
 
 ## Bound world output explicitly

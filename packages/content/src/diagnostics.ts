@@ -60,7 +60,7 @@ export const ContentCode = {
    *
    * This exists because the three checks above it are shape checks, and shape is not the whole
    * contract: a free-form `optional: { data: 'object' }` field, an array's elements and a
-   * scene's `resources` block are all *shapeless* by design, so nothing looked inside them.
+   * ID-only resource declarations have no shape constraints, so nothing looked inside them.
    * `aegis validate` reported a clean document and `aegis run` then died with
    * `AEG-CORE-0001` — the worst shape a defect can take in an agent-first engine, because the
    * tool that exists to catch the problem says the problem is not there.
@@ -70,6 +70,8 @@ export const ContentCode = {
   PrefabCycle: 'AEG-CONTENT-0018',
   /** Authored Name.value would erase an entity's resolved scene/prefab identity. */
   EntityNameMismatch: 'AEG-CONTENT-0019',
+  /** A value does not satisfy an explicit plugin value schema. */
+  InvalidDeclaredValue: 'AEG-CONTENT-0020',
 } as const;
 
 /** A content diagnostic code value. */

@@ -13,7 +13,7 @@
  * @packageDocumentation
  */
 import { createSchedule, createSimulation } from '@aegis/core';
-import type { Simulation, StateHash, World, WorldSnapshot } from '@aegis/core';
+import type { InputSource, Simulation, StateHash, World, WorldSnapshot } from '@aegis/core';
 import type { SceneFile } from '@aegis/content';
 import { bootstrapScene } from '@aegis/harness';
 import type { ModePlugin, SceneContentOptions } from '@aegis/harness';
@@ -34,6 +34,8 @@ export interface LiveSessionOptions extends SceneContentOptions {
   tickRate?: number;
   /** Maximum simulation steps per `advance` call. Defaults to the loop's own cap. */
   maxStepsPerFrame?: number;
+  /** Optional tick-indexed replay driver. Replaces human input, not the fixed-step clock. */
+  replayInput?: InputSource;
 }
 
 /** A running, human-driven simulation. */
@@ -78,7 +80,7 @@ function buildWorld(options: Required<Pick<LiveSessionOptions, 'plugin'>> & Live
     world,
     schedule,
     tickRate: options.tickRate === undefined ? 60 : options.tickRate,
-    input,
+    input: options.replayInput ?? input,
   });
   return { world, simulation, input };
 }

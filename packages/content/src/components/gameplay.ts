@@ -110,6 +110,11 @@ export interface EntityDiedEvent {
 /** The generic, mode-agnostic death event type emitted by {@link healthSystem}. */
 export const ENTITY_DIED = 'entity.died';
 
+/** Include with `healthSystem` when composing a plugin's emitted vocabulary. */
+export const HEALTH_EVENTS = {
+  [ENTITY_DIED]: { fields: { entity: 'number', name: { nullable: 'string' } } },
+} as const;
+
 /** The generic, mode-agnostic volume-entry event type by convention used with {@link pointInTrigger}. */
 export const TRIGGER_ENTERED = 'trigger.entered';
 

@@ -18,9 +18,10 @@
  * agent can always tell whether the game's systems were actually installed.
  * @packageDocumentation
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, isAbsolute, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isGameMode } from '@aegis/core';
 import type { ModePlugin } from '@aegis/harness';
 import { AegisCliError, CliCode, messageOf } from './errors.js';
@@ -93,6 +94,8 @@ export function isModePlugin(value: unknown): value is ModePlugin {
     typeof v['view'] === 'function' &&
     (v['init'] === undefined || typeof v['init'] === 'function') &&
     (v['resources'] === undefined || typeof v['resources'] === 'function') &&
+    (v['inputs'] === undefined || typeof v['inputs'] === 'function') &&
+    (v['events'] === undefined || typeof v['events'] === 'function') &&
     (v['prefabs'] === undefined || typeof v['prefabs'] === 'function')
   );
 }
@@ -102,8 +105,8 @@ async function importModule(
   module: string,
   baseDirs: readonly string[],
   spec: string,
-): Promise<Record<string, unknown>> {
-  let target = module;
+): Promise<{ exports: Record<string, unknown>; entry: string }> {
+  let entry: string | undefined;
   if (isPathSpecifier(module)) {
     const candidates = isAbsolute(module) ? [module] : baseDirs.map((dir) => resolve(dir, module));
     const found = candidates.find((abs) => existsSync(abs));
@@ -117,10 +120,11 @@ async function importModule(
         },
       );
     }
-    target = pathToFileURL(found).href;
+    entry = found;
   }
   try {
-    return (await import(target)) as Record<string, unknown>;
+    if (entry === undefined) entry = await resolvePackageEntry(module, baseDirs);
+    return { exports: (await import(pathToFileURL(entry).href)) as Record<string, unknown>, entry };
   } catch (err) {
     throw new AegisCliError(
       CliCode.PluginLoadFailed,
@@ -136,6 +140,40 @@ async function importModule(
   }
 }
 
+/** Prefer game-installed packages (ESM/import conditions), then the CLI's own installation. */
+async function resolvePackageEntry(specifier: string, bases: readonly string[]): Promise<string> {
+  let installed: string | undefined;
+  try {
+    installed = fileURLToPath(import.meta.resolve(specifier));
+  } catch {
+    /* game-local package */
+  }
+  const parts = specifier.split('/');
+  const pkg = parts.slice(0, specifier.startsWith('@') ? 2 : 1).join('/');
+  for (const base of bases) {
+    const roots = createRequire(resolve(base, CONFIG_FILENAME)).resolve.paths(pkg) ?? [];
+    const root = roots
+      .map((dir) => resolve(dir, pkg))
+      .find((dir) => existsSync(resolve(dir, 'package.json')));
+    if (!root) continue;
+    if (installed?.startsWith(realpathSync(root) + sep)) return installed;
+    const { build } = await import('esbuild');
+    const result = await build({
+      absWorkingDir: base,
+      entryPoints: [specifier],
+      write: false,
+      metafile: true,
+      platform: 'node',
+      conditions: ['import'],
+      format: 'esm',
+      logLevel: 'silent',
+    });
+    const entry = Object.values(result.metafile.outputs)[0]?.entryPoint;
+    if (entry) return resolve(base, entry);
+  }
+  if (installed) return installed;
+  throw new Error(`Not installed in ${bases.join(', ')} or alongside the CLI.`);
+}
 /** Names of a module's exports that are runnable {@link ModePlugin}s, with the plugin itself. */
 interface PluginExport {
   /** The export name. */
@@ -160,7 +198,7 @@ function selectExport(
   exportName: string | undefined,
   spec: string,
   module: string,
-): ModePlugin {
+): PluginExport {
   const candidates = pluginExports(mod);
   const names = candidates.map((c) => c.name);
   if (exportName !== undefined) {
@@ -188,12 +226,12 @@ function selectExport(
         },
       );
     }
-    return value;
+    return { name: exportName, plugin: value };
   }
   const fallback = mod['default'];
-  if (isModePlugin(fallback)) return fallback;
+  if (isModePlugin(fallback)) return { name: 'default', plugin: fallback };
   const [only] = candidates;
-  if (candidates.length === 1 && only !== undefined) return only.plugin;
+  if (candidates.length === 1 && only !== undefined) return only;
   throw new AegisCliError(
     CliCode.PluginInvalid,
     candidates.length === 0
@@ -218,10 +256,20 @@ export async function loadPlugin(
   baseDirs: readonly string[],
   modes: { has(mode: string): boolean; resolve(mode: string): ModePlugin },
 ): Promise<ModePlugin> {
+  return (await loadPluginEntry(spec, baseDirs, modes)).plugin;
+}
+
+/** One selection for both Node's live value and the browser export. */
+export async function loadPluginEntry(
+  spec: string,
+  baseDirs: readonly string[],
+  modes: { has(mode: string): boolean; resolve(mode: string): ModePlugin },
+): Promise<PluginExport & { entry?: string }> {
   const { module, exportName } = splitSpec(spec);
-  if (exportName === undefined && modes.has(module)) return modes.resolve(module);
+  if (exportName === undefined && modes.has(module))
+    return { name: `${module}Plugin`, plugin: modes.resolve(module) };
   const mod = await importModule(module, baseDirs, spec);
-  return selectExport(mod, exportName, spec, module);
+  return { ...selectExport(mod.exports, exportName, spec, module), entry: mod.entry };
 }
 
 /** A plugin spec declared by an `aegis.json`, with the directory its relative paths resolve against. */

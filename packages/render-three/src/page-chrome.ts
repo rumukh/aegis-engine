@@ -4,6 +4,7 @@ import type { ModeBindings } from './bindings.js';
 import type { PresentationManifest } from './presentation/schema.js';
 
 export interface GameChromeOptions {
+  exampleInput?: boolean;
   title: string;
   objective: string;
   mode: GameMode;
@@ -23,6 +24,7 @@ export interface CatalogGame {
 }
 
 export interface CatalogBodyOptions {
+  releaseLabel?: string;
   games: readonly CatalogGame[];
   gameHref(id: string): string;
   staticSite: boolean;
@@ -274,6 +276,22 @@ export const PAGE_STYLE = `
     *, *::before, *::after { animation: none !important; transition: none !important; }
     .card:hover { transform: none; }
   }
+  [data-layout="tactical"] #hud { padding: .6rem .8rem; width: min(19rem, 58vw); }
+  [data-layout="tactical"] #hud h1 { font-size: 1rem; margin: .2rem 0; }
+  [data-layout="tactical"] .eyebrow { font-size: .56rem; letter-spacing: .1em; }
+  [data-layout="tactical"] .health-readout { gap: 0 .5rem; margin-top: .24rem; }
+  [data-layout="tactical"] #mission-status { margin: .2rem 0 0; }
+  [data-layout="tactical"] #mission-status summary { color: var(--accent); }
+  [data-layout="tactical"] #mission-status[open] .objective-steps { display: block; }
+  [data-layout="tactical"] #hud-input { position: static; transform: none; width: auto; max-width: none; margin: .3rem 0 0; padding: .2rem .4rem; font-size: .7rem; }
+  #action-focus { align-self: flex-start; margin-left: auto; white-space: nowrap; }
+  #action-focus[aria-pressed="true"] { background: var(--accent); color: var(--base); }
+  @media (max-width: 640px) {
+    [data-layout="tactical"] #hud { max-width: calc(100% - 6rem); width: auto; }
+    [data-layout="tactical"] #hud .eyebrow { display: none; }
+    [data-layout="tactical"] .game-topbar { gap: .4rem; }
+    [data-layout="tactical"] #action-focus { padding: .35rem .58rem; font-size: .75rem; }
+  }
 `;
 
 /** Return only body content; document/import-map/boot ownership stays with the delivery path. */
@@ -286,6 +304,8 @@ export function renderGameChrome(options: GameChromeOptions): string {
     (manifest?.audio?.cues?.some((cue) => cue.asset !== undefined) ?? false);
   const quality = manifest?.quality ?? 'standard';
   const compact = manifest?.ui?.layout === 'cinematic';
+  const tactical = manifest?.ui?.layout === 'tactical';
+  const inputNotice = '<p id="hud-input" role="status" aria-live="polite" hidden></p>';
   const ending = manifest?.ui?.lossEnding;
   const win = manifest?.ui?.winEnding;
   const controls = [
@@ -297,19 +317,21 @@ export function renderGameChrome(options: GameChromeOptions): string {
       (line) => `          <dt><kbd>${escape(line.keys)}</kbd></dt><dd>${escape(line.does)}</dd>`,
     )
     .join('\n');
-  return `  <main class="game-shell" id="game-shell" data-mode="${escape(mode)}"${compact ? ' data-layout="cinematic"' : ''}${accent(manifest)}>
+  return `  <main class="game-shell" id="game-shell" data-mode="${escape(mode)}"${compact ? ' data-layout="cinematic"' : tactical ? ' data-layout="tactical"' : ''}${accent(manifest)}>
     <canvas id="stage" tabindex="0" aria-label="${escape(title)} game view" aria-busy="true">This game requires a browser with WebGL support.</canvas>
     <div id="gamepad-cursor" aria-hidden="true" hidden></div>
 ${mode === 'fps' ? '    <div id="crosshair" aria-hidden="true"></div>\n' : ''}    <div class="game-topbar">
       <section class="panel" id="hud" aria-labelledby="game-title">
         <div class="hud-heading"><a class="back-link" href="${localUrl(options.backHref)}"><span aria-hidden="true">← </span>All games</a><p class="eyebrow">${escape(manifest?.ui?.eyebrow ?? MODE_LABELS[mode])}</p></div>
         <h1 id="game-title">${escape(title)}</h1>
-        <p id="hud-objective">${escape(objective)}</p>
+        ${tactical ? '' : `<p id="hud-objective">${escape(objective)}</p>`}
 ${compact ? '        <details class="compact-menu" id="mission-status"><summary>Status</summary>\n' : ''}\
         <div class="health-readout" id="health-readout" hidden><span class="readout-label">Health</span><output id="hud-health">—</output><meter id="hud-health-bar" min="0" max="100" value="100" aria-label="Health"></meter></div>
+${tactical ? `        <details class="compact-menu" id="mission-status"><summary id="hud-next">${escape(steps[0]?.label ?? 'Objectives')}</summary><p id="hud-objective">${escape(objective)}</p>\n` : ''}\
         <p id="hud-progress" aria-live="polite"${steps.length === 0 ? ' hidden' : ''}>${steps.length === 0 ? '' : `0 / ${steps.length} complete`}</p>
-${steps.length === 0 ? '' : `        <ol class="objective-steps" id="hud-steps" aria-label="Objective steps">\n${steps.map((step, index) => `          <li id="hud-step-${index}" data-complete="false">${escape(step.label)}</li>`).join('\n')}\n        </ol>\n`}${compact ? '        </details>\n' : ''}        <p id="hud-outcome" role="status" aria-live="polite" hidden></p>
+${steps.length === 0 ? '' : `        <ol class="objective-steps" id="hud-steps" aria-label="Objective steps">\n${steps.map((step, index) => `          <li id="hud-step-${index}" data-complete="false">${escape(step.label)}</li>`).join('\n')}\n        </ol>\n`}${compact || tactical ? '        </details>\n' : ''}        <p id="hud-outcome" role="status" aria-live="polite" hidden></p>
       </section>
+      ${mode === 'iso' && manifest?.camera?.focus ? '<button id="action-focus" type="button" aria-pressed="false" title="Toggle between operative focus and board overview">Focus view</button>' : ''}
       <nav class="panel session-controls" aria-label="Session controls">
 ${compact ? '        <details class="compact-menu" id="session-menu"><summary>Session</summary>\n' : ''}\
         <div class="session-actions">
@@ -319,11 +341,12 @@ ${compact ? '        <details class="compact-menu" id="session-menu"><summary>Se
           <label class="quality-control" for="quality"><span>Quality</span><select id="quality" aria-label="Presentation quality"><option value="standard"${quality === 'standard' ? ' selected' : ''}>Standard</option><option value="low"${quality === 'low' ? ' selected' : ''}>Low</option>${manifest?.pipeline === undefined ? '' : `<option value="high"${quality === 'high' ? ' selected' : ''}>High (1440p budget)</option><option value="photo"${quality === 'photo' ? ' selected' : ''}>Photo (4K budget)</option>`}</select></label>
         </div>
         <p id="hud-audio" role="status" aria-live="polite">${hasAudio ? 'Sound needs a gesture' : 'Sound unavailable'}</p>
+${tactical ? inputNotice : ''}
 ${compact ? '        </details>\n' : ''}\
       </nav>
     </div>
     <div class="narrative-overlay"><p id="hud-narrative-status" role="status" hidden></p><p id="hud-prompt" hidden></p><p id="hud-subtitle" role="status" aria-live="polite" hidden></p></div>
-    <p id="hud-input" role="status" aria-live="polite" hidden></p>
+    ${tactical ? '' : inputNotice}
 ${
   ending === undefined
     ? ''
@@ -363,7 +386,7 @@ ${
         <summary>Controls</summary>
         <div class="details-content" tabindex="0" aria-label="Controls reference"><dl class="binding-list">
 ${controls}
-        </dl></div>
+        </dl>${options.exampleInput ? '<a href="./example.input" download>Example input script</a>' : ''}</div>
       </details>
       <details class="panel details-panel" id="diagnostics">
         <summary>Diagnostics</summary>
@@ -406,6 +429,6 @@ export function renderCatalogBody(options: CatalogBodyOptions): string {
     <section class="game-grid" aria-label="Games">
 ${cards || '      <p class="lede">No games are configured yet.</p>'}
     </section>
-    <footer class="catalog-footer">Play first. Open the in-game diagnostics when you want to look under the hood.</footer>
+    <footer class="catalog-footer">${options.releaseLabel ? escape(options.releaseLabel) : 'Play first. Open the in-game diagnostics when you want to look under the hood.'}</footer>
   </main>`;
 }

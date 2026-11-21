@@ -55,6 +55,8 @@ function requirePlugin(plugin: ModePlugin): void {
     typeof plugin.view === 'function' &&
     (plugin.init === undefined || typeof plugin.init === 'function') &&
     (plugin.resources === undefined || typeof plugin.resources === 'function') &&
+    (plugin.inputs === undefined || typeof plugin.inputs === 'function') &&
+    (plugin.events === undefined || typeof plugin.events === 'function') &&
     (plugin.prefabs === undefined || typeof plugin.prefabs === 'function')
   ) {
     return;
@@ -69,7 +71,7 @@ function requirePlugin(plugin: ModePlugin): void {
         `package exports platformerPlugin / isoPlugin / fpsPlugin — and substitute it:\n` +
         `  await runGameTest({ ...spec, options: { ...spec.options, plugin: myPlugin } });`
       : `Pass the ModePlugin object itself. components(), systems() and view() are required; ` +
-        `init, resources and prefabs must be methods when present.`;
+        `init, resources, inputs, events and prefabs must be methods when present.`;
   throw new TypeError(
     `[aegis] scene bootstrap: options.plugin is not a ModePlugin${named}.\n${advice}`,
   );
@@ -95,7 +97,12 @@ export function createSceneContext(
     }
   }
   const resources = createResourceRegistry(...(plugin.resources?.() ?? []));
-  if (options.resources !== undefined) resources.registerAll(options.resources.ids());
+  if (options.resources !== undefined) {
+    for (const id of options.resources.ids()) {
+      const schema = options.resources.schema?.(id);
+      resources.register(schema === undefined ? id : { id, schema });
+    }
+  }
   const catalog = createPrefabResolver(...(plugin.prefabs?.() ?? []));
   const prefabs: PrefabResolver = {
     resolve: (name) => options.prefabs?.resolve(name) ?? catalog.resolve(name),

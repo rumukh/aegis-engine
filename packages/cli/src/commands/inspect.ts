@@ -147,7 +147,10 @@ export const inspectCommand: Command = {
     const seed = flagSeed(args);
     if (seed !== undefined) options.seed = seed;
     const inputFile = flagString(args, 'input');
-    if (inputFile !== undefined) options.input = readText(resolvePath(io, inputFile), io);
+    if (inputFile !== undefined) {
+      options.input = readText(resolvePath(io, inputFile), io);
+      options.inputFile = inputFile;
+    }
 
     const result = await runScene(loaded.scene, options);
     const wantJson = flagBool(args, 'json');

@@ -24,6 +24,7 @@ export * from './catalog.js';
 export * from './script-input.js';
 export * from './pages.js';
 export * from './static-site.js';
+export * from './presentation/rights.js';
 export * from './dev-server.js';
 export * from './play.js';
 export * from './capture.js';

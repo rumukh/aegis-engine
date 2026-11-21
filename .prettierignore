@@ -28,3 +28,6 @@ games/horror/assets/source/aftermath-input/placement-contract.json
 
 # Canonical extension specification, kept byte-identical to its import source.
 docs/specs/aegis-extension-spec.md
+
+# Unmodified raw hardware benchmark receipts, SHA-256 linked in the measurement report.
+docs/games/evidence/horror-*-rtx4070ti-super.json

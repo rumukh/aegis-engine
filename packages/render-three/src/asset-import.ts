@@ -85,15 +85,23 @@ export function parseImportProvenance(value: unknown): Provenance {
     !value.author.trim() ||
     !value.license.trim() ||
     !value.source.trim() ||
-    Object.keys(value).some((key) => !['author', 'license', 'source'].includes(key))
+    ('commercialUse' in value && value.commercialUse !== 'restricted') ||
+    Object.keys(value).some(
+      (key) => !['author', 'license', 'source', 'commercialUse'].includes(key),
+    )
   )
     throw failure(
       AssetImportCode.Provenance,
       'provenance',
-      'Import requires exactly { author, license, source }, each a nonempty string.',
+      'Import requires exactly author, license, source (nonempty strings), and optionally commercialUse: "restricted".',
       'Declare the asset provenance explicitly. Do not substitute a generation receipt or infer a license.',
     );
-  return { author: value.author, license: value.license, source: value.source };
+  return {
+    author: value.author,
+    license: value.license,
+    source: value.source,
+    ...('commercialUse' in value ? { commercialUse: 'restricted' as const } : {}),
+  };
 }
 
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');

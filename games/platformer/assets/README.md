@@ -42,6 +42,12 @@ resources in the simulation. The game plugin, scene and input script are not mod
 | Effects          | Short feet-attached landing puffs, stomp flash, ferry signal and bounded event bursts use shared tick/event handling; no gameplay camera shake or simulation changes.    |
 | Audio            | Original mono 16-bit PCM at 22050 Hz; six short cues and a twelve-second air loop. The shared host owns gesture unlock, mute, pause, restart, decoding and voice limits. |
 
+The cable davits use tapered, weathered spars with open sky between them. Contiguous
+cliff cells share one painted outcrop, so a fracture spans metres instead of repeating
+every tile. The test rasterizes every rendered face back onto all 180 solid cells. The lip remains a separate landing
+edge. Amber under-light is painted into the ferry's hull and wheels without moving its
+physical deck or reducing the visible lethal volume.
+
 The opaque cliff faces sit behind the retained collision geometry, so the shared diagnostic
 toggle can reveal the underlying mechanical tiles. Decorative objects never become colliders.
 The camera-anchored painting continues to cover the view with reduced motion; the wide secondary

@@ -38,6 +38,9 @@ import {
   GridPosition,
   ISO_COMPONENTS,
   ISO_RESOURCES,
+  IsoGrid,
+  ISO_EVENTS,
+  ISO_INPUTS,
   IsoViewProvider,
   isoInit,
   isoSystems,
@@ -46,33 +49,6 @@ import {
   TRIGGER_ENTERED_EVENT,
 } from '@aegis/mode-iso';
 import type { NavGridData, TriggerEnteredEvent } from '@aegis/mode-iso';
-
-// ---------------------------------------------------------------------------
-// Level geometry — single source of truth for the collision layer.
-// ---------------------------------------------------------------------------
-
-/**
- * The vault's collision rows (walls only), identical to the tilemap's `collision` layer and the
- * scene's `IsoGrid.walls`. `#` = wall, everything else = floor. Kept here in code so the
- * whole-timeline "never stand in a wall" invariant derives its {@link WALL_CELLS} from the same
- * bytes the sim navigates. The companion test asserts these rows match the scene on disk.
- */
-export const WALL_ROWS: readonly string[] = [
-  '############',
-  '#...#...#..#',
-  '#.#.#.#.#..#',
-  '#.#...#...##',
-  '#.###.#.##.#',
-  '#..........#',
-  '####.#######',
-  '#..........#',
-  '############',
-];
-
-/** Every wall cell of the level, derived from {@link WALL_ROWS} — used by invariant #1. */
-export const WALL_CELLS: readonly { x: number; y: number }[] = WALL_ROWS.flatMap((row, y) =>
-  [...row].flatMap((ch, x) => (ch === '#' ? [{ x, y }] : [])),
-);
 
 // ---------------------------------------------------------------------------
 // Marker components (scene tags queried by the game's own systems).
@@ -304,6 +280,15 @@ export const serverVaultPlugin: ModePlugin = {
   mode: 'iso',
   components: (): readonly ComponentType<unknown>[] => [...ISO_COMPONENTS, ...GAME_COMPONENTS],
   resources: () => ISO_RESOURCES,
+  inputs: () => ISO_INPUTS,
+  events: () => ({
+    ...ISO_EVENTS,
+    [GUARD_ALERTED]: { fields: { tick: 'number' } },
+    [SWITCH_ACTIVATED]: { fields: { name: { nullable: 'string' } } },
+    [DOOR_OPENED]: { fields: { name: { nullable: 'string' } } },
+    [MISSION_COMPLETED]: { fields: { tick: 'number' } },
+    [PLAYER_DIED]: { fields: { cause: 'string', tick: 'number' } },
+  }),
   systems: (): Schedule => createSchedule().addAll([...isoSystems(), ...SERVER_VAULT_SYSTEMS]),
   init: (world: World): void => isoInit(world),
   view: (): ViewProvider => new IsoViewProvider(),
@@ -564,7 +549,8 @@ export default defineGameTest({
         .query({ has: ['Operative', 'GridPosition'] })
         .one()
         .get(GridPosition);
-      return WALL_CELLS.every((c) => !(c.x === g.cellX && c.y === g.cellY));
+      // Check authored floor directly, independently of the pathfinder's baked bitmap.
+      return w.getResource(IsoGrid)?.walls[g.cellY]?.[g.cellX] === '.';
     });
 
     result.assertInvariant(

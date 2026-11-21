@@ -15,7 +15,7 @@
 
 ![Coyote Gap: an expedition engineer riding a ferry over lava, with layered canyon scenery and a live objective HUD](docs/images/platformer.png)
 
-_Coyote Gap, running in the browser. The same traversal can be executed and inspected entirely headlessly._
+_Coyote Gap, running in the browser. The same traversal can be executed and inspected entirely headlessly. See the [matched playfield comparisons](docs/m1/review/README.md) for all three original showcases._
 
 Aegis is a TypeScript engine built around a **deterministic, inspectable simulation** rather
 than an editor application. Scenes, input scripts, prefab definitions and presentation manifests
@@ -110,7 +110,7 @@ does not require clicking the canvas or capturing the mouse.
 ### NULL MERIDIAN
 
 [Play NULL MERIDIAN](https://rumukh.github.io/aegis-engine/play/horror/) ·
-[Game guide and acceptance limits](docs/games/horror.md) · [Source](games/horror)
+[Game guide and acceptance limits](docs/games/horror.md) · [Full-route benchmark](docs/games/null-meridian-benchmark.md) · [Spoiler-free playtest protocol](docs/games/null-meridian-first-play.md) · [Source](games/horror)
 
 Investigate an abandoned orbital station, diagnose and restore auxiliary power, recover the
 crew evidence, evade a corrupted rescue responder and depart. **No gun combat.** Spatially
@@ -237,19 +237,21 @@ npx aegis describe games\iso\levels\server-vault.scene.json --json
 
 The versioned `capabilities/1` response exposes actual plugin declarations and supported CLI
 operations. It does not create a world or run game systems. Unknown facts remain explicitly
-unavailable: for example, resource value schemas and complete action/event inventories are
-not inferred from arbitrary gameplay code.
+unavailable: `inputs`, `events` and `resources.valueSchemas` report what the selected plugin
+declares, never guesses from arbitrary gameplay code. For a copyable, tested scaffold-to-test
+loop, start at [AGENTS.md](AGENTS.md).
 
 ### 2. Validate authored content
 
 ```powershell
 npx aegis validate games\platformer\levels\coyote-gap.scene.json --json
+npx aegis validate games\platformer\play\coyote-gap.input --json
 npx aegis validate poc\previews\asset-studies.presentation.json --json
 ```
 
-Scene validation checks the selected game's vocabulary. Presentation validation is
-**structural**: it does not prove that every referenced file decodes or that a game entity
-exists. Asset preparation and rendering provide those separate observations.
+Scene and script validation check the selected game's vocabulary. Presentation validation is
+**structural by default**; `--game-context` also checks declared event names and audio payload
+predicates. Neither proves that a referenced file decodes or a named entity exists.
 
 ### 3. Inspect the state you actually need
 

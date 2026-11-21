@@ -15,12 +15,14 @@ function fakeIO(argv: readonly string[]): { io: CliIO; out: () => string; err: (
 }
 
 describe('@aegis/cli dispatcher', () => {
-  it('registers all ten commands', () => {
+  it('registers the headless, asset and game distribution commands', () => {
     expect(COMMANDS.map((c) => c.name).sort()).toEqual(
       [
         'describe',
+        'export',
         'import',
         'inspect',
+        'play',
         'preview',
         'record',
         'replay',
