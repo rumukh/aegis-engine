@@ -15,7 +15,7 @@
 
 ![Coyote Gap: an expedition engineer riding a ferry over lava, with layered canyon scenery and a live objective HUD](docs/images/platformer.png)
 
-_Coyote Gap, running in the browser. The same traversal can be executed and inspected entirely headlessly._
+_Coyote Gap, running in the browser. The same traversal can be executed and inspected entirely headlessly. See the [matched playfield comparisons](docs/m1/review/README.md) for all three original showcases._
 
 Aegis is a TypeScript engine built around a **deterministic, inspectable simulation** rather
 than an editor application. Scenes, input scripts, prefab definitions and presentation manifests
