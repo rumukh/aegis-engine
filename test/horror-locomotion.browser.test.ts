@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { parseInputScript } from '@aegis/harness';
@@ -15,6 +15,7 @@ import {
   until,
 } from '../packages/render-three/src/browser.js';
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
+import { navigateAndWait } from '../packages/render-three/src/browser-navigation.js';
 import {
   approachHashes,
   expectApproachPose,
@@ -123,14 +124,15 @@ it('Cable Warden: the live station approach turns in Stalk and blends to Search 
         await control('restart');
         expect(await sample()).toEqual(spawn);
       } finally {
-        page.close();
+        try {
+          await navigateAndWait(page, () => page.send('Page.navigate', { url: 'about:blank' }));
+        } finally {
+          page.close();
+        }
       }
     } finally {
-      try {
-        await closeOwnedBrowser(browser);
-      } finally {
-        rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-      }
+      await closeOwnedBrowser(browser, { inspectProcesses: true });
+      await rm(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   } finally {
     stopExternalLagWitness();

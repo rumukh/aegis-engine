@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
+import { initSync, parse } from 'es-module-lexer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fixturePng, writePresentationFixture } from '../testing/presentation-fixture.js';
 import { startAssetPreviewServer } from './server.js';
@@ -30,6 +31,38 @@ async function post(path: string, body: unknown, token = server!.token): Promise
 }
 
 describe('loopback asset-only host (no browser)', () => {
+  it('serves the complete static ESM graph of the asset-only boot page', async () => {
+    server = await startAssetPreviewServer({ source });
+    const base = server.url;
+    const html = await (await fetch(base)).text();
+    const script = (type: string) =>
+      new RegExp(`<script type="${type}"[^>]*>([\\s\\S]*?)</script>`).exec(html)![1]!;
+    const { imports } = JSON.parse(script('importmap')) as { imports: Record<string, string> };
+    const prefixes = Object.keys(imports)
+      .filter((key) => key.endsWith('/'))
+      .sort((a, b) => b.length - a.length);
+    const seen = new Set<string>();
+    initSync();
+    async function crawl(body: string, parent: string): Promise<void> {
+      for (const { d, n } of parse(body)[0]) {
+        if (d !== -1 || n === undefined) continue;
+        const prefix = prefixes.find((key) => n.startsWith(key));
+        const mapped =
+          imports[n] ??
+          (prefix === undefined ? undefined : imports[prefix] + n.slice(prefix.length));
+        if (mapped === undefined) expect(n, parent).toMatch(/^(?:\.{1,2}\/|\/)/);
+        const url = new URL(mapped ?? n, mapped === undefined ? parent : base).href;
+        if (seen.has(url)) continue;
+        seen.add(url);
+        const res = await fetch(url);
+        expect(res.status, `${parent} imports ${n} (${url})`).toBe(200);
+        await crawl(await res.text(), url);
+      }
+    }
+    await crawl(script('module'), base);
+    expect(seen.has(base + 'vendor/@aegis/render-three/dist/preview/client/boot.js')).toBe(true);
+    expect((await fetch(base + 'vendor/@aegis/content/dist/index.js')).status).toBe(404);
+  });
   it('serves its dedicated page and checked assets but no game routes or arbitrary files', async () => {
     writeFileSync(join(root, 'secret.txt'), 'not declared');
     server = await startAssetPreviewServer({ source });

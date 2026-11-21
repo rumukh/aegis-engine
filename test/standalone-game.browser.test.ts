@@ -1,9 +1,9 @@
 import { createServer } from 'node:http';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
-  closeAllPages,
   evaluate,
   key,
   launchBrowser,
@@ -12,6 +12,7 @@ import {
   until,
 } from '../packages/render-three/src/browser.js';
 import { closeOwnedBrowser } from '../packages/render-three/src/testing/browser-lifecycle.js';
+import { navigateAndWait } from '../packages/render-three/src/browser-navigation.js';
 import { standaloneFixture } from './support/standalone-game.js';
 
 let f: ReturnType<typeof standaloneFixture>;
@@ -62,12 +63,8 @@ beforeAll(async () => {
 afterAll(async () => {
   try {
     if (browser) {
-      try {
-        await closeAllPages(browser.port);
-      } finally {
-        await closeOwnedBrowser(browser);
-      }
-      rmSync(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      await closeOwnedBrowser(browser, { inspectProcesses: true });
+      await rm(browser.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   } finally {
     stopExternalLagWitness();
@@ -116,7 +113,7 @@ it.each(['live', 'static'] as const)(
       }
     } finally {
       try {
-        await page.send('Page.navigate', { url: 'about:blank' });
+        await navigateAndWait(page, () => page.send('Page.navigate', { url: 'about:blank' }));
       } finally {
         page.close();
       }

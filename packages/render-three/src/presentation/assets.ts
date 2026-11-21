@@ -23,7 +23,7 @@ import { DiagnosticError } from '@aegis/core';
 import { assetError, isAssetPath } from './diagnostics.js';
 import { PRESENTATION_LIMITS } from './schema.js';
 import type { AssetSpec, PresentationManifest, ResolvedPresentation } from './schema.js';
-import { validatePresentation } from './validate.js';
+import { validatePresentationShape } from './validate-shape.js';
 import { sharedResource } from '../resources.js';
 import { TextureSources } from './texture-sources.js';
 
@@ -447,7 +447,7 @@ export async function loadPresentationAssets(
   config: ResolvedPresentation,
   options: AssetLoadOptions = {},
 ): Promise<PresentationAssets> {
-  const checked = validatePresentation(config.manifest);
+  const checked = validatePresentationShape(config.manifest);
   if (!checked.ok) throw new DiagnosticError(checked.diagnostics);
   const library = new AssetLibrary(config.manifest, options.loaders === undefined);
   const base = new URL(
